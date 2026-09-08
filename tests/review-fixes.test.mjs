@@ -805,6 +805,7 @@ test('diagnosis rejects TypeScript built-ins and forbidden aliases with model re
     'Promise',
     'AsyncGenerator',
     'Record',
+    'Exclude',
     'unknown',
     'any',
     'number',
@@ -828,7 +829,7 @@ test('diagnosis rejects TypeScript built-ins and forbidden aliases with model re
     assert.match(diagnosis.stderr, /collision|reserved/);
     f.cfg.models = { [name]: 'ProviderValue' };
     emit(f);
-    if (['Promise', 'unknown'].includes(name)) {
+    if (['Promise', 'unknown', 'Exclude'].includes(name)) {
       const result = compile(
         f,
         "import {Client} from './sdk/node/index.js'; new Client({baseUrl:'https://example.invalid'}).api.read();",
@@ -1147,4 +1148,284 @@ test('GET/HEAD bodies are diagnosed for Node targets and fail before runtime dis
     save(f);
     assert.doesNotThrow(() => loadContract(join(f.dir, 'api.json'), join(f.dir, 'config.json')));
   }
+});
+
+test('typeless object constraints preserve nonobject inputs and require response narrowing', async () => {
+  const loose = { properties: { id: { type: 'string' } }, required: ['id'] };
+  const f = fixture(
+    'typeless-object-constraints',
+    { $ref: '#/components/schemas/Loose' },
+    {
+      body: { $ref: '#/components/schemas/Loose' },
+      components: { Loose: loose },
+    },
+  );
+  const compiled = compile(
+    f,
+    `
+import { Client, makeLoose, type Loose, type LooseInput } from './sdk/node/index.js';
+const values: LooseInput[] = [null, true, 42, 'text', [], {id:'ok'}];
+for (const value of values) makeLoose(value);
+// @ts-expect-error Object inputs still require id.
+const missing: LooseInput = {};
+async function consume(client: Client) {
+  for (const body of values) {
+    const {data} = await client.api.read({body});
+    // @ts-expect-error A typeless schema does not guarantee an object response.
+    data.id.toUpperCase();
+    if (data !== null && typeof data === 'object' && !Array.isArray(data)) {
+      const id: string = data.id;
+    }
+  }
+}
+`,
+  );
+  assert.equal(compiled.status, 0, compiled.stdout + compiled.stderr);
+  const { Client, makeLoose } = await sdk(f);
+  const sent = [];
+  const client = new Client({
+    baseUrl: 'https://example.invalid',
+    transport: async (_, init) => {
+      sent.push(init.body);
+      return new Response(init.body);
+    },
+  });
+  const values = [null, true, 42, 'text', [], { id: 'ok' }];
+  for (const body of values) {
+    const { data } = await client.api.read({ body: makeLoose(body) });
+    assert.equal(JSON.stringify(data), JSON.stringify(body));
+  }
+  assert.deepEqual(
+    sent,
+    values.map((v) => JSON.stringify(v)),
+  );
+  await assert.rejects(client.api.read({ body: {} }), /required field/);
+});
+
+test('typeless nested schemas and alternatives stay broad while object intersections retain fields', async () => {
+  const loose = { properties: { id: { type: 'string' } }, required: ['id'] };
+  const f = fixture('typeless-composition-context', {
+    type: 'object',
+    required: ['loose', 'choice', 'constrained'],
+    properties: {
+      loose,
+      choice: { anyOf: [loose, { type: 'string' }] },
+      constrained: {
+        allOf: [{ type: 'object' }, loose],
+      },
+    },
+  });
+  const compiled = compile(
+    f,
+    `
+import {Client} from './sdk/node/index.js';
+async function consume(client: Client) {
+  const {data} = await client.api.read();
+  const id: string = data.constrained.id;
+  // @ts-expect-error The enclosing object's type does not constrain its children.
+  data.loose.id.toUpperCase();
+  // @ts-expect-error Typeless alternatives can return nonobjects, including future values.
+  data.choice.id.toUpperCase();
+}
+`,
+  );
+  assert.equal(compiled.status, 0, compiled.stdout + compiled.stderr);
+  const { Client } = await sdk(f);
+  const expected = { loose: null, choice: true, constrained: { id: 'ok' } };
+  const { data } = await new Client({
+    baseUrl: 'https://example.invalid',
+    transport: async () => new Response(JSON.stringify(expected)),
+  }).api.read();
+  assert.equal(JSON.stringify(data), JSON.stringify(expected));
+});
+
+test('nullable object intersections retain field types after narrowing without excluding null', async () => {
+  const loose = { properties: { id: { type: 'string' } }, required: ['id'] };
+  const nullable = { allOf: [{ type: ['object', 'null'] }, loose] };
+  const f = fixture('nullable-object-intersections', {
+    type: 'object',
+    required: ['nullable', 'object', 'text'],
+    properties: {
+      nullable,
+      object: { allOf: [nullable, { type: 'object' }] },
+      text: { allOf: [{ type: 'string' }, loose] },
+    },
+  });
+  const compiled = compile(
+    f,
+    `
+import { Client, type ApiReadResponse } from './sdk/node/index.js';
+const value: ApiReadResponse = {nullable:null, object:{id:'ok'}, text:'ok'};
+async function consume(client:Client) {
+  const {data} = await client.api.read();
+  // @ts-expect-error Null still requires a check.
+  data.nullable.id.toUpperCase();
+  if (data.nullable !== null) { const id:string = data.nullable.id; }
+  const id:string = data.object.id;
+  const text:string = data.text;
+}
+`,
+  );
+  assert.equal(compiled.status, 0, compiled.stdout + compiled.stderr);
+  const { Client } = await sdk(f);
+  for (const value of [null, { id: 'ok' }]) {
+    const expected = { nullable: value, object: { id: 'ok' }, text: 'ok' };
+    const { data } = await new Client({
+      baseUrl: 'https://example.invalid',
+      transport: async () => new Response(JSON.stringify(expected)),
+    }).api.read();
+    assert.equal(JSON.stringify(data), JSON.stringify(expected));
+  }
+});
+
+test('recursive typeless models retain object constraints at each reference without narrowing the root', async () => {
+  const reference = { $ref: '#/components/schemas/Recursive' };
+  const f = fixture('recursive-object-context', reference, {
+    body: reference,
+    components: {
+      Recursive: {
+        properties: {
+          id: { type: 'string' },
+          next: { allOf: [{ type: 'object' }, reference] },
+          nullableNext: { allOf: [{ type: ['object', 'null'] }, reference] },
+        },
+        required: ['id'],
+      },
+    },
+  });
+  const compiled = compile(
+    f,
+    `
+import {Client,makeRecursive,type RecursiveInput} from './sdk/node/index.js';
+makeRecursive(null);
+makeRecursive('root');
+makeRecursive([]);
+makeRecursive({id:'a',next:{id:'b',next:{id:'c'}},nullableNext:null});
+// @ts-expect-error The nested reference requires an object.
+const badNull:RecursiveInput={id:'a',next:null};
+// @ts-expect-error Arrays are not objects under the schema.
+const badArray:RecursiveInput={id:'a',next:[]};
+// @ts-expect-error Nullable object references still reject strings.
+const badString:RecursiveInput={id:'a',nullableNext:'wrong'};
+async function consume(client:Client){
+ const {data}=await client.api.read({body:null});
+ // @ts-expect-error The root remains typeless and must be narrowed.
+ data.id.toUpperCase();
+ if(data!==null && typeof data==='object' && !Array.isArray(data)){
+   const id:string=data.id;
+   if(data.next){
+     const nextId:string=data.next.id;
+     if(data.next.next){const deeperId:string=data.next.next.id;}
+   }
+   if(data.nullableNext!==undefined && data.nullableNext!==null){
+     const nullableId:string=data.nullableNext.id;
+     if(data.nullableNext.next){const deeperId:string=data.nullableNext.next.id;}
+   }
+ }
+}
+`,
+  );
+  assert.equal(compiled.status, 0, compiled.stdout + compiled.stderr);
+  const { Client, makeRecursive } = await sdk(f);
+  let sent = 0;
+  const client = new Client({
+    baseUrl: 'https://example.invalid',
+    transport: async (_, init) => {
+      sent++;
+      return new Response(init.body);
+    },
+  });
+  for (const value of [
+    null,
+    'root',
+    [],
+    { id: 'a', next: { id: 'b', next: { id: 'c' } }, nullableNext: null },
+    { id: 'a', nullableNext: { id: 'b', next: { id: 'c' } } },
+  ]) {
+    const { data } = await client.api.read({ body: makeRecursive(value) });
+    assert.equal(JSON.stringify(data), JSON.stringify(value));
+  }
+  const before = sent;
+  for (const body of [
+    { id: 'a', next: null },
+    { id: 'a', next: [] },
+    { id: 'a', nullableNext: 'wrong' },
+  ])
+    await assert.rejects(client.api.read({ body }), /object|null is not permitted/);
+  assert.equal(sent, before);
+});
+
+test('object-valued factories compose through mutually recursive typeless models', async () => {
+  const a = { $ref: '#/components/schemas/TreeRoot' };
+  const b = { $ref: '#/components/schemas/Child' };
+  const f = fixture('mutual-recursive-factories', a, {
+    body: a,
+    components: {
+      TreeRoot: {
+        properties: {
+          id: { type: 'string' },
+          child: { allOf: [{ type: 'object' }, b] },
+          maybe: { allOf: [{ type: ['object', 'null'] }, b] },
+        },
+        required: ['id'],
+      },
+      Child: {
+        properties: {
+          label: { type: 'string' },
+          parent: { allOf: [{ type: 'object' }, a] },
+        },
+        required: ['label'],
+      },
+    },
+  });
+  const compiled = compile(
+    f,
+    `
+import {Client,makeTreeRoot,makeChild} from './sdk/node/index.js';
+const child=makeChild({label:'b',parent:makeTreeRoot({id:'c'})});
+const label:string=child.toJSON().label;
+const body=makeTreeRoot({id:'a',child,maybe:makeChild({label:'d'})});
+new Client({baseUrl:'https://example.invalid'}).api.read({body});
+makeTreeRoot({id:'a',child:makeChild(child),maybe:null});
+makeTreeRoot(null);makeChild('root');makeChild([]);
+// @ts-expect-error A factory does not waive required fields.
+makeChild({});
+// @ts-expect-error A factory does not waive field types.
+makeChild({label:123});
+// @ts-expect-error A possibly nonobject model cannot enter an object-only field.
+makeTreeRoot({id:'a',child:makeChild(null)});
+// @ts-expect-error An array model cannot enter an object-only field.
+makeTreeRoot({id:'a',child:makeChild([])});
+const broad=makeChild(null);
+// @ts-expect-error Nonobject factory inputs retain the broad result type.
+broad.toJSON().label;
+`,
+  );
+  assert.equal(compiled.status, 0, compiled.stdout + compiled.stderr);
+  const { Client, makeTreeRoot, makeChild } = await sdk(f);
+  let sent = 0;
+  const client = new Client({
+    baseUrl: 'https://example.invalid',
+    transport: async (_, init) => {
+      sent++;
+      return new Response(init.body);
+    },
+  });
+  const body = makeTreeRoot({
+    id: 'a',
+    child: makeChild({ label: 'b', parent: makeTreeRoot({ id: 'c' }) }),
+    maybe: makeChild({ label: 'd' }),
+  });
+  const { data } = await client.api.read({ body });
+  assert.equal(
+    JSON.stringify(data),
+    JSON.stringify({ id: 'a', child: { label: 'b', parent: { id: 'c' } }, maybe: { label: 'd' } }),
+  );
+  const before = sent;
+  for (const child of [makeChild(null), makeChild([])])
+    await assert.rejects(
+      client.api.read({ body: { id: 'a', child } }),
+      /object|null is not permitted/,
+    );
+  assert.equal(sent, before);
 });

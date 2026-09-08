@@ -341,7 +341,16 @@ foreach(['string','number'] as $kind)$c->api->saveValue(new HardeningSdk\\ApiSav
 });
 
 test('diagnosis rejects reserved model names and accepts model-renaming recovery', () => {
-  for (const name of ['export', 'import', 'this', 'typeof', 'package']) {
+  for (const name of [
+    'export',
+    'import',
+    'this',
+    'typeof',
+    'package',
+    'keyof',
+    'infer',
+    'unique',
+  ]) {
     const i = inputs(
       `reserved-${name}`,
       {
@@ -390,5 +399,57 @@ test('diagnosis rejects reserved model names and accepts model-renaming recovery
       encoding: 'utf8',
     });
     assert.equal(php.status, 0, php.stdout + php.stderr);
+  }
+});
+
+test('native clients preserve required empty headers and per-request empty overrides', async () => {
+  const i = inputs('empty-headers', {
+    get: {
+      operationId: 'fetchValue',
+      parameters: [{ in: 'header', name: 'X-Empty', required: true, schema: { type: 'string' } }],
+      responses: { 204: { description: 'Empty' } },
+    },
+  });
+  build(i);
+  const received = [];
+  const server = createServer((req, res) => {
+    received.push({
+      present: Object.hasOwn(req.headers, 'x-empty'),
+      value: req.headers['x-empty'],
+    });
+    req.resume();
+    res.writeHead(204);
+    res.end();
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const Client = await clientClass(i);
+    const client = new Client({ baseUrl, allowInsecureHttp: true });
+    await client.api.fetchValue({ 'X-Empty': '' });
+    await client.api.fetchValue({ 'X-Empty': 'original' }, { headers: { 'X-Empty': '' } });
+    await client.api.fetchValue({ 'X-Empty': 'nonempty' });
+    const file = join(i.dir, 'empty.php');
+    writeFileSync(
+      file,
+      phpImports +
+        `
+$c=new Client(new ClientOptions(baseUrl:$argv[2],allowInsecureHttp:true));
+$c->api->fetchValue(new HardeningSdk\\ApiFetchValueInput(['X-Empty'=>'']));
+$c->api->fetchValue(new HardeningSdk\\ApiFetchValueInput(['X-Empty'=>'original']),new RequestOptions(headers:['X-Empty'=>'']));
+$c->api->fetchValue(new HardeningSdk\\ApiFetchValueInput(['X-Empty'=>'nonempty']));
+echo json_encode(true);
+`,
+    );
+    assert.equal(await phpAsync(file, [i.output, baseUrl]), true);
+    const expected = [
+      { present: true, value: '' },
+      { present: true, value: '' },
+      { present: true, value: 'nonempty' },
+    ];
+    assert.deepEqual(received, [...expected, ...expected]);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
   }
 });

@@ -52,6 +52,10 @@ Integer response decoding accepts integral decimal/exponent tokens without float
 
 HTTP success bodies and verified webhook payloads must contain well-formed UTF-8 JSON without a byte-order mark or unpaired surrogate escapes. Malformed bodies produce a protocol error; decoding never repairs them by inserting replacement characters. HTTP error statuses remain available even when their bodies cannot be parsed.
 
+## Compatibility analysis limitations
+
+Nested constraint changes in `allOf`, `anyOf`, and `not` can receive only a `review` finding even when they break existing inputs. The SemVer release policy relies on provider judgment for these findings. See [known compatibility limitations and deferred improvements](releases.md#known-compatibility-limitations).
+
 ## Unsupported capabilities
 
 - File upload and download, multipart streaming and resume/checksum protocols. Declaring binary media such as a PDF response fails generation. Exclude those operations from the selection, or handle them outside the SDK.
