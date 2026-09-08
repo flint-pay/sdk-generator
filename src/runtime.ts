@@ -951,6 +951,11 @@ export class Runtime {
     if (key !== undefined) {
       if (!op.idempotency || !key)
         bad('idempotencyKey', 'a nonempty key and declared capability are required');
+      if (/^[ \t]|[ \t]$/.test(key))
+        bad(
+          'idempotencyKey',
+          'leading or trailing HTTP whitespace would change the key on the wire',
+        );
       setHeader(op.idempotency!.header, key);
     }
     const safe =
@@ -1197,7 +1202,6 @@ export class Runtime {
     if (!op?.pagination) return bad('pagination', 'capability is not declared');
     const p = op.pagination;
     let next: unknown;
-    let previous: unknown;
     const request = { ...input };
     const deadline =
       performance.now() +
@@ -1216,13 +1220,18 @@ export class Runtime {
         p.kind === 'link' && typeof next === 'string' ? next : undefined,
       );
       yield result;
-      previous = next;
+      const sent = p.kind === 'link' ? next : request[p.parameter!];
+      const previous = sent instanceof Model ? sent.toJSON() : sent;
       next = field(result.data, p.next);
       if (next === undefined || next === null || next === '') return;
       if (p.kind === 'link' && typeof next !== 'string')
         throw new SdkError('protocol', 'Expected a pagination URL', 'response');
       if (p.kind === 'link') next = new URL(next as string, result.meta.url ?? this.base).href;
-      if (next === previous || (p.kind === 'link' && next === result.meta.url))
+      if (
+        next === previous ||
+        (p.kind === 'offset' && previous !== undefined && String(next) === String(previous)) ||
+        (p.kind === 'link' && next === result.meta.url)
+      )
         throw new SdkError(
           'protocol',
           'Pagination returned a non-advancing continuation',

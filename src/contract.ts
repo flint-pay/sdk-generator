@@ -159,6 +159,19 @@ const reserved = new Set(
     ' ',
   ),
 );
+// TypeScript keywords are case-sensitive and may still be valid property names.
+const reservedTypeNames = new Set(
+  'debugger export import in super this typeof with package arguments'.split(' '),
+);
+function modelName(
+  value: unknown,
+  path: string,
+  targets: Config['targets'],
+): asserts value is string {
+  name(value, path);
+  if ((!targets || targets.includes('node')) && reservedTypeNames.has(value))
+    fail(path, 'model name is a TypeScript reserved word; customize it with config.models');
+}
 function name(value: unknown, path: string, method = false): asserts value is string {
   if (
     typeof value !== 'string' ||
@@ -536,17 +549,117 @@ function checkRepresentations(s: Schema, p: string): void {
     };
     inherit(s);
   }
+  // Compare the caller representations at corresponding paths, not just at the
+  // roots of alternatives. Exact JSON numbers and JSON strings both use SDK strings.
+  const sdkTypes = (shape: Schema): string[] | undefined => {
+    if (shape.type === undefined) return undefined;
+    return (Array.isArray(shape.type) ? shape.type : [shape.type]).map((type) =>
+      type === 'number' || (type === 'integer' && scalar(shape) === 'exact-number')
+        ? 'string'
+        : type,
+    );
+  };
+  const disjoint = (left: Schema[], right: Schema[]): boolean => {
+    for (const a of left)
+      for (const b of right) {
+        const at = sdkTypes(a),
+          bt = sdkTypes(b);
+        if (at && bt && !at.some((type) => bt.includes(type))) return true;
+        // Non-numeric enums can distinguish tagged object alternatives without
+        // confusing numeric enums with their exact string representations.
+        if (
+          a.enum &&
+          b.enum &&
+          [...a.enum, ...b.enum].every((v) => typeof v !== 'number') &&
+          !a.enum.some((v) => b.enum!.includes(v))
+        )
+          return true;
+      }
+    const required = new Set([...left, ...right].flatMap((shape) => shape.required ?? []));
+    for (const key of required) {
+      const children = (shapes: Schema[]) =>
+        shapes.flatMap((shape) =>
+          Object.hasOwn(shape.properties ?? {}, key) ? conjuncts(shape.properties![key]!) : [],
+        );
+      const a = children(left),
+        b = children(right);
+      if ([...a, ...b].some((child) => child.readOnly)) continue;
+      if (
+        [...left, ...right].some(
+          (shape) =>
+            shape.additionalProperties === false && !Object.hasOwn(shape.properties ?? {}, key),
+        )
+      )
+        return true;
+      if (disjoint(a, b)) return true;
+    }
+    return false;
+  };
+  const ambiguous = (left: Schema[], right: Schema[], path: string): void => {
+    if (!left.length || !right.length) return;
+    left = left.flatMap(conjuncts).map(({ allOf, ...shape }) => shape);
+    right = right.flatMap(conjuncts).map(({ allOf, ...shape }) => shape);
+    if (disjoint(left, right)) return;
+    // Keep branch constraints together so disjoint tags are not lost while
+    // looking through nested alternatives and intersections.
+    for (const [side, other, reversed] of [
+      [left, right, false],
+      [right, left, true],
+    ] as const) {
+      for (const [i, shape] of side.entries()) {
+        const keyword = shape.oneOf ? 'oneOf' : shape.anyOf ? 'anyOf' : undefined;
+        if (!keyword) continue;
+        const base = { ...shape };
+        delete base[keyword];
+        for (const branch of shape[keyword]!) {
+          const selected = [...side.slice(0, i), base, branch, ...side.slice(i + 1)];
+          ambiguous(reversed ? other : selected, reversed ? selected : other, path);
+        }
+        return;
+      }
+    }
+    const a = new Set(left.map(scalar)),
+      b = new Set(right.map(scalar));
+    if ((a.has('string') && b.has('exact-number')) || (b.has('string') && a.has('exact-number')))
+      fail(
+        path,
+        'string and exact-number alternatives have ambiguous SDK string inputs; provide an unambiguous provider representation before generating this operation',
+      );
+    const keys = new Set(
+      [...left, ...right].flatMap((shape) => Object.keys(shape.properties ?? {})),
+    );
+    for (const key of keys) {
+      const children = (shapes: Schema[]) =>
+        shapes.flatMap((shape) => {
+          const child = own(shape.properties, key);
+          return child
+            ? [child]
+            : typeof shape.additionalProperties === 'object'
+              ? [shape.additionalProperties]
+              : [];
+        });
+      ambiguous(children(left), children(right), path + '/properties/' + key);
+    }
+    ambiguousItems(left, right, path);
+  };
+  const ambiguousItems = (left: Schema[], right: Schema[], path: string): void => {
+    const a = left.flatMap((shape) => (shape.items ? [shape.items] : []));
+    const b = right.flatMap((shape) => (shape.items ? [shape.items] : []));
+    if (a.length && b.length) ambiguous(a, b, path + '/items');
+    const additional = (shapes: Schema[]) =>
+      shapes.flatMap((shape) =>
+        typeof shape.additionalProperties === 'object' ? [shape.additionalProperties] : [],
+      );
+    const x = additional(left),
+      y = additional(right);
+    if (x.length && y.length) ambiguous(x, y, path + '/additionalProperties');
+  };
   for (const keyword of ['oneOf', 'anyOf'] as const) {
     const alternatives = s[keyword];
     if (!alternatives) continue;
-    const kinds = new Set(
-      alternatives.flatMap((branch) => conjuncts(branch).map(scalar)).filter(Boolean),
-    );
-    if (kinds.has('string') && kinds.has('exact-number'))
-      fail(
-        p + '/' + keyword,
-        'string and exact-number alternatives have ambiguous SDK string inputs; provide an unambiguous provider representation before generating this operation',
-      );
+    for (let i = 0; i < alternatives.length; i++)
+      for (let j = i + 1; j < alternatives.length; j++)
+        ambiguous([alternatives[i]!], [alternatives[j]!], p + '/' + keyword);
   }
   if (s.allOf) {
     const properties = new Map<string, Schema[]>();
@@ -734,7 +847,7 @@ export function loadContract(definitionPath: string, configPath: string): Contra
   for (const [id, capability] of Object.entries(config.operations ?? {}))
     record(capability, 'config/operations/' + id);
   for (const [original, mapped] of Object.entries(config.models ?? {}))
-    name(mapped, 'config/models/' + original);
+    modelName(mapped, 'config/models/' + original, config.targets);
   if (config.release !== undefined) {
     keys(config.release, ['baseUrl', 'policy'], 'config/release');
     if (
@@ -974,7 +1087,7 @@ export function loadContract(definitionPath: string, configPath: string): Contra
     Schema,
   ][]) {
     const mapped = own(config.models, original) ?? original;
-    name(mapped, `models/${original}`);
+    modelName(mapped, `models/${original}`, config.targets);
     if (Object.keys(models).some((k) => k.toLowerCase() === mapped.toLowerCase()))
       fail(`models/${original}`, 'model name collision');
     schema(value, `/components/schemas/${original}`, raw.openapi.startsWith('3.0.'));
@@ -985,7 +1098,7 @@ export function loadContract(definitionPath: string, configPath: string): Contra
       fail(`config/models/${k}`, 'stale model customization');
   const definitions: Record<string, Schema> = {};
   for (const [mapped, key] of cycles) {
-    name(mapped, 'definitions/' + mapped);
+    modelName(mapped, 'definitions/' + mapped, config.targets);
     if (
       !key.startsWith(resolve(definitionPath) + '#/components/schemas/') &&
       Object.hasOwn(models, mapped)
