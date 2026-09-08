@@ -396,6 +396,78 @@ test('removing numeric input encoding requires a major release in both generated
   assert.equal(prepareRelease(f.out, join(f.dir, 'major')).version, '2.0.0');
 });
 
+test('expanding nullable numeric input enums permits minor releases without changing existing values', async () => {
+  for (const numeric of [
+    { type: ['number', 'null'] },
+    { type: ['integer', 'null'], format: 'int64' },
+    { type: ['integer', 'null'], format: 'uint64' },
+  ]) {
+    const before = { ...numeric, enum: [null] };
+    for (const after of [{ ...numeric, enum: [null, 1] }, numeric]) {
+      assert(
+        !compareSchemas(before, after, 'amount', 'input').some((c) => c.severity === 'breaking'),
+      );
+      assert.equal(serialize(null, before), serialize(null, after));
+      assert.equal(serialize('1', after), '1');
+      assert(
+        compareSchemas(after, before, 'amount', 'input').some((c) => c.severity === 'breaking'),
+      );
+    }
+    // Response enums remain open, so dropping their numeric representation is breaking.
+    assert(compareSchemas(before, {}, 'amount', 'response').some((c) => c.severity === 'breaking'));
+  }
+  const f = fixture(
+    'numeric-enum-expansion-release',
+    { type: 'string' },
+    {
+      body: {
+        type: 'object',
+        required: ['amount'],
+        properties: { amount: { type: ['number', 'null'], enum: [null] } },
+      },
+      config: { release: { policy: 'semver' } },
+    },
+  );
+  const requestWire = async (amount) => {
+    const { Client } = await sdk(f);
+    let wire;
+    await new Client({
+      baseUrl: 'https://example.invalid',
+      transport: async (_url, init) => {
+        wire = init.body;
+        return Response.json('ok');
+      },
+    }).api.read({ body: { amount } });
+    assert.equal(
+      await php(
+        f,
+        String.raw`
+      $wire = null;
+      $c = new Review\Client(new Review\ClientOptions('https://example.invalid',
+        transport: function($r) use (&$wire) {
+          $wire = $r['body'];
+          return ['status'=>200, 'headers'=>[], 'body'=>'"ok"'];
+        }));
+      $c->api->read(new Review\ApiReadInput(['body'=>['amount'=>json_decode($argv[2])]]));
+      echo json_encode($wire);
+    `,
+        [JSON.stringify(amount)],
+      ),
+      wire,
+    );
+    return wire;
+  };
+  assert.equal(await requestWire(null), '{"amount":null}');
+  const amount =
+    f.doc.paths['/values'].post.requestBody.content['application/json'].schema.properties.amount;
+  amount.enum.push(1);
+  f.cfg.version = '1.1.0';
+  assert(!emit(f).compatibility.some((c) => c.severity === 'breaking'));
+  assert.equal(await requestWire(null), '{"amount":null}');
+  assert.equal(await requestWire('1'), '{"amount":1}');
+  assert.equal(prepareRelease(f.out, join(f.dir, 'minor')).version, '1.1.0');
+});
+
 test('redundant enum input types permit minor releases without weakening representation or response checks', () => {
   for (const [members, type] of [
     [['card', 'bank'], 'string'],

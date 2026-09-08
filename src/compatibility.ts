@@ -78,14 +78,19 @@ export function compareSchemas(
   // JSON-kind widening can still change how existing SDK strings are encoded.
   // Track exact numeric encoding separately from accepted kinds and nullability.
   const exactNumeric = (s: Schema): boolean => {
-    if (direction === 'input' && s.enum && !s.enum.some((v) => typeof v === 'number')) return false;
     const declared = Array.isArray(s.type) ? s.type : [s.type];
     return (
       declared.includes('number') ||
       (declared.includes('integer') && ['int64', 'uint64'].includes(s.format ?? ''))
     );
   };
-  if (before.format !== after.format || exactNumeric(before) !== exactNumeric(after))
+  // Only null was accepted by a null-only input enum, and its encoding cannot
+  // change. Response enums are open, so they do not provide this guarantee.
+  const onlyNullInput = direction === 'input' && before.enum?.every((v) => v === null);
+  if (
+    before.format !== after.format ||
+    (!onlyNullInput && exactNumeric(before) !== exactNumeric(after))
+  )
     add(
       'breaking',
       `Wire/value representation changed from ${before.format ?? before.type ?? 'unconstrained'} to ${after.format ?? after.type ?? 'unconstrained'}; update serialization and consumers before upgrading.`,
