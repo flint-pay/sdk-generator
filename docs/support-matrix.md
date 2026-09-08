@@ -46,6 +46,8 @@ A capability must be declared to generate its public helper. Both targets have t
 
 Descriptions, examples and defaults are metadata, not evidence of server behavior. Declared exact formats determine serialization. Generated inputs preserve presence without inferring whether a null clears data on the server.
 
+Exact numeric enum membership compares mathematical values, including equivalent decimal/exponent spellings. PHP typed getters unwrap nested models, and object/array alternative matching distinguishes lists from objects.
+
 Integer response decoding accepts integral decimal/exponent tokens without floating-point rounding. Exponent expansion is limited to 10,000 appended zero digits to bound allocation; larger expansions produce a protocol error. Decimal precision and the public representation of unknown numeric fields are preserved. Sparse Node input arrays are rejected, including arrays in additional fields.
 
 HTTP success bodies and verified webhook payloads must contain well-formed UTF-8 JSON without a byte-order mark or unpaired surrogate escapes. Malformed bodies produce a protocol error; decoding never repairs them by inserting replacement characters. HTTP error statuses remain available even when their bodies cannot be parsed.
