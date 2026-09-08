@@ -1183,6 +1183,8 @@ export function loadContract(definitionPath: string, configPath: string): Contra
       let body: Schema | undefined;
       let mediaType: string | undefined;
       if (op.requestBody !== undefined) {
+        if (['get', 'head'].includes(verb) && (config.targets ?? ['node', 'php']).includes('node'))
+          fail(p + '/requestBody', 'GET/HEAD request bodies are unsupported by the Node transport');
         record(op.requestBody, p + '/requestBody');
         if (op.requestBody.required !== undefined && typeof op.requestBody.required !== 'boolean')
           fail(p, 'requestBody.required must be boolean');

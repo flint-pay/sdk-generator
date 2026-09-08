@@ -32,6 +32,8 @@ The generator accepts OpenAPI **3.0/3.1 JSON**, not YAML or arbitrary JSON Schem
 }
 ```
 
+GET/HEAD request bodies are rejected when Node is a selected target because its built-in fetch transport cannot send them.
+
 Package metadata is required only for selected targets. `targets` defaults to both. Namespace segments and public names are validated; collisions and reserved identifiers fail with source locations. `license` changes distribution metadata only and must accurately describe the provider's package; bundled Apache-2.0 code and notices remain included. PHP-compatible prerelease versions use `alpha`, `beta`, or `rc`, optionally with a numeric suffix, such as `1.2.0-beta.1`.
 
 ## Configuration fields
@@ -72,7 +74,7 @@ Providers can supply `documentation.overview` as Markdown and `documentation.gui
 
 `include` selects operation IDs. `audiences` selects operations whose declared `audiences` intersect it. `hidden: true` excludes an operation. Selection never confers server authorization. Only models needed by selected operations/events are exported; the private generation record retains the resolved selected contract and source hashes. Unselected unsupported schema components do not prevent a supported slice from generating.
 
-`models` maps component schema names to SDK names. Public request/response types are emitted independently to preserve response extensibility. Node creates `Name`, `NameInput`, and `makeName` model helpers. PHP emits presence-aware `NameInput` classes plus operation input/response classes, PHPDoc shapes and native typed field accessors. Object inputs use `new OperationInput(['field' => null])`; scalar, array and nullable named model constructors accept their corresponding values and expose them with `jsonSerialize()`; omitted keys remain omitted. `has()` and `get()` distinguish a missing key from null. Getters for omitted optional fields throw, rather than inventing a value.
+`models` maps component schema names to SDK names. Public request/response types are emitted independently to preserve response extensibility. Node creates `Name`, `NameInput`, and `makeName` model helpers. PHP emits presence-aware `NameInput` classes plus operation input/response classes, PHPDoc shapes and native typed field accessors. Object inputs use `new OperationInput(['field' => null])`; scalar, array and nullable named model constructors accept their corresponding values and expose them with `jsonSerialize()`; omitted keys remain omitted. `has()` and `get()` distinguish a missing key from null. Getters for omitted optional fields throw, rather than inventing a value. TypeScript models field-absence constraints where possible; value-specific `not` constraints retain a broader input type and are enforced at runtime.
 
 Optional TypeScript fields named like inherited `Object` members (for example `toString`) include the inherited signature in their type so callers can omit the own field. Explicit own values still undergo wire-schema validation; functions are never serialized as strings. Required fields retain their declared types. The runtime reads only own request properties.
 

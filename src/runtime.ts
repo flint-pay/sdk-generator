@@ -964,6 +964,8 @@ export class Runtime {
     let body: string | undefined;
     if (Object.hasOwn(input, 'body') && input.body !== undefined) {
       if (!op.body) bad('body', 'operation does not accept a body');
+      if (['GET', 'HEAD'].includes(op.verb))
+        bad('body', 'GET/HEAD request bodies are unsupported by the Node transport');
       body = serialize(input.body, op.body!);
       setHeader('content-type', op.mediaType!);
     } else if (op.bodyRequired) bad('body', 'required body is missing');
@@ -1217,15 +1219,15 @@ export class Runtime {
       previous = next;
       next = field(result.data, p.next);
       if (next === undefined || next === null || next === '') return;
-      if (next === previous)
+      if (p.kind === 'link' && typeof next !== 'string')
+        throw new SdkError('protocol', 'Expected a pagination URL', 'response');
+      if (p.kind === 'link') next = new URL(next as string, result.meta.url ?? this.base).href;
+      if (next === previous || (p.kind === 'link' && next === result.meta.url))
         throw new SdkError(
           'protocol',
           'Pagination returned a non-advancing continuation',
           'response',
         );
-      if (p.kind === 'link' && typeof next !== 'string')
-        throw new SdkError('protocol', 'Expected a pagination URL', 'response');
-      if (p.kind === 'link') next = new URL(next as string, result.meta.url ?? this.base).href;
       if (p.kind !== 'link') request[p.parameter!] = next;
     }
   }

@@ -114,6 +114,21 @@ function type(s: Schema, response = false, discriminator?: string, known = false
       }
     if (not && !response) {
       const absent = (constraint: Schema): string => {
+        // Negating a value constraint does not imply that the field must be absent.
+        const keywords = Object.keys(constraint).filter(
+          (key) =>
+            ![
+              'description',
+              'title',
+              'default',
+              'example',
+              'examples',
+              'deprecated',
+              'readOnly',
+              'writeOnly',
+            ].includes(key) && !key.startsWith('x-'),
+        );
+        if (keywords.length !== 1) return 'unknown';
         if (constraint.required?.length)
           return constraint.required
             .map(
@@ -1218,6 +1233,18 @@ export function generate(contract: Contract, output: string, dryRun = false) {
   }
   return { changes: plan.changes, compatibility: plan.compatibility };
 }
+function selectedTargets(output: string): ('node' | 'php')[] {
+  const recordPath = join(output, recordName);
+  if (existsSync(recordPath)) {
+    const record: RecordFile = JSON.parse(readFileSync(recordPath, 'utf8'));
+    return record.interface.config.targets ?? ['node', 'php'];
+  }
+  // Validation also supports packages copied without the private generation record.
+  return (['node', 'php'] as const).filter((target) =>
+    existsSync(join(output, target, target === 'node' ? 'package.json' : 'composer.json')),
+  );
+}
+
 export function validate(output: string): { command: string; output: string }[] {
   const results: { command: string; output: string }[] = [];
   function run(command: string, args: string[], cwd: string) {
@@ -1230,14 +1257,15 @@ export function validate(output: string): { command: string; output: string }[] 
     results.push({ command: [command, ...args].join(' '), output: result.stdout.trim() });
   }
   output = resolve(output);
-  if (existsSync(join(output, 'node'))) {
+  const targets = selectedTargets(output);
+  if (targets.includes('node')) {
     run('node', ['--check', 'index.js'], join(output, 'node'));
     run('npm', ['pack', '--dry-run', '--ignore-scripts', '--json'], join(output, 'node'));
     const examples = readdirSync(join(output, 'node/examples')).filter((f) => f.endsWith('.mjs'));
     for (const file of examples)
       run('node', ['--check', join('examples', file)], join(output, 'node'));
   }
-  if (existsSync(join(output, 'node'))) {
+  if (targets.includes('node')) {
     const cwd = join(output, 'node');
     const examples = readdirSync(join(cwd, 'examples'))
       .filter((p) => p.endsWith('.ts'))
@@ -1263,7 +1291,7 @@ export function validate(output: string): { command: string; output: string }[] 
       cwd,
     );
   }
-  if (existsSync(join(output, 'php'))) {
+  if (targets.includes('php')) {
     for (const sub of ['src', 'examples'])
       for (const file of readdirSync(join(output, 'php', sub)).filter((f) => f.endsWith('.php')))
         run('php', ['-l', join(sub, file)], join(output, 'php'));
@@ -1290,10 +1318,11 @@ export function prepareRelease(output: string, destination: string, acknowledgeR
     throw new Diagnostic(destination, 'release destination already exists; choose a new directory');
   if (destination.startsWith(output + '/'))
     throw new Diagnostic(destination, 'release destination must be outside generated output');
+  const targets = record.interface.config.targets ?? ['node', 'php'];
   const commands: string[][] = [];
   mkdirSync(destination, { recursive: true });
   try {
-    if (existsSync(join(output, 'node'))) {
+    if (targets.includes('node')) {
       const nodeStage = join(destination, '.node-package');
       mkdirSync(nodeStage);
       for (const path of Object.keys(record.files).filter((p) => p.startsWith('node/'))) {
@@ -1323,7 +1352,7 @@ export function prepareRelease(output: string, destination: string, acknowledgeR
         record.interface.config.version.includes('-') ? 'next' : 'latest',
       ]);
     }
-    if (existsSync(join(output, 'php'))) {
+    if (targets.includes('php')) {
       const phpStage = join(destination, '.php-package');
       mkdirSync(phpStage);
       try {
