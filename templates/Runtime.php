@@ -447,6 +447,7 @@ final class Codec
         array $definitions = [],
         int $depth = 0,
         bool $validateConstraints = true,
+        bool $allowUnknownResponseFields = false,
     ): mixed {
         if ($depth > 256) {
             self::fail(
@@ -472,6 +473,7 @@ final class Codec
                 $definitions,
                 $depth + 1,
                 $validateConstraints,
+                $allowUnknownResponseFields,
             );
         }
         if ($value instanceof Model) {
@@ -519,8 +521,9 @@ final class Codec
                 $definitions,
                 $depth + 1,
                 $validateConstraints,
+                $allowUnknownResponseFields,
             );
-            $matches = function ($branch) use (
+            $matches = function ($branch, bool $allowUnknownFields) use (
                 $value,
                 $path,
                 $response,
@@ -538,6 +541,7 @@ final class Codec
                         $definitions,
                         $depth + 1,
                         $validateConstraints,
+                        $allowUnknownFields,
                     );
                     return true;
                 } catch (SdkError $e) {
@@ -547,7 +551,7 @@ final class Codec
                     throw $e;
                 }
             };
-            if (isset($s['not']) && $matches($s['not'])) {
+            if (isset($s['not']) && $matches($s['not'], false)) {
                 self::fail($path, 'value matches a forbidden combination');
             }
             foreach ($s['allOf'] ?? [] as $branch) {
@@ -562,6 +566,7 @@ final class Codec
                         $definitions,
                         $depth + 1,
                         $validateConstraints,
+                        $allowUnknownResponseFields,
                     ),
                     $path,
                 );
@@ -570,6 +575,7 @@ final class Codec
                 if (!isset($s[$keyword])) {
                     continue;
                 }
+                $tolerateUnknownFields = $allowUnknownResponseFields;
                 if ($keyword === 'oneOf' && isset($s['discriminator'])) {
                     $tag = $s['discriminator']['propertyName'];
                     $data = (array) $value;
@@ -589,7 +595,23 @@ final class Codec
                         ),
                     );
                 } else {
-                    $selected = array_filter($s[$keyword], $matches);
+                    $selected = array_filter($s[$keyword], fn($branch) => $matches($branch, false));
+                    // Prefer exact closed oneOf alternatives, then a unique
+                    // compatible branch. anyOf retains every compatible branch.
+                    if (
+                        ($keyword === 'anyOf' || !$selected) &&
+                        $response &&
+                        (!$matching || $allowUnknownResponseFields)
+                    ) {
+                        $compatible = array_filter(
+                            $s[$keyword],
+                            fn($branch) => $matches($branch, true),
+                        );
+                        if ($keyword === 'anyOf' || count($compatible) === 1) {
+                            $selected = $compatible;
+                            $tolerateUnknownFields = true;
+                        }
+                    }
                 }
                 if (!$selected && $response && !$matching) {
                     if (
@@ -625,6 +647,7 @@ final class Codec
                             $definitions,
                             $depth + 1,
                             $validateConstraints,
+                            $tolerateUnknownFields,
                         ),
                         $path,
                     );
@@ -774,8 +797,12 @@ final class Codec
                         $definitions,
                         $depth + 1,
                         $validateConstraints,
+                        $allowUnknownResponseFields,
                     );
-                } elseif (!$response && ($s['additionalProperties'] ?? true) === false) {
+                } elseif (
+                    (!$response || ($matching && !$allowUnknownResponseFields)) &&
+                    ($s['additionalProperties'] ?? true) === false
+                ) {
                     self::fail("$path.$key", 'unknown request field');
                 } elseif (is_array($s['additionalProperties'] ?? null)) {
                     $out->{$key} = self::normalize(
@@ -787,6 +814,7 @@ final class Codec
                         $definitions,
                         $depth + 1,
                         $validateConstraints,
+                        $allowUnknownResponseFields,
                     );
                 } else {
                     $out->{$key} = $v;
@@ -816,6 +844,7 @@ final class Codec
                     $definitions,
                     $depth + 1,
                     $validateConstraints,
+                    $allowUnknownResponseFields,
                 ),
                 $value,
             );
@@ -1500,6 +1529,7 @@ class Runtime
             CURLOPT_URL => $r['url'],
             CURLOPT_CUSTOMREQUEST => $r['method'],
             CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_ENCODING => '',
             CURLOPT_FOLLOWLOCATION => false,
             CURLOPT_TIMEOUT_MS => $r['timeoutMs'],
             CURLOPT_CONNECTTIMEOUT_MS => $r['timeoutMs'],

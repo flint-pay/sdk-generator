@@ -22,7 +22,48 @@ export function compareSchemas(
       'review',
       'Recursive model target changed; review nested input and response compatibility.',
     );
-  const types = (s: Schema) => (Array.isArray(s.type) ? s.type : [s.type]).filter(Boolean);
+  const unconstrainedTypes = ['null', 'boolean', 'object', 'array', 'string', 'number', 'integer'];
+  const types = (s: Schema): string[] => {
+    const declared = s.type === undefined ? undefined : Array.isArray(s.type) ? s.type : [s.type];
+    // Inputs enforce enums even without type. Responses tolerate unknown enum
+    // values, so their public type guarantees still need the declared type.
+    if (direction === 'input' && s.enum) {
+      const kinds: string[] = [
+        ...new Set(
+          s.enum.map((value) =>
+            value === null ? 'null' : typeof value === 'number' ? 'integer' : typeof value,
+          ),
+        ),
+      ];
+      return declared
+        ? declared.filter(
+            (type) => kinds.includes(type) || (type === 'number' && kinds.includes('integer')),
+          )
+        : kinds;
+    }
+    if (declared) return declared;
+    if (direction === 'input') {
+      let accepted = unconstrainedTypes;
+      for (const branch of s.allOf ?? []) {
+        const allowed = types(branch);
+        accepted = accepted.filter(
+          (type) => allowed.includes(type) || (type === 'integer' && allowed.includes('number')),
+        );
+      }
+      for (const branches of [s.anyOf, s.oneOf]) {
+        if (!branches) continue;
+        const allowed = new Set(branches.flatMap(types));
+        accepted = accepted.filter(
+          (type) => allowed.has(type) || (type === 'integer' && allowed.has('number')),
+        );
+      }
+      // Activating a numeric type can change exact-string encoding and bound
+      // checks in the enclosing schema. Keep those changes conservative.
+      if (!accepted.includes('integer') && !accepted.includes('number')) return accepted;
+    }
+    // An absent, unconstrained type accepts every JSON kind, not an empty set.
+    return unconstrainedTypes;
+  };
   const oldTypes = types(before);
   const newTypes = types(after);
   if (stable([...oldTypes].sort()) !== stable([...newTypes].sort())) {
@@ -180,6 +221,6 @@ export function compareSchemas(
         `${keyword} direction changed; update request construction, required fields and response access.`,
       );
   if (!changes.length)
-    add('review', 'Schema annotations changed; review documentation and examples.');
+    add('review', 'Schema declarations or annotations changed; review documentation and examples.');
   return changes;
 }
