@@ -311,12 +311,98 @@ test('unconstrained type changes use input and response compatibility directions
   assert.equal(prepareRelease(f.out, join(f.dir, 'major')).version, '2.0.0');
 });
 
+test('exact numeric representation changes remain breaking when accepted JSON kinds widen', () => {
+  for (const numeric of [
+    { type: 'number' },
+    { type: ['number', 'null'] },
+    { type: 'integer', format: 'int64' },
+    { type: ['integer', 'null'], format: 'uint64' },
+  ]) {
+    for (const [before, after] of [
+      [numeric, {}],
+      [{}, numeric],
+    ]) {
+      for (const direction of ['input', 'response']) {
+        assert(
+          compareSchemas(before, after, 'value', direction).some(
+            (c) => c.severity === 'breaking' && /representation/.test(c.message),
+          ),
+          JSON.stringify({ before, after, direction }),
+        );
+      }
+    }
+  }
+  // Widening kinds is still compatible when existing values keep their encoding.
+  for (const before of [{ type: 'string' }, { type: 'integer' }, { type: 'boolean' }]) {
+    assert(!compareSchemas(before, {}, 'value', 'input').some((c) => c.severity === 'breaking'));
+  }
+  const number = { type: 'number' },
+    nullable = { type: ['number', 'null'] };
+  assert(
+    !compareSchemas(number, nullable, 'value', 'input').some((c) => c.severity === 'breaking'),
+  );
+  assert(
+    !compareSchemas(nullable, number, 'value', 'response').some((c) => c.severity === 'breaking'),
+  );
+});
+
+test('removing numeric input encoding requires a major release in both generated clients', async () => {
+  const f = fixture(
+    'numeric-encoding-release',
+    { type: 'string' },
+    {
+      body: { type: 'object', required: ['amount'], properties: { amount: { type: 'number' } } },
+      config: { release: { policy: 'semver' } },
+    },
+  );
+  const requestWire = async () => {
+    const { Client } = await sdk(f);
+    let wire;
+    await new Client({
+      baseUrl: 'https://example.invalid',
+      transport: async (_url, init) => {
+        wire = init.body;
+        return Response.json('ok');
+      },
+    }).api.read({ body: { amount: '42' } });
+    const phpWire = await php(
+      f,
+      String.raw`
+      $wire = null;
+      $c = new Review\Client(new Review\ClientOptions('https://example.invalid',
+        transport: function($r) use (&$wire) {
+          $wire = $r['body'];
+          return ['status'=>200, 'headers'=>[], 'body'=>'"ok"'];
+        }));
+      $c->api->read(new Review\ApiReadInput(['body'=>['amount'=>'42']]));
+      echo json_encode($wire);
+    `,
+    );
+    assert.equal(wire, phpWire);
+    return wire;
+  };
+  assert.equal(await requestWire(), '{"amount":42}');
+  f.doc.paths['/values'].post.requestBody.content['application/json'].schema.properties.amount = {};
+  f.cfg.version = '1.1.0';
+  const changes = emit(f).compatibility;
+  assert.equal(await requestWire(), '{"amount":"42"}');
+  assert(changes.some((c) => c.subject === 'read.input.body.amount' && c.severity === 'breaking'));
+  assert.throws(
+    () => prepareRelease(f.out, join(f.dir, 'minor')),
+    /breaking changes require a new major/,
+  );
+  f.cfg.version = '2.0.0';
+  emit(f);
+  assert.equal(prepareRelease(f.out, join(f.dir, 'major')).version, '2.0.0');
+});
+
 test('redundant enum input types permit minor releases without weakening representation or response checks', () => {
   for (const [members, type] of [
     [['card', 'bank'], 'string'],
     [[true, false], 'boolean'],
     [[1, 2], 'integer'],
     [[null], 'null'],
+    [[null], ['number', 'null']],
     [
       ['card', null],
       ['string', 'null'],

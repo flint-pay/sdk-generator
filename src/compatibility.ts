@@ -75,10 +75,20 @@ export function compareSchemas(
       `${direction} types changed from ${oldTypes.join('|')} to ${newTypes.join('|')}. ${direction === 'input' ? 'Update supplied values to the accepted types; preserve explicit null only where allowed.' : 'Update result handling and null checks to cover the new response types.'}`,
     );
   }
-  if (before.format !== after.format)
+  // JSON-kind widening can still change how existing SDK strings are encoded.
+  // Track exact numeric encoding separately from accepted kinds and nullability.
+  const exactNumeric = (s: Schema): boolean => {
+    if (direction === 'input' && s.enum && !s.enum.some((v) => typeof v === 'number')) return false;
+    const declared = Array.isArray(s.type) ? s.type : [s.type];
+    return (
+      declared.includes('number') ||
+      (declared.includes('integer') && ['int64', 'uint64'].includes(s.format ?? ''))
+    );
+  };
+  if (before.format !== after.format || exactNumeric(before) !== exactNumeric(after))
     add(
       'breaking',
-      `Wire/value representation changed from ${before.format ?? before.type} to ${after.format ?? after.type}; update serialization and consumers before upgrading.`,
+      `Wire/value representation changed from ${before.format ?? before.type ?? 'unconstrained'} to ${after.format ?? after.type ?? 'unconstrained'}; update serialization and consumers before upgrading.`,
     );
   for (const keyword of [
     'minimum',
