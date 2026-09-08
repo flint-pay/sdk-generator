@@ -1,6 +1,6 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { writeFileSync, readFileSync, readdirSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync, execFile } from 'node:child_process';
@@ -8,7 +8,9 @@ import { promisify } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { loadContract, generate, prepareRelease } from '../dist/index.js';
+import { loadContract, generate, prepareRelease, validate } from '../dist/index.js';
+import { compareSchemas } from '../dist/compatibility.js';
+import { Runtime } from '../dist/runtime.js';
 
 const run = promisify(execFile);
 const root = mkdtempSync(join(tmpdir(), 'sdk-review-fixes-'));
@@ -271,5 +273,194 @@ test('exact numeric enums accept equal spellings but reject unequal values in bo
       transport: async () => new Response(raw),
     });
     assert.equal(generated.isApiReadResponseKnown((await c.api.read()).data), raw !== '3');
+  }
+});
+
+test('required-only fields enforce input and response compatibility and block breaking patch releases', () => {
+  const optional = { type: 'object' };
+  const required = { type: 'object', required: ['tenant'] };
+  for (const [before, after, direction, severity] of [
+    [optional, required, 'input', 'breaking'],
+    [required, optional, 'input', 'additive'],
+    [optional, required, 'response', 'additive'],
+    [required, optional, 'response', 'breaking'],
+  ]) {
+    assert(
+      compareSchemas(before, after, 'payload', direction).some(
+        (c) => c.subject === 'payload.tenant' && c.severity === severity,
+      ),
+    );
+  }
+  const f = fixture(
+    'required-only-release',
+    { type: 'string' },
+    {
+      body: optional,
+      config: { targets: ['node'], release: { policy: 'semver' } },
+    },
+  );
+  f.doc.paths['/values'].post.requestBody.content['application/json'].schema = required;
+  f.cfg.version = '1.0.1';
+  assert(emit(f).compatibility.some((c) => c.severity === 'breaking'));
+  assert.throws(() => prepareRelease(f.out, join(f.dir, 'release'), true), /new major version/);
+});
+
+test('relative and absolute pagination self-links stop before duplicate dispatch in both clients', async () => {
+  const f = fixture(
+    'pagination-self-links',
+    {
+      type: 'object',
+      properties: {
+        items: { type: 'array', items: { type: 'string' } },
+        next: { type: ['string', 'null'] },
+      },
+    },
+    {
+      config: {
+        operations: { read: { pagination: { kind: 'link', items: 'items', next: 'next' } } },
+      },
+    },
+  );
+  const { Client } = await sdk(f);
+  const scenarios = [
+    { links: ['?page=2', '?page=2'], error: 'protocol' },
+    { links: ['?page=2', 'https://example.invalid/values?page=2'], error: 'protocol' },
+    { links: ['/values'], error: 'protocol' },
+    { links: ['?page=2', '?page=3', null], error: null },
+  ];
+  for (const scenario of scenarios) {
+    const urls = [],
+      items = [];
+    const c = new Client({
+      baseUrl: 'https://example.invalid',
+      transport: async (url) => {
+        urls.push(String(url));
+        return Response.json({ items: [String(url)], next: scenario.links[urls.length - 1] });
+      },
+    });
+    let error = null;
+    try {
+      for await (const item of c.api.readItems({}, { maxPages: 5 })) items.push(item);
+    } catch (e) {
+      error = e.kind;
+    }
+    assert.equal(error, scenario.error);
+    assert.equal(urls.length, scenario.links.length);
+    assert.equal(new Set(urls).size, urls.length);
+    const result = await php(
+      f,
+      String.raw`$links=json_decode($argv[2],true);$urls=[];$items=[];$error=null;$c=new Review\Client(new Review\ClientOptions('https://example.invalid',transport:function($r)use(&$urls,$links){$urls[]=$r['url'];return ['status'=>200,'headers'=>[],'body'=>json_encode(['items'=>[$r['url']],'next'=>$links[count($urls)-1]])];}));try{foreach($c->api->readItems(new Review\ApiReadInput(),new Review\RequestOptions(maxPages:5)) as $item)$items[]=$item;}catch(Review\SdkError $e){$error=$e->kind;}echo json_encode(['urls'=>$urls,'items'=>$items,'error'=>$error]);`,
+      [JSON.stringify(scenario.links)],
+    );
+    assert.deepEqual(result, { urls, items, error });
+  }
+});
+
+test('negated value constraints allow valid TypeScript inputs while retaining runtime validation', async () => {
+  const f = fixture(
+    'negated-value-types',
+    { type: 'string' },
+    {
+      body: {
+        type: 'object',
+        properties: { mode: { type: 'string' } },
+        not: {
+          required: ['mode'],
+          properties: { mode: { enum: ['forbidden'] } },
+        },
+      },
+      config: { operations: { read: { example: { body: { mode: 'allowed' } } } } },
+    },
+  );
+  const compilation = compile(
+    f,
+    "import {Client} from './sdk/node/index.js'; const c=new Client({baseUrl:'https://example.invalid'}); c.api.read({body:{mode:'allowed'}}); c.api.read({body:{}});",
+  );
+  assert.equal(compilation.status, 0, compilation.stdout);
+  validate(f.out);
+  const { Client } = await sdk(f);
+  let calls = 0;
+  const c = new Client({
+    baseUrl: 'https://example.invalid',
+    transport: async () => {
+      calls++;
+      return Response.json('ok');
+    },
+  });
+  await c.api.read({ body: { mode: 'allowed' } });
+  await c.api.read({ body: {} });
+  await assert.rejects(c.api.read({ body: { mode: 'forbidden' } }), (e) => e.kind === 'validation');
+  assert.equal(calls, 2);
+  const result = await php(
+    f,
+    String.raw`$calls=0;$c=new Review\Client(new Review\ClientOptions('https://example.invalid',transport:function($r)use(&$calls){$calls++;return ['status'=>200,'headers'=>[],'body'=>'"ok"'];}));$c->api->read(new Review\ApiReadInput(['body'=>['mode'=>'allowed']]));$c->api->read(new Review\ApiReadInput(['body'=>new stdClass()]));try{$c->api->read(new Review\ApiReadInput(['body'=>['mode'=>'forbidden']]));}catch(Review\SdkError $e){echo json_encode(['calls'=>$calls,'error'=>$e->kind]);}`,
+  );
+  assert.deepEqual(result, { calls: 2, error: 'validation' });
+});
+
+test('removing either target preserves custom files and validates/releases only the selected package', () => {
+  for (const target of ['node', 'php']) {
+    const f = fixture('remove-target-' + target, { type: 'string' });
+    for (const language of ['node', 'php']) {
+      mkdirSync(join(f.out, language, 'custom'), { recursive: true });
+      writeFileSync(join(f.out, language, 'custom', 'notes.txt'), 'handwritten');
+    }
+    f.cfg.targets = [target];
+    emit(f);
+    for (const language of ['node', 'php'])
+      assert.equal(
+        readFileSync(join(f.out, language, 'custom', 'notes.txt'), 'utf8'),
+        'handwritten',
+      );
+    const checks = validate(f.out);
+    assert(!checks.some((c) => c.command.startsWith(target === 'node' ? 'php ' : 'node ')));
+    const destination = join(f.dir, 'release');
+    const plan = prepareRelease(f.out, destination, true);
+    const archives = readdirSync(destination).filter((p) => /\.(tgz|zip)$/.test(p));
+    assert.equal(archives.length, 1);
+    assert(archives[0].endsWith(target === 'node' ? '.tgz' : '.zip'));
+    assert.equal(plan.packages[target === 'node' ? 'composer' : 'npm'], null);
+  }
+});
+
+test('GET/HEAD bodies are diagnosed for Node targets and fail before runtime dispatch', async () => {
+  for (const verb of ['get', 'head']) {
+    const f = fixture(
+      'body-' + verb,
+      { type: 'string' },
+      { body: { type: 'object' }, render: false },
+    );
+    f.doc.paths['/values'] = { [verb]: f.doc.paths['/values'].post };
+    for (const targets of [undefined, ['node']]) {
+      f.cfg.targets = targets;
+      save(f);
+      assert.throws(
+        () => loadContract(join(f.dir, 'api.json'), join(f.dir, 'config.json')),
+        /requestBody: GET\/HEAD request bodies are unsupported/,
+      );
+    }
+    f.cfg.targets = ['php'];
+    save(f);
+    const contract = loadContract(join(f.dir, 'api.json'), join(f.dir, 'config.json'));
+    let calls = 0;
+    const runtime = new Runtime(
+      { operations: contract.operations },
+      {
+        baseUrl: 'https://example.invalid',
+        transport: async () => {
+          calls++;
+          return Response.json('ok');
+        },
+      },
+    );
+    await assert.rejects(
+      runtime.request('read', { body: {} }),
+      (e) => e.kind === 'validation' && e.outcome === 'not_sent',
+    );
+    assert.equal(calls, 0);
+    delete f.doc.paths['/values'][verb].requestBody;
+    f.cfg.targets = ['node'];
+    save(f);
+    assert.doesNotThrow(() => loadContract(join(f.dir, 'api.json'), join(f.dir, 'config.json')));
   }
 });

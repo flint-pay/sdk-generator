@@ -1617,18 +1617,18 @@ class Runtime
             if ($next === null || $next === '') {
                 return;
             }
-            if ($next === $previous) {
-                throw new SdkError(
-                    'protocol',
-                    'Pagination returned a non-advancing continuation',
-                    'response',
-                );
-            }
             if ($p['kind'] === 'link' && !is_string($next)) {
                 throw new SdkError('protocol', 'Expected a pagination URL', 'response');
             }
             if ($p['kind'] === 'link') {
                 $next = self::resolveLink($next, $result->meta['url']);
+            }
+            if ($next === $previous || ($p['kind'] === 'link' && $next === $result->meta['url'])) {
+                throw new SdkError(
+                    'protocol',
+                    'Pagination returned a non-advancing continuation',
+                    'response',
+                );
             }
             if ($p['kind'] !== 'link') {
                 $input[$p['parameter']] = $next;

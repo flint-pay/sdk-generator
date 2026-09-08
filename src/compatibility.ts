@@ -79,12 +79,24 @@ export function compareSchemas(
   }
   const oldProperties = before.properties ?? {};
   const newProperties = after.properties ?? {};
-  for (const key of new Set([...Object.keys(oldProperties), ...Object.keys(newProperties)])) {
-    const old = oldProperties[key];
-    const next = newProperties[key];
+  for (const key of new Set([
+    ...Object.keys(oldProperties),
+    ...Object.keys(newProperties),
+    ...(before.required ?? []),
+    ...(after.required ?? []),
+  ])) {
+    const old = Object.hasOwn(oldProperties, key) ? oldProperties[key] : undefined;
+    const next = Object.hasOwn(newProperties, key) ? newProperties[key] : undefined;
     const path = `${subject}.${key}`;
     const wasRequired = before.required?.includes(key) ?? false;
     const required = after.required?.includes(key) ?? false;
+    if (wasRequired !== required)
+      changes.push({
+        severity: (direction === 'input' ? required : !required) ? 'breaking' : 'additive',
+        subject: path,
+        message: `${direction} field is now ${required ? 'required' : 'optional'}. ${direction === 'input' && required ? 'Supply it in existing calls.' : direction === 'response' && !required ? 'Handle absent values before accessing it.' : 'Existing consumers retain their supported states.'}`,
+      });
+    if (!old && !next) continue;
     if (!old || !next) {
       const breaking =
         !next || (direction === 'input' && (required || before.additionalProperties !== false));
@@ -97,12 +109,6 @@ export function compareSchemas(
       });
       continue;
     }
-    if (wasRequired !== required)
-      changes.push({
-        severity: (direction === 'input' ? required : !required) ? 'breaking' : 'additive',
-        subject: path,
-        message: `${direction} field is now ${required ? 'required' : 'optional'}. ${direction === 'input' && required ? 'Supply it in existing calls.' : direction === 'response' && !required ? 'Handle absent values before accessing it.' : 'Existing consumers retain their supported states.'}`,
-      });
     changes.push(...compareSchemas(old, next, path, direction));
   }
   if (before.items && after.items)
