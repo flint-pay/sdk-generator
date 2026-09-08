@@ -57,6 +57,8 @@ Path, query and header parameters are properties of the operation input; a JSON 
 
 Use strings for exact int64/uint64 and JSON `number` values, including decimals: `"9007199254740993"`, for example. The schema determines whether the string becomes an unquoted number token on the wire. Ordinary safe integers use native numbers/integers. Do not convert an exact amount to a floating-point number before handing it to the SDK.
 
+Integer responses accept integral decimal and exponent notation: `1.0` becomes `1`, and `1e3` becomes `1000`. int64/uint64 results remain exact strings. Fractional values are rejected rather than rounded, and decimal fields retain their original precision. Node request arrays must contain an explicit value at every index; sparse arrays fail validation before dispatch.
+
 ## Client and request options
 
 Pass client defaults to `new Client({...})` in Node or `new Client(new ClientOptions(...))` in PHP. Pass request overrides as the second method argument: a plain object in Node or `new RequestOptions(...)` in PHP.

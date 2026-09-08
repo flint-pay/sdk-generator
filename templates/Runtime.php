@@ -175,15 +175,20 @@ final class RawNumber
 {
     public function __construct(public readonly string $value) {}
 }
+final class ParsedNumber
+{
+    public function __construct(public readonly string $value) {}
+}
 final class Codec
 {
     public static function fail(string $path, string $reason): never
     {
         throw new SdkError('validation', "$path: $reason");
     }
-    public static function parse(string $text): mixed
+    public static function parse(string $text, bool $preserveNumbers = false): mixed
     {
-        json_decode($text, false, 512, JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING);
+        // This tree supplies token kinds only; rounded values are never returned.
+        $original = json_decode($text, false, 512, JSON_THROW_ON_ERROR);
         $encoded = '';
         $quoted = false;
         $escaped = false;
@@ -225,10 +230,88 @@ final class Codec
             $encoded .= $c;
             $i++;
         }
-        return json_decode($encoded, false, 512, JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING);
+        $parsed = json_decode($encoded, false, 512, JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING);
+        return $preserveNumbers ? self::markNumbers($parsed, $original) : $parsed;
+    }
+    private static function markNumbers(mixed $value, mixed $original): mixed
+    {
+        if ((is_int($original) || is_float($original)) && is_string($value)) {
+            return new ParsedNumber($value);
+        }
+        if (is_array($value)) {
+            foreach ($value as $key => $child) {
+                $value[$key] = self::markNumbers($child, $original[$key]);
+            }
+        } elseif (is_object($value)) {
+            foreach ($value as $key => $child) {
+                $value->{$key} = self::markNumbers($child, $original->{$key});
+            }
+        }
+        return $value;
+    }
+    public static function plainNumbers(mixed $value): mixed
+    {
+        if ($value instanceof ParsedNumber) {
+            return $value->value;
+        }
+        if (is_array($value)) {
+            foreach ($value as $key => $child) {
+                $value[$key] = self::plainNumbers($child);
+            }
+        } elseif (is_object($value)) {
+            foreach ($value as $key => $child) {
+                $value->{$key} = self::plainNumbers($child);
+            }
+        }
+        return $value;
+    }
+    private static function integerToken(string $token, string $path): string
+    {
+        if (preg_match('/^-?(?:0|[1-9]\d*)$/', $token)) {
+            return $token;
+        }
+        [$coefficient, $exponent] = array_pad(explode('e', strtolower($token)), 2, '0');
+        $fraction = strlen(explode('.', $coefficient)[1] ?? '');
+        $digits = ltrim(str_replace('.', '', ltrim($coefficient, '-')), '0');
+        if ($digits === '') {
+            return '0';
+        }
+        $shift = (float) $exponent - $fraction;
+        if ($shift < 0) {
+            if (
+                -$shift >= strlen($digits) ||
+                preg_match('/[1-9]/', substr($digits, (int) $shift))
+            ) {
+                self::fail($path, 'expected an integral JSON number');
+            }
+            $digits = substr($digits, 0, (int) $shift);
+        } else {
+            if ($shift > 10000) {
+                self::fail($path, 'integer exponent expansion exceeds 10000 digits');
+            }
+            $digits .= str_repeat('0', (int) $shift);
+        }
+        return (str_starts_with($token, '-') ? '-' : '') . $digits;
     }
     private static function combine(mixed $left, mixed $right, string $path): mixed
     {
+        if ($left instanceof ParsedNumber || $right instanceof ParsedNumber) {
+            $token = $left instanceof ParsedNumber ? $left : $right;
+            $other = $left instanceof ParsedNumber ? $right : $left;
+            $text =
+                $other instanceof ParsedNumber
+                    ? $other->value
+                    : (is_scalar($other)
+                        ? (string) $other
+                        : '');
+            if (
+                !preg_match('/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/', $text) ||
+                self::compareDecimal($token->value, $text) !== 0
+            ) {
+                self::fail($path, 'alternatives have incompatible numeric representations');
+            }
+            return $other;
+        }
         if ($left instanceof RawNumber || $right instanceof RawNumber) {
             $token = $left instanceof RawNumber ? $left : $right;
             $other = $left instanceof RawNumber ? $right : $left;
@@ -539,6 +622,35 @@ final class Codec
                 return null;
             }
             self::fail($path, 'null is not permitted');
+        }
+        if ($value instanceof ParsedNumber) {
+            if ($type === null) {
+                if (
+                    $matching &&
+                    isset($s['enum']) &&
+                    !array_filter(
+                        $s['enum'],
+                        fn($v) => is_int($v) &&
+                            self::compareDecimal($value->value, (string) $v) === 0,
+                    )
+                ) {
+                    self::fail($path, 'value is outside the declared enum');
+                }
+                if ($matching) {
+                    self::numericConstraints($value->value, $s, $path);
+                }
+                return $value;
+            }
+            if ($type === 'integer') {
+                $token = self::integerToken($value->value, $path);
+                $value = in_array($s['format'] ?? '', ['int64', 'uint64'], true)
+                    ? $token
+                    : (int) $token;
+            } elseif ($type === 'number') {
+                $value = $value->value;
+            } else {
+                self::fail($path, "expected $type; received a JSON number");
+            }
         }
         if (
             (!$response || $matching) &&
@@ -1160,7 +1272,10 @@ class Runtime
                 $data = null;
                 try {
                     if ($raw !== '') {
-                        $data = Codec::parse($raw);
+                        $data = Codec::parse(
+                            $raw,
+                            ($status >= 200 && $status < 300) || $status === 304,
+                        );
                     }
                 } catch (\Throwable $cause) {
                     if ($status >= 200 && $status < 300) {
@@ -1201,7 +1316,9 @@ class Runtime
                             if ($raw === '') {
                                 throw new \RuntimeException('Missing body');
                             }
-                            $data = Codec::normalize($data, $declared['schema'], 'response', true);
+                            $data = Codec::plainNumbers(
+                                Codec::normalize($data, $declared['schema'], 'response', true),
+                            );
                         } elseif ($raw !== '') {
                             throw new \RuntimeException('Unexpected body for an empty response');
                         }
@@ -1637,7 +1754,7 @@ class Runtime
             throw new SdkError('authentication', 'Invalid webhook signature or timestamp');
         }
         try {
-            $event = Codec::parse($rawBody);
+            $event = Codec::parse($rawBody, true);
         } catch (\Throwable $cause) {
             throw new SdkError('protocol', 'Invalid webhook JSON', 'response', previous: $cause);
         }
@@ -1646,6 +1763,7 @@ class Runtime
         if ($schema) {
             $event = Codec::normalize($event, $schema, 'event', true);
         }
+        $event = Codec::plainNumbers($event);
         if (is_string($eventType) && isset($w['eventModels'][$eventType]) && is_object($event)) {
             $class = __NAMESPACE__ . '\\' . $w['eventModels'][$eventType];
             $event = new $class((array) $event, $this->options->redactFields);

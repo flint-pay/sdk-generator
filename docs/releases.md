@@ -14,6 +14,8 @@ Before publication:
 
 A method alias preserves a name only while the HTTP operation remains the same. Changing an endpoint behind the same name is a behavioral compatibility change. Structural comparisons identify added/removed fields, requiredness, nullability, enums, tagged variants, exact representations, parameter encoding and response status changes. Inputs and outputs have different compatibility directions: a newly required input and a newly optional output both break callers. Ambiguous changes retain review findings; no schema comparison proves server business semantics.
 
+Renaming a resource or method can also change generated operation input/response type names and pagination/polling helper names. A method alias does not preserve these interfaces. Renames that change them are reported as breaking even when an alias retains the old method, and the `semver` policy blocks a patch or minor release of a stable SDK. Update consumer imports, PHP input classes and helper calls when making the corresponding major upgrade.
+
 Stable SDK releases should use a major version for removed/renamed public interfaces without aliases, changed HTTP semantics, tighter requiredness/nullability, changed exact representations, or dropped runtimes. Additive compatible operations normally require a minor version; corrections preserving behavior may use a patch. Unknown future response fields/enums are tolerated but never reinterpreted as success. Do not remove aliases until the provider's documented deprecation window has elapsed; the generator makes no unsupported promise about that window.
 
 ## Version policy
