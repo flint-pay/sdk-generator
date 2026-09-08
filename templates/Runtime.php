@@ -1232,6 +1232,12 @@ class Runtime
                     'a nonempty key and declared capability are required',
                 );
             }
+            if (preg_match('/^[ \t]|[ \t]$/D', $key)) {
+                Codec::fail(
+                    'idempotencyKey',
+                    'leading or trailing HTTP whitespace would change the key on the wire',
+                );
+            }
             $set($op['idempotency']['header'], $key);
         }
         $safe =
@@ -1612,7 +1618,7 @@ class Runtime
                 $p['kind'] === 'link' ? $next : null,
             );
             yield $result;
-            $previous = $next;
+            $previous = $p['kind'] === 'link' ? $next : $input[$p['parameter']] ?? null;
             $next = self::field($result->data, $p['next']);
             if ($next === null || $next === '') {
                 return;
@@ -1623,7 +1629,13 @@ class Runtime
             if ($p['kind'] === 'link') {
                 $next = self::resolveLink($next, $result->meta['url']);
             }
-            if ($next === $previous || ($p['kind'] === 'link' && $next === $result->meta['url'])) {
+            if (
+                $next === $previous ||
+                ($p['kind'] === 'offset' &&
+                    $previous !== null &&
+                    (string) $next === (string) $previous) ||
+                ($p['kind'] === 'link' && $next === $result->meta['url'])
+            ) {
                 throw new SdkError(
                     'protocol',
                     'Pagination returned a non-advancing continuation',
