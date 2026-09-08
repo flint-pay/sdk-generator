@@ -55,6 +55,8 @@ Path, query and header parameters are properties of the operation input; a JSON 
 
 An OpenAPI 3.1 schema with `properties` or `required` but no `type` does not by itself require an object. Generated TypeScript types preserve the permitted nonobject values; narrow such responses before accessing their fields. An enclosing object constraint in an `allOf` composition still applies to the same value.
 
+PHP response classes include the response status in their names; tagged alternatives also include the branch position. Follow the package's migration notes when upgrading code that dispatches by class: adding a status can introduce a new return class even with an identical JSON shape, and reassigning an existing branch position requires a breaking release. Dispatching by the discriminator value also requires explicit handling of unknown tags.
+
 `Result` contains `data`, `meta` and explicit raw response text in `raw`. Node accesses metadata with properties; PHP uses array keys. Metadata includes HTTP status, response headers, attempt count, duration and an optional provider request ID. Inspect unknown response enums or variants explicitly before treating them as a known successful business state.
 
 Use strings for exact int64/uint64 and JSON `number` values, including decimals: `"9007199254740993"`, for example. The schema determines whether the string becomes an unquoted number token on the wire. Ordinary safe integers use native numbers/integers. Do not convert an exact amount to a floating-point number before handing it to the SDK.

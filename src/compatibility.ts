@@ -169,15 +169,18 @@ export function compareSchemas(
   }
   if (before.items && after.items)
     changes.push(...compareSchemas(before.items, after.items, `${subject}[]`, direction));
-  if (stable(before.additionalProperties) !== stable(after.additionalProperties)) {
-    if (
-      typeof before.additionalProperties === 'object' &&
-      typeof after.additionalProperties === 'object'
-    )
+  // Dictionary rules only affect values that can be objects in both versions.
+  // Type changes already account for introducing or removing objects entirely.
+  if (
+    oldTypes.includes('object') &&
+    newTypes.includes('object') &&
+    stable(before.additionalProperties) !== stable(after.additionalProperties)
+  ) {
+    if (before.additionalProperties !== false && after.additionalProperties !== false)
       changes.push(
         ...compareSchemas(
-          before.additionalProperties,
-          after.additionalProperties,
+          typeof before.additionalProperties === 'object' ? before.additionalProperties : {},
+          typeof after.additionalProperties === 'object' ? after.additionalProperties : {},
           `${subject}.*`,
           direction,
         ),

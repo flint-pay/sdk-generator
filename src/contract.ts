@@ -234,13 +234,22 @@ function portablePattern(source: string, p: string): string {
   }
   const space =
     '\\x09-\\x0d\\x20\\x{00a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}\\x{2029}\\x{202f}\\x{205f}\\x{3000}\\x{feff}';
+  // PHP's /u enables Unicode properties for these escapes; ECMAScript /u
+  // retains ASCII digit/word classes. Explicit ranges also work inside [].
+  const classes: Record<string, string> = {
+    d: '0-9',
+    D: '\\x00-\\x2f\\x3a-\\x{10ffff}',
+    w: 'A-Za-z0-9_',
+    W: '\\x00-\\x2f\\x3a-\\x40\\x5b-\\x5e\\x60\\x7b-\\x{10ffff}',
+  };
   let result = '',
     inClass = false;
   for (let i = 0; i < source.length; i++) {
     const ch = source[i]!;
     if (ch === '\\') {
       const next = source[++i]!;
-      if (next === 's') result += inClass ? space : '[' + space + ']';
+      if (classes[next]) result += inClass ? classes[next] : '[' + classes[next] + ']';
+      else if (next === 's') result += inClass ? space : '[' + space + ']';
       else if (next === 'S' && !inClass) result += '[^' + space + ']';
       else if (next === 'v') result += '\\x0b';
       else if (next === 'u') {
@@ -249,7 +258,7 @@ function portablePattern(source: string, p: string): string {
           fail(p, 'use literal Unicode characters instead of surrogate or braced escapes');
         result += '\\x{' + hex + '}';
         i += 4;
-      } else if ('dDwWnrtfv\\.^$|?*+()[]{}-/'.includes(next)) result += '\\' + next;
+      } else if ('nrtfv\\.^$|?*+()[]{}-/'.includes(next)) result += '\\' + next;
       else if (next === 'x' && /^[0-9a-f]{2}$/i.test(source.slice(i + 1, i + 3))) {
         result += '\\x' + source.slice(i + 1, i + 3);
         i += 2;
@@ -1234,15 +1243,19 @@ export function loadContract(definitionPath: string, configPath: string): Contra
           fail(p, `parameter name ${param.name} conflicts with SDK input`);
         schema(param.schema, `${p}/parameters/${param.name}`, raw.openapi.startsWith('3.0.'));
         if (
-          param.schema.type === 'object' ||
-          param.schema.type === 'null' ||
+          !['string', 'integer', 'number', 'boolean', 'array'].includes(
+            String(param.schema.type),
+          ) ||
           Array.isArray(param.schema.type) ||
           param.schema.oneOf ||
           param.schema.anyOf ||
           param.schema.allOf ||
           param.schema.not
         )
-          fail(p, 'parameters support non-null scalar values and scalar arrays');
+          fail(
+            `${p}/parameters/${param.name}`,
+            'parameters require an explicit non-null scalar type or scalar array',
+          );
         if (
           param.schema.type === 'array' &&
           !['string', 'integer', 'boolean'].includes(String(param.schema.items?.type))
