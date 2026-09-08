@@ -1,0 +1,24 @@
+{
+  "source": {
+    "repository": "flint-pay/flint",
+    "revision": "bcb5621e2d7aa2fa4fc4b846838afe2fde83ba82",
+    "verifiedOn": "2026-09-07",
+    "basis": "Local source and focused Go unit tests; no hosted documentation or sandbox calls",
+    "files": {
+      "shared/webhooksigning/signing.go": "dd48e5ddd3508f22d25b75f321342fad0154dbaff77131da6893741ca5234faa",
+      "shared/webhooksigning/signing_test.go": "80efb4d86c3b0c7990189cf4d34b73ad711d7cb604ab10e0996e4155c7cad76d",
+      "server/monolith/internal/services/webhooks/domain/delivery.go": "c43598a3f9ff66815683edaeadbc825c8b9630fc86924b0df86ef8271f377098",
+      "server/monolith/internal/publicapi/idempotency.go": "b6e77ee85c8b803b6bf4d03626612f8aae42fafc23ef60d745f8380ec940539d",
+      "server/monolith/internal/publicapi/idempotency_test.go": "dd6e2d7e75cf5545582a4136cbf19d594c3ef1306473eafa9af37e613754d870",
+      "web/apps/developers/src/generated/openapi.json": "3d1188e2c0ff5fb9b6f75c9c152181f9e77b2d5a5e14284cde1d9618bb38f4b0"
+    }
+  },
+  "webhook": {
+    "body": "{\"id\":\"pi_123\",\"status\":\"succeeded\"}",
+    "eventId": "whev_test",
+    "legacy": "t=1700000000,v1=6c03cf4f4f520506c386eb707258ec065f0df0350ba5c7955f721eaa9f5c0a60",
+    "secret": "whsec_AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+    "standard": "v1,/hiJOnBg47YJCiwbXhOB2ygLlyQXGu6CHw8D3A/KW5o=",
+    "timestamp": 1700000000
+  }
+}

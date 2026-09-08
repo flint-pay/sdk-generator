@@ -1,0 +1,554 @@
+{
+  "openapi": "3.1.1",
+  "info": {
+    "title": "Example Payments (not a Flint contract)",
+    "version": "2026-09-fixture"
+  },
+  "security": [
+    {
+      "bearer": []
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "schemas": {
+      "Payment": {
+        "type": "object",
+        "required": ["id", "amount", "status"],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "amount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "succeeded", "failed"]
+          },
+          "description": {
+            "type": ["string", "null"]
+          },
+          "secret": {
+            "type": "string",
+            "x-sensitive": true
+          }
+        },
+        "additionalProperties": true
+      },
+      "CreatePayment": {
+        "type": "object",
+        "required": ["amount", "currency", "reference"],
+        "properties": {
+          "amount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "currency": {
+            "type": "string",
+            "enum": ["USD", "JPY"]
+          },
+          "reference": {
+            "type": "string"
+          },
+          "description": {
+            "type": ["string", "null"]
+          },
+          "fee": {
+            "type": "number",
+            "format": "decimal"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PrivateAdmin": {
+        "type": "object",
+        "properties": {
+          "internal": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/payments": {
+      "post": {
+        "operationId": "createPayment",
+        "description": "Create a payment attempt using a persisted operation key.",
+        "parameters": [
+          {
+            "name": "X-Tenant",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePayment"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Fixture response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Payment"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Fixture response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "fields": {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    "secret": {
+                      "type": "string",
+                      "x-sensitive": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Fixture response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "fields": {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    "secret": {
+                      "type": "string",
+                      "x-sensitive": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listPayments",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tag",
+            "in": "query",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "explode": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fixture response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["items"],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": ["id", "amount", "status"],
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "amount": {
+                            "type": "integer",
+                            "format": "int64"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": ["pending", "succeeded", "failed"]
+                          },
+                          "description": {
+                            "type": ["string", "null"]
+                          },
+                          "secret": {
+                            "type": "string",
+                            "x-sensitive": true
+                          }
+                        },
+                        "additionalProperties": true
+                      }
+                    },
+                    "next": {
+                      "type": ["string", "null"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/payments/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getPayment",
+        "parameters": [
+          {
+            "name": "X-Tenant",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fixture response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["id", "amount", "status"],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "amount": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": ["pending", "succeeded", "failed"]
+                    },
+                    "description": {
+                      "type": ["string", "null"]
+                    },
+                    "secret": {
+                      "type": "string",
+                      "x-sensitive": true
+                    }
+                  },
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not modified"
+          },
+          "404": {
+            "description": "Fixture response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "fields": {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    "secret": {
+                      "type": "string",
+                      "x-sensitive": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updatePayment",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/merge-patch+json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "description": {
+                    "type": ["string", "null"]
+                  },
+                  "reference": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Fixture response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["id", "amount", "status"],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "amount": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": ["pending", "succeeded", "failed"]
+                    },
+                    "description": {
+                      "type": ["string", "null"]
+                    },
+                    "secret": {
+                      "type": "string",
+                      "x-sensitive": true
+                    }
+                  },
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Fixture response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "fields": {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    "secret": {
+                      "type": "string",
+                      "x-sensitive": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/links": {
+      "get": {
+        "operationId": "listLinks",
+        "responses": {
+          "200": {
+            "description": "Fixture response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": ["id", "amount", "status"],
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "amount": {
+                            "type": "integer",
+                            "format": "int64"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": ["pending", "succeeded", "failed"]
+                          },
+                          "description": {
+                            "type": ["string", "null"]
+                          },
+                          "secret": {
+                            "type": "string",
+                            "x-sensitive": true
+                          }
+                        },
+                        "additionalProperties": true
+                      }
+                    },
+                    "next": {
+                      "type": ["string", "null"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin": {
+      "get": {
+        "operationId": "adminSecrets",
+        "responses": {
+          "200": {
+            "description": "Fixture response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrivateAdmin"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/payments/{id}/capture": {
+      "post": {
+        "operationId": "capturePayment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["amount"],
+                "properties": {
+                  "amount": {
+                    "type": "integer",
+                    "format": "int64"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Synthetic payment action result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Payment"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/payments/{id}/refund": {
+      "post": {
+        "operationId": "refundPayment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["amount"],
+                "properties": {
+                  "amount": {
+                    "type": "integer",
+                    "format": "int64"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Synthetic payment action result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Payment"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

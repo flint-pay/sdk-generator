@@ -1,0 +1,519 @@
+[
+  {
+    "name": "exact amount and decimal",
+    "operation": "createPayment",
+    "input": {
+      "X-Tenant": "shop-a",
+      "body": {
+        "amount": "9007199254740993",
+        "currency": "USD",
+        "reference": "order",
+        "description": null,
+        "fee": "0.10000000000000000001"
+      }
+    },
+    "options": {
+      "idempotencyKey": "persisted-key"
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/payments",
+      "headers": {
+        "authorization": "Bearer test-token",
+        "idempotency-key": "persisted-key",
+        "x-tenant": "shop-a",
+        "x-api-version": "2026-09-fixture",
+        "content-type": "application/json"
+      },
+      "body": "{\"amount\":9007199254740993,\"currency\":\"USD\",\"reference\":\"order\",\"description\":null,\"fee\":0.10000000000000000001}"
+    },
+    "responses": [
+      {
+        "status": 201,
+        "body": "{\"id\":\"p1\",\"amount\":9007199254740993,\"status\":\"future_state\",\"new_field\":true}"
+      }
+    ],
+    "data": {
+      "id": "p1",
+      "amount": "9007199254740993",
+      "status": "future_state",
+      "new_field": true
+    }
+  },
+  {
+    "name": "encoded path",
+    "operation": "getPayment",
+    "input": {
+      "id": "a/b !"
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/payments/a%2Fb%20%21"
+    },
+    "responses": [
+      {
+        "status": 200,
+        "body": "{\"id\":\"p1\",\"amount\":100,\"status\":\"pending\"}"
+      }
+    ],
+    "data": {
+      "id": "p1",
+      "amount": "100",
+      "status": "pending"
+    }
+  },
+  {
+    "name": "repeated query",
+    "operation": "listPayments",
+    "input": {
+      "tag": ["a b", "x/y"]
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/payments?tag=a%20b&tag=x%2Fy"
+    },
+    "responses": [
+      {
+        "status": 200,
+        "body": "{\"items\":[],\"next\":null}"
+      }
+    ],
+    "data": {
+      "items": [],
+      "next": null
+    }
+  },
+  {
+    "name": "presence 0",
+    "operation": "updatePayment",
+    "input": {
+      "id": "p1",
+      "body": {}
+    },
+    "expected": {
+      "method": "PATCH",
+      "path": "/v1/payments/p1",
+      "body": "{}"
+    },
+    "responses": [
+      {
+        "status": 200,
+        "body": "{\"id\":\"p1\",\"amount\":0,\"status\":\"pending\"}"
+      }
+    ],
+    "data": {
+      "id": "p1",
+      "amount": "0",
+      "status": "pending"
+    }
+  },
+  {
+    "name": "presence 1",
+    "operation": "updatePayment",
+    "input": {
+      "id": "p1",
+      "body": {
+        "description": null
+      }
+    },
+    "expected": {
+      "method": "PATCH",
+      "path": "/v1/payments/p1",
+      "body": "{\"description\":null}"
+    },
+    "responses": [
+      {
+        "status": 200,
+        "body": "{\"id\":\"p1\",\"amount\":0,\"status\":\"pending\"}"
+      }
+    ],
+    "data": {
+      "id": "p1",
+      "amount": "0",
+      "status": "pending"
+    }
+  },
+  {
+    "name": "presence 2",
+    "operation": "updatePayment",
+    "input": {
+      "id": "p1",
+      "body": {
+        "description": ""
+      }
+    },
+    "expected": {
+      "method": "PATCH",
+      "path": "/v1/payments/p1",
+      "body": "{\"description\":\"\"}"
+    },
+    "responses": [
+      {
+        "status": 200,
+        "body": "{\"id\":\"p1\",\"amount\":0,\"status\":\"pending\"}"
+      }
+    ],
+    "data": {
+      "id": "p1",
+      "amount": "0",
+      "status": "pending"
+    }
+  },
+  {
+    "name": "presence 3",
+    "operation": "updatePayment",
+    "input": {
+      "id": "p1",
+      "body": {
+        "description": "updated"
+      }
+    },
+    "expected": {
+      "method": "PATCH",
+      "path": "/v1/payments/p1",
+      "body": "{\"description\":\"updated\"}"
+    },
+    "responses": [
+      {
+        "status": 200,
+        "body": "{\"id\":\"p1\",\"amount\":0,\"status\":\"pending\"}"
+      }
+    ],
+    "data": {
+      "id": "p1",
+      "amount": "0",
+      "status": "pending"
+    }
+  },
+  {
+    "name": "same key after missing response",
+    "operation": "createPayment",
+    "input": {
+      "body": {
+        "amount": "100",
+        "currency": "USD",
+        "reference": "order"
+      }
+    },
+    "options": {
+      "idempotencyKey": "restart-key"
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/payments",
+      "headers": {
+        "idempotency-key": "restart-key"
+      }
+    },
+    "responses": [
+      {
+        "transportError": true
+      },
+      {
+        "status": 201,
+        "body": "{\"id\":\"p1\",\"amount\":100,\"status\":\"succeeded\"}"
+      }
+    ],
+    "data": {
+      "id": "p1",
+      "amount": "100",
+      "status": "succeeded"
+    },
+    "attempts": 2
+  },
+  {
+    "name": "unknown final transport outcome",
+    "operation": "createPayment",
+    "input": {
+      "body": {
+        "amount": "100",
+        "currency": "USD",
+        "reference": "order"
+      }
+    },
+    "options": {
+      "idempotencyKey": "restart-key"
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/payments"
+    },
+    "responses": [
+      {
+        "transportError": true
+      },
+      {
+        "transportError": true
+      },
+      {
+        "transportError": true
+      }
+    ],
+    "error": {
+      "kind": "transport",
+      "outcome": "unknown",
+      "retryAllowed": true
+    },
+    "attempts": 3
+  },
+  {
+    "name": "HTML intermediary error preserves metadata",
+    "operation": "getPayment",
+    "input": {
+      "id": "p1"
+    },
+    "options": {
+      "maxAttempts": 1
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/payments/p1"
+    },
+    "responses": [
+      {
+        "status": 503,
+        "headers": {
+          "x-request-id": "req-html"
+        },
+        "body": "<html>upstream unavailable</html>"
+      }
+    ],
+    "error": {
+      "kind": "api",
+      "outcome": "response",
+      "status": 503,
+      "requestId": "req-html"
+    }
+  },
+  {
+    "name": "invalid JSON success",
+    "operation": "getPayment",
+    "input": {
+      "id": "p1"
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/payments/p1"
+    },
+    "responses": [
+      {
+        "status": 200,
+        "body": "{bad json"
+      }
+    ],
+    "error": {
+      "kind": "protocol",
+      "outcome": "response",
+      "status": 200
+    }
+  },
+  {
+    "name": "conditional conflict",
+    "operation": "updatePayment",
+    "input": {
+      "id": "p1",
+      "body": {
+        "description": null
+      }
+    },
+    "options": {
+      "ifMatch": "version-1"
+    },
+    "expected": {
+      "method": "PATCH",
+      "path": "/v1/payments/p1",
+      "headers": {
+        "if-match": "version-1"
+      }
+    },
+    "responses": [
+      {
+        "status": 412,
+        "body": "{\"code\":\"stale_version\"}"
+      }
+    ],
+    "error": {
+      "kind": "conflict",
+      "outcome": "response",
+      "status": 412,
+      "retryAllowed": false
+    }
+  },
+  {
+    "name": "redirect rejected",
+    "operation": "getPayment",
+    "input": {
+      "id": "p1"
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/payments/p1"
+    },
+    "responses": [
+      {
+        "status": 302,
+        "headers": {
+          "location": "https://evil.invalid"
+        },
+        "body": ""
+      }
+    ],
+    "error": {
+      "kind": "destination",
+      "outcome": "response",
+      "status": 302
+    }
+  },
+  {
+    "name": "empty conditional response",
+    "operation": "getPayment",
+    "input": {
+      "id": "p1"
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/payments/p1"
+    },
+    "responses": [
+      {
+        "status": 304,
+        "body": ""
+      }
+    ],
+    "empty": true
+  },
+  {
+    "name": "Retry-After honors deadline",
+    "operation": "getPayment",
+    "input": {
+      "id": "p1"
+    },
+    "options": {
+      "deadlineMs": 30
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/payments/p1"
+    },
+    "responses": [
+      {
+        "status": 503,
+        "headers": {
+          "retry-after": "10"
+        },
+        "body": "{}"
+      }
+    ],
+    "error": {
+      "kind": "deadline",
+      "outcome": "response"
+    }
+  },
+  {
+    "name": "missing required body field",
+    "operation": "createPayment",
+    "input": {
+      "body": {
+        "amount": "1",
+        "currency": "USD"
+      }
+    },
+    "options": {
+      "idempotencyKey": "key"
+    },
+    "responses": [],
+    "error": {
+      "kind": "validation",
+      "outcome": "not_sent"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "explicit null rejected for nonnullable",
+    "operation": "updatePayment",
+    "input": {
+      "id": "p1",
+      "body": {
+        "reference": null
+      }
+    },
+    "responses": [],
+    "error": {
+      "kind": "validation",
+      "outcome": "not_sent"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "capture response recovery uses persisted action key",
+    "operation": "capturePayment",
+    "input": {
+      "id": "p1",
+      "body": {
+        "amount": "100"
+      }
+    },
+    "options": {
+      "idempotencyKey": "capture-key"
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/payments/p1/capture",
+      "headers": {
+        "idempotency-key": "capture-key"
+      },
+      "body": "{\"amount\":100}"
+    },
+    "responses": [
+      {
+        "transportError": true
+      },
+      {
+        "status": 200,
+        "body": "{\"id\":\"p1\",\"amount\":100,\"status\":\"succeeded\"}"
+      }
+    ],
+    "data": {
+      "id": "p1",
+      "amount": "100",
+      "status": "succeeded"
+    },
+    "attempts": 2
+  },
+  {
+    "name": "refund response recovery uses persisted action key",
+    "operation": "refundPayment",
+    "input": {
+      "id": "p1",
+      "body": {
+        "amount": "100"
+      }
+    },
+    "options": {
+      "idempotencyKey": "refund-key"
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/payments/p1/refund",
+      "headers": {
+        "idempotency-key": "refund-key"
+      },
+      "body": "{\"amount\":100}"
+    },
+    "responses": [
+      {
+        "transportError": true
+      },
+      {
+        "status": 200,
+        "body": "{\"id\":\"p1\",\"amount\":100,\"status\":\"succeeded\"}"
+      }
+    ],
+    "data": {
+      "id": "p1",
+      "amount": "100",
+      "status": "succeeded"
+    },
+    "attempts": 2
+  }
+]

@@ -1,0 +1,7 @@
+.git
+.context
+.generated
+node_modules
+dist
+*.tgz
+.env*

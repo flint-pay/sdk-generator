@@ -1,0 +1,178 @@
+{
+  "version": "0.1.0",
+  "npm": {
+    "name": "@example/payments"
+  },
+  "composer": {
+    "name": "example/payments",
+    "namespace": "Example\\Payments"
+  },
+  "operations": {
+    "createPayment": {
+      "resource": "payments",
+      "method": "create",
+      "idempotency": {
+        "header": "Idempotency-Key",
+        "retention": "24 hours (fixture only)",
+        "scope": "tenant and operation (fixture only)",
+        "auto": false
+      },
+      "retry": {
+        "maxAttempts": 3,
+        "statuses": [429, 503],
+        "transport": true,
+        "baseDelayMs": 1
+      },
+      "example": {
+        "body": {
+          "amount": "9007199254740993",
+          "currency": "USD",
+          "reference": "order-123"
+        }
+      }
+    },
+    "getPayment": {
+      "resource": "payments",
+      "method": "retrieve",
+      "retry": {
+        "maxAttempts": 3,
+        "statuses": [429, 503],
+        "transport": true,
+        "baseDelayMs": 1
+      },
+      "polling": {
+        "state": "status",
+        "success": ["succeeded"],
+        "failure": ["failed"],
+        "intervalMs": 1
+      },
+      "conditional": {
+        "header": "If-None-Match"
+      }
+    },
+    "updatePayment": {
+      "resource": "payments",
+      "method": "update",
+      "conditional": {
+        "header": "If-Match"
+      }
+    },
+    "listPayments": {
+      "resource": "payments",
+      "method": "listAll",
+      "retry": {
+        "maxAttempts": 3,
+        "statuses": [429, 503],
+        "transport": true,
+        "baseDelayMs": 1
+      },
+      "pagination": {
+        "kind": "cursor",
+        "items": "items",
+        "next": "next",
+        "parameter": "cursor"
+      }
+    },
+    "listLinks": {
+      "resource": "payments",
+      "method": "links",
+      "pagination": {
+        "kind": "link",
+        "items": "items",
+        "next": "next"
+      }
+    },
+    "adminSecrets": {
+      "hidden": true
+    },
+    "capturePayment": {
+      "resource": "payments",
+      "method": "capture",
+      "idempotency": {
+        "header": "Idempotency-Key",
+        "retention": "24 hours (synthetic fixture)",
+        "scope": "tenant and action (synthetic fixture)",
+        "auto": false
+      },
+      "retry": {
+        "maxAttempts": 3,
+        "statuses": [503],
+        "transport": true,
+        "baseDelayMs": 1
+      }
+    },
+    "refundPayment": {
+      "resource": "payments",
+      "method": "refund",
+      "idempotency": {
+        "header": "Idempotency-Key",
+        "retention": "24 hours (synthetic fixture)",
+        "scope": "tenant and action (synthetic fixture)",
+        "auto": true
+      },
+      "retry": {
+        "maxAttempts": 3,
+        "statuses": [503],
+        "transport": true,
+        "baseDelayMs": 1
+      }
+    }
+  },
+  "money": {
+    "currencies": {
+      "USD": 2,
+      "JPY": 0
+    }
+  },
+  "apiVersion": {
+    "header": "X-Api-Version",
+    "value": "2026-09-fixture"
+  },
+  "webhook": {
+    "algorithm": "hmac-sha256",
+    "header": "X-Signature",
+    "timestampHeader": "X-Timestamp",
+    "separator": ".",
+    "toleranceSeconds": 300,
+    "typeField": "type",
+    "events": {
+      "payment.updated": {
+        "type": "object",
+        "required": ["id", "type", "data"],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "required": ["id", "amount", "status"],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "amount": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "status": {
+                "type": "string",
+                "enum": ["pending", "succeeded", "failed"]
+              },
+              "description": {
+                "type": ["string", "null"]
+              },
+              "secret": {
+                "type": "string",
+                "x-sensitive": true
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    }
+  }
+}

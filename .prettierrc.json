@@ -1,0 +1,6 @@
+{
+  "singleQuote": true,
+  "printWidth": 100,
+  "plugins": ["@prettier/plugin-php"],
+  "overrides": [{ "files": "*.php", "options": { "phpVersion": "8.2" } }]
+}

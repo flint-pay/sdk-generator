@@ -1,0 +1,60 @@
+{
+  "repository": "flint-pay/flint",
+  "revision": "8be00f180602f15d6332e3c976f9960f835775ee",
+  "source": "web/apps/developers/src/generated/openapi.json",
+  "sourceSha256": "274651111254ef061e20d9742184e5366c3577431aa808b21a56ef8fe2016e58",
+  "sliceSha256": "63c022c16b8a4af1826fdc7116d9f38d301f75430b0336a5edeb781611fc12c4",
+  "selection": [
+    "createPaymentIntent",
+    "getPaymentIntent",
+    "capturePaymentIntent",
+    "listPaymentIntents",
+    "createRefund",
+    "getRefund",
+    "listRefunds"
+  ],
+  "schemas": 91,
+  "basis": "Raw selected operations and transitive schemas from the pinned dated export, with corrections declared separately in SDK profiles. Behavior source hashes refer to behaviorRevision.",
+  "behaviorSources": {
+    "server/monolith/internal/publicapi/payment_intents.go": "908309bac343293157de1f28bcf31dee789fcc4ac38bea51a4ab2972b372d6b4",
+    "server/monolith/internal/publicapi/refunds.go": "ac82c11b26022501a3ab3b517112b01081f7ca17888f5a939b5e832db6c607bb",
+    "server/monolith/internal/publicapi/idempotency.go": "b6e77ee85c8b803b6bf4d03626612f8aae42fafc23ef60d745f8380ec940539d",
+    "server/monolith/internal/mutationidempotency/mutationidempotency.go": "6f43551c4cdd2141d5cdd86b123933cf6dfa97311ad6a4ab412fbbdb5a0ca5c3",
+    "server/monolith/internal/publicapi/PUBLIC_API_CONTRACT.md": "640fe156d0d39f97b3fc4e8fde33b5f8ef5d8e05159826a51be3989d0eb1bd62",
+    "server/monolith/internal/publicapi/risk_controls.go": "b404876d6feb07ac60d57c8a543039e129e3b43837331cde0230336c6003efb7",
+    "server/monolith/internal/publicapi/models.go": "59e5285e0acd86dcc5d0aa92bf888cb619e49fc00bf013cb18fda6f5a246a029",
+    "server/monolith/internal/services/webhooks/application/publish.go": "7c6cd5ecfd7fcd0da684ad8a307210ffec3f03aa2c07b6ffc035210d2d43815b",
+    "server/monolith/internal/services/payment_intents/domain/webhookevents/events.go": "4eb3912cd5d1e2d7882871a9709c1a0c2ab0e255f41f635d3d0b7d63588e6841"
+  },
+  "riskOverride": {
+    "pointer": "/components/schemas/AddRiskListItemsRequest/required",
+    "original": ["values"],
+    "replacement": [],
+    "reason": "The exported required list contradicts its oneOf. The handler accepts exactly one of value or values; the profile removes only the redundant required list."
+  },
+  "riskSliceSha256": "7077821046302edb8c39d5e14c24b0ac6ff4ad6c28bda437534474e89210da68",
+  "readResponseOverrides": {
+    "pointers": [
+      "/components/schemas/GetPaymentIntentResult/properties/last_payment_error",
+      "/components/schemas/GetPaymentIntentResult/properties/risk"
+    ],
+    "replacement": "Preserve each field schema and add nullable: true",
+    "reason": "The export omits nullable for last_payment_error and risk. The backend serializer explicitly emits both fields when nil; the raw source export is preserved.",
+    "source": "server/monolith/internal/publicapi/models.go"
+  },
+  "webhookProfile": {
+    "format": "standard-webhooks",
+    "eventType": "payment_intent.succeeded",
+    "envelopeSource": "server/monolith/internal/services/webhooks/application/publish.go",
+    "dataSource": "server/monolith/internal/services/payment_intents/domain/webhookevents/events.go",
+    "coverage": "Known event envelope and exact payment amount; undeclared event types remain unknown."
+  },
+  "behaviorRevision": "bcb5621e2d7aa2fa4fc4b846838afe2fde83ba82",
+  "previousSpec": {
+    "revision": "bcb5621e2d7aa2fa4fc4b846838afe2fde83ba82",
+    "sourceSha256": "3d1188e2c0ff5fb9b6f75c9c152181f9e77b2d5a5e14284cde1d9618bb38f4b0",
+    "sliceSha256": "f1b87c29c964ec4a7a8803480e0c6bb33749f7f4b8bfc41228de3b275b355aff",
+    "riskSliceSha256": "1a222649ddc423b7251fe80342f2a82759113e793c0f7236d126f7f40a5bb2a4"
+  },
+  "apiVersion": "2026-09-07"
+}

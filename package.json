@@ -1,0 +1,52 @@
+{
+  "name": "@public-sdk/generator",
+  "version": "0.1.0",
+  "description": "Reproducible local SDK generation for Node.js/TypeScript and PHP",
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "sdk-generator": "dist/cli.js"
+  },
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "templates",
+    "LICENSE",
+    "README.md",
+    "docs/architecture.md",
+    "docs/cli.md",
+    "docs/configuration.md",
+    "docs/licensing.md",
+    "docs/releases.md",
+    "docs/support-matrix.md",
+    "docs/using-sdks.md",
+    "examples/library.openapi.json",
+    "examples/library.sdk.json",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "tests/fixtures/payment-api.json",
+    "tests/fixtures/payment-sdk.json",
+    "tests/fixtures/http-cases.json"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "prepack": "npm run build",
+    "format": "prettier --write src templates tests examples README.md CONTRIBUTING.md SECURITY.md docs .github tsconfig.json package.json"
+  },
+  "dependencies": {
+    "@types/node": "22.20.1",
+    "markdown-it": "15.0.1",
+    "typescript": "5.9.3"
+  },
+  "devDependencies": {
+    "@prettier/plugin-php": "0.24.0",
+    "prettier": "3.6.2"
+  }
+}

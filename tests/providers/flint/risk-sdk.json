@@ -1,0 +1,37 @@
+{
+  "version": "0.2.0",
+  "validation": "schema",
+  "auth": {
+    "scheme": "BearerAuth"
+  },
+  "npm": {
+    "name": "@example/flint-risk-sdk"
+  },
+  "composer": {
+    "name": "example/flint-risk-sdk",
+    "namespace": "Example\\FlintRisk"
+  },
+  "include": ["addRiskListItems"],
+  "overrides": {
+    "/components/schemas/AddRiskListItemsRequest/required": []
+  },
+  "operations": {
+    "addRiskListItems": {
+      "resource": "riskLists",
+      "method": "addItems",
+      "example": {
+        "risk_list_id": "rl_replace_with_sandbox_id",
+        "body": {
+          "value": "sdk-example"
+        }
+      }
+    }
+  },
+  "models": {
+    "Money": "MoneyValue"
+  },
+  "apiVersion": {
+    "header": "Flint-Version",
+    "value": "2026-09-07"
+  }
+}

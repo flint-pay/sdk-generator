@@ -1,0 +1,265 @@
+{
+  "version": "0.2.0",
+  "npm": {
+    "name": "@example/flint-sdk"
+  },
+  "composer": {
+    "name": "example/flint-sdk",
+    "namespace": "Example\\Flint"
+  },
+  "include": [
+    "createPaymentIntent",
+    "getPaymentIntent",
+    "capturePaymentIntent",
+    "listPaymentIntents",
+    "createRefund",
+    "getRefund",
+    "listRefunds"
+  ],
+  "auth": {
+    "scheme": "BearerAuth"
+  },
+  "models": {
+    "Money": "MoneyValue"
+  },
+  "errors": {
+    "codePath": "error.code",
+    "detailsPath": "error",
+    "requestIdHeader": "X-Request-Id"
+  },
+  "operations": {
+    "createPaymentIntent": {
+      "resource": "paymentIntents",
+      "method": "create",
+      "example": {
+        "body": {
+          "amount_money": {
+            "amount": "100",
+            "currency": "USD"
+          },
+          "payment_options": ["card"],
+          "capture_method": "manual"
+        }
+      },
+      "idempotency": {
+        "header": "Idempotency-Key",
+        "auto": true,
+        "retention": "24 hours from record completion by the pinned backend; never reuse a key for a new business intent.",
+        "scope": "Merchant, environment and HTTP endpoint; capture includes the payment intent ID in the endpoint."
+      },
+      "retry": {
+        "maxAttempts": 3,
+        "statuses": [429, 503, 504],
+        "errors": [
+          {
+            "status": 409,
+            "codes": ["IDEMPOTENCY_KEY_IN_PROGRESS"]
+          }
+        ],
+        "transport": true,
+        "baseDelayMs": 25
+      }
+    },
+    "getPaymentIntent": {
+      "resource": "paymentIntents",
+      "method": "get",
+      "example": {
+        "payment_intent_id": "pi_replace_with_sandbox_id"
+      }
+    },
+    "capturePaymentIntent": {
+      "resource": "paymentIntents",
+      "method": "capture",
+      "example": {
+        "payment_intent_id": "pi_replace_with_sandbox_id",
+        "body": {}
+      },
+      "idempotency": {
+        "header": "Idempotency-Key",
+        "auto": true,
+        "retention": "24 hours from record completion by the pinned backend; never reuse a key for a new business intent.",
+        "scope": "Merchant, environment and HTTP endpoint; capture includes the payment intent ID in the endpoint."
+      },
+      "retry": {
+        "maxAttempts": 3,
+        "statuses": [429, 503, 504],
+        "errors": [
+          {
+            "status": 409,
+            "codes": ["IDEMPOTENCY_KEY_IN_PROGRESS"]
+          }
+        ],
+        "transport": true,
+        "baseDelayMs": 25
+      }
+    },
+    "listPaymentIntents": {
+      "resource": "paymentIntents",
+      "method": "list",
+      "pagination": {
+        "kind": "cursor",
+        "items": "data",
+        "next": "next_page_token",
+        "parameter": "page_token"
+      }
+    },
+    "createRefund": {
+      "resource": "refunds",
+      "method": "create",
+      "example": {
+        "body": {
+          "payment_intent_id": "pi_replace_with_sandbox_id",
+          "amount_money": {
+            "amount": "100",
+            "currency": "USD"
+          }
+        }
+      },
+      "idempotency": {
+        "header": "Idempotency-Key",
+        "auto": true,
+        "retention": "24 hours from record completion by the pinned backend; never reuse a key for a new business intent.",
+        "scope": "Merchant, environment and HTTP endpoint; capture includes the payment intent ID in the endpoint."
+      },
+      "retry": {
+        "maxAttempts": 3,
+        "statuses": [429, 503, 504],
+        "errors": [
+          {
+            "status": 409,
+            "codes": ["IDEMPOTENCY_KEY_IN_PROGRESS"]
+          }
+        ],
+        "transport": true,
+        "baseDelayMs": 25
+      }
+    },
+    "getRefund": {
+      "resource": "refunds",
+      "method": "get",
+      "example": {
+        "refund_id": "ref_replace_with_sandbox_id"
+      }
+    },
+    "listRefunds": {
+      "resource": "refunds",
+      "method": "list",
+      "pagination": {
+        "kind": "cursor",
+        "items": "data",
+        "next": "next_page_token",
+        "parameter": "page_token"
+      }
+    }
+  },
+  "validation": "schema",
+  "overrides": {
+    "/components/schemas/GetPaymentIntentResult/properties/last_payment_error": {
+      "allOf": [
+        {
+          "$ref": "#/components/schemas/PaymentErrorSummary"
+        }
+      ],
+      "readOnly": true,
+      "nullable": true
+    },
+    "/components/schemas/GetPaymentIntentResult/properties/risk": {
+      "allOf": [
+        {
+          "$ref": "#/components/schemas/PaymentRisk"
+        }
+      ],
+      "readOnly": true,
+      "nullable": true
+    }
+  },
+  "webhook": {
+    "algorithm": "hmac-sha256",
+    "format": "standard-webhooks",
+    "header": "webhook-signature",
+    "timestampHeader": "webhook-timestamp",
+    "idHeader": "webhook-id",
+    "separator": ".",
+    "toleranceSeconds": 300,
+    "typeField": "event_type",
+    "events": {
+      "payment_intent.succeeded": {
+        "type": "object",
+        "required": ["webhook_event_id", "event_type", "mode", "merchant_id", "data"],
+        "properties": {
+          "webhook_event_id": {
+            "type": "string"
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "payload_version": {
+            "type": "integer"
+          },
+          "mode": {
+            "type": "string",
+            "enum": ["test", "live"]
+          },
+          "merchant_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "test": {
+            "type": "boolean"
+          },
+          "request": {
+            "type": ["object", "null"],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "idempotency_key": {
+                "type": "string"
+              }
+            }
+          },
+          "data": {
+            "type": "object",
+            "required": ["payment_intent"],
+            "properties": {
+              "payment_intent": {
+                "type": "object",
+                "required": ["payment_intent_id", "status", "amount_money"],
+                "properties": {
+                  "payment_intent_id": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "amount_money": {
+                    "type": "object",
+                    "required": ["amount", "currency"],
+                    "properties": {
+                      "amount": {
+                        "type": "integer",
+                        "format": "int64"
+                      },
+                      "currency": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "api_version": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "apiVersion": {
+    "header": "Flint-Version",
+    "value": "2026-09-07"
+  }
+}
