@@ -125,8 +125,34 @@ class Model implements \JsonSerializable
             $values = (object) $values;
         }
         $normalized = Codec::normalize($values, $schema, response: $response);
-        $this->values =
-            $normalized instanceof \stdClass && is_array($values) ? (object) $values : $values;
+        // Store public values: unwrap nested models and exact wire-number wrappers,
+        // while retaining the normalized distinction between objects and lists.
+        $unwrap = function (mixed $value, int $depth = 0) use (&$unwrap): mixed {
+            if ($depth > 256) {
+                Codec::fail(
+                    'value',
+                    'value exceeds the supported nesting depth or contains a cycle',
+                );
+            }
+            if ($value instanceof Model) {
+                return $unwrap($value->jsonSerialize(), $depth + 1);
+            }
+            if ($value instanceof RawNumber) {
+                return $value->value;
+            }
+            if (is_array($value)) {
+                return array_map(fn($v) => $unwrap($v, $depth + 1), $value);
+            }
+            if (is_object($value)) {
+                $out = new \stdClass();
+                foreach ((array) $value as $key => $child) {
+                    $out->{$key} = $unwrap($child, $depth + 1);
+                }
+                return $out;
+            }
+            return $value;
+        };
+        $this->values = $unwrap($normalized);
     }
     public function has(string $field): bool
     {
@@ -652,20 +678,24 @@ final class Codec
                 self::fail($path, "expected $type; received a JSON number");
             }
         }
+        $exactEnum =
+            $type === 'number' ||
+            ($type === 'integer' && in_array($s['format'] ?? '', ['int64', 'uint64'], true));
         if (
             (!$response || $matching) &&
             isset($s['enum']) &&
-            !in_array(
-                $type === 'number' ||
-                ($type === 'integer' && in_array($s['format'] ?? '', ['int64', 'uint64'], true))
-                    ? (string) $value
-                    : $value,
-                $type === 'number' ||
-                ($type === 'integer' && in_array($s['format'] ?? '', ['int64', 'uint64'], true))
-                    ? array_map('strval', $s['enum'])
-                    : $s['enum'],
-                true,
-            )
+            !($exactEnum
+                ? (is_string($value) || is_int($value)) &&
+                    preg_match(
+                        '/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/',
+                        (string) $value,
+                    ) &&
+                    array_filter(
+                        $s['enum'],
+                        fn($member) => is_int($member) &&
+                            self::compareDecimal((string) $value, (string) $member) === 0,
+                    )
+                : in_array($value, $s['enum'], true))
         ) {
             self::fail($path, 'value is outside the declared enum');
         }
@@ -708,7 +738,12 @@ final class Codec
                         (!array_is_list($value) ||
                             (!$value && (isset($s['required']) || isset($s['properties'])))))))
         ) {
-            if (!is_object($value) && !is_array($value)) {
+            if (
+                !is_object($value) &&
+                (!is_array($value) ||
+                    $response ||
+                    (array_is_list($value) && ($value !== [] || $matching)))
+            ) {
                 self::fail($path, 'expected an object');
             }
             $data = (array) $value;

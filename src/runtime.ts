@@ -502,7 +502,14 @@ export function normalize(
   if (
     (!response || matching) &&
     s.enum &&
-    !(exactEnum ? s.enum.map(String).includes(String(value)) : s.enum.includes(value as any))
+    !(exactEnum
+      ? (typeof value === 'string' || typeof value === 'number') &&
+        exactDecimal.test(String(value)) &&
+        s.enum.some(
+          (member) =>
+            typeof member === 'number' && compareDecimal(String(value), String(member)) === 0,
+        )
+      : s.enum.includes(value as any))
   )
     bad(path, 'value is outside the declared enum');
   if (type === 'integer' || type === 'number') {
