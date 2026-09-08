@@ -890,7 +890,7 @@ export function render(c: Contract): Map<string, string> {
     const first = c.operations[0]!;
     files.set(
       `${target}/README.md`,
-      `# ${c.title} SDK (${target})\n\nPackage ${c.config.version}; generated for API ${c.apiVersion}.\n\n${target === 'node' ? `Requires Node.js 22+; TypeScript 5.9+. ESM JavaScript and declarations ship together.\n\nInstall: \`npm install ${c.config.npm.name}\`` : `Requires PHP 8.2+, ext-json and ext-curl; framework independent.\n\nInstall: \`composer require ${c.config.composer.name}\``}\n\nStart with [the quickstart](examples/${first.resource}-${first.method}.${target === 'node' ? 'mjs' : 'php'}). Set API_BASE_URL explicitly and API_TOKEN if authentication is declared. Examples target a placeholder sandbox and make one attempt. Provider example values must match your sandbox. Run examples from the generated package: for Node use node examples/NAME.mjs; for PHP run composer install in the generated php/ directory, then php examples/NAME.php. When copying a PHP example into an application, point its require statement at that application\'s vendor/autoload.php.\n\n## Client and request options\n\nConstruct a client with baseUrl and, for authenticated operations, token. The SDK does not discover credentials or read environment variables; the operation example scripts read API_BASE_URL and API_TOKEN explicitly. Pass per-request options as the second method argument: a plain object in Node, or RequestOptions in PHP. Defaults are timeoutMs: 10000 per attempt and deadlineMs: 30000 for the overall duration (not an absolute timestamp). Request values override client defaults. maxAttempts defaults to the operation\'s declared limit, or one when no retries are declared; overrides cannot exceed that limit. Request headers carry tenant context without shared mutable state.\n\nResults expose data, meta and explicit raw response text. Node metadata uses properties; PHP metadata uses array keys. SdkError exposes kind, outcome, retryAllowed and optional metadata; provider codes use code in Node and errorCode in PHP. outcome is not_sent, response or unknown. Reconcile an unknown mutation outcome with the provider and the original persisted idempotency key before resubmitting.\n\n## Behavior and ownership\n\nOptional properties distinguish omission from null. PHP inputs use presence-aware typed input objects constructed from arrays: omit a key to omit it; include a key with null to clear only where permitted. PHP models expose presence through has()/get(); typed getters unwrap nested models and getters for omitted optional fields throw. In object/array alternatives, PHP lists (including []) represent JSON arrays; use (object) [] for an empty JSON object. Numeric enum membership compares exact values, so equivalent decimal/exponent spellings are accepted. Large integers (int64) and decimals use exact strings, including numeric JSON wire values. Integer responses accept integral decimal/exponent notation without rounding. Sparse Node input arrays fail before dispatch. Timestamps remain strings. Unknown response fields, enum members, and tagged variants are retained. Full request encoding checks run locally; server business effects require provider tests.\n\nRetries count total attempts, include jitter and Retry-After, and never exceed the declared policy. Persist an idempotency key across process restarts and submissions within the server's documented retention/scope. Automatic keys cover one SDK call only. Explicit keys from operation inputs, request headers or idempotencyKey are preserved; conflicting values fail before dispatch. A timeout after dispatch can leave the remote outcome unknown; inspect SdkError.outcome. Disable nested transport/application retries to avoid multiplied attempts. 409/412 are distinct conflicts and never automatically overwritten.\n\nTimeout is per attempt, including body consumption. Deadline covers attempts and waits; pagination and polling share an overall deadline. Cancellation stops local work, not the remote operation. Node uses AbortSignal. PHP uses a Cancellation token checked during cURL progress and between waits; synchronous calls need an external signal handler to cancel while blocked. Pagination is lazy, supports maxPages/maxItems, and does not guarantee a stable snapshot or durable continuation.\n\nExplicit allowedOrigins govern all destinations, including pagination. HTTPS is required unless allowInsecureHttp is set for local tests. Redirects are rejected. Authentication is attached only after destination validation. API version headers are pinned when configured; changing them does not update generated types.\n\nClients perform no network I/O at import/construction. Node clients reuse the runtime's fetch connection pool; injected transports remain caller-owned and must honor AbortSignal and disable redirects/retries. PHP owns a reusable cURL handle, released by close()/destruction; a client supports sequential calls within one PHP execution context. Do not concurrently share a PHP client across threads/fibers. Node requests keep headers/context local and support concurrent calls. No SDK telemetry is sent. Requests identify the selected package name/version and runtime through an overridable User-Agent header.\n\nDiagnostics run once per attempted HTTP request, including transport failures, with operation, request ID, status, timing, attempt count and error kind only; hook failures are ignored. Bodies and credentials are excluded. Raw response text/headers and structured error details are privileged explicit access. Model debug printing redacts declared sensitive fields and additional field names supplied in ClientOptions.redactFields; printing arbitrary raw values is application responsibility. Injected transports are privileged and see credentials/bodies.\n\n## Webhooks and recovery\n\n${c.config.webhook ? 'Verification uses the configured HMAC-SHA256 signature format, signed headers and original body bytes, with timestamp tolerance and overlapping secrets. Preserve raw request bytes; never verify reserialized JSON. Verification is not durable deduplication. In one database transaction, insert a unique provider event ID and durable work record before acknowledging. Workers should fetch authoritative current state for out-of-order events; commit business side effects idempotently. Unknown event types must not be treated as known success.' : 'This provider has not declared webhook verification.'}\n\nCustom helpers belong in custom/; they survive regeneration. Multi-call helpers are not atomic and must expose partial completion. See [reference](REFERENCE.md).\n`,
+      `# ${c.title} SDK (${target})\n\nPackage ${c.config.version}; generated for API ${c.apiVersion}.\n\n${target === 'node' ? `Requires Node.js 22+; TypeScript 5.9+. ESM JavaScript and declarations ship together.\n\nInstall: \`npm install ${c.config.npm.name}\`` : `Requires PHP 8.2+, ext-json and ext-curl; framework independent.\n\nInstall: \`composer require ${c.config.composer.name}\``}\n\nStart with [the quickstart](examples/${first.resource}-${first.method}.${target === 'node' ? 'mjs' : 'php'}). Set API_BASE_URL explicitly and API_TOKEN if authentication is declared. Examples target a placeholder sandbox and make one attempt. Provider example values must match your sandbox. Run examples from the generated package: for Node use node examples/NAME.mjs; for PHP run composer install in the generated php/ directory, then php examples/NAME.php. When copying a PHP example into an application, point its require statement at that application\'s vendor/autoload.php.\n\n## Client and request options\n\nConstruct a client with baseUrl and, for authenticated operations, token. The SDK does not discover credentials or read environment variables; the operation example scripts read API_BASE_URL and API_TOKEN explicitly. Pass per-request options as the second method argument: a plain object in Node, or RequestOptions in PHP. Defaults are timeoutMs: 10000 per attempt and deadlineMs: 30000 for the overall duration (not an absolute timestamp). Request values override client defaults. maxAttempts defaults to the operation\'s declared limit, or one when no retries are declared; overrides cannot exceed that limit. Request headers carry tenant context without shared mutable state.\n\nResults expose data, meta and explicit raw response text. Node metadata uses properties; PHP metadata uses array keys. SdkError exposes kind, outcome, retryAllowed and optional metadata; provider codes use code in Node and errorCode in PHP. outcome is not_sent, response or unknown. Reconcile an unknown mutation outcome with the provider and the original persisted idempotency key before resubmitting.\n\n## Behavior and ownership\n\nOptional properties distinguish omission from null. PHP inputs use presence-aware typed input objects constructed from arrays: omit a key to omit it; include a key with null to clear only where permitted. PHP models expose presence through has()/get(); typed getters unwrap nested models and getters for omitted optional fields throw. In object/array alternatives, PHP lists (including []) represent JSON arrays; use (object) [] for an empty JSON object. Numeric enum membership compares exact values, so equivalent decimal/exponent spellings are accepted. Large integers (int64) and decimals use exact strings, including numeric JSON wire values. Integer responses accept integral decimal/exponent notation without rounding. Sparse Node input arrays fail before dispatch. Timestamps remain strings. Unknown response fields, enum members, and tagged variants are retained. PHP response class names include status codes and, for tagged alternatives, branch positions. Adding a status can introduce a new return class even with an identical JSON shape; consult migration notes before upgrading class-based dispatch. Portable digit/word pattern escapes retain their ASCII ECMAScript meaning in both targets, including inside character classes. Full request encoding checks run locally; server business effects require provider tests.\n\nRetries count total attempts, include jitter and Retry-After, and never exceed the declared policy. Persist an idempotency key across process restarts and submissions within the server's documented retention/scope. Automatic keys cover one SDK call only. Explicit keys from operation inputs, request headers or idempotencyKey are preserved; conflicting values fail before dispatch. A timeout after dispatch can leave the remote outcome unknown; inspect SdkError.outcome. Disable nested transport/application retries to avoid multiplied attempts. 409/412 are distinct conflicts and never automatically overwritten.\n\nTimeout is per attempt, including body consumption. Deadline covers attempts and waits; pagination and polling share an overall deadline. Cancellation stops local work, not the remote operation. Node uses AbortSignal. PHP uses a Cancellation token checked during cURL progress and between waits; synchronous calls need an external signal handler to cancel while blocked. Pagination is lazy, supports maxPages/maxItems, and does not guarantee a stable snapshot or durable continuation.\n\nExplicit allowedOrigins govern all destinations, including pagination. HTTPS is required unless allowInsecureHttp is set for local tests. Redirects are rejected. Authentication is attached only after destination validation. API version headers are pinned when configured; changing them does not update generated types.\n\nClients perform no network I/O at import/construction. Node clients reuse the runtime's fetch connection pool; injected transports remain caller-owned and must honor AbortSignal and disable redirects/retries. PHP owns a reusable cURL handle, released by close()/destruction; a client supports sequential calls within one PHP execution context. Do not concurrently share a PHP client across threads/fibers. Node requests keep headers/context local and support concurrent calls. No SDK telemetry is sent. Requests identify the selected package name/version and runtime through an overridable User-Agent header.\n\nDiagnostics run once per attempted HTTP request, including transport failures, with operation, request ID, status, timing, attempt count and error kind only; hook failures are ignored. Bodies and credentials are excluded. Raw response text/headers and structured error details are privileged explicit access. Model debug printing redacts declared sensitive fields and additional field names supplied in ClientOptions.redactFields; printing arbitrary raw values is application responsibility. Injected transports are privileged and see credentials/bodies.\n\n## Webhooks and recovery\n\n${c.config.webhook ? 'Verification uses the configured HMAC-SHA256 signature format, signed headers and original body bytes, with timestamp tolerance and overlapping secrets. Preserve raw request bytes; never verify reserialized JSON. Verification is not durable deduplication. In one database transaction, insert a unique provider event ID and durable work record before acknowledging. Workers should fetch authoritative current state for out-of-order events; commit business side effects idempotently. Unknown event types must not be treated as known success.' : 'This provider has not declared webhook verification.'}\n\nCustom helpers belong in custom/; they survive regeneration. Multi-call helpers are not atomic and must expose partial completion. See [reference](REFERENCE.md).\n`,
     );
     files.set(
       `${target}/REFERENCE.md`,
@@ -930,8 +930,153 @@ export function render(c: Contract): Map<string, string> {
   }
   return files;
 }
+const resultStatus = (status: string) =>
+  /^2\d\d$/.test(status) || status === '304' || status === 'default';
+
+function simpleResponseSchema(schema: Schema): boolean {
+  return (
+    !schema['x-sdk-ref'] &&
+    schema.type !== undefined &&
+    !Array.isArray(schema.type) &&
+    !schema.allOf &&
+    !schema.anyOf &&
+    !schema.oneOf &&
+    !schema.not &&
+    Object.values(schema.properties ?? {}).every(simpleResponseSchema) &&
+    (!schema.items || simpleResponseSchema(schema.items)) &&
+    (typeof schema.additionalProperties !== 'object' ||
+      simpleResponseSchema(schema.additionalProperties))
+  );
+}
+
+/** Project simple schemas to their public response fields and decoded value types. */
+function responseValueSchema(schema: Schema, requiredness: 'declared' | 'validated'): Schema {
+  const value: Schema = { type: schema.type! };
+  if (
+    schema.type === 'number' ||
+    (schema.type === 'integer' && ['int64', 'uint64'].includes(schema.format ?? ''))
+  )
+    value.type = 'string';
+  if (schema.type === 'object') {
+    const properties = Object.entries(schema.properties ?? {});
+    value.properties = Object.fromEntries(
+      properties
+        .filter(([, child]) => !child.writeOnly)
+        .map(([key, child]) => [key, responseValueSchema(child, requiredness)]),
+    );
+    value.required = (schema.required ?? []).filter((key) => !schema.properties?.[key]?.writeOnly);
+    // Match type(): only pure dictionaries declare a typed index signature.
+    // Record<string, T> does not declare required keys, even when runtime validation does.
+    // Other response objects expose unknown extra fields, even with false.
+    if (!properties.length && typeof schema.additionalProperties === 'object') {
+      if (requiredness === 'declared') value.required = [];
+      value.additionalProperties = responseValueSchema(schema.additionalProperties, requiredness);
+    } else {
+      value.additionalProperties = true;
+    }
+  }
+  if (schema.type === 'array' && schema.items)
+    value.items = responseValueSchema(schema.items, requiredness);
+  return value;
+}
+
+/** Inclusion of simple projected values, rather than changes to schema declarations. */
+function responseValuesFit(previous: Schema, added: Schema): boolean {
+  if (previous.type === undefined) return true;
+  if (previous.type !== added.type) return false;
+  if (previous.type === 'array') return responseValuesFit(previous.items ?? {}, added.items ?? {});
+  if (previous.type !== 'object') return true;
+  if (previous.required?.some((key) => !added.required?.includes(key))) return false;
+  const extra = (schema: Schema): Schema =>
+    typeof schema.additionalProperties === 'object' ? schema.additionalProperties : {};
+  const field = (schema: Schema, key: string): Schema =>
+    Object.hasOwn(schema.properties ?? {}, key) ? schema.properties![key]! : extra(schema);
+  for (const key of new Set([
+    ...Object.keys(previous.properties ?? {}),
+    ...Object.keys(added.properties ?? {}),
+  ]))
+    if (!responseValuesFit(field(previous, key), field(added, key))) return false;
+  return responseValuesFit(extra(previous), extra(added));
+}
+
+/** Prove ordinary result widening; leave schema-union inclusion for review. */
+function addedResponseBreaks(op: Operation, response: Operation['responses'][string]): boolean {
+  const previous = Object.entries(op.responses)
+    .filter(([status]) => resultStatus(status))
+    .map(([, value]) => value);
+  if (!response.schema) return previous.every((value) => value.schema);
+  const schemas = [
+    ...new Map(
+      previous
+        .filter((value) => value.schema)
+        .map((value) => [stable(value.schema), value.schema!]),
+    ).values(),
+  ];
+  if (!schemas.length) return true;
+  if (schemas.some((schema) => stable(schema) === stable(response.schema))) return false;
+  if (
+    schemas.length !== 1 ||
+    !simpleResponseSchema(schemas[0]!) ||
+    !simpleResponseSchema(response.schema)
+  )
+    return false;
+  // Preserve both TypeScript field declarations and runtime presence guarantees.
+  // A dictionary's required keys affect only the latter, at every nesting depth.
+  return (['declared', 'validated'] as const).some(
+    (requiredness) =>
+      !responseValuesFit(
+        responseValueSchema(schemas[0]!, requiredness),
+        responseValueSchema(response.schema!, requiredness),
+      ),
+  );
+}
+
+/** Match the status-specific model and variant classes emitted by render(). */
+function phpResponseHasClasses(status: string, schema?: Schema): boolean {
+  return (
+    resultStatus(status) &&
+    status !== '304' &&
+    !!schema &&
+    (schema.type === 'object' || !!(schema.oneOf && schema.discriminator))
+  );
+}
+
+function addedPhpResponseClassBreaks(
+  op: Operation,
+  status: string,
+  response: Operation['responses'][string],
+): boolean {
+  if (!phpResponseHasClasses(status, response.schema)) return false;
+  // Each new status gets new nominal classes, even for identical JSON shapes.
+  // An existing mixed/object return type already accommodates those classes.
+  return Object.entries(op.responses)
+    .filter(([previousStatus]) => resultStatus(previousStatus))
+    .every(
+      ([previousStatus, previous]) =>
+        !previous.schema ||
+        phpResponseHasClasses(previousStatus, previous.schema) ||
+        !phpType(previous.schema)
+          .split('|')
+          .some((type) => type === 'mixed' || type === 'object'),
+    );
+}
+
+/** These indices are part of the existing PHP public class names. */
+function phpVariantIndices(schema?: Schema): Map<string, number> {
+  if (!schema?.oneOf || !schema.discriminator || schema.type === 'object') return new Map();
+  const tag = schema.discriminator.propertyName;
+  return new Map(
+    schema.oneOf.flatMap((branch, index) =>
+      (branch.properties?.[tag]?.enum ?? []).map((value) => [String(value), index] as const),
+    ),
+  );
+}
+
 export function compare(before: Contract, after: Contract): Compatibility[] {
   const changes: Compatibility[] = [];
+  const comparePhp =
+    (before.config.targets ?? ['node', 'php']).includes('php') &&
+    (after.config.targets ?? ['node', 'php']).includes('php');
   const add = (severity: Compatibility['severity'], subject: string, message: string) =>
     changes.push({ severity, subject, message });
   const oldModels = modelsUsed(before),
@@ -1003,14 +1148,34 @@ export function compare(before: Contract, after: Contract): Compatibility[] {
       const before = old.responses[status],
         after = current.responses[status];
       if (!before || !after) {
+        const widened = after && resultStatus(status) && addedResponseBreaks(old, after);
+        const newPhpClass = after && comparePhp && addedPhpResponseClassBreaks(old, status, after);
         add(
-          after ? 'review' : 'breaking',
+          !after || widened || newPhpClass ? 'breaking' : 'review',
           `${old.id}.response.${status}`,
           after
-            ? 'Response status added; handle this outcome explicitly.'
+            ? newPhpClass
+              ? 'Response status added with new PHP response classes outside the previous return type; update class-based consumers before upgrading.'
+              : widened
+                ? 'Response status added with an incompatible result shape or body presence; update result handling before upgrading.'
+                : 'Response status added; handle this outcome explicitly.'
             : 'Response status removed; migrate handling of this outcome.',
         );
       } else {
+        if (resultStatus(status) && status !== '304' && comparePhp) {
+          const previousVariants = phpVariantIndices(before.schema);
+          const nextVariants = phpVariantIndices(after.schema);
+          for (const [tag, index] of previousVariants) {
+            if (nextVariants.get(tag) !== index) {
+              add(
+                'breaking',
+                `${old.id}.response.${status}`,
+                'PHP response variant classes were reassigned by branch reordering or insertion; preserve existing branch positions or update consumers in a major release.',
+              );
+              break;
+            }
+          }
+        }
         if (before.schema && after.schema)
           changes.push(
             ...compareSchemas(
