@@ -8,7 +8,7 @@ Start with the [CLI and library reference](cli.md) for invocation, [configuratio
 2. `src/generate.ts` creates Node and PHP source/package/documentation artifacts from the same contract. Inputs/responses have separate public representations. Selected operations include required models but not excluded API surfaces.
 3. `src/runtime.ts` is the Node runtime copied into the npm output. `templates/Runtime.php` implements the corresponding PHP semantics. They have no dependency on the installed generator.
 4. `src/fixtures.ts` and `templates/fixtures.php` exercise generated public clients with externally supplied expected HTTP cases. Tests also install packages and call both default transports against a local HTTP server.
-5. A private ownership/provenance record drives previews, conflict detection and regeneration. Generated packages do not include this record or upstream private definitions. Generated operation/schema information necessarily exists inside the SDK; private SDKs must be distributed privately.
+5. A private ownership/provenance record drives previews, conflict detection and regeneration. Generated packages do not include this record or upstream private definitions. The selected operations and schemas are part of the SDK source, so an SDK for a private API must be distributed privately.
 
 ## Regeneration transaction
 
@@ -20,7 +20,7 @@ Deterministic rendering normalizes object-key order, excludes timestamps/absolut
 
 ## Extending the project
 
-For a new schema construct or API capability, add its contract type and validation first. Implement observable semantics in **both** runtimes, update the support matrix, add independently expected HTTP fixtures and negative scenarios, and test published artifacts. A language-specific convenience may vary, but must preserve shared API semantics. Unsupported requested features must remain diagnostic failures until implemented.
+For a new schema construct or API capability, add its contract type and validation first. Implement observable semantics in **both** runtimes, update the support matrix, add independently expected HTTP fixtures and negative scenarios, and test published artifacts. A language-specific convenience may vary, but must preserve shared API semantics. A requested feature that is not supported stays a diagnostic failure until both runtimes implement it.
 
 Ordinary diagnostics hooks receive operation/attempt/status/request ID/timing only. Transport injection is a separate privileged boundary: it sees URLs, headers and bodies. Keep credentials out of diagnostics and examples. The application owns injected transports and any downstream retry/connection policy.
 

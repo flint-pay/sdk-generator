@@ -1,6 +1,6 @@
 # Support matrix (generator 0.1.0)
 
-A capability must be declared to generate its public helper. Both initial targets have the same contract semantics. A missing capability is not inferred from a payment resource name, HTTP verb, or field name.
+A capability must be declared to generate its public helper. Both targets have the same contract semantics. A missing capability is not inferred from a payment resource name, HTTP verb, or field name.
 
 | Capability                 | Node.js/TypeScript                                               | PHP                                                         |
 | -------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------- |
@@ -28,7 +28,7 @@ A capability must be declared to generate its public helper. Both initial target
 
 ## Exact OpenAPI subset
 
-| Area           | Supported                                                                                                                                                                    | Rejected or outside this release                                                                                   |
+| Area           | Supported                                                                                                                                                                    | Rejected or unsupported                                                                                            |
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | Input          | OpenAPI 3.0.x/3.1.x JSON; local `$ref`; JSON Pointer overrides                                                                                                               | YAML, remote refs, nonproductive reference cycles, `$ref` siblings                                                 |
 | Operations     | GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS; unique operationId                                                                                                                   | Callbacks, operation servers, other protocol methods                                                               |
@@ -50,11 +50,10 @@ HTTP success bodies and verified webhook payloads must contain well-formed UTF-8
 
 ## Unsupported capabilities
 
-The following capabilities are outside this release:
+- File upload and download, multipart streaming and resume/checksum protocols. Declaring binary media such as a PDF response fails generation. Exclude those operations from the selection, or handle them outside the SDK.
+- OAuth refresh and token cache coordination. Obtain the bearer token in your application and pass it as `token`.
+- Bulk helpers, additional protocols and languages, adaptive throttling, caching and dirty tracking, framework packages, checkout UI, portals, forwarding and replay services, and time simulation.
 
-- File upload/download, multipart streaming and resume/checksum protocols are unsupported. Declaring binary media such as PDF responses fails generation. Operations using those media types require streaming support before they can ship.
-- OAuth refresh/token cache coordination is unsupported; no partially implemented refresh promise is exposed.
-- Bulk helpers, additional protocols/languages, adaptive throttling, caching/dirty tracking, framework packages, checkout UI, portals, forwarding/replay services, AI tooling and time simulations remain optional future products.
-- The generic schema can express per-item bulk results, resource relationships, next actions and exports. Automatic workflows require declared provider semantics; arbitrary resource properties never trigger network activity.
+The schema can still express per-item bulk results, resource relationships, next actions and exports as ordinary data. Automatic behavior requires a declared provider capability; a resource property alone never triggers network activity.
 
-The absence of an optional capability is documented and diagnosed. Existing operations with unsupported wire semantics cannot be quietly shipped as a working SDK.
+A missing optional capability produces a diagnostic. An operation with unsupported wire semantics fails generation rather than shipping as a working SDK.

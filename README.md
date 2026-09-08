@@ -1,14 +1,14 @@
 # Public SDK generator
 
-Generate portable Node.js/TypeScript and PHP SDKs locally from an OpenAPI 3.0/3.1 JSON definition and a separate SDK configuration. The generator is implemented in TypeScript. Generated packages have no dependency on this generator or a hosted service.
+Generate portable Node.js/TypeScript and PHP SDKs locally from an OpenAPI 3.0/3.1 JSON definition and a separate SDK configuration. The generator is a TypeScript CLI and library. Generated packages have no dependency on the generator or on a hosted service.
 
-The generator package is version `0.1.0` and implements the [supported contract subset](docs/support-matrix.md). Generated packages have their own configured versions. The commands below run from a source checkout and do not require a published generator package.
+Generator version `0.1.0` supports the [contract subset in the support matrix](docs/support-matrix.md). Generated packages carry their own configured versions. Every command runs from a source checkout and does not require a published generator package.
 
 ## Generate your first SDK
 
-Use Node.js 22+ and npm. To validate PHP output, also install PHP 8.2+ and Composer 2; preparing PHP release archives requires ZIP support. Generated PHP clients require the JSON and cURL extensions. The generator includes pinned TypeScript 5.9.3, so a global TypeScript installation is unnecessary.
+Use Node.js 22+ and npm. To validate PHP output, also install PHP 8.2+ and Composer 2; preparing PHP release archives requires ZIP support. Generated PHP clients require the JSON and cURL extensions. The generator pins TypeScript 5.9.3, so a global TypeScript installation is unnecessary.
 
-From this repository root:
+From the repository root:
 
 ```sh
 npm ci
@@ -35,7 +35,7 @@ npm init -y
 npm install ../releases/library-1.0.0/example-library-1.0.0.tgz
 ```
 
-Save the following as `example.mjs`. Replace the base URL with an API implementing the example library contract before running `node example.mjs`; the repository does not provide a hosted library API.
+Save this as `example.mjs`. Replace the base URL with an API implementing the example library contract before running `node example.mjs`; the repository does not provide a hosted library API.
 
 ```js
 import { Client } from '@example/library';
@@ -67,23 +67,23 @@ echo $result->data->getTitle();
 $client->close();
 ```
 
-The wire path escapes `book/123` as a single path parameter. Resource/method names are independent of the upstream operation ID and URL.
+The wire path escapes `book/123` as a single path parameter. Resource and method names are independent of the upstream operation ID and URL.
 
 Generated Node packages support Node.js 22+, ESM JavaScript and TypeScript 5.9+. PHP packages require no framework. Optional SQLite webhook examples require Node.js 22.16+ or PHP's `pdo_sqlite` extension. See [using generated SDKs](docs/using-sdks.md) for request options, errors and recovery, and [releases](docs/releases.md) for publishing and hosted Composer installation.
 
-## What is implemented
+## What you get
 
-- Actionable contract/configuration diagnostics; local references; semantic overrides; naming, audience and operation selection; dependent model inclusion.
-- Typed interfaces and examples in both targets; exact integer/decimal encoding; omission/null presence; tolerant future response fields, enum values and tagged alternatives.
-- Explicit authentication destinations, per-request headers, structured errors, request metadata, redacted diagnostics, injectable transports, cancellation, deadlines and declared bounded retries/idempotency.
-- Declared cursor/offset/link pagination, conditional requests, bounded polling, HMAC webhook verification and optional money conversion.
-- Safe deterministic regeneration, conflict detection, no-write previews, structural compatibility reports, package validation, release archives, reference documentation and migration guidance.
-- Provider narrative guides, npm publication, and coordinated versioned documentation/Composer repository deployment with artifact checksums and immutable releases.
-- Shared HTTP conformance fixtures, actual local HTTP transport tests, npm installation, Composer installation, and durable duplicate-event examples.
+- Diagnostics that point at the contract or configuration location that needs attention. Local references, explicit semantic overrides, naming, audience and operation selection, and automatic inclusion of the models a selected operation needs.
+- Typed interfaces and examples in both targets. Exact integer and decimal encoding, a distinction between an omitted field and an explicit null, and responses that keep unknown fields, enum values and tagged alternatives instead of failing on them.
+- Explicit credential destinations, per-request headers, structured errors, request metadata, redacted diagnostics, injectable transports, cancellation, deadlines, and retries and idempotency bounded by what the contract declares.
+- Declared cursor, offset and link pagination, conditional requests, bounded polling, HMAC webhook verification and optional money conversion.
+- Deterministic regeneration that detects hand edits, previews without writing, reports structural compatibility, validates packages, and prepares release archives, reference documentation and migration notes.
+- Provider narrative guides, npm publication, and coordinated deployment of versioned documentation and a Composer repository with artifact checksums and immutable releases.
+- Shared HTTP conformance fixtures, local HTTP transport tests, npm and Composer installation tests, and durable duplicate-event examples.
 
-The [capability matrix](docs/support-matrix.md) specifies the exact supported subset and intentionally unsupported features. This is not unrestricted OpenAPI support. Unsupported constructs fail generation instead of silently degrading. The bundled library and payment examples are synthetic; tests also exercise pinned provider contracts.
+The [support matrix](docs/support-matrix.md) lists the exact supported subset and what is outside it. Unsupported constructs fail generation instead of silently degrading. The bundled library and payment examples are synthetic; the test suite also exercises pinned provider contracts.
 
-## Provider validation
+## Validate against your provider's expected wire behavior
 
 From the repository root:
 
@@ -93,7 +93,7 @@ node dist/cli.js validate .generated/payments --fixtures tests/fixtures/http-cas
 npm test
 ```
 
-Provider-reviewed fixtures should specify expected wire behavior independently of the schema. The shipped synthetic scenarios test the implementation; they do not prove server correctness. `validate --fixtures` runs the same request/response scenarios through both generated public clients without network access. Installation/package tooling may consult configured registries.
+Write fixtures that state the expected wire behavior independently of the schema, and have the provider review them. The bundled synthetic scenarios test the generator; they do not prove server correctness. `validate --fixtures` runs the same request and response scenarios through both generated public clients without network access. Installation and package tooling may consult configured registries.
 
 ## Documentation
 
