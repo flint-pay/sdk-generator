@@ -22,7 +22,48 @@ export function compareSchemas(
       'review',
       'Recursive model target changed; review nested input and response compatibility.',
     );
-  const types = (s: Schema) => (Array.isArray(s.type) ? s.type : [s.type]).filter(Boolean);
+  const unconstrainedTypes = ['null', 'boolean', 'object', 'array', 'string', 'number', 'integer'];
+  const types = (s: Schema): string[] => {
+    const declared = s.type === undefined ? undefined : Array.isArray(s.type) ? s.type : [s.type];
+    // Inputs enforce enums even without type. Responses tolerate unknown enum
+    // values, so their public type guarantees still need the declared type.
+    if (direction === 'input' && s.enum) {
+      const kinds: string[] = [
+        ...new Set(
+          s.enum.map((value) =>
+            value === null ? 'null' : typeof value === 'number' ? 'integer' : typeof value,
+          ),
+        ),
+      ];
+      return declared
+        ? declared.filter(
+            (type) => kinds.includes(type) || (type === 'number' && kinds.includes('integer')),
+          )
+        : kinds;
+    }
+    if (declared) return declared;
+    if (direction === 'input') {
+      let accepted = unconstrainedTypes;
+      for (const branch of s.allOf ?? []) {
+        const allowed = types(branch);
+        accepted = accepted.filter(
+          (type) => allowed.includes(type) || (type === 'integer' && allowed.includes('number')),
+        );
+      }
+      for (const branches of [s.anyOf, s.oneOf]) {
+        if (!branches) continue;
+        const allowed = new Set(branches.flatMap(types));
+        accepted = accepted.filter(
+          (type) => allowed.has(type) || (type === 'integer' && allowed.has('number')),
+        );
+      }
+      // Activating a numeric type can change exact-string encoding and bound
+      // checks in the enclosing schema. Keep those changes conservative.
+      if (!accepted.includes('integer') && !accepted.includes('number')) return accepted;
+    }
+    // An absent, unconstrained type accepts every JSON kind, not an empty set.
+    return unconstrainedTypes;
+  };
   const oldTypes = types(before);
   const newTypes = types(after);
   if (stable([...oldTypes].sort()) !== stable([...newTypes].sort())) {
@@ -34,10 +75,25 @@ export function compareSchemas(
       `${direction} types changed from ${oldTypes.join('|')} to ${newTypes.join('|')}. ${direction === 'input' ? 'Update supplied values to the accepted types; preserve explicit null only where allowed.' : 'Update result handling and null checks to cover the new response types.'}`,
     );
   }
-  if (before.format !== after.format)
+  // JSON-kind widening can still change how existing SDK strings are encoded.
+  // Track exact numeric encoding separately from accepted kinds and nullability.
+  const exactNumeric = (s: Schema): boolean => {
+    const declared = Array.isArray(s.type) ? s.type : [s.type];
+    return (
+      declared.includes('number') ||
+      (declared.includes('integer') && ['int64', 'uint64'].includes(s.format ?? ''))
+    );
+  };
+  // Only null was accepted by a null-only input enum, and its encoding cannot
+  // change. Response enums are open, so they do not provide this guarantee.
+  const onlyNullInput = direction === 'input' && before.enum?.every((v) => v === null);
+  if (
+    before.format !== after.format ||
+    (!onlyNullInput && exactNumeric(before) !== exactNumeric(after))
+  )
     add(
       'breaking',
-      `Wire/value representation changed from ${before.format ?? before.type} to ${after.format ?? after.type}; update serialization and consumers before upgrading.`,
+      `Wire/value representation changed from ${before.format ?? before.type ?? 'unconstrained'} to ${after.format ?? after.type ?? 'unconstrained'}; update serialization and consumers before upgrading.`,
     );
   for (const keyword of [
     'minimum',
@@ -180,6 +236,6 @@ export function compareSchemas(
         `${keyword} direction changed; update request construction, required fields and response access.`,
       );
   if (!changes.length)
-    add('review', 'Schema annotations changed; review documentation and examples.');
+    add('review', 'Schema declarations or annotations changed; review documentation and examples.');
   return changes;
 }

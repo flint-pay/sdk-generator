@@ -4,7 +4,7 @@ Generate and install a package using the [README quickstart](../README.md#instal
 
 ## Calls, inputs and results
 
-Node.js and TypeScript share one ESM package. Use a `.mjs` file or a project with `"type": "module"`. TypeScript consumers use the included declarations with TypeScript 5.9+ and NodeNext module resolution.
+Node.js and TypeScript share one ESM package. Use a `.mjs` file or a project with `"type": "module"`. TypeScript consumers use the included declarations with TypeScript 5.9+ and NodeNext module resolution. Generated npm packages install the pinned `@types/node` dependency required by their declarations.
 
 ```js
 import { Client, SdkError } from '@example/library';

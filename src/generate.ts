@@ -54,7 +54,8 @@ interface RecordFile {
 }
 const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
-const version = JSON.parse(readFileSync(join(here, '../package.json'), 'utf8')).version as string;
+const packageMetadata = JSON.parse(readFileSync(join(here, '../package.json'), 'utf8'));
+const version = packageMetadata.version as string;
 const recordName = '.sdk-generator.json';
 function comparisonBase(before: RecordFile, next: Contract): Contract {
   return before.interface.config.version === next.config.version ||
@@ -577,6 +578,7 @@ export function render(c: Contract): Map<string, string> {
           './custom/*': './custom/*',
         },
         engines: { node: '>=22' },
+        dependencies: { '@types/node': packageMetadata.dependencies['@types/node'] },
         publishConfig: {
           registry: c.config.npm.registry ?? 'https://registry.npmjs.org',
           access: c.config.npm.access ?? 'public',

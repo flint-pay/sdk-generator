@@ -8,9 +8,10 @@ import { promisify } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
+import { gzipSync } from 'node:zlib';
 import { loadContract, generate, prepareRelease, validate } from '../dist/index.js';
 import { compareSchemas } from '../dist/compatibility.js';
-import { Runtime } from '../dist/runtime.js';
+import { Runtime, serialize } from '../dist/runtime.js';
 
 const run = promisify(execFile);
 const root = mkdtempSync(join(tmpdir(), 'sdk-review-fixes-'));
@@ -79,6 +80,689 @@ async function php(f, code, args = []) {
   ]);
   return JSON.parse(stdout);
 }
+
+test('closed response alternatives match their own fields and retain unknown future objects', async () => {
+  const f = fixture('closed-response-alternatives', {
+    oneOf: [
+      { type: 'object', properties: { card: { type: 'string' } }, additionalProperties: false },
+      { type: 'object', properties: { bank: { type: 'string' } }, additionalProperties: false },
+    ],
+  });
+  const { Client, isApiReadResponseKnown } = await sdk(f);
+  for (const [data, known] of [
+    [{ card: 'visa' }, true],
+    [{ bank: 'account' }, true],
+    [{ future: 'value' }, false],
+  ]) {
+    const client = new Client({
+      baseUrl: 'https://example.invalid',
+      transport: async () => Response.json(data),
+    });
+    const result = await client.api.read();
+    assert.deepEqual(JSON.parse(JSON.stringify(result.data)), data);
+    assert.equal(isApiReadResponseKnown(result.data), known);
+    assert.deepEqual(
+      await php(
+        f,
+        String.raw`
+      $c = new Review\Client(new Review\ClientOptions('https://example.invalid',
+        transport: fn($r) => ['status'=>200, 'headers'=>[], 'body'=>$argv[2]]));
+      echo json_encode($c->api->read()->data);
+    `,
+        [JSON.stringify(data)],
+      ),
+      data,
+    );
+  }
+  // An empty object really does match both branches and must not narrow to either.
+  assert.equal(isApiReadResponseKnown({}), false);
+  const client = new Client({
+    baseUrl: 'https://example.invalid',
+    transport: async () => Response.json({}),
+  });
+  await assert.rejects(client.api.read(), (e) => e.kind === 'protocol');
+  assert.equal(
+    await php(
+      f,
+      String.raw`
+    $c = new Review\Client(new Review\ClientOptions('https://example.invalid',
+      transport: fn($r) => ['status'=>200, 'headers'=>[], 'body'=>'{}']));
+    try {$c->api->read();} catch (Review\SdkError $e) {echo json_encode($e->kind);}
+  `,
+    ),
+    'protocol',
+  );
+});
+
+test('response alternatives retain exact fields and known guards when new fields appear at recursive depths', async () => {
+  const detail = {
+    type: 'object',
+    required: ['amount'],
+    additionalProperties: false,
+    properties: {
+      amount: { type: 'integer', format: 'int64' },
+      children: { type: 'array', items: { $ref: '#/components/schemas/Detail' } },
+      related: { type: 'object', additionalProperties: { $ref: '#/components/schemas/Detail' } },
+    },
+  };
+  const branches = [
+    {
+      type: 'object',
+      required: ['card', 'amount'],
+      additionalProperties: false,
+      properties: {
+        card: { type: 'string' },
+        amount: { type: 'integer', format: 'int64' },
+        detail: { $ref: '#/components/schemas/Detail' },
+      },
+    },
+    {
+      type: 'object',
+      required: ['bank'],
+      additionalProperties: false,
+      properties: { bank: { type: 'string' } },
+    },
+  ];
+  for (const keyword of ['oneOf', 'anyOf']) {
+    const f = fixture(
+      'future-fields-' + keyword,
+      {
+        type: 'object',
+        [keyword]: [...branches, ...(keyword === 'anyOf' ? [{ type: 'object' }] : [])],
+      },
+      { components: { Detail: detail } },
+    );
+    const generated = await sdk(f);
+    const data = {
+      card: 'visa',
+      amount: 42,
+      future: true,
+      detail: {
+        amount: 7,
+        future: true,
+        children: [{ amount: 8, future: true }],
+        related: { first: { amount: 9, future: true } },
+      },
+    };
+    const expected = {
+      card: 'visa',
+      amount: '42',
+      future: true,
+      detail: {
+        amount: '7',
+        future: true,
+        children: [{ amount: '8', future: true }],
+        related: { first: { amount: '9', future: true } },
+      },
+    };
+    const client = new generated.Client({
+      baseUrl: 'https://example.invalid',
+      transport: async () => Response.json(data),
+    });
+    const result = await client.api.read();
+    assert.deepEqual(JSON.parse(JSON.stringify(result.data)), expected);
+    assert.deepEqual(
+      await php(
+        f,
+        String.raw`
+      $c = new Review\Client(new Review\ClientOptions('https://example.invalid',
+        transport: fn($r) => ['status'=>200, 'headers'=>[], 'body'=>$argv[2]]));
+      echo json_encode($c->api->read()->data);
+    `,
+        [JSON.stringify(data)],
+      ),
+      expected,
+    );
+    // The response fallback must not permit extra fields in caller inputs.
+    assert.throws(
+      () => generated.makeDetail({ amount: '7', future: true }),
+      (e) => e.kind === 'validation',
+    );
+    assert.equal(
+      await php(
+        f,
+        String.raw`
+      try {new Review\DetailInput(['amount'=>'7', 'future'=>true]);}
+      catch (Review\SdkError $e) {echo json_encode($e->kind);}
+    `,
+      ),
+      'validation',
+    );
+    if (keyword === 'oneOf') {
+      const known = generated.isApiReadResponseKnown;
+      assert.equal(known(result.data), true);
+      assert.equal(known({ ...expected, amount: 'invalid' }), false);
+      assert.equal(
+        known({
+          ...expected,
+          detail: { ...expected.detail, children: [{ amount: 'invalid', future: true }] },
+        }),
+        false,
+      );
+      assert.equal(known({ ...expected, bank: 'account' }), false);
+      assert.equal(known({ future: true }), false);
+    }
+  }
+});
+
+test('tagged response guards retain known variants with additional response fields', async () => {
+  const f = fixture('tagged-future-fields', {
+    oneOf: [
+      {
+        type: 'object',
+        required: ['kind', 'amount'],
+        additionalProperties: false,
+        properties: {
+          kind: { type: 'string', enum: ['card'] },
+          amount: { type: 'integer', format: 'int64' },
+        },
+      },
+      {
+        type: 'object',
+        required: ['kind'],
+        additionalProperties: false,
+        properties: { kind: { type: 'string', enum: ['bank'] } },
+      },
+    ],
+    discriminator: { propertyName: 'kind' },
+  });
+  const { Client, isApiReadResponseKnown } = await sdk(f);
+  const raw = '{"kind":"card","amount":42,"future":true}';
+  const { data } = await new Client({
+    baseUrl: 'https://example.invalid',
+    transport: async () => new Response(raw),
+  }).api.read();
+  assert.equal(data.amount, '42');
+  assert.equal(isApiReadResponseKnown(data), true);
+  assert.equal(isApiReadResponseKnown({ ...data, kind: 'future' }), false);
+  assert.equal(isApiReadResponseKnown({ ...data, amount: 'invalid' }), false);
+});
+
+test('unconstrained type changes use input and response compatibility directions during release', () => {
+  for (const [before, after, direction, severity] of [
+    [{}, { type: 'string' }, 'input', 'breaking'],
+    [{ type: 'string' }, {}, 'input', 'additive'],
+    [{}, { type: 'string' }, 'response', 'additive'],
+    [{ type: 'string' }, {}, 'response', 'breaking'],
+  ]) {
+    const changes = compareSchemas(before, after, 'value', direction);
+    assert.equal(changes.length, 1);
+    assert.equal(changes[0].severity, severity);
+  }
+  const f = fixture(
+    'unconstrained-release',
+    { type: 'string' },
+    {
+      body: {},
+      config: { targets: ['node'], release: { policy: 'semver' } },
+    },
+  );
+  f.doc.paths['/values'].post.requestBody.content['application/json'].schema = { type: 'string' };
+  f.cfg.version = '1.1.0';
+  assert(
+    emit(f).compatibility.some((c) => c.subject === 'read.input.body' && c.severity === 'breaking'),
+  );
+  assert.throws(
+    () => prepareRelease(f.out, join(f.dir, 'minor')),
+    /breaking changes require a new major/,
+  );
+  f.cfg.version = '2.0.0';
+  emit(f);
+  assert.equal(prepareRelease(f.out, join(f.dir, 'major')).version, '2.0.0');
+});
+
+test('exact numeric representation changes remain breaking when accepted JSON kinds widen', () => {
+  for (const numeric of [
+    { type: 'number' },
+    { type: ['number', 'null'] },
+    { type: 'integer', format: 'int64' },
+    { type: ['integer', 'null'], format: 'uint64' },
+  ]) {
+    for (const [before, after] of [
+      [numeric, {}],
+      [{}, numeric],
+    ]) {
+      for (const direction of ['input', 'response']) {
+        assert(
+          compareSchemas(before, after, 'value', direction).some(
+            (c) => c.severity === 'breaking' && /representation/.test(c.message),
+          ),
+          JSON.stringify({ before, after, direction }),
+        );
+      }
+    }
+  }
+  // Widening kinds is still compatible when existing values keep their encoding.
+  for (const before of [{ type: 'string' }, { type: 'integer' }, { type: 'boolean' }]) {
+    assert(!compareSchemas(before, {}, 'value', 'input').some((c) => c.severity === 'breaking'));
+  }
+  const number = { type: 'number' },
+    nullable = { type: ['number', 'null'] };
+  assert(
+    !compareSchemas(number, nullable, 'value', 'input').some((c) => c.severity === 'breaking'),
+  );
+  assert(
+    !compareSchemas(nullable, number, 'value', 'response').some((c) => c.severity === 'breaking'),
+  );
+});
+
+test('removing numeric input encoding requires a major release in both generated clients', async () => {
+  const f = fixture(
+    'numeric-encoding-release',
+    { type: 'string' },
+    {
+      body: { type: 'object', required: ['amount'], properties: { amount: { type: 'number' } } },
+      config: { release: { policy: 'semver' } },
+    },
+  );
+  const requestWire = async () => {
+    const { Client } = await sdk(f);
+    let wire;
+    await new Client({
+      baseUrl: 'https://example.invalid',
+      transport: async (_url, init) => {
+        wire = init.body;
+        return Response.json('ok');
+      },
+    }).api.read({ body: { amount: '42' } });
+    const phpWire = await php(
+      f,
+      String.raw`
+      $wire = null;
+      $c = new Review\Client(new Review\ClientOptions('https://example.invalid',
+        transport: function($r) use (&$wire) {
+          $wire = $r['body'];
+          return ['status'=>200, 'headers'=>[], 'body'=>'"ok"'];
+        }));
+      $c->api->read(new Review\ApiReadInput(['body'=>['amount'=>'42']]));
+      echo json_encode($wire);
+    `,
+    );
+    assert.equal(wire, phpWire);
+    return wire;
+  };
+  assert.equal(await requestWire(), '{"amount":42}');
+  f.doc.paths['/values'].post.requestBody.content['application/json'].schema.properties.amount = {};
+  f.cfg.version = '1.1.0';
+  const changes = emit(f).compatibility;
+  assert.equal(await requestWire(), '{"amount":"42"}');
+  assert(changes.some((c) => c.subject === 'read.input.body.amount' && c.severity === 'breaking'));
+  assert.throws(
+    () => prepareRelease(f.out, join(f.dir, 'minor')),
+    /breaking changes require a new major/,
+  );
+  f.cfg.version = '2.0.0';
+  emit(f);
+  assert.equal(prepareRelease(f.out, join(f.dir, 'major')).version, '2.0.0');
+});
+
+test('expanding nullable numeric input enums permits minor releases without changing existing values', async () => {
+  for (const numeric of [
+    { type: ['number', 'null'] },
+    { type: ['integer', 'null'], format: 'int64' },
+    { type: ['integer', 'null'], format: 'uint64' },
+  ]) {
+    const before = { ...numeric, enum: [null] };
+    for (const after of [{ ...numeric, enum: [null, 1] }, numeric]) {
+      assert(
+        !compareSchemas(before, after, 'amount', 'input').some((c) => c.severity === 'breaking'),
+      );
+      assert.equal(serialize(null, before), serialize(null, after));
+      assert.equal(serialize('1', after), '1');
+      assert(
+        compareSchemas(after, before, 'amount', 'input').some((c) => c.severity === 'breaking'),
+      );
+    }
+    // Response enums remain open, so dropping their numeric representation is breaking.
+    assert(compareSchemas(before, {}, 'amount', 'response').some((c) => c.severity === 'breaking'));
+  }
+  const f = fixture(
+    'numeric-enum-expansion-release',
+    { type: 'string' },
+    {
+      body: {
+        type: 'object',
+        required: ['amount'],
+        properties: { amount: { type: ['number', 'null'], enum: [null] } },
+      },
+      config: { release: { policy: 'semver' } },
+    },
+  );
+  const requestWire = async (amount) => {
+    const { Client } = await sdk(f);
+    let wire;
+    await new Client({
+      baseUrl: 'https://example.invalid',
+      transport: async (_url, init) => {
+        wire = init.body;
+        return Response.json('ok');
+      },
+    }).api.read({ body: { amount } });
+    assert.equal(
+      await php(
+        f,
+        String.raw`
+      $wire = null;
+      $c = new Review\Client(new Review\ClientOptions('https://example.invalid',
+        transport: function($r) use (&$wire) {
+          $wire = $r['body'];
+          return ['status'=>200, 'headers'=>[], 'body'=>'"ok"'];
+        }));
+      $c->api->read(new Review\ApiReadInput(['body'=>['amount'=>json_decode($argv[2])]]));
+      echo json_encode($wire);
+    `,
+        [JSON.stringify(amount)],
+      ),
+      wire,
+    );
+    return wire;
+  };
+  assert.equal(await requestWire(null), '{"amount":null}');
+  const amount =
+    f.doc.paths['/values'].post.requestBody.content['application/json'].schema.properties.amount;
+  amount.enum.push(1);
+  f.cfg.version = '1.1.0';
+  assert(!emit(f).compatibility.some((c) => c.severity === 'breaking'));
+  assert.equal(await requestWire(null), '{"amount":null}');
+  assert.equal(await requestWire('1'), '{"amount":1}');
+  assert.equal(prepareRelease(f.out, join(f.dir, 'minor')).version, '1.1.0');
+});
+
+test('redundant enum input types permit minor releases without weakening representation or response checks', () => {
+  for (const [members, type] of [
+    [['card', 'bank'], 'string'],
+    [[true, false], 'boolean'],
+    [[1, 2], 'integer'],
+    [[null], 'null'],
+    [[null], ['number', 'null']],
+    [
+      ['card', null],
+      ['string', 'null'],
+    ],
+    [['card'], ['string', 'null']],
+  ]) {
+    const implicit = { enum: members },
+      explicit = { type, enum: members };
+    for (const [before, after] of [
+      [implicit, explicit],
+      [explicit, implicit],
+    ]) {
+      assert(
+        !compareSchemas(before, after, 'input', 'input').some((c) => c.severity === 'breaking'),
+      );
+      for (const value of members) assert.equal(serialize(value, before), serialize(value, after));
+    }
+  }
+  const implicit = { enum: ['card', 'bank'] },
+    explicit = { type: 'string', enum: ['card', 'bank'] };
+  for (const shape of [implicit, explicit]) {
+    for (const value of [123, null, {}, 'cash']) assert.throws(() => serialize(value, shape));
+  }
+  // Numeric wire representations and open response enums are still significant.
+  assert(
+    compareSchemas({ enum: [1] }, { type: 'number', enum: [1] }, 'input', 'input').some(
+      (c) => c.severity === 'breaking',
+    ),
+  );
+  assert(
+    compareSchemas(
+      { enum: [1] },
+      { type: 'integer', format: 'int64', enum: [1] },
+      'input',
+      'input',
+    ).some((c) => c.severity === 'breaking'),
+  );
+  assert(
+    compareSchemas(explicit, implicit, 'response', 'response').some(
+      (c) => c.severity === 'breaking',
+    ),
+  );
+  assert(
+    compareSchemas(implicit, { type: 'string', enum: ['card'] }, 'input', 'input').some(
+      (c) => c.severity === 'breaking',
+    ),
+  );
+  const f = fixture(
+    'enum-type-release',
+    { type: 'string' },
+    { body: implicit, config: { targets: ['node'], release: { policy: 'semver' } } },
+  );
+  const declarations = readFileSync(join(f.out, 'node/index.d.ts'), 'utf8');
+  f.doc.paths['/values'].post.requestBody.content['application/json'].schema = explicit;
+  f.cfg.version = '1.1.0';
+  assert(!emit(f).compatibility.some((c) => c.severity === 'breaking'));
+  assert.equal(readFileSync(join(f.out, 'node/index.d.ts'), 'utf8'), declarations);
+  assert.equal(prepareRelease(f.out, join(f.dir, 'minor')).version, '1.1.0');
+});
+
+test('composed input constraints recognize redundant types while still detecting narrowed inputs', () => {
+  for (const [implicit, type] of [
+    [{ allOf: [{ type: 'string' }, { minLength: 1 }] }, 'string'],
+    [
+      {
+        anyOf: [
+          { type: 'string', enum: ['card'] },
+          { type: 'string', enum: ['bank'] },
+        ],
+      },
+      'string',
+    ],
+    [
+      {
+        oneOf: [
+          { type: 'string', enum: ['card'] },
+          { type: 'string', enum: ['bank'] },
+        ],
+      },
+      'string',
+    ],
+    [{ anyOf: [{ type: 'string' }, { type: 'null' }] }, ['string', 'null']],
+    [
+      { allOf: [{ anyOf: [{ type: 'string' }, { type: 'boolean' }] }, { enum: ['card', 'bank'] }] },
+      'string',
+    ],
+  ]) {
+    const explicit = { ...implicit, type };
+    for (const [before, after] of [
+      [implicit, explicit],
+      [explicit, implicit],
+    ]) {
+      assert(
+        !compareSchemas(before, after, 'body', 'input').some((c) => c.severity === 'breaking'),
+      );
+      for (const value of ['card', 'bank', true, null, 42, {}]) {
+        const encode = (schema) => {
+          try {
+            return { wire: serialize(value, schema) };
+          } catch {
+            return { rejected: true };
+          }
+        };
+        assert.deepEqual(encode(before), encode(after));
+      }
+    }
+  }
+  for (const before of [
+    { anyOf: [{ type: 'string' }, { type: 'boolean' }] },
+    { allOf: [{ minLength: 1 }, { maxLength: 10 }] },
+  ]) {
+    assert(
+      compareSchemas(before, { ...before, type: 'string' }, 'body', 'input').some(
+        (c) => c.severity === 'breaking',
+      ),
+    );
+  }
+  const numeric = { minimum: 1, anyOf: [{ type: 'number' }] };
+  assert(
+    compareSchemas(numeric, { ...numeric, type: 'number' }, 'body', 'input').some(
+      (c) => c.severity === 'breaking',
+    ),
+  );
+  // Unlike inputs, response alternatives may retain unknown future JSON kinds.
+  const alternatives = { anyOf: [{ type: 'string' }] };
+  assert(
+    compareSchemas({ ...alternatives, type: 'string' }, alternatives, 'body', 'response').some(
+      (c) => c.severity === 'breaking',
+    ),
+  );
+  const f = fixture(
+    'composed-type-release',
+    { type: 'string' },
+    {
+      body: {
+        anyOf: [
+          { type: 'string', enum: ['card'] },
+          { type: 'string', enum: ['bank'] },
+        ],
+      },
+      config: { targets: ['node'], release: { policy: 'semver' } },
+    },
+  );
+  const consumer =
+    "import {Client} from './sdk/node/index.js'; const client = new Client({baseUrl:'https://example.invalid'}); client.api.read({body:'card'}); client.api.read({body:'bank'});";
+  let compilation = compile(f, consumer);
+  assert.equal(compilation.status, 0, compilation.stdout + compilation.stderr);
+  f.doc.paths['/values'].post.requestBody.content['application/json'].schema.type = 'string';
+  f.cfg.version = '1.1.0';
+  assert(!emit(f).compatibility.some((c) => c.severity === 'breaking'));
+  compilation = compile(f, consumer);
+  assert.equal(compilation.status, 0, compilation.stdout + compilation.stderr);
+  assert.equal(prepareRelease(f.out, join(f.dir, 'minor')).version, '1.1.0');
+});
+
+test('native clients decode compressed successes and code-specific retry errors with default and explicit encoding headers', async () => {
+  const f = fixture(
+    'compressed-http',
+    {
+      type: 'object',
+      required: ['value'],
+      properties: { value: { type: 'integer' } },
+    },
+    {
+      config: {
+        operations: {
+          read: {
+            retry: {
+              maxAttempts: 2,
+              statuses: [],
+              errors: [{ status: 503, codes: ['temporarily_unavailable'] }],
+              transport: false,
+              baseDelayMs: 0,
+            },
+          },
+        },
+      },
+    },
+  );
+  const counts = new Map(),
+    requests = [];
+  const server = createServer((req, res) => {
+    const key = req.headers['x-test-run'];
+    const count = (counts.get(key) ?? 0) + 1;
+    counts.set(key, count);
+    requests.push(req.headers);
+    const retry = key.endsWith('retry') && count === 1;
+    res.writeHead(retry ? 503 : 200, {
+      'content-type': 'application/json',
+      'content-encoding': 'gzip',
+    });
+    res.end(gzipSync(JSON.stringify(retry ? { code: 'temporarily_unavailable' } : { value: 1 })));
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const { Client } = await sdk(f);
+    const client = new Client({ baseUrl: base, allowInsecureHttp: true });
+    for (const explicit of [false, true]) {
+      for (const kind of ['success', 'retry']) {
+        const result = await client.api.read(
+          {},
+          {
+            headers: {
+              'x-test-run': `node-${explicit}-${kind}`,
+              ...(explicit ? { 'accept-encoding': 'gzip' } : {}),
+            },
+          },
+        );
+        assert.equal(result.data.value, 1);
+        assert.equal(result.meta.attempts, kind === 'retry' ? 2 : 1);
+      }
+    }
+    const results = await php(
+      f,
+      String.raw`
+      $c = new Review\Client(new Review\ClientOptions($argv[2], allowInsecureHttp:true));
+      $results = [];
+      foreach ([false, true] as $explicit) {
+        foreach (['success', 'retry'] as $kind) {
+          $headers = ['x-test-run'=>'php-'.($explicit ? 'true' : 'false').'-'.$kind];
+          if ($explicit) $headers['accept-encoding'] = 'gzip';
+          $r = $c->api->read(options:new Review\RequestOptions(headers:$headers));
+          $results[] = [$r->data->getValue(), $r->meta['attempts']];
+        }
+      }
+      $c->close();
+      echo json_encode($results);
+    `,
+      [base],
+    );
+    assert.deepEqual(results, [
+      [1, 1],
+      [1, 2],
+      [1, 1],
+      [1, 2],
+    ]);
+    assert.equal(requests.length, 12);
+    for (const headers of requests) assert.match(headers['accept-encoding'], /gzip/);
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('an installed generated npm archive typechecks without the generator type roots', async () => {
+  const f = fixture('standalone-types', { type: 'string' }, { config: { targets: ['node'] } });
+  const packed = await run(
+    'npm',
+    ['pack', '--ignore-scripts', '--json', '--pack-destination', f.dir],
+    { cwd: join(f.out, 'node') },
+  );
+  const archive = join(f.dir, JSON.parse(packed.stdout)[0].filename);
+  const consumer = join(f.dir, 'consumer');
+  mkdirSync(consumer);
+  writeFileSync(
+    join(consumer, 'package.json'),
+    JSON.stringify({ name: 'review-consumer', private: true, type: 'module' }),
+  );
+  await run('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', archive], {
+    cwd: consumer,
+  });
+  writeFileSync(
+    join(consumer, 'index.ts'),
+    `import {Client} from '@example/review';
+    const client = new Client({baseUrl:'https://example.invalid'});
+    const result: string = (await client.api.read()).data;
+  `,
+  );
+  const compilation = spawnSync(
+    process.execPath,
+    [
+      resolve('node_modules/typescript/bin/tsc'),
+      '--strict',
+      '--noEmit',
+      '--target',
+      'ES2022',
+      '--lib',
+      'ES2022',
+      '--module',
+      'NodeNext',
+      'index.ts',
+    ],
+    { cwd: consumer, encoding: 'utf8', timeout: 120000 },
+  );
+  assert.equal(compilation.status, 0, compilation.stdout + compilation.stderr);
+});
 
 test('exported response-model factories enforce major versions when their inputs tighten', async () => {
   const f = fixture(

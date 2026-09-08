@@ -327,6 +327,7 @@ export function normalize(
   definitions: Record<string, Schema> = {},
   depth = 0,
   validateConstraints = true,
+  allowUnknownResponseFields = false,
 ): any {
   if (depth > 256) bad(path, 'value exceeds the supported nesting depth (256) or contains a cycle');
   validateConstraints =
@@ -347,6 +348,7 @@ export function normalize(
       definitions,
       depth + 1,
       validateConstraints,
+      allowUnknownResponseFields,
     );
   }
   if (value instanceof Model) value = value.toJSON();
@@ -363,8 +365,9 @@ export function normalize(
       definitions,
       depth + 1,
       validateConstraints,
+      allowUnknownResponseFields,
     );
-    const matches = (branch: Schema): boolean => {
+    const matches = (branch: Schema, allowUnknownFields: boolean): boolean => {
       try {
         normalize(
           value,
@@ -376,6 +379,7 @@ export function normalize(
           definitions,
           depth + 1,
           validateConstraints,
+          allowUnknownFields,
         );
         return true;
       } catch (error) {
@@ -383,7 +387,7 @@ export function normalize(
         throw error;
       }
     };
-    if (not && matches(not)) bad(path, 'value matches a forbidden combination');
+    if (not && matches(not, false)) bad(path, 'value matches a forbidden combination');
     for (const branch of allOf ?? [])
       result = combine(
         result,
@@ -397,6 +401,7 @@ export function normalize(
           definitions,
           depth + 1,
           validateConstraints,
+          allowUnknownResponseFields,
         ),
         path,
       );
@@ -406,6 +411,7 @@ export function normalize(
     ] as const) {
       if (!branches) continue;
       let selected: Schema[];
+      let tolerateUnknownFields = allowUnknownResponseFields;
       if (keyword === 'oneOf' && discriminator) {
         const tag = discriminator.propertyName;
         if (
@@ -419,7 +425,23 @@ export function normalize(
         selected = branches.filter((branch) =>
           branch.properties?.[tag]?.enum?.includes((value as any)[tag]),
         );
-      } else selected = branches.filter(matches);
+      } else {
+        selected = branches.filter((branch) => matches(branch, false));
+        // Prefer exact closed oneOf alternatives, then a unique branch allowing
+        // extra response fields. anyOf keeps every compatible branch so a generic
+        // match does not discard another branch's known field representations.
+        if (
+          (keyword === 'anyOf' || !selected.length) &&
+          response &&
+          (!matching || allowUnknownResponseFields)
+        ) {
+          const compatible = branches.filter((branch) => matches(branch, true));
+          if (keyword === 'anyOf' || compatible.length === 1) {
+            selected = compatible;
+            tolerateUnknownFields = true;
+          }
+        }
+      }
       if (selected.length === 0 && response && !matching) {
         if (
           branches.every((branch) => branch.type === 'object') &&
@@ -448,6 +470,7 @@ export function normalize(
             definitions,
             depth + 1,
             validateConstraints,
+            tolerateUnknownFields,
           ),
           path,
         );
@@ -560,8 +583,12 @@ export function normalize(
           definitions,
           depth + 1,
           validateConstraints,
+          allowUnknownResponseFields,
         );
-      else if (!response && s.additionalProperties === false)
+      else if (
+        (!response || (matching && !allowUnknownResponseFields)) &&
+        s.additionalProperties === false
+      )
         bad(`${path}.${k}`, 'unknown request field');
       else if (typeof s.additionalProperties === 'object')
         out[k] = normalize(
@@ -574,6 +601,7 @@ export function normalize(
           definitions,
           depth + 1,
           validateConstraints,
+          allowUnknownResponseFields,
         );
       else out[k] = v;
     }
@@ -604,6 +632,7 @@ export function normalize(
         definitions,
         depth + 1,
         validateConstraints,
+        allowUnknownResponseFields,
       ),
     );
   }
@@ -640,7 +669,7 @@ export function isKnownVariant(value: unknown, schema: Schema): boolean {
   )
     return false;
   try {
-    normalize(value, schema, 'response', true, [], true);
+    normalize(value, schema, 'response', true, [], true, {}, 0, true, true);
     return true;
   } catch {
     return false;
