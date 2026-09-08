@@ -27,4 +27,4 @@ node dist/cli.js validate .generated/flint-risk --fixtures tests/providers/flint
 
 When updating the fixture set, obtain a matching versioned source export, retain the original schemas, and record any required corrections in the profiles with a source-backed reason. Keep the API date, header pin and generated types aligned. Verify expected HTTP behavior independently of generator output before updating hashes; the manifest is an integrity check, not proof of provider acceptance.
 
-Large amounts and future status values intentionally probe serialization and response compatibility. They do not assert transaction eligibility or a successful server mutation. Schema checks do not replace provider business validation, and these fixtures do not cover every Flint endpoint or payment method.
+Large amounts and future status values probe serialization and response compatibility. They do not assert transaction eligibility or a successful server mutation. Schema checks do not replace provider business validation, and these fixtures do not cover every Flint endpoint or payment method.

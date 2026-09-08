@@ -1,6 +1,6 @@
 # Using generated SDKs
 
-Generate and install a package using the [README quickstart](../README.md#install-and-use-the-generated-packages). Each package contains its own `README.md`, `REFERENCE.md`, typed interfaces and operation examples. Public resource and method names come from the SDK configuration; the examples below use the bundled library contract.
+Generate and install a package using the [README quickstart](../README.md#install-and-use-the-generated-packages). Each package contains its own `README.md`, `REFERENCE.md`, typed interfaces and operation examples. Public resource and method names come from the SDK configuration; these examples use the bundled library contract.
 
 ## Calls, inputs and results
 
@@ -49,7 +49,7 @@ try {
 }
 ```
 
-Set `baseUrl` to the actual API base; these examples do not point to a hosted service. Its path prefix is retained when operation paths are appended, so avoid duplicating `/v1` if it is already present in the generated operation paths. Provide `token` through your application's credential source when the selected contract requires authentication. The SDK itself does not read environment variables or discover credentials.
+Set `baseUrl` to your API's base URL; these examples do not point to a hosted service. Its path prefix is retained when operation paths are appended, so avoid duplicating `/v1` if it is already present in the generated operation paths. Provide `token` through your application's credential source when the selected contract requires authentication. The SDK itself does not read environment variables or discover credentials.
 
 Path, query and header parameters are properties of the operation input; a JSON request body is under `body`. Optional fields may be omitted. Explicit null is accepted only where nullable; it does not automatically mean the server will clear a value. PHP inputs use omitted array keys for omission and `['field' => null]` for explicit null. PHP models provide `has()` and `get()`; typed getters for missing optional fields throw.
 
@@ -85,7 +85,7 @@ Node clients can serve concurrent calls within an event loop. PHP clients suppor
 
 ## Errors and recovery
 
-Both targets expose `SdkError`. Node uses `code`, `cause` and `meta?.requestId`; PHP uses `errorCode`, `getPrevious()` and `$error->meta['requestId']`. Shared `kind` values are `transport`, `authentication`, `validation`, `rate_limit`, `api`, `conflict`, `protocol`, `cancelled`, `deadline` and `destination`.
+Both targets expose `SdkError`. Node uses `code`, `cause` and `meta?.requestId`; PHP uses `errorCode`, `getPrevious()` and `$error->meta['requestId']`. Shared `kind` values are `transport`, `authentication`, `validation`, `rate_limit`, `api`, `conflict`, `protocol`, `cancelled`, `deadline` and `destination`. <!-- copy-ok: `cancelled` is the literal SdkError kind -->
 
 | `outcome`  | Meaning for recovery                                                                                                                                      |
 | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |

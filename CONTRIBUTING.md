@@ -14,13 +14,13 @@ Tests generate packages in temporary directories, typecheck JS/TS consumer examp
 
 When changing shared semantics, update both language runtimes and their common fixtures. Review expected HTTP values independently of generator output. New capabilities require diagnostics for incomplete declarations, documentation and negative scenarios. Keep generated output readable and deterministic. Do not check generated artifacts, real credentials or private provider definitions into this repository.
 
-For bug reports, include generator/package/runtime versions, a minimal sanitized API/configuration example, expected and actual wire behavior, and a request ID when safe. Explain whether the reproduction uses local fixtures, a sandbox or a live provider. Redact credentials and sensitive bodies.
+For bug reports, include generator/package/runtime versions, a minimal sanitized API/configuration example, the expected and observed wire behavior, and a request ID when safe. Explain whether the reproduction uses local fixtures, a sandbox or a live provider. Redact credentials and sensitive bodies.
 
-The project is pre-1.0 and has no paid support SLA. Support is limited to the published capability/runtime matrix. Deprecations and breaking changes must be recorded in release notes, with effects on both targets described. Additional languages and provider capabilities should be driven by concrete contracts and tests.
+The generator is pre-1.0 and has no paid support SLA. Support covers the published capability and runtime matrix. Record deprecations and breaking changes in release notes, with the effect on both targets described. A new language or provider capability starts from a concrete contract and its tests.
 
 ## Documentation and package checks
 
-Update the [configuration guide](docs/configuration.md), [consumer guide](docs/using-sdks.md) and support matrix whenever public behavior changes. Package README/reference text is emitted from `src/generate.ts`; update that text too when the change affects generated consumers. Keep development progress reports, provider acceptance logs and local investigation artifacts outside public documentation and package contents.
+Update the [configuration guide](docs/configuration.md), [consumer guide](docs/using-sdks.md) and support matrix whenever public behavior changes. Package README/reference text is emitted from `src/generate.ts`; update that text too when the change affects generated consumers. Keep working notes, provider acceptance logs and local investigation artifacts out of public documentation and package contents.
 
 ```sh
 npx prettier --check README.md CONTRIBUTING.md SECURITY.md docs tests/providers/flint/README.md

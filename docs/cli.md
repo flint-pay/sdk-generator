@@ -1,6 +1,6 @@
 # CLI and library reference
 
-From a source checkout, run `npm ci` and `npm run build`, then invoke `node dist/cli.js`. The commands below use that form. Installing a packed generator exposes the same CLI as `sdk-generator`; no global installation is required for source development.
+From a source checkout, run `npm ci` and `npm run build`, then invoke `node dist/cli.js`. Installing a packed generator exposes the same commands as `sdk-generator`; no global installation is required for source development.
 
 ## Commands
 
@@ -45,7 +45,7 @@ OUTPUT/
     guides/             Optional provider narrative guides
 ```
 
-Only selected targets are emitted. Webhook inbox/outbox examples appear when verification is configured. The private root record is excluded from package archives; preserve it to detect hand edits, remove obsolete owned files and compare future versions. Generated packages necessarily contain their selected operation and schema information.
+Only selected targets are emitted. Webhook inbox/outbox examples appear when verification is configured. The private root record is excluded from package archives; preserve it to detect hand edits, remove obsolete owned files and compare future versions. Generated packages contain their selected operation and schema information.
 
 ## Using the generator as a library
 

@@ -1,8 +1,8 @@
 # Releases and compatibility
 
-Generator releases and generated SDK package versions are independent. Version 0.1.0 supports the subset in the support matrix. Node and PHP outputs use the configured package version; API `info.version` and an optional pinned version header are separately documented. Preview versions use a SemVer prerelease suffix and npm's `next` tag in the release plan.
+Generator releases and generated SDK package versions are independent. Generator 0.1.0 supports the subset in the [support matrix](support-matrix.md). Node and PHP outputs use the configured package version; API `info.version` and an optional pinned version header are separately documented. Preview versions use a SemVer prerelease suffix and npm's `next` tag in the release plan.
 
-The commands below use the installed `sdk-generator` executable. From a source checkout, substitute `node dist/cli.js` after running `npm ci` and `npm run build`. See the [CLI reference](cli.md) for complete positional arguments. Package preparation and tests do not establish that a version has been published.
+Release commands use the installed `sdk-generator` executable. From a source checkout, substitute `node dist/cli.js` after running `npm ci` and `npm run build`. See the [CLI reference](cli.md) for complete positional arguments. Package preparation and tests do not establish that a version has been published.
 
 Before publication:
 
@@ -51,6 +51,6 @@ sdk-generator publish-site release/1.2.0 /path/to/sdk-web-root --confirm-version
 
 The destination is a dedicated provider-owned web root or hosting checkout. Deployment stages a complete tree and preserves previous versions and Composer package entries. It rejects unrelated directories, edited published versions, symlinks and tampered artifacts. Repeating the same reviewed publication is safe. HTTP serving and authentication belong to the provider's hosting environment; no cloud account is required by the generator. A hosting checkout still needs the provider's normal deployment step before it is publicly served.
 
-Consumers add `{ "type": "composer", "url": "https://sdk.example.com/" }` to their Composer repositories and install the generated package normally. The automated suite installs from an actual locally served generated repository.
+Consumers add `{ "type": "composer", "url": "https://sdk.example.com/" }` to their Composer repositories and install the generated package normally. The test suite installs from a generated repository served locally over HTTP.
 
 Publish npm and the site as separate reviewed steps. `publication.json` and `site-publication.json` record the respective outcomes. If one destination succeeds and the other fails, preserve the successful immutable version and retry only the failed step after checking its state; do not rebuild different contents under an already published version. The two destinations cannot be committed atomically.
