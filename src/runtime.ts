@@ -104,8 +104,14 @@ const exactDecimal = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
 class RawNumber {
   constructor(readonly value: string) {}
 }
+class ParsedNumber {
+  constructor(readonly value: string) {}
+}
 /** Parse JSON without rounding integers or decimal tokens. Unknown numeric tokens remain exact strings. */
 export function parseExact(text: string): unknown {
+  return parseJson(text);
+}
+function parseJson(text: string, preserveNumbers = false): unknown {
   let encoded = '';
   let quoted = false;
   let escaped = false;
@@ -139,8 +145,8 @@ export function parseExact(text: string): unknown {
     i++;
   }
   // Validate original grammar as well: quoting tokens must not repair malformed JSON.
-  JSON.parse(text);
-  return JSON.parse(encoded, (key, value) => {
+  const original = JSON.parse(text);
+  const parsed = JSON.parse(encoded, (key, value) => {
     if (
       /[\uD800-\uDFFF]/u.test(key) ||
       (typeof value === 'string' && /[\uD800-\uDFFF]/u.test(value))
@@ -148,6 +154,42 @@ export function parseExact(text: string): unknown {
       throw new SyntaxError('JSON strings must contain well-formed Unicode');
     return value;
   });
+  // The original tree supplies only token kinds, never rounded numeric values.
+  const mark = (value: any, source: any): any => {
+    if (typeof source === 'number' && typeof value === 'string') return new ParsedNumber(value);
+    if (value && typeof value === 'object')
+      for (const key of Object.keys(value)) value[key] = mark(value[key], source[key]);
+    return value;
+  };
+  return preserveNumbers ? mark(parsed, original) : parsed;
+}
+function plainNumbers(value: any): any {
+  if (value instanceof ParsedNumber) return value.value;
+  if (value && typeof value === 'object')
+    for (const key of Object.keys(value)) value[key] = plainNumbers(value[key]);
+  return value;
+}
+/** Expand integral decimal/exponent tokens exactly, with bounded exponent expansion. */
+function integerToken(token: string, path: string): string {
+  if (exactInteger.test(token)) return token;
+  const [coefficient, exponent = '0'] = token.toLowerCase().split('e');
+  const fraction = coefficient!.split('.')[1]?.length ?? 0;
+  let digits = coefficient!.replace(/^-/, '').replace('.', '').replace(/^0+/, '');
+  if (!digits) return '0';
+  const shift = Number(exponent) - fraction;
+  if (shift < 0) {
+    if (-shift >= digits.length || /[1-9]/.test(digits.slice(shift)))
+      return bad(path, 'expected an integral JSON number');
+    digits = digits.slice(0, shift);
+  } else {
+    if (shift > 10000) return bad(path, 'integer exponent expansion exceeds 10000 digits');
+    digits += '0'.repeat(shift);
+  }
+  return (token.startsWith('-') ? '-' : '') + digits;
+}
+function denseArray(value: unknown[], path: string): void {
+  for (let i = 0; i < value.length; i++)
+    if (!Object.hasOwn(value, i)) bad(`${path}[${i}]`, 'sparse arrays are unsupported');
 }
 function encode(value: unknown, depth = 0): string {
   if (depth > 256) bad('value', 'value exceeds the supported nesting depth or contains a cycle');
@@ -160,7 +202,10 @@ function encode(value: unknown, depth = 0): string {
       bad('value', 'use a decimal or integer string for exact numbers');
     return String(value);
   }
-  if (Array.isArray(value)) return '[' + value.map((v) => encode(v, depth + 1)).join(',') + ']';
+  if (Array.isArray(value)) {
+    denseArray(value, 'value');
+    return '[' + value.map((v) => encode(v, depth + 1)).join(',') + ']';
+  }
   if (value && typeof value === 'object')
     return (
       '{' +
@@ -174,6 +219,14 @@ function encode(value: unknown, depth = 0): string {
 }
 /** Merge independently validated representations without discarding typed numeric tokens. */
 function combine(left: any, right: any, path: string): any {
+  if (left instanceof ParsedNumber || right instanceof ParsedNumber) {
+    const token = left instanceof ParsedNumber ? left : right;
+    const other = left instanceof ParsedNumber ? right : left;
+    const text = other instanceof ParsedNumber ? other.value : String(other);
+    if (!exactDecimal.test(text) || compareDecimal(token.value, text) !== 0)
+      bad(path, 'alternatives have incompatible numeric representations');
+    return other;
+  }
   if (left instanceof RawNumber || right instanceof RawNumber) {
     const token = left instanceof RawNumber ? left : right;
     const other = left instanceof RawNumber ? right : left;
@@ -399,7 +452,13 @@ export function normalize(
           path,
         );
     }
-    if (response && result && typeof result === 'object' && !Array.isArray(result)) {
+    if (
+      response &&
+      result &&
+      typeof result === 'object' &&
+      !Array.isArray(result) &&
+      !(result instanceof ParsedNumber)
+    ) {
       const object = Object.assign(Object.create(null), result);
       Object.defineProperty(object, inspect.custom, {
         value: () => redact(object, s, redactFields, definitions),
@@ -420,6 +479,24 @@ export function normalize(
     return bad(path, 'null is not permitted');
   }
   const type = Array.isArray(s.type) ? s.type.find((v) => v !== 'null') : s.type;
+  if (value instanceof ParsedNumber) {
+    if (type === undefined) {
+      const token = value.value;
+      if (
+        matching &&
+        s.enum &&
+        !s.enum.some((v) => typeof v === 'number' && compareDecimal(token, String(v)) === 0)
+      )
+        bad(path, 'value is outside the declared enum');
+      if (matching) numericConstraints(value.value, s, path);
+      return value;
+    }
+    if (type === 'integer') {
+      const token = integerToken(value.value, path);
+      value = ['int64', 'uint64'].includes(s.format ?? '') ? token : Number(token);
+    } else if (type === 'number') value = value.value;
+    else return bad(path, `expected ${type}; received a JSON number`);
+  }
   const exactEnum =
     type === 'number' || (type === 'integer' && ['int64', 'uint64'].includes(s.format ?? ''));
   if (
@@ -502,6 +579,7 @@ export function normalize(
   }
   if (type === 'array' || (type === undefined && Array.isArray(value))) {
     if (!Array.isArray(value)) return bad(path, 'expected an array');
+    denseArray(value, path);
     if ((!response || matching) && (validateConstraints || matching)) {
       if (s.minItems !== undefined && value.length < s.minItems)
         bad(path, 'array violates minItems');
@@ -936,7 +1014,7 @@ export class Runtime {
         let data: any;
         try {
           raw = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
-          data = raw ? parseExact(raw) : undefined;
+          data = raw ? parseJson(raw, response.ok || response.status === 304) : undefined;
         } catch (cause) {
           if (response.ok)
             throw new SdkError(
@@ -966,7 +1044,9 @@ export class Runtime {
           try {
             if (declared.schema) {
               if (data === undefined) throw new Error('Missing body');
-              data = normalize(data, declared.schema, 'response', true, this.options.redactFields);
+              data = plainNumbers(
+                normalize(data, declared.schema, 'response', true, this.options.redactFields),
+              );
             } else if (raw) throw new Error('Unexpected body for an empty response');
           } catch (cause) {
             throw new SdkError(
@@ -1266,8 +1346,9 @@ export class Runtime {
     if (!valid) throw new SdkError('authentication', 'Invalid webhook signature or timestamp');
     let event: any;
     try {
-      event = parseExact(
+      event = parseJson(
         new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(Buffer.from(rawBody)),
+        true,
       );
     } catch (cause) {
       throw new SdkError(
@@ -1287,7 +1368,9 @@ export class Runtime {
         ? w.events[eventType]
         : undefined;
     return {
-      event: schema ? normalize(event, schema, 'event', true, this.options.redactFields) : event,
+      event: plainNumbers(
+        schema ? normalize(event, schema, 'event', true, this.options.redactFields) : event,
+      ),
       known: Boolean(schema),
     };
   }
