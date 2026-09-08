@@ -29,6 +29,18 @@ The generator compares against its recorded previous interface; preserve the pri
 
 Archive preparation checks generated file integrity. Keep private provenance records, API definitions and signing secrets out of distribution repositories. npm's explicit file allowlist includes `custom/`; review custom contents before publishing. No local test suite certifies a real provider's backend. Publication to multiple registries cannot be one atomic transaction; document any partial publication and recovery.
 
+## Known compatibility limitations
+
+Changes inside `allOf`, `anyOf`, and `not` receive a generic `review` finding; the comparison does not recursively classify every nested constraint change. Other comparisons may still identify a breaking change, but a `review` finding alone does not block a patch release under `release.policy: "semver"` or require an explicit acknowledgment.
+
+For example, with `validation: "schema"`, adding `minLength: 3` to a string input property inside an otherwise unchanged `allOf` branch can reject a previously valid one-character value while producing only a `review` finding. Review the nested constraints and choose the appropriate version increase manually before release. Successful release preparation does not establish that these changes are compatible.
+
+Deferred improvements:
+
+- Compare straightforward changes within otherwise unchanged `allOf` branches and classify provable input narrowing as breaking, accounting for the surrounding constraints.
+- Retain `review` for reorganized branches, overlapping constraints, and alternatives whose compatibility cannot be determined safely.
+- Consider requiring explicit acknowledgment of unresolved `review` findings during release preparation under the `semver` policy.
+
 ## Explicit npm publication
 
 After reviewing the prepared artifacts and supplying registry authentication through your own npm configuration, run:

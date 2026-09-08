@@ -1534,7 +1534,8 @@ class Runtime
             CURLOPT_TIMEOUT_MS => $r['timeoutMs'],
             CURLOPT_CONNECTTIMEOUT_MS => $r['timeoutMs'],
             CURLOPT_HTTPHEADER => array_map(
-                fn($k, $v) => "$k: $v",
+                // cURL treats "name:" as suppression; "name;" sends an empty value.
+                fn($k, $v) => $v === '' ? "$k;" : "$k: $v",
                 array_keys($r['headers']),
                 array_values($r['headers']),
             ),

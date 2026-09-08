@@ -161,7 +161,9 @@ const reserved = new Set(
 );
 // TypeScript keywords are case-sensitive and may still be valid property names.
 const reservedTypeNames = new Set(
-  'debugger export import in super this typeof with package arguments'.split(' '),
+  'debugger export import in super this typeof with package arguments keyof infer unique'.split(
+    ' ',
+  ),
 );
 function modelName(
   value: unknown,

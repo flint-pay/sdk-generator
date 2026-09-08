@@ -94,20 +94,58 @@ function optionalPropertyType(key: string, value: string): string {
     ? `(${value}) | Object[${JSON.stringify(key)}]`
     : value;
 }
-function type(s: Schema, response = false, discriminator?: string, known = false): string {
-  if (s['x-sdk-ref']) return s['x-sdk-ref'] + (response ? '' : 'Input');
+type ObjectContext = 'object' | 'nullableObject' | undefined;
+function objectConstraint(s: Schema): ObjectContext {
+  const constraints = [
+    s.type === 'object'
+      ? 'object'
+      : Array.isArray(s.type) && s.type.includes('object')
+        ? 'nullableObject'
+        : undefined,
+    ...(s.allOf ?? []).map(objectConstraint),
+  ];
+  return constraints.includes('object')
+    ? 'object'
+    : constraints.includes('nullableObject')
+      ? 'nullableObject'
+      : undefined;
+}
+function type(
+  s: Schema,
+  response = false,
+  discriminator?: string,
+  known = false,
+  objectContext?: ObjectContext,
+): string {
+  if (s['x-sdk-ref']) {
+    const reference = s['x-sdk-ref'] + (response ? '' : 'Input');
+    if (!objectContext) return reference;
+    // A recursive alias may also admit nonobjects. Filter it at this use site
+    // without expanding the recursive graph or narrowing the alias globally.
+    const object = `Exclude<${reference} & object, readonly unknown[]>`;
+    return objectContext === 'nullableObject' ? `(${object}) | (${reference} & null)` : object;
+  }
   s = directionalSchema(s, response);
+  // Composition branches constrain the same value. Object keywords alone do
+  // not exclude scalars, null or arrays, but an enclosing object type does.
+  const constraint = objectConstraint(s);
+  objectContext =
+    objectContext === 'object' || constraint === 'object'
+      ? 'object'
+      : (objectContext ?? constraint);
   if (s.oneOf || s.anyOf || s.allOf || s.not) {
     const { oneOf, anyOf, allOf, not, discriminator: tag, ...base } = s;
-    const parts = [type(base, response, discriminator)];
-    for (const branch of allOf ?? []) parts.push(type(branch, response, discriminator));
+    const parts = [type(base, response, discriminator, false, objectContext)];
+    for (const branch of allOf ?? [])
+      parts.push(type(branch, response, discriminator, false, objectContext));
     for (const branches of [oneOf, anyOf])
       if (branches) {
-        const alternatives = branches.map((branch) => type(branch, response, tag?.propertyName));
+        const alternatives = branches.map((branch) =>
+          type(branch, response, tag?.propertyName, false, objectContext),
+        );
         if (response && !known)
           alternatives.push(
-            base.type === 'object' ||
-              branches.every((v) => v.type === 'object' || v.required || v.properties)
+            objectContext === 'object' || branches.every((v) => v.type === 'object')
               ? '{ [key: string]: unknown }'
               : 'unknown',
           );
@@ -196,6 +234,10 @@ function type(s: Schema, response = false, discriminator?: string, known = false
       return `Array<${type(s.items!, response)}>`;
     case undefined:
       if (!s.properties && !s.required?.length) return 'unknown';
+      if (objectContext === 'nullableObject')
+        return `null | (${type({ ...s, type: 'object' }, response, discriminator)})`;
+      if (!objectContext)
+        return `null | boolean | number | string | unknown[] | (${type({ ...s, type: 'object' }, response, discriminator)})`;
     case 'object':
       if (!Object.keys(s.properties ?? {}).length && typeof s.additionalProperties === 'object')
         return `Record<string, ${type(s.additionalProperties, response)}>`;
@@ -525,6 +567,7 @@ export function render(c: Contract): Map<string, string> {
             'Promise',
             'AsyncGenerator',
             'Record',
+            'Exclude',
             'Object',
             'Array',
             'any',
@@ -607,8 +650,19 @@ export function render(c: Contract): Map<string, string> {
     put('contract.d.ts', readFileSync(join(here, 'contract.d.ts'), 'utf8'));
     let code = `import { Runtime, Model, isKnownVariant } from './runtime.js';\nexport { SdkError, Model, serialize, parseExact, redact } from './runtime.js';\nconst contract = ${js({ ...contract, userAgent: `${c.config.npm.name.replace(/^@/, '').replaceAll('/', '-')}/${c.config.version} (Node.js)` })};\nexport class Client {\n  #runtime;\n  constructor(options) {\n    this.#runtime = new Runtime(contract, options);\n`;
     let declarations = `import type { ClientOptions, RequestOptions, Result, InputValue } from './runtime.js';\nimport { Model } from './runtime.js';\nexport { SdkError, Model, serialize, parseExact, redact } from './runtime.js';\nexport type { ClientOptions, RequestOptions, Result, Metadata, ErrorKind, DiagnosticEvent, InputValue } from './runtime.js';\n`;
-    for (const [name, s] of Object.entries(models))
-      declarations += `export type ${name} = ${type(s, true)};\nexport type ${name}Input = ${type(s)};\nexport declare function make${name}(value: InputValue<${name}Input>): Model<${name}Input>;\n`;
+    for (const [name, s] of Object.entries(models)) {
+      declarations += `export type ${name} = ${type(s, true)};\nexport type ${name}Input = ${type(s)};\n`;
+      // Preserve the validated object branch when a model also permits
+      // nonobjects, so its factory can nest inside an object-constrained field.
+      if (
+        objectConstraint(s) !== 'object' &&
+        (s.type === undefined || (Array.isArray(s.type) && s.type.includes('object')))
+      ) {
+        const object = `Exclude<${name}Input & object, readonly unknown[]>`;
+        declarations += `export declare function make${name}(value: InputValue<${object}>): Model<${object}>;\n`;
+      }
+      declarations += `export declare function make${name}(value: InputValue<${name}Input>): Model<${name}Input>;\n`;
+    }
     for (const op of c.operations)
       declarations += `export type ${pascal(op.resource)}${pascal(op.method)}Input = ${operationInputType(op, models)};\nexport type ${pascal(op.resource)}${pascal(op.method)}Response = ${resultType(op, models)};\n`;
     declarations += 'export declare class Client {\n  constructor(options: ClientOptions);\n';
