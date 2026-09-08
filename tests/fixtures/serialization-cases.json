@@ -1,0 +1,128 @@
+[
+  {
+    "name": "optional absent",
+    "schema": { "type": "object", "properties": { "value": { "type": ["string", "null"] } } },
+    "value": {},
+    "wire": "{}"
+  },
+  {
+    "name": "optional explicit null",
+    "schema": { "type": "object", "properties": { "value": { "type": ["string", "null"] } } },
+    "value": { "value": null },
+    "wire": "{\"value\":null}"
+  },
+  {
+    "name": "required nullable present",
+    "schema": {
+      "type": "object",
+      "required": ["value"],
+      "properties": { "value": { "type": ["string", "null"] } }
+    },
+    "value": { "value": null },
+    "wire": "{\"value\":null}"
+  },
+  {
+    "name": "required nullable missing",
+    "schema": {
+      "type": "object",
+      "required": ["value"],
+      "properties": { "value": { "type": ["string", "null"] } }
+    },
+    "value": {},
+    "error": true
+  },
+  {
+    "name": "required nonnull missing",
+    "schema": {
+      "type": "object",
+      "required": ["value"],
+      "properties": { "value": { "type": "string" } }
+    },
+    "value": {},
+    "error": true
+  },
+  {
+    "name": "optional nonnull null",
+    "schema": { "type": "object", "properties": { "value": { "type": "string" } } },
+    "value": { "value": null },
+    "error": true
+  },
+  {
+    "name": "false zero empty are values",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "count": { "type": "integer" },
+        "label": { "type": "string" }
+      }
+    },
+    "value": { "enabled": false, "count": 0, "label": "" },
+    "wire": "{\"enabled\":false,\"count\":0,\"label\":\"\"}"
+  },
+  {
+    "name": "exact integer enum",
+    "schema": { "type": "integer", "format": "int64", "enum": [1, 2] },
+    "value": "2",
+    "wire": "2"
+  },
+  {
+    "name": "negative exact decimal",
+    "schema": { "type": "number", "format": "decimal" },
+    "value": "-0.00000000000000000001",
+    "wire": "-0.00000000000000000001"
+  },
+  {
+    "name": "null excluded by enum",
+    "schema": { "type": ["string", "null"], "enum": ["a"] },
+    "value": null,
+    "error": true
+  },
+  {
+    "name": "unknown request enum",
+    "schema": { "type": "string", "enum": ["known"] },
+    "value": "future",
+    "error": true
+  },
+  {
+    "name": "known tagged input",
+    "schema": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "value"],
+          "properties": {
+            "kind": { "type": "string", "enum": ["text"] },
+            "value": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "value"],
+          "properties": {
+            "kind": { "type": "string", "enum": ["count"] },
+            "value": { "type": "integer" }
+          }
+        }
+      ],
+      "discriminator": { "propertyName": "kind" }
+    },
+    "value": { "kind": "count", "value": 0 },
+    "wire": "{\"kind\":\"count\",\"value\":0}"
+  },
+  {
+    "name": "unknown tagged input rejected",
+    "schema": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind"],
+          "properties": { "kind": { "type": "string", "enum": ["known"] } }
+        }
+      ],
+      "discriminator": { "propertyName": "kind" }
+    },
+    "value": { "kind": "future" },
+    "error": true
+  }
+]

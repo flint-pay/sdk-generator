@@ -1,0 +1,42 @@
+{
+  "openapi": "3.1.1",
+  "info": {
+    "title": "Library",
+    "version": "1"
+  },
+  "paths": {
+    "/books/{id}": {
+      "get": {
+        "operationId": "findBook",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fixture response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["title"],
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

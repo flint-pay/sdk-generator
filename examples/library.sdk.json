@@ -1,0 +1,16 @@
+{
+  "version": "1.0.0",
+  "npm": {
+    "name": "@example/library"
+  },
+  "composer": {
+    "name": "example/library",
+    "namespace": "Example\\Library"
+  },
+  "operations": {
+    "findBook": {
+      "resource": "books",
+      "method": "retrieve"
+    }
+  }
+}

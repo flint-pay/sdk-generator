@@ -1,0 +1,12 @@
+{
+  "specRevision": "8be00f180602f15d6332e3c976f9960f835775ee",
+  "behaviorRevision": "bcb5621e2d7aa2fa4fc4b846838afe2fde83ba82",
+  "files": {
+    "openapi.json": "63c022c16b8a4af1826fdc7116d9f38d301f75430b0336a5edeb781611fc12c4",
+    "sdk.json": "9542a6cdd431afe5b82907279fafb193c61cfddd13230740d753a2928ddfcf49",
+    "http-cases.json": "74b520744581651f3ea407d2802a9679e603c3e18d335919da25394283ba309b",
+    "risk-openapi.json": "7077821046302edb8c39d5e14c24b0ac6ff4ad6c28bda437534474e89210da68",
+    "risk-sdk.json": "a0db996a5578a2b6de61947528f602bdab2546f2710cb11c63ffcf2c10d54e02",
+    "risk-http-cases.json": "81b0057b02d1880ed3051f5e6cd1f998fa4ffed491d123b480a42de73e1927fb"
+  }
+}

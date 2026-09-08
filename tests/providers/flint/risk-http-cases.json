@@ -1,0 +1,120 @@
+[
+  {
+    "name": "neither choice",
+    "operation": "addRiskListItems",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "risk_list_id": "rl_fixture",
+      "body": {}
+    },
+    "responses": [],
+    "error": {
+      "kind": "validation"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "single value",
+    "operation": "addRiskListItems",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "risk_list_id": "rl_fixture",
+      "body": {
+        "value": "sdk-fixture"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/risk-lists/rl_fixture/items",
+      "body": "{\"value\":\"sdk-fixture\"}",
+      "headers": {
+        "flint-version": "2026-09-07"
+      }
+    },
+    "responses": [
+      {
+        "status": 201,
+        "body": "{\"data\":{\"items\":[{\"status\":\"created\",\"risk_list_item\":{\"created_at\":\"2026-09-07T12:00:00Z\",\"created_by\":\"sdk-fixture\",\"risk_list_id\":\"rl_fixture\",\"risk_list_item_id\":\"rli_fixture\",\"value\":\"sdk-fixture\"}}]}}"
+      }
+    ],
+    "data": {
+      "data": {
+        "items": [
+          {
+            "status": "created",
+            "risk_list_item": {
+              "created_at": "2026-09-07T12:00:00Z",
+              "created_by": "sdk-fixture",
+              "risk_list_id": "rl_fixture",
+              "risk_list_item_id": "rli_fixture",
+              "value": "sdk-fixture"
+            }
+          }
+        ]
+      }
+    },
+    "options": {
+      "headers": {
+        "fLiNt-VeRsIoN": "2026-02-01"
+      }
+    }
+  },
+  {
+    "name": "value list",
+    "operation": "addRiskListItems",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "risk_list_id": "rl_fixture",
+      "body": {
+        "values": ["sdk-fixture"]
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/risk-lists/rl_fixture/items",
+      "body": "{\"values\":[\"sdk-fixture\"]}",
+      "headers": {
+        "flint-version": "2026-09-07"
+      }
+    },
+    "responses": [
+      {
+        "status": 201,
+        "body": "{\"data\":{\"items\":[{\"status\":\"created\",\"risk_list_item\":{\"created_at\":\"2026-09-07T12:00:00Z\",\"created_by\":\"sdk-fixture\",\"risk_list_id\":\"rl_fixture\",\"risk_list_item_id\":\"rli_fixture\",\"value\":\"sdk-fixture\"}}]}}"
+      }
+    ],
+    "data": {
+      "data": {
+        "items": [
+          {
+            "status": "created",
+            "risk_list_item": {
+              "created_at": "2026-09-07T12:00:00Z",
+              "created_by": "sdk-fixture",
+              "risk_list_id": "rl_fixture",
+              "risk_list_item_id": "rli_fixture",
+              "value": "sdk-fixture"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "both choices",
+    "operation": "addRiskListItems",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "risk_list_id": "rl_fixture",
+      "body": {
+        "value": "sdk-fixture",
+        "values": ["sdk-fixture"]
+      }
+    },
+    "responses": [],
+    "error": {
+      "kind": "validation"
+    },
+    "attempts": 0
+  }
+]

@@ -1,0 +1,1477 @@
+import { readFileSync } from 'node:fs';
+import { resolve, dirname, relative as relativePath } from 'node:path';
+import { createHash } from 'node:crypto';
+
+export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
+export type Schema = {
+  'x-sdk-ref'?: string;
+  'x-sdk-definitions'?: Record<string, Schema>;
+  type?: string | string[];
+  properties?: Record<string, Schema>;
+  required?: string[];
+  items?: Schema;
+  enum?: Json[];
+  oneOf?: Schema[];
+  anyOf?: Schema[];
+  allOf?: Schema[];
+  not?: Schema;
+  readOnly?: boolean;
+  writeOnly?: boolean;
+  discriminator?: { propertyName: string };
+  additionalProperties?: boolean | Schema;
+  format?: string;
+  minimum?: number;
+  maximum?: number;
+  exclusiveMinimum?: number;
+  exclusiveMaximum?: number;
+  minLength?: number;
+  maxLength?: number;
+  minItems?: number;
+  maxItems?: number;
+  pattern?: string;
+  'x-sdk-pattern-php'?: string;
+  description?: string;
+  'x-sensitive'?: boolean;
+  [key: string]: unknown;
+};
+export interface Parameter {
+  name: string;
+  in: 'path' | 'query' | 'header';
+  required?: boolean;
+  schema: Schema;
+  style?: string;
+  explode?: boolean;
+}
+export interface Retry {
+  maxAttempts: number;
+  statuses: number[];
+  /** Retry only these provider error codes at a given status. */
+  errors?: { status: number; codes: string[] }[];
+  transport: boolean;
+  baseDelayMs: number;
+}
+export interface Capability {
+  resource?: string;
+  method?: string;
+  audiences?: string[];
+  hidden?: boolean;
+  aliases?: string[];
+  retry?: Retry;
+  idempotency?: { header: string; retention: string; scope: string; auto?: boolean };
+  pagination?: {
+    kind: 'cursor' | 'offset' | 'link';
+    items: string;
+    next: string;
+    parameter?: string;
+  };
+  polling?: { state: string; success: string[]; failure: string[]; intervalMs: number };
+  conditional?: { header: string };
+  example?: Record<string, unknown>;
+  deprecated?: string;
+}
+export interface Operation extends Capability {
+  id: string;
+  resource: string;
+  method: string;
+  verb: string;
+  path: string;
+  parameters: Parameter[];
+  body?: Schema;
+  bodyRequired: boolean;
+  mediaType?: string;
+  responses: Record<string, { schema?: Schema; mediaType?: string }>;
+  authenticated: boolean;
+  optionalAuthentication?: boolean;
+  description: string;
+}
+export interface Auth {
+  type: 'bearer' | 'apiKey';
+  header: string;
+}
+export interface Webhook {
+  algorithm: 'hmac-sha256';
+  format?: 'hex' | 'standard-webhooks' | 'timestamped-hex';
+  idHeader?: string;
+  header: string;
+  timestampHeader?: string;
+  separator: string;
+  toleranceSeconds: number;
+  events: Record<string, Schema>;
+  typeField: string;
+}
+export interface Config {
+  validation?: 'encoding' | 'schema';
+  auth?: { scheme: string };
+  targets?: ('node' | 'php')[];
+  version: string;
+  npm: { name: string; registry?: string; access?: 'public' | 'restricted' };
+  composer: { name: string; namespace: string };
+  operations?: Record<string, Capability>;
+  models?: Record<string, string>;
+  include?: string[];
+  audiences?: string[];
+  overrides?: Record<string, Json | Schema>;
+  webhook?: Webhook;
+  money?: { currencies: Record<string, number> };
+  apiVersion?: { value: string; header: string };
+  license?: string;
+  errors?: { codePath?: string; detailsPath?: string; requestIdHeader?: string };
+  documentation?: { overview?: string; guides?: Record<string, string> };
+  release?: { baseUrl?: string; policy?: 'review' | 'semver' };
+}
+export interface Contract {
+  title: string;
+  apiVersion: string;
+  operations: Operation[];
+  models: Record<string, Schema>;
+  definitions?: Record<string, Schema>;
+  modelDependencies?: Record<string, string[]>;
+  auth?: Auth;
+  config: Config;
+  sources: Record<string, string>;
+  hash: string;
+}
+export class Diagnostic extends Error {
+  constructor(
+    public location: string,
+    message: string,
+  ) {
+    super(`${location}: ${message}`);
+    this.name = 'Diagnostic';
+  }
+}
+export const stable = (value: unknown): string =>
+  JSON.stringify(
+    value,
+    (_k, v: unknown) =>
+      v && typeof v === 'object' && !Array.isArray(v)
+        ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b, 'en')))
+        : v,
+    2,
+  ) + '\n';
+export const hash = (value: string): string => createHash('sha256').update(value).digest('hex');
+const fail = (p: string, m: string): never => {
+  throw new Diagnostic(p, m);
+};
+const identifier = /^[A-Za-z][A-Za-z0-9_]*$/;
+const reserved = new Set(
+  'class function public private protected static new default delete constructor prototype then tostring valueof tojson catch finally call request close pages items wait verifywebhook money client runtime model result sdkerror codec rawnumber cancellation clientoptions requestoptions namespace use match enum readonly trait interface extends implements clone throw return const var let await yield list echo print empty isset unset true false null string int bool float mixed void never object array iterable self parent static abstract final break case continue declare die do else elseif enddeclare endfor endforeach endif endswitch endwhile eval exit for foreach global goto if include include_once instanceof insteadof require require_once switch try while xor and or switch'.split(
+    ' ',
+  ),
+);
+function name(value: unknown, path: string, method = false): asserts value is string {
+  if (
+    typeof value !== 'string' ||
+    !identifier.test(value) ||
+    (reserved.has(value.toLowerCase()) && !(method && value.toLowerCase() === 'list'))
+  )
+    fail(
+      path,
+      'choose an identifier that is not a JavaScript/PHP reserved word or SDK runtime member',
+    );
+}
+function keys(object: object, allowed: string[], path: string) {
+  if (!object || typeof object !== 'object' || Array.isArray(object))
+    fail(path, 'expected an object');
+  for (const k of Object.keys(object))
+    if (!allowed.includes(k))
+      fail(`${path}/${k}`, 'unsupported setting; consult docs/configuration.md');
+}
+function record(value: unknown, path: string): asserts value is Record<string, any> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) fail(path, 'expected an object');
+}
+function own<T>(map: Record<string, T> | undefined, key: string): T | undefined {
+  return map && Object.hasOwn(map, key) ? map[key] : undefined;
+}
+function strings(value: unknown, path: string): void {
+  if (
+    !Array.isArray(value) ||
+    value.some((v) => typeof v !== 'string') ||
+    new Set(value).size !== value.length
+  )
+    fail(path, 'expected an array of unique strings');
+}
+function header(value: unknown, path: string) {
+  if (typeof value !== 'string' || !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(value))
+    fail(path, 'expected an HTTP header name');
+}
+function schemaFields(s: Schema | undefined, path: string): Schema[] {
+  if (!s) return [];
+  const [first, ...rest] = path.split('.');
+  const child = Object.hasOwn(s.properties ?? {}, first!) ? s.properties![first!] : undefined;
+  return [
+    ...(rest.length ? schemaFields(child, rest.join('.')) : child ? [child] : []),
+    ...[...(s.oneOf ?? []), ...(s.anyOf ?? []), ...(s.allOf ?? [])].flatMap((branch) =>
+      schemaFields(branch, path),
+    ),
+  ];
+}
+function hasType(s: Schema, type: string) {
+  return (Array.isArray(s.type) ? s.type : [s.type]).includes(type);
+}
+// A deliberately portable ECMAScript subset; translate differences in PCRE rather
+// than silently applying a different pattern in the PHP target.
+function portablePattern(source: string, p: string): string {
+  try {
+    new RegExp(source, 'u');
+  } catch {
+    fail(p, 'invalid Unicode regular expression');
+  }
+  const space =
+    '\\x09-\\x0d\\x20\\x{00a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}\\x{2029}\\x{202f}\\x{205f}\\x{3000}\\x{feff}';
+  let result = '',
+    inClass = false;
+  for (let i = 0; i < source.length; i++) {
+    const ch = source[i]!;
+    if (ch === '\\') {
+      const next = source[++i]!;
+      if (next === 's') result += inClass ? space : '[' + space + ']';
+      else if (next === 'S' && !inClass) result += '[^' + space + ']';
+      else if (next === 'v') result += '\\x0b';
+      else if (next === 'u') {
+        const hex = source.slice(i + 1, i + 5);
+        if (!/^[0-9a-f]{4}$/i.test(hex) || /^[dD][89a-fA-F]/.test(hex))
+          fail(p, 'use literal Unicode characters instead of surrogate or braced escapes');
+        result += '\\x{' + hex + '}';
+        i += 4;
+      } else if ('dDwWnrtfv\\.^$|?*+()[]{}-/'.includes(next)) result += '\\' + next;
+      else if (next === 'x' && /^[0-9a-f]{2}$/i.test(source.slice(i + 1, i + 3))) {
+        result += '\\x' + source.slice(i + 1, i + 3);
+        i += 2;
+      } else fail(p, 'unsupported pattern escape; use portable character classes');
+    } else if (ch === '[' && !inClass) {
+      if (source[i + 1] === ']' || (source[i + 1] === '^' && source[i + 2] === ']'))
+        fail(p, 'empty character classes are unsupported; use an explicit character range');
+      inClass = true;
+      result += ch;
+    } else if (ch === ']' && inClass) {
+      inClass = false;
+      result += ch;
+    } else if (!inClass && ch === '(' && source[i + 1] === '?' && source[i + 2] !== ':')
+      fail(
+        p,
+        'lookarounds and special groups are unsupported; use ordinary or noncapturing groups',
+      );
+    else if (!inClass && ch === '.') result += '[^\\n\\r\\x{2028}\\x{2029}]';
+    else if (!inClass && ch === '^') result += '\\A';
+    else if (!inClass && ch === '$') result += '\\z';
+    else result += ch;
+  }
+  return '~' + result.replaceAll('~', '\\~') + '~u';
+}
+function schema(s: Schema, p: string, legacy = false): void {
+  if (!s || typeof s !== 'object' || Array.isArray(s)) fail(p, 'expected a schema object');
+  if (s['x-sdk-ref']) return;
+  if (s.nullable !== undefined) {
+    if (!legacy || typeof s.nullable !== 'boolean')
+      fail(p + '/nullable', 'nullable is an OpenAPI 3.0 boolean; use a null type in 3.1');
+    const nullable = s.nullable;
+    delete s.nullable;
+    if (nullable) {
+      if (typeof s.type === 'string') s.type = [s.type, 'null'];
+      else {
+        const original = { ...s };
+        for (const key of Object.keys(s)) delete s[key];
+        Object.assign(
+          s,
+          Object.fromEntries(
+            Object.entries(original).filter(([key]) =>
+              [
+                'description',
+                'title',
+                'readOnly',
+                'writeOnly',
+                'deprecated',
+                'x-sensitive',
+              ].includes(key),
+            ),
+          ),
+          { anyOf: [original, { type: 'null' }] },
+        );
+      }
+    }
+  }
+  const annotations = [
+    'description',
+    'title',
+    'default',
+    'example',
+    'examples',
+    'deprecated',
+    'readOnly',
+    'writeOnly',
+    'x-sensitive',
+  ];
+  const supported = [
+    'type',
+    'properties',
+    'required',
+    'items',
+    'enum',
+    'oneOf',
+    'anyOf',
+    'allOf',
+    'not',
+    'discriminator',
+    'additionalProperties',
+    'format',
+    'minimum',
+    'maximum',
+    'exclusiveMinimum',
+    'exclusiveMaximum',
+    'minLength',
+    'maxLength',
+    'minItems',
+    'maxItems',
+    'pattern',
+    ...annotations,
+  ];
+  keys(
+    Object.fromEntries(Object.entries(s).filter(([key]) => !key.startsWith('x-'))),
+    supported,
+    p,
+  );
+  for (const keyword of ['exclusiveMinimum', 'exclusiveMaximum'] as const) {
+    const value = s[keyword] as unknown;
+    if (legacy && typeof value === 'boolean') {
+      const bound = keyword === 'exclusiveMinimum' ? 'minimum' : 'maximum';
+      delete s[keyword];
+      if (value) {
+        if (s[bound] === undefined) fail(p + '/' + keyword, 'requires ' + bound);
+        s[keyword] = s[bound]!;
+        delete s[bound];
+      }
+    }
+  }
+  for (const keyword of ['minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum'] as const)
+    if (
+      s[keyword] !== undefined &&
+      (typeof s[keyword] !== 'number' ||
+        !Number.isFinite(s[keyword]) ||
+        (Number.isInteger(s[keyword]) && !Number.isSafeInteger(s[keyword])))
+    )
+      fail(
+        p + '/' + keyword,
+        'expected a finite numeric bound; integer literals must be safe integers',
+      );
+  for (const keyword of ['minLength', 'maxLength', 'minItems', 'maxItems'] as const)
+    if (s[keyword] !== undefined && (!Number.isSafeInteger(s[keyword]) || s[keyword]! < 0))
+      fail(p + '/' + keyword, 'expected a nonnegative safe integer');
+  for (const [min, max] of [
+    ['minLength', 'maxLength'],
+    ['minItems', 'maxItems'],
+    ['minimum', 'maximum'],
+  ] as const)
+    if (s[min] !== undefined && s[max] !== undefined && s[min]! > s[max]!)
+      fail(p, min + ' exceeds ' + max);
+  if (s.pattern !== undefined) {
+    if (typeof s.pattern !== 'string') fail(p + '/pattern', 'expected a string');
+    s['x-sdk-pattern-php'] = portablePattern(s.pattern, p + '/pattern');
+  }
+  for (const key of ['readOnly', 'writeOnly', 'deprecated', 'x-sensitive'])
+    if (s[key] !== undefined && typeof s[key] !== 'boolean')
+      fail(p + '/' + key, 'expected a boolean');
+  if (s.readOnly && s.writeOnly) fail(p, 'a field cannot be both readOnly and writeOnly');
+  if (s.required !== undefined) strings(s.required, p + '/required');
+  if (
+    s.properties !== undefined &&
+    (!s.properties || typeof s.properties !== 'object' || Array.isArray(s.properties))
+  )
+    fail(p + '/properties', 'expected a property map');
+  if (
+    s.additionalProperties !== undefined &&
+    typeof s.additionalProperties !== 'boolean' &&
+    (!s.additionalProperties ||
+      typeof s.additionalProperties !== 'object' ||
+      Array.isArray(s.additionalProperties))
+  )
+    fail(p + '/additionalProperties', 'expected a boolean or schema');
+  if (
+    s.enum !== undefined &&
+    (!Array.isArray(s.enum) ||
+      !s.enum.length ||
+      s.enum.some((v) => typeof v === 'object' && v !== null))
+  )
+    fail(p, 'enum requires nonempty scalar values');
+  for (const keyword of ['oneOf', 'anyOf', 'allOf'] as const) {
+    const branches = s[keyword];
+    if (branches !== undefined) {
+      if (!Array.isArray(branches) || !branches.length)
+        fail(p + '/' + keyword, 'expected a nonempty schema array');
+      branches.forEach((branch, i) => schema(branch, p + '/' + keyword + '/' + i, legacy));
+    }
+  }
+  if (s.not !== undefined) schema(s.not, p + '/not', legacy);
+  if (s.discriminator !== undefined) {
+    keys(s.discriminator, ['propertyName'], p + '/discriminator');
+    if (
+      typeof s.discriminator.propertyName !== 'string' ||
+      !s.discriminator.propertyName ||
+      !s.oneOf
+    )
+      fail(p, 'discriminator requires propertyName and oneOf alternatives');
+    const tags = new Set<string>();
+    for (const branch of s.oneOf!) {
+      const values = branch.properties?.[s.discriminator.propertyName]?.enum;
+      if (
+        branch.type !== 'object' ||
+        !branch.required?.includes(s.discriminator.propertyName) ||
+        !values?.length
+      )
+        fail(p, 'each tagged branch must require its discriminator and declare an enum');
+      for (const tag of values!) {
+        if (typeof tag !== 'string' || tags.has(tag))
+          fail(p, 'discriminator values must be unique strings');
+        tags.add(tag as string);
+      }
+    }
+  }
+  const types = s.type === undefined ? [] : Array.isArray(s.type) ? s.type : [s.type];
+  if (
+    s.type !== undefined &&
+    (!types.length ||
+      new Set(types).size !== types.length ||
+      types.some(
+        (t) => !['object', 'array', 'string', 'integer', 'number', 'boolean', 'null'].includes(t),
+      ))
+  )
+    fail(p + '/type', 'expected supported unique JSON types');
+  if (types.length > 1 && (types.length !== 2 || !types.includes('null')))
+    fail(p, 'use anyOf for non-null type alternatives');
+  if (s.enum?.some((v) => typeof v === 'number' && !Number.isSafeInteger(v)))
+    fail(p + '/enum', 'numeric enum literals must be safe integers');
+  if (
+    s.enum?.some(
+      (v) =>
+        types.length &&
+        !types.includes(
+          v === null
+            ? 'null'
+            : typeof v === 'number'
+              ? types.includes('integer')
+                ? 'integer'
+                : 'number'
+              : typeof v,
+        ),
+    )
+  )
+    fail(p + '/enum', 'enum members must match the declared type');
+  if (
+    s.format &&
+    ![
+      'int32',
+      'int64',
+      'uint32',
+      'uint64',
+      'float',
+      'double',
+      'decimal',
+      'date-time',
+      'date',
+      'uuid',
+      'email',
+      'uri',
+      'password',
+      'hostname',
+    ].includes(s.format)
+  )
+    fail(p + '/format', 'unsupported format ' + s.format);
+  if (types.includes('array') && !s.items) fail(p, 'arrays require items');
+  if (s.items) schema(s.items, p + '/items', legacy);
+  for (const [key, child] of Object.entries(s.properties ?? {}))
+    schema(child, p + '/properties/' + key, legacy);
+  if (s.additionalProperties && typeof s.additionalProperties === 'object')
+    schema(s.additionalProperties, p + '/additionalProperties', legacy);
+  checkRepresentations(s, p);
+  // Annotation-only wrappers are equivalent to their branch; semantic siblings stay composed.
+  if (
+    s.allOf?.length === 1 &&
+    Object.keys(s).every(
+      (key) => key === 'allOf' || annotations.includes(key) || key.startsWith('x-'),
+    )
+  ) {
+    const branch = s.allOf[0]!;
+    delete s.allOf;
+    Object.assign(s, branch, { ...s });
+  }
+}
+function checkRepresentations(s: Schema, p: string): void {
+  const conjuncts = (shape: Schema): Schema[] => [shape, ...(shape.allOf ?? []).flatMap(conjuncts)];
+  const scalar = (shape: Schema): string | undefined => {
+    const type = Array.isArray(shape.type) ? shape.type.find((t) => t !== 'null') : shape.type;
+    if (type === 'number') return 'exact-number';
+    if (type === 'integer')
+      return ['int64', 'uint64'].includes(shape.format ?? '') ? 'exact-number' : 'safe-integer';
+    return type === 'string' ? 'string' : undefined;
+  };
+  const shapes = conjuncts(s);
+  const kinds = new Set(shapes.map(scalar).filter(Boolean));
+  if (kinds.has('exact-number') && kinds.has('safe-integer'))
+    fail(
+      p,
+      'intersected numeric schemas use different SDK representations; use a consistent numeric format with the intersected bounds in a provider override',
+    );
+  if (kinds.has('string') && (kinds.has('exact-number') || kinds.has('safe-integer')))
+    fail(p, 'intersected string and numeric schemas cannot describe the same non-null JSON value');
+  // Constraint-only conjuncts must see the JSON numeric kind, even when callers
+  // express that number as an exact SDK string. Inherit only an established kind.
+  const numeric = shapes.find((shape) =>
+    ['exact-number', 'safe-integer'].includes(scalar(shape) ?? ''),
+  );
+  if (numeric) {
+    const inherit = (shape: Schema): void => {
+      if (shape['x-sdk-ref']) return;
+      if (shape.type === undefined) {
+        shape.type = structuredClone(numeric.type!);
+        if (numeric.format !== undefined && shape.format === undefined)
+          shape.format = numeric.format;
+      }
+      for (const branch of [
+        ...(shape.allOf ?? []),
+        ...(shape.anyOf ?? []),
+        ...(shape.oneOf ?? []),
+        ...(shape.not ? [shape.not] : []),
+      ])
+        inherit(branch);
+    };
+    inherit(s);
+  }
+  for (const keyword of ['oneOf', 'anyOf'] as const) {
+    const alternatives = s[keyword];
+    if (!alternatives) continue;
+    const kinds = new Set(
+      alternatives.flatMap((branch) => conjuncts(branch).map(scalar)).filter(Boolean),
+    );
+    if (kinds.has('string') && kinds.has('exact-number'))
+      fail(
+        p + '/' + keyword,
+        'string and exact-number alternatives have ambiguous SDK string inputs; provide an unambiguous provider representation before generating this operation',
+      );
+  }
+  if (s.allOf) {
+    const properties = new Map<string, Schema[]>();
+    for (const shape of shapes)
+      for (const [name, child] of Object.entries(shape.properties ?? {}))
+        properties.set(name, [...(properties.get(name) ?? []), child]);
+    for (const [name, children] of properties)
+      if (children.length > 1) checkRepresentations({ allOf: children }, p + '/properties/' + name);
+  }
+}
+function pointer(root: unknown, pointer: string, p: string): any {
+  if (pointer === '') return root;
+  if (!pointer.startsWith('/')) fail(p, 'reference fragment must be a JSON Pointer');
+  let current: any = root;
+  for (const part of pointer.slice(1).split('/')) {
+    const key = part.replace(/~1/g, '/').replace(/~0/g, '~');
+    current = current != null && Object.hasOwn(current, key) ? current[key] : undefined;
+    if (current === undefined) fail(p, `unresolved reference #${pointer}`);
+  }
+  return current;
+}
+export function loadContract(definitionPath: string, configPath: string): Contract {
+  const sources: Record<string, string> = {};
+  const documents = new Map<string, unknown>();
+  const rootDir = dirname(resolve(definitionPath));
+  const references: { path: string; model: string }[] = [];
+  const resolved = new Map<string, { value: any; models: string[] }>();
+  const cycles = new Map<string, string>();
+  // Map keys are user names; annotations contain JSON data, not Reference Objects.
+  const referenceMaps = new Set([
+    'properties',
+    'schemas',
+    'paths',
+    'responses',
+    'content',
+    'headers',
+    'securitySchemes',
+    'requestBodies',
+    'parameters',
+  ]);
+  const literalAnnotation = (key: string) =>
+    ['example', 'examples', 'default', 'enum'].includes(key) || key.startsWith('x-');
+  function load(file: string): any {
+    file = resolve(file);
+    if (!documents.has(file)) {
+      let content: string;
+      try {
+        content = readFileSync(file, 'utf8');
+      } catch {
+        return fail(file, 'cannot read input');
+      }
+      try {
+        documents.set(file, JSON.parse(content));
+      } catch {
+        return fail(file, 'expected valid JSON; YAML is not supported');
+      }
+      sources[
+        file.startsWith(rootDir + '/')
+          ? file.slice(rootDir.length + 1)
+          : hash(relativePath(rootDir, file))
+      ] = hash(content);
+    }
+    return documents.get(file);
+  }
+  function deref(
+    value: any,
+    file: string,
+    path: string,
+    stack: { key: string; path: string }[] = [],
+    map = false,
+  ): any {
+    if (Array.isArray(value)) return value.map((v, i) => deref(v, file, `${path}/${i}`, stack));
+    if (!value || typeof value !== 'object') return value;
+    if (!map && Object.keys(value).some((key) => key.startsWith('x-sdk-')))
+      fail(path, 'x-sdk-* extensions are reserved for resolved generator metadata');
+    if (!map && '$ref' in value) {
+      if (Object.keys(value).length !== 1)
+        fail(path, '$ref siblings are unsupported; use an explicit provider override');
+      const ref = value.$ref;
+      if (typeof ref !== 'string' || /^\w+:/.test(ref) || ref.startsWith('//'))
+        fail(path, 'remote references must be vendored locally for reproducible generation');
+      const [relative, fragment = ''] = ref.split('#');
+      const target = resolve(dirname(file), relative || file);
+      const modelMatch = /^\/components\/schemas\/([^/]+)$/.exec(fragment);
+      if (target === resolve(definitionPath) && modelMatch)
+        references.push({ path, model: modelMatch[1]!.replace(/~1/g, '/').replace(/~0/g, '~') });
+      const key = target + '#' + fragment;
+      const ancestor = stack.find((entry) => entry.key === key);
+      if (ancestor) {
+        if (
+          !/\/(?:properties|items|additionalProperties)\//.test(
+            path.slice(ancestor.path.length) + '/',
+          )
+        )
+          fail(
+            path,
+            `recursive reference ${ref} must descend through an object field or array item`,
+          );
+        const original =
+          target === resolve(definitionPath) && modelMatch
+            ? modelMatch[1]!.replace(/~1/g, '/').replace(/~0/g, '~')
+            : undefined;
+        const mapped = original
+          ? (own(config.models, original) ?? original)
+          : 'ReferencedModel' + hash(relativePath(rootDir, target) + '#' + fragment).slice(0, 12);
+        if (cycles.has(mapped) && cycles.get(mapped) !== key)
+          fail(path, 'recursive model name collision');
+        cycles.set(mapped, key);
+        return { 'x-sdk-ref': mapped };
+      }
+      const cached = resolved.get(key);
+      if (cached) {
+        for (const model of cached.models) references.push({ path, model });
+        return structuredClone(cached.value);
+      }
+      const before = references.length;
+      const result = deref(pointer(load(target), fragment, path), target, path, [
+        ...stack,
+        { key, path },
+      ]);
+      resolved.set(key, {
+        value: result,
+        models: [...new Set(references.slice(before).map((ref) => ref.model))],
+      });
+      return structuredClone(result);
+    }
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [
+        k,
+        !map && literalAnnotation(k)
+          ? structuredClone(v)
+          : deref(v, file, `${path}/${k}`, stack, !map && referenceMaps.has(k)),
+      ]),
+    );
+  }
+  const raw = load(resolve(definitionPath));
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+    fail('/', 'expected an OpenAPI object');
+  const config = load(resolve(configPath)) as Config;
+  keys(
+    config,
+    [
+      'targets',
+      'validation',
+      'auth',
+      'version',
+      'npm',
+      'composer',
+      'operations',
+      'models',
+      'include',
+      'audiences',
+      'overrides',
+      'webhook',
+      'money',
+      'apiVersion',
+      'license',
+      'errors',
+      'documentation',
+      'release',
+    ],
+    'config',
+  );
+  if (config.validation !== undefined && !['encoding', 'schema'].includes(config.validation))
+    fail('config/validation', 'expected encoding or schema');
+  if (config.targets !== undefined) strings(config.targets, 'config/targets');
+  if (config.targets?.length && !config.targets.includes('php') && config.composer === undefined)
+    config.composer = { name: 'unused/sdk', namespace: 'UnusedSdk' };
+  if (config.targets?.length && !config.targets.includes('node') && config.npm === undefined)
+    config.npm = { name: 'unused-sdk' };
+  for (const key of [
+    'auth',
+    'npm',
+    'composer',
+    'errors',
+    'webhook',
+    'money',
+    'operations',
+    'models',
+    'overrides',
+    'documentation',
+    'release',
+  ] as const)
+    if (config[key] !== undefined) record(config[key], 'config/' + key);
+  for (const [id, capability] of Object.entries(config.operations ?? {}))
+    record(capability, 'config/operations/' + id);
+  for (const [original, mapped] of Object.entries(config.models ?? {}))
+    name(mapped, 'config/models/' + original);
+  if (config.release !== undefined) {
+    keys(config.release, ['baseUrl', 'policy'], 'config/release');
+    if (
+      config.release.policy !== undefined &&
+      !['review', 'semver'].includes(config.release.policy)
+    )
+      fail('config/release/policy', 'expected review or semver');
+    if (config.release.baseUrl !== undefined) {
+      let url: URL;
+      try {
+        url = new URL(config.release.baseUrl);
+      } catch {
+        return fail('config/release/baseUrl', 'expected an absolute publication URL');
+      }
+      if (
+        (url.protocol !== 'https:' &&
+          !(
+            url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+          )) ||
+        url.username ||
+        url.password ||
+        url.search ||
+        url.hash
+      )
+        fail(
+          'config/release/baseUrl',
+          'use HTTPS without credentials/query/fragment (HTTP allowed only for loopback tests)',
+        );
+    }
+  }
+  if (config.errors !== undefined) {
+    keys(config.errors, ['codePath', 'detailsPath', 'requestIdHeader'], 'config/errors');
+    for (const key of ['codePath', 'detailsPath'] as const)
+      if (
+        config.errors[key] !== undefined &&
+        (typeof config.errors[key] !== 'string' ||
+          !/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/.test(config.errors[key]!))
+      )
+        fail(`config/errors/${key}`, 'expected a dot-separated field path');
+    if (config.errors.requestIdHeader !== undefined)
+      header(config.errors.requestIdHeader, 'config/errors/requestIdHeader');
+  }
+  if (config.documentation !== undefined) {
+    keys(config.documentation, ['overview', 'guides'], 'config/documentation');
+    if (
+      config.documentation.overview !== undefined &&
+      typeof config.documentation.overview !== 'string'
+    )
+      fail('config/documentation/overview', 'expected Markdown text');
+    if (config.documentation.guides !== undefined) {
+      if (
+        !config.documentation.guides ||
+        typeof config.documentation.guides !== 'object' ||
+        Array.isArray(config.documentation.guides)
+      )
+        fail('config/documentation/guides', 'expected a guide-name to Markdown map');
+      for (const [name, content] of Object.entries(config.documentation.guides))
+        if (!/^[a-z0-9][a-z0-9-]*$/.test(name) || typeof content !== 'string')
+          fail(
+            `config/documentation/guides/${name}`,
+            'use a lowercase guide slug and Markdown text',
+          );
+    }
+  }
+  keys(config.npm, ['name', 'registry', 'access'], 'config/npm');
+  if (config.npm.registry) {
+    let registry: URL;
+    try {
+      registry = new URL(config.npm.registry);
+    } catch {
+      return fail('config/npm/registry', 'expected an HTTPS registry URL');
+    }
+    if (
+      registry.protocol !== 'https:' ||
+      registry.username ||
+      registry.password ||
+      registry.search ||
+      registry.hash
+    )
+      fail(
+        'config/npm/registry',
+        'expected an HTTPS registry URL without embedded credentials, query or fragment',
+      );
+  }
+  if (config.npm.access !== undefined && !['public', 'restricted'].includes(config.npm.access))
+    fail('config/npm/access', 'expected public or restricted');
+  if (config.npm.access === 'restricted' && !config.npm.name?.startsWith('@'))
+    fail('config/npm/access', 'restricted npm packages require a scoped package name');
+  keys(config.composer, ['name', 'namespace'], 'config/composer');
+  for (const key of ['targets', 'include', 'audiences'] as const)
+    if (config[key] !== undefined) strings(config[key], `config/${key}`);
+  for (const key of ['operations', 'models', 'overrides'] as const)
+    if (
+      config[key] !== undefined &&
+      (!config[key] || typeof config[key] !== 'object' || Array.isArray(config[key]))
+    )
+      fail(`config/${key}`, 'expected an object map');
+  if (!/^3\.[01]\.\d+$/.test(raw.openapi ?? ''))
+    fail('/openapi', 'supported input is OpenAPI 3.0 or 3.1 JSON');
+  if (
+    !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?$/.test(
+      config.version ?? '',
+    )
+  )
+    fail('config/version', 'expected a semantic package version');
+  if (!/^(@[a-z0-9._-]+\/)?[a-z0-9][a-z0-9._-]*$/.test(config.npm?.name ?? ''))
+    fail('config/npm/name', 'expected an npm package name');
+  if (!/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/.test(config.composer?.name ?? ''))
+    fail('config/composer/name', 'expected vendor/package');
+  if (!/^[A-Z][A-Za-z0-9]*(?:\\[A-Z][A-Za-z0-9]*)*$/.test(config.composer?.namespace ?? ''))
+    fail('config/composer/namespace', 'expected a PHP namespace such as Acme\\Sdk');
+  const targets = config.targets ?? ['node', 'php'];
+  if (
+    targets.includes('php') &&
+    config.version.includes('-') &&
+    !/^\d+\.\d+\.\d+-(?:alpha|beta|rc)(?:\.\d+)?$/.test(config.version)
+  )
+    fail(
+      'config/version',
+      'PHP-compatible prereleases use alpha, beta or rc, optionally followed by a numeric identifier (for example 1.2.0-beta.1)',
+    );
+  if (
+    !targets.length ||
+    new Set(targets).size !== targets.length ||
+    targets.some((t) => !['node', 'php'].includes(t))
+  )
+    fail('config/targets', 'select node and/or php, each once');
+  for (const [p, replacement] of Object.entries(config.overrides ?? {})) {
+    const parts = p.split('/');
+    const key = parts.pop()!;
+    const parent = pointer(raw, parts.join('/'), `config/overrides/${p}`);
+    if (!parent || typeof parent !== 'object')
+      fail('config/overrides/' + p, 'override parent must be an object or array');
+    const decoded = key.replace(/~1/g, '/').replace(/~0/g, '~');
+    if (!Object.hasOwn(parent, decoded)) fail(p, 'stale override target');
+    parent[decoded] = replacement;
+  }
+  const reachable = new Set<string>();
+  const visited = new Set<string>();
+  const collect = (value: any, file: string, map = false): void => {
+    if (!value || typeof value !== 'object') return;
+    if (Array.isArray(value)) {
+      for (const child of value) collect(child, file);
+      return;
+    }
+    if (!map && typeof value.$ref === 'string') {
+      const ref = value.$ref;
+      if (/^\w+:/.test(ref) || ref.startsWith('//'))
+        fail(ref, 'remote references must be vendored locally for reproducible generation');
+      const [relative, fragment = ''] = ref.split('#');
+      const target = resolve(dirname(file), relative || file);
+      const key = target + '#' + fragment;
+      const match = /^\/components\/schemas\/([^/]+)$/.exec(fragment);
+      if (target === resolve(definitionPath) && match)
+        reachable.add(match[1]!.replace(/~1/g, '/').replace(/~0/g, '~'));
+      if (!visited.has(key)) {
+        visited.add(key);
+        collect(pointer(load(target), fragment, ref), target);
+      }
+    } else
+      for (const [key, child] of Object.entries(value)) {
+        if (map || !literalAnnotation(key)) collect(child, file, !map && referenceMaps.has(key));
+      }
+  };
+  const selectedPaths = Object.fromEntries(
+    Object.entries(raw.paths ?? {}).map(([path, item]) => {
+      let file = resolve(definitionPath);
+      const pathReferences = new Set<string>();
+      while (item && typeof item === 'object' && '$ref' in item) {
+        if (Object.keys(item).length !== 1)
+          fail(
+            '/paths/' + path,
+            '$ref siblings are unsupported; use an explicit provider override',
+          );
+        const ref = (item as any).$ref;
+        if (typeof ref !== 'string' || /^\w+:/.test(ref) || ref.startsWith('//'))
+          fail(
+            '/paths/' + path,
+            'remote references must be vendored locally for reproducible generation',
+          );
+        const [relative, fragment = ''] = ref.split('#');
+        file = resolve(dirname(file), relative || file);
+        const key = file + '#' + fragment;
+        if (pathReferences.has(key)) fail('/paths/' + path, 'cyclic path item reference');
+        pathReferences.add(key);
+        item = pointer(load(file), fragment, '/paths/' + path);
+      }
+      if (!item || typeof item !== 'object' || Array.isArray(item))
+        fail('/paths/' + path, 'expected a path item');
+      let selectedAny = false;
+      const entries = Object.entries(item as Record<string, unknown>).map(([verb, operation]) => {
+        const op = operation as any;
+        if (!['get', 'post', 'put', 'patch', 'delete', 'head', 'options'].includes(verb))
+          return [verb, op];
+        record(op, '/paths/' + path + '/' + verb);
+        const c = own(config.operations, op.operationId);
+        const included =
+          !c?.hidden &&
+          (!config.include || config.include.includes(op?.operationId)) &&
+          (!config.audiences || c?.audiences?.some((a) => config.audiences!.includes(a)));
+        if (included) {
+          selectedAny = true;
+          collect(op, file);
+          collect((item as any).parameters, file);
+        }
+        return [verb, included ? op : { operationId: op?.operationId }];
+      });
+      return [
+        path,
+        deref(
+          Object.fromEntries(entries.filter(([key]) => key !== 'parameters' || selectedAny)),
+          file,
+          '/paths/' + path,
+        ),
+      ];
+    }),
+  );
+  const selected = {
+    ...raw,
+    paths: {},
+    components: {
+      securitySchemes: raw.components?.securitySchemes,
+      schemas: Object.fromEntries(
+        Object.entries(raw.components?.schemas ?? {}).filter(([key]) => reachable.has(key)),
+      ),
+    },
+  };
+  const doc = deref(selected, resolve(definitionPath), '');
+  // Path items have already been resolved relative to their own source files.
+  doc.paths = selectedPaths;
+  for (const forbidden of ['webhooks', 'callbacks'])
+    if (doc[forbidden])
+      fail(`/${forbidden}`, 'declare supported HMAC webhooks in the SDK configuration');
+  const models: Record<string, Schema> = {};
+  for (const [original, value] of Object.entries(doc.components?.schemas ?? {}) as [
+    string,
+    Schema,
+  ][]) {
+    const mapped = own(config.models, original) ?? original;
+    name(mapped, `models/${original}`);
+    if (Object.keys(models).some((k) => k.toLowerCase() === mapped.toLowerCase()))
+      fail(`models/${original}`, 'model name collision');
+    schema(value, `/components/schemas/${original}`, raw.openapi.startsWith('3.0.'));
+    models[mapped] = value;
+  }
+  for (const k of Object.keys(config.models ?? {}))
+    if (!Object.hasOwn(raw.components?.schemas ?? {}, k))
+      fail(`config/models/${k}`, 'stale model customization');
+  const definitions: Record<string, Schema> = {};
+  for (const [mapped, key] of cycles) {
+    name(mapped, 'definitions/' + mapped);
+    if (
+      !key.startsWith(resolve(definitionPath) + '#/components/schemas/') &&
+      Object.hasOwn(models, mapped)
+    )
+      fail(
+        'definitions/' + mapped,
+        'generated external model name collides with an existing model',
+      );
+    const value = models[mapped] ?? resolved.get(key)?.value;
+    if (!value) fail('definitions/' + mapped, 'unresolved recursive model');
+    schema(value, 'definitions/' + mapped, raw.openapi.startsWith('3.0.'));
+    definitions[mapped] = value;
+    models[mapped] ??= value;
+  }
+  let auth: Auth | undefined;
+  const schemes = doc.components?.securitySchemes ?? {};
+  if (config.auth !== undefined) {
+    keys(config.auth, ['scheme'], 'config/auth');
+    if (typeof config.auth.scheme !== 'string' || !Object.hasOwn(schemes, config.auth.scheme))
+      fail('config/auth/scheme', 'select an existing security scheme');
+  }
+  if (Object.keys(schemes).length > 1 && !config.auth)
+    fail(
+      '/components/securitySchemes',
+      'multiple authentication schemes require config.auth.scheme to select a declared alternative',
+    );
+  const selectedScheme = config.auth?.scheme ?? Object.keys(schemes)[0];
+  for (const [k, s] of Object.entries(schemes).filter(([key]) => key === selectedScheme) as [
+    string,
+    any,
+  ][]) {
+    if (s.type === 'http' && s.scheme === 'bearer')
+      auth = { type: 'bearer', header: 'Authorization' };
+    else if (s.type === 'apiKey' && s.in === 'header') {
+      header(s.name, `securitySchemes/${k}/name`);
+      auth = { type: 'apiKey', header: s.name };
+    } else
+      fail(
+        `securitySchemes/${k}`,
+        'supported authentication: bearer or header API key; refresh/OAuth must be supplied by an explicit caller-owned transport',
+      );
+  }
+  const resourceSpellings = new Map<string, string>();
+  const operations: Operation[] = [];
+  const ids = new Set<string>();
+  const publicNames = new Set<string>();
+  for (const [path, item] of Object.entries(doc.paths ?? {}) as [string, any][]) {
+    if (!path.startsWith('/') || path.startsWith('//') || /[\\\s?#]/.test(path))
+      fail(`/paths/${path}`, 'expected an absolute API path without query or fragment');
+    for (const [verb, op] of Object.entries(item) as [string, any][]) {
+      if (['parameters', 'summary', 'description'].includes(verb)) continue;
+      if (!['get', 'post', 'put', 'patch', 'delete', 'head', 'options'].includes(verb))
+        fail(`/paths/${path}/${verb}`, 'unsupported path construct');
+      const p = `/paths/${path}/${verb}`;
+      record(op, p);
+      const id = op.operationId;
+      if (typeof id !== 'string' || !id || ids.has(id))
+        fail(p, 'operationId must be present and unique');
+      ids.add(id);
+      const c: Capability = own(config.operations, id) ?? {};
+      keys(
+        c,
+        [
+          'resource',
+          'method',
+          'audiences',
+          'hidden',
+          'aliases',
+          'retry',
+          'idempotency',
+          'pagination',
+          'polling',
+          'conditional',
+          'example',
+          'deprecated',
+        ],
+        `config/operations/${id}`,
+      );
+      for (const key of ['aliases', 'audiences'] as const)
+        if (c[key] !== undefined) strings(c[key], `config/operations/${id}/${key}`);
+      if (c.hidden !== undefined && typeof c.hidden !== 'boolean')
+        fail(p, 'hidden must be boolean');
+      if (c.deprecated !== undefined && (typeof c.deprecated !== 'string' || !c.deprecated.trim()))
+        fail(p, 'deprecated must be a nonempty migration message');
+      if (op.deprecated !== undefined && typeof op.deprecated !== 'boolean')
+        fail(p, 'OpenAPI deprecated must be boolean');
+      if (
+        c.hidden ||
+        (config.include && !config.include.includes(id)) ||
+        (config.audiences && !c.audiences?.some((a) => config.audiences!.includes(a)))
+      )
+        continue;
+      const resource = c.resource ?? 'api';
+      const method = c.method ?? id;
+      name(resource, `${p}/resource`);
+      name(method, `${p}/method`, true);
+      const spelling = resourceSpellings.get(resource.toLowerCase());
+      if (spelling && spelling !== resource)
+        fail(p, 'resource names collide case-insensitively in PHP');
+      resourceSpellings.set(resource.toLowerCase(), resource);
+      const allNames = [
+        method,
+        ...(c.aliases ?? []),
+        ...(c.pagination ? [method + 'Pages', method + 'Items'] : []),
+        ...(c.polling ? [method + 'Wait'] : []),
+      ];
+      for (const n of allNames) {
+        name(n, `${p}/method`, true);
+        const key = `${resource}.${n}`.toLowerCase();
+        if (publicNames.has(key)) fail(p, `public method collision: ${key}`);
+        publicNames.add(key);
+      }
+      for (const forbidden of ['callbacks', 'servers'])
+        if (op[forbidden]) fail(`${p}/${forbidden}`, 'unsupported operation construct');
+      const params = new Map<string, Parameter>();
+      for (const list of [item.parameters, op.parameters])
+        if (list !== undefined && !Array.isArray(list)) fail(p, 'parameters must be an array');
+      for (const param of [...(item.parameters ?? []), ...(op.parameters ?? [])] as Parameter[]) {
+        record(param, p + '/parameters');
+        if (typeof param.name !== 'string' || !param.name)
+          fail(p, 'parameters require nonempty names');
+        for (const key of ['required', 'explode'] as const)
+          if (param[key] !== undefined && typeof param[key] !== 'boolean')
+            fail(p, `parameter ${key} must be boolean`);
+        if (!['path', 'query', 'header'].includes(param.in))
+          fail(p, 'supported parameter locations: path, query, header');
+        if (param.in === 'header') header(param.name, p);
+        if (param.in === 'path' && !param.required)
+          fail(p, `path parameter ${param.name} must be required`);
+        if (['body', '__proto__', 'constructor', 'prototype'].includes(param.name))
+          fail(p, `parameter name ${param.name} conflicts with SDK input`);
+        schema(param.schema, `${p}/parameters/${param.name}`, raw.openapi.startsWith('3.0.'));
+        if (
+          param.schema.type === 'object' ||
+          param.schema.type === 'null' ||
+          Array.isArray(param.schema.type) ||
+          param.schema.oneOf ||
+          param.schema.anyOf ||
+          param.schema.allOf ||
+          param.schema.not
+        )
+          fail(p, 'parameters support non-null scalar values and scalar arrays');
+        if (
+          param.schema.type === 'array' &&
+          !['string', 'integer', 'boolean'].includes(String(param.schema.items?.type))
+        )
+          fail(p, 'parameter arrays require scalar items');
+        const style = param.style ?? (param.in === 'query' ? 'form' : 'simple');
+        if (style !== (param.in === 'query' ? 'form' : 'simple'))
+          fail(p, `unsupported parameter style ${style}`);
+        if ((param as any).allowReserved || (param as any).content)
+          fail(p, 'allowReserved/content parameters are unsupported');
+        params.set(`${param.in}:${param.name}`, param);
+      }
+      const parameters = [...params.values()];
+      if (new Set(parameters.map((v) => v.name)).size !== parameters.length)
+        fail(p, 'parameter names must be unique across locations');
+      for (const match of path.matchAll(/\{([^}]+)\}/g))
+        if (!parameters.some((v) => v.in === 'path' && v.name === match[1]))
+          fail(p, `missing path parameter ${match[1]}`);
+      for (const param of parameters)
+        if (param.in === 'path' && !path.includes(`{${param.name}}`))
+          fail(p, `path parameter ${param.name} has no placeholder`);
+      const security = op.security ?? doc.security ?? [];
+      if (
+        !Array.isArray(security) ||
+        security.some(
+          (s: any) =>
+            !s ||
+            typeof s !== 'object' ||
+            Array.isArray(s) ||
+            Object.entries(s).some(
+              ([k, v]) =>
+                !Object.hasOwn(schemes, k) ||
+                !Array.isArray(v) ||
+                v.some((scope) => typeof scope !== 'string'),
+            ),
+        )
+      )
+        fail(p, 'security must contain declared authentication requirements or []');
+      const anonymous =
+        !security.length ||
+        security.some((requirement: object) => !Object.keys(requirement).length);
+      const selectedAuthentication = security.some(
+        (requirement: Record<string, string[]>) =>
+          Object.keys(requirement).length === 1 &&
+          Object.hasOwn(requirement, selectedScheme!) &&
+          requirement[selectedScheme!]!.length === 0,
+      );
+      if (!anonymous && !selectedAuthentication)
+        fail(
+          p,
+          `selected authentication scheme ${selectedScheme ?? '(none)'} is not a supported standalone alternative for this operation`,
+        );
+      let body: Schema | undefined;
+      let mediaType: string | undefined;
+      if (op.requestBody !== undefined) {
+        record(op.requestBody, p + '/requestBody');
+        if (op.requestBody.required !== undefined && typeof op.requestBody.required !== 'boolean')
+          fail(p, 'requestBody.required must be boolean');
+        record(op.requestBody.content, p + '/requestBody/content');
+        const contents = Object.entries(op.requestBody.content);
+        if (contents.length !== 1) fail(p, 'requestBody must select one supported media type');
+        const [media, content] = contents[0]! as [string, any];
+        record(content, p + '/requestBody/content/' + media);
+        if (!['application/json', 'application/merge-patch+json'].includes(media))
+          fail(
+            p,
+            `unsupported request media type ${media}; file transfer is not in the initial reference contracts`,
+          );
+        schema(content.schema, `${p}/requestBody`, raw.openapi.startsWith('3.0.'));
+        body = content.schema;
+        mediaType = media;
+      }
+      const responses: Operation['responses'] = {};
+      record(op.responses, p + '/responses');
+      for (const [status, response] of Object.entries(op.responses) as [string, any][]) {
+        if (!/^[1-5]\d\d$/.test(status) && status !== 'default')
+          fail(p, 'responses require explicit HTTP status codes or default');
+        record(response, p + '/responses/' + status);
+        if (response.content !== undefined)
+          record(response.content, p + '/responses/' + status + '/content');
+        const contents = Object.entries(response.content ?? {});
+        if (contents.length > 1) fail(p, 'each response must select one media type');
+        const r: Operation['responses'][string] = {};
+        if (contents.length) {
+          const [media, value] = contents[0]! as [string, any];
+          record(value, p + '/responses/' + status + '/content/' + media);
+          if (media !== 'application/json') fail(p, `unsupported response media type ${media}`);
+          schema(value.schema, `${p}/responses/${status}`, raw.openapi.startsWith('3.0.'));
+          r.schema = value.schema;
+          r.mediaType = media;
+        }
+        responses[status] = r;
+      }
+      if (!Object.keys(responses).some((k) => /^2\d\d$/.test(k)))
+        fail(p, 'declare at least one explicit success response');
+      if (c.idempotency) {
+        keys(c.idempotency, ['header', 'retention', 'scope', 'auto'], p);
+        header(c.idempotency.header, p);
+        if (
+          typeof c.idempotency.retention !== 'string' ||
+          !c.idempotency.retention.trim() ||
+          typeof c.idempotency.scope !== 'string' ||
+          !c.idempotency.scope.trim()
+        )
+          fail(p, 'idempotency requires server retention and scope descriptions');
+        if (c.idempotency.auto !== undefined && typeof c.idempotency.auto !== 'boolean')
+          fail(p, 'idempotency auto must be boolean');
+      }
+      if (c.retry) {
+        keys(c.retry, ['maxAttempts', 'statuses', 'errors', 'transport', 'baseDelayMs'], p);
+        if (
+          !Number.isInteger(c.retry.maxAttempts) ||
+          c.retry.maxAttempts < 1 ||
+          c.retry.maxAttempts > 10 ||
+          !Number.isFinite(c.retry.baseDelayMs) ||
+          c.retry.baseDelayMs < 0 ||
+          !Array.isArray(c.retry.statuses) ||
+          c.retry.statuses.some(
+            (s) => !Number.isInteger(s) || s < 400 || s > 599 || [409, 412].includes(s),
+          ) ||
+          typeof c.retry.transport !== 'boolean'
+        )
+          fail(
+            p,
+            'retry requires 1–10 attempts, nonnegative delay, explicit statuses (excluding conflicts), and transport boolean',
+          );
+        if (c.retry.maxAttempts > 1 && !['get', 'head', 'options'].includes(verb) && !c.idempotency)
+          fail(p, 'mutation retries require a declared idempotency contract');
+        if (c.retry.errors !== undefined) {
+          if (!Array.isArray(c.retry.errors)) fail(p, 'retry.errors must be an array');
+          for (const rule of c.retry.errors) {
+            keys(rule, ['status', 'codes'], p);
+            if (
+              !Number.isInteger(rule.status) ||
+              rule.status < 400 ||
+              rule.status > 599 ||
+              rule.status === 412 ||
+              !Array.isArray(rule.codes) ||
+              !rule.codes.length ||
+              rule.codes.some((code) => typeof code !== 'string' || !code.trim())
+            )
+              fail(
+                p,
+                'retry.errors requires an HTTP error status other than 412 and explicit nonempty codes',
+              );
+            if (rule.status === 409 && (!c.idempotency || c.conditional))
+              fail(
+                p,
+                'retrying a specific 409 code requires idempotency and cannot retry conditional updates',
+              );
+          }
+        }
+      }
+      if (c.pagination) {
+        const pg = c.pagination;
+        keys(pg, ['kind', 'items', 'next', 'parameter'], p);
+        if (
+          !['cursor', 'offset', 'link'].includes(pg.kind) ||
+          typeof pg.items !== 'string' ||
+          !pg.items ||
+          typeof pg.next !== 'string' ||
+          !pg.next ||
+          (pg.kind !== 'link' &&
+            !parameters.some((v) => v.in === 'query' && v.name === pg.parameter))
+        )
+          fail(
+            p,
+            'pagination requires item/continuation fields and a declared query parameter (except links)',
+          );
+        if (verb !== 'get') fail(p, 'pagination helpers require GET');
+        for (const [, response] of Object.entries(responses).filter(([status]) =>
+          /^2\d\d$/.test(status),
+        )) {
+          const items = schemaFields(response.schema, pg.items);
+          const next = schemaFields(response.schema, pg.next);
+          const nextType = pg.kind === 'offset' ? 'integer' : 'string';
+          if (
+            !items.length ||
+            items.some((s) => !hasType(s, 'array')) ||
+            !next.length ||
+            next.some((s) => !hasType(s, nextType))
+          )
+            fail(
+              p,
+              `pagination items/next must address declared array and ${nextType} response fields`,
+            );
+        }
+      }
+      if (c.polling) {
+        keys(c.polling, ['state', 'success', 'failure', 'intervalMs'], p);
+        strings(c.polling.success, `${p}/polling/success`);
+        strings(c.polling.failure, `${p}/polling/failure`);
+        if (
+          verb !== 'get' ||
+          typeof c.polling.state !== 'string' ||
+          !c.polling.state ||
+          !c.polling.success?.length ||
+          !Array.isArray(c.polling.failure) ||
+          !Number.isFinite(c.polling.intervalMs) ||
+          c.polling.intervalMs < 1 ||
+          c.polling.success.some((s) => c.polling!.failure.includes(s))
+        )
+          fail(p, 'polling requires GET, distinct terminal states, and positive intervalMs');
+        for (const [, response] of Object.entries(responses).filter(([status]) =>
+          /^2\d\d$/.test(status),
+        )) {
+          const states = schemaFields(response.schema, c.polling.state);
+          if (!states.length || states.some((s) => !hasType(s, 'string')))
+            fail(p, 'polling state must address a declared string response field');
+        }
+      }
+      if (c.conditional) {
+        keys(c.conditional, ['header'], p);
+        header(c.conditional.header, p);
+      }
+      operations.push({
+        ...c,
+        id,
+        resource,
+        method,
+        verb: verb.toUpperCase(),
+        path,
+        parameters,
+        ...(body ? { body } : {}),
+        ...(mediaType ? { mediaType } : {}),
+        bodyRequired: op.requestBody?.required ?? false,
+        responses,
+        authenticated: !anonymous,
+        ...(anonymous && selectedAuthentication ? { optionalAuthentication: true } : {}),
+        description: op.description ?? op.summary ?? '',
+        ...(c.deprecated
+          ? { deprecated: c.deprecated }
+          : op.deprecated
+            ? { deprecated: 'Deprecated by the API provider; consult its migration guide.' }
+            : {}),
+      });
+    }
+  }
+  operations.sort((a, b) => a.id.localeCompare(b.id, 'en'));
+  for (const id of [...Object.keys(config.operations ?? {}), ...(config.include ?? [])])
+    if (!ids.has(id)) fail(`config/operations/${id}`, 'stale operation customization or selection');
+  if (!operations.length) fail('/paths', 'selection contains no operations');
+  if (config.webhook) {
+    const w = config.webhook;
+    keys(
+      w,
+      [
+        'algorithm',
+        'format',
+        'idHeader',
+        'header',
+        'timestampHeader',
+        'separator',
+        'toleranceSeconds',
+        'events',
+        'typeField',
+      ],
+      'config/webhook',
+    );
+    if (
+      w.algorithm !== 'hmac-sha256' ||
+      !Number.isFinite(w.toleranceSeconds) ||
+      w.toleranceSeconds < 0 ||
+      typeof w.separator !== 'string' ||
+      typeof w.typeField !== 'string' ||
+      !w.typeField
+    )
+      fail(
+        'config/webhook',
+        'declare hmac-sha256, a literal separator, typeField, and nonnegative toleranceSeconds',
+      );
+    header(w.header, 'config/webhook/header');
+    if (w.format !== 'timestamped-hex') header(w.timestampHeader, 'config/webhook/timestampHeader');
+    else if (w.timestampHeader !== undefined)
+      fail(
+        'config/webhook/timestampHeader',
+        'timestamped-hex embeds the timestamp in the signature header',
+      );
+    if (
+      w.format !== undefined &&
+      !['hex', 'standard-webhooks', 'timestamped-hex'].includes(w.format)
+    )
+      fail('config/webhook/format', 'expected hex, standard-webhooks, or timestamped-hex');
+    if (w.format === 'standard-webhooks') header(w.idHeader, 'config/webhook/idHeader');
+    else if (w.idHeader !== undefined)
+      fail('config/webhook/idHeader', 'only standard-webhooks uses an event ID header');
+    if (w.format && w.format !== 'hex' && w.separator !== '.')
+      fail('config/webhook/separator', 'this signature format requires a dot separator');
+    if (!w.events || typeof w.events !== 'object' || Array.isArray(w.events))
+      fail('config/webhook/events', 'expected an event schema map');
+    for (const [k, v] of Object.entries(w.events)) schema(v, `config/webhook/events/${k}`);
+  }
+  if (config.money) {
+    keys(config.money, ['currencies'], 'config/money');
+    if (
+      !config.money.currencies ||
+      typeof config.money.currencies !== 'object' ||
+      Array.isArray(config.money.currencies)
+    )
+      fail('config/money/currencies', 'expected a currency precision map');
+    for (const [code, digits] of Object.entries(config.money.currencies))
+      if (!/^[A-Z]{3}$/.test(code) || !Number.isInteger(digits) || digits < 0 || digits > 12)
+        fail('config/money', 'currencies map ISO-style codes to 0–12 minor-unit digits');
+  }
+  if (config.apiVersion) {
+    keys(config.apiVersion, ['value', 'header'], 'config/apiVersion');
+    header(config.apiVersion.header, 'config/apiVersion/header');
+    if (
+      typeof config.apiVersion.value !== 'string' ||
+      !config.apiVersion.value ||
+      /[\r\n]/.test(config.apiVersion.value)
+    )
+      fail('config/apiVersion/value', 'expected a nonempty safe header value');
+  }
+  const contract: Contract = {
+    title: String(doc.info?.title ?? 'API'),
+    apiVersion: config.apiVersion?.value ?? String(doc.info?.version ?? ''),
+    operations,
+    models,
+    ...(cycles.size ? { definitions } : {}),
+    modelDependencies: Object.fromEntries(
+      operations.map((op) => {
+        const operationPath = `/paths/${op.path}/${op.verb.toLowerCase()}/`;
+        const sharedParameters = `/paths/${op.path}/parameters/`;
+        return [
+          op.id,
+          [
+            ...new Set(
+              references
+                .filter(
+                  (ref) =>
+                    ref.path.startsWith(operationPath) || ref.path.startsWith(sharedParameters),
+                )
+                .map((ref) => own(config.models, ref.model) ?? ref.model),
+            ),
+          ].sort(),
+        ];
+      }),
+    ),
+    config,
+    sources,
+    hash: '',
+  };
+  if (auth) contract.auth = auth;
+  contract.hash = hash(stable(contract));
+  return contract;
+}

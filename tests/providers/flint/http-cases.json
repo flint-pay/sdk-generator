@@ -1,0 +1,567 @@
+[
+  {
+    "name": "create uses current required payment options and preserves exact amount",
+    "operation": "createPaymentIntent",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "body": {
+        "amount_money": {
+          "amount": "9007199254740993",
+          "currency": "USD"
+        },
+        "payment_options": ["card"],
+        "capture_method": "manual"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/payment-intents",
+      "headers": {
+        "authorization": "Bearer test-token",
+        "idempotency-key": "durable-create-key",
+        "flint-version": "2026-09-07"
+      },
+      "body": "{\"amount_money\":{\"amount\":9007199254740993,\"currency\":\"USD\"},\"payment_options\":[\"card\"],\"capture_method\":\"manual\"}"
+    },
+    "responses": [
+      {
+        "transportError": true
+      },
+      {
+        "status": 201,
+        "headers": {
+          "x-request-id": "req_fixture"
+        },
+        "body": "{\"data\":{\"payment_collection\":{},\"payment_intent\":{\"amount_money\":{\"amount\":9007199254740993,\"currency\":\"USD\"},\"payment_flow\":\"api\",\"payment_intent_id\":\"pi_fixture\",\"payment_options\":[\"card\"],\"status\":\"requires_capture\",\"support_reference\":\"support_fixture\",\"risk\":null,\"last_payment_error\":null}}}"
+      }
+    ],
+    "data": {
+      "data": {
+        "payment_collection": {},
+        "payment_intent": {
+          "amount_money": {
+            "amount": "9007199254740993",
+            "currency": "USD"
+          },
+          "payment_flow": "api",
+          "payment_intent_id": "pi_fixture",
+          "payment_options": ["card"],
+          "status": "requires_capture",
+          "support_reference": "support_fixture",
+          "risk": null,
+          "last_payment_error": null
+        }
+      }
+    },
+    "options": {
+      "idempotencyKey": "durable-create-key",
+      "headers": {
+        "fLiNt-VeRsIoN": "2026-02-01"
+      }
+    },
+    "attempts": 2
+  },
+  {
+    "name": "refund reason is optional and payment intent satisfies field choice",
+    "operation": "createRefund",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "body": {
+        "payment_intent_id": "pi_fixture",
+        "amount_money": {
+          "amount": "100",
+          "currency": "USD"
+        }
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/refunds",
+      "headers": {
+        "authorization": "Bearer test-token",
+        "idempotency-key": "durable-refund-key",
+        "flint-version": "2026-09-07"
+      },
+      "body": "{\"payment_intent_id\":\"pi_fixture\",\"amount_money\":{\"amount\":100,\"currency\":\"USD\"}}"
+    },
+    "responses": [
+      {
+        "status": 409,
+        "body": "{\"error\":{\"type\":\"conflict_error\",\"code\":\"IDEMPOTENCY_KEY_IN_PROGRESS\",\"message\":\"Request in progress\"}}"
+      },
+      {
+        "status": 201,
+        "headers": {
+          "x-request-id": "req_fixture"
+        },
+        "body": "{\"data\":{\"amount_money\":{\"amount\":100,\"currency\":\"USD\"},\"refund_id\":\"ref_fixture\",\"refunded_tip_money\":{\"amount\":0,\"currency\":\"USD\"},\"status\":\"pending\"}}"
+      }
+    ],
+    "data": {
+      "data": {
+        "amount_money": {
+          "amount": "100",
+          "currency": "USD"
+        },
+        "refund_id": "ref_fixture",
+        "refunded_tip_money": {
+          "amount": "0",
+          "currency": "USD"
+        },
+        "status": "pending"
+      }
+    },
+    "options": {
+      "idempotencyKey": "durable-refund-key"
+    },
+    "attempts": 2
+  },
+  {
+    "name": "capture preserves endpoint identity",
+    "operation": "capturePaymentIntent",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "payment_intent_id": "pi_fixture",
+      "body": {}
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/payment-intents/pi_fixture/capture",
+      "headers": {
+        "authorization": "Bearer test-token",
+        "flint-version": "2026-09-07"
+      },
+      "body": "{}"
+    },
+    "responses": [
+      {
+        "status": 200,
+        "headers": {
+          "x-request-id": "req_fixture"
+        },
+        "body": "{\"data\":{\"amount_money\":{\"amount\":9007199254740993,\"currency\":\"USD\"},\"payment_flow\":\"api\",\"payment_intent_id\":\"pi_fixture\",\"payment_options\":[\"card\"],\"status\":\"succeeded\",\"support_reference\":\"support_fixture\",\"risk\":null,\"last_payment_error\":null}}"
+      }
+    ],
+    "data": {
+      "data": {
+        "amount_money": {
+          "amount": "9007199254740993",
+          "currency": "USD"
+        },
+        "payment_flow": "api",
+        "payment_intent_id": "pi_fixture",
+        "payment_options": ["card"],
+        "status": "succeeded",
+        "support_reference": "support_fixture",
+        "risk": null,
+        "last_payment_error": null
+      }
+    }
+  },
+  {
+    "name": "future status and omitted optional read fields are retained",
+    "operation": "getPaymentIntent",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "payment_intent_id": "pi_fixture",
+      "expand": ["customer", "order"]
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/payment-intents/pi_fixture?expand=customer&expand=order",
+      "headers": {
+        "authorization": "Bearer test-token",
+        "flint-version": "2026-09-07"
+      }
+    },
+    "responses": [
+      {
+        "status": 200,
+        "headers": {
+          "x-request-id": "req_fixture"
+        },
+        "body": "{\"data\":{\"amount_money\":{\"amount\":9007199254740993,\"currency\":\"USD\"},\"payment_flow\":\"api\",\"payment_intent_id\":\"pi_fixture\",\"payment_options\":[\"card\"],\"status\":\"future_review\",\"support_reference\":\"support_fixture\"}}"
+      }
+    ],
+    "data": {
+      "data": {
+        "amount_money": {
+          "amount": "9007199254740993",
+          "currency": "USD"
+        },
+        "payment_flow": "api",
+        "payment_intent_id": "pi_fixture",
+        "payment_options": ["card"],
+        "status": "future_review",
+        "support_reference": "support_fixture"
+      }
+    }
+  },
+  {
+    "name": "refund read returns exact refund and tip values",
+    "operation": "getRefund",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "refund_id": "ref_fixture"
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/refunds/ref_fixture",
+      "headers": {
+        "authorization": "Bearer test-token",
+        "flint-version": "2026-09-07"
+      }
+    },
+    "responses": [
+      {
+        "status": 200,
+        "headers": {
+          "x-request-id": "req_fixture"
+        },
+        "body": "{\"data\":{\"amount_money\":{\"amount\":100,\"currency\":\"USD\"},\"refund_id\":\"ref_fixture\",\"refunded_tip_money\":{\"amount\":0,\"currency\":\"USD\"},\"status\":\"pending\"}}"
+      }
+    ],
+    "data": {
+      "data": {
+        "amount_money": {
+          "amount": "100",
+          "currency": "USD"
+        },
+        "refund_id": "ref_fixture",
+        "refunded_tip_money": {
+          "amount": "0",
+          "currency": "USD"
+        },
+        "status": "pending"
+      }
+    }
+  },
+  {
+    "name": "payment list uses documented cursor query",
+    "operation": "listPaymentIntents",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "page_size": 2,
+      "page_token": "cursor +/="
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/payment-intents?page_size=2&page_token=cursor%20%2B%2F%3D",
+      "headers": {
+        "authorization": "Bearer test-token",
+        "flint-version": "2026-09-07"
+      }
+    },
+    "responses": [
+      {
+        "status": 200,
+        "headers": {
+          "x-request-id": "req_fixture"
+        },
+        "body": "{\"data\":[{\"amount_money\":{\"amount\":9007199254740993,\"currency\":\"USD\"},\"payment_flow\":\"api\",\"payment_intent_id\":\"pi_fixture\",\"payment_options\":[\"card\"],\"status\":\"requires_capture\",\"support_reference\":\"support_fixture\",\"risk\":null,\"last_payment_error\":null}],\"next_page_token\":\"next_cursor\"}"
+      }
+    ],
+    "data": {
+      "data": [
+        {
+          "amount_money": {
+            "amount": "9007199254740993",
+            "currency": "USD"
+          },
+          "payment_flow": "api",
+          "payment_intent_id": "pi_fixture",
+          "payment_options": ["card"],
+          "status": "requires_capture",
+          "support_reference": "support_fixture",
+          "risk": null,
+          "last_payment_error": null
+        }
+      ],
+      "next_page_token": "next_cursor"
+    }
+  },
+  {
+    "name": "refund list uses documented cursor query",
+    "operation": "listRefunds",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "page_size": 2
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/refunds?page_size=2",
+      "headers": {
+        "authorization": "Bearer test-token",
+        "flint-version": "2026-09-07"
+      }
+    },
+    "responses": [
+      {
+        "status": 200,
+        "headers": {
+          "x-request-id": "req_fixture"
+        },
+        "body": "{\"data\":[{\"amount_money\":{\"amount\":100,\"currency\":\"USD\"},\"refund_id\":\"ref_fixture\",\"refunded_tip_money\":{\"amount\":0,\"currency\":\"USD\"},\"status\":\"pending\"}]}"
+      }
+    ],
+    "data": {
+      "data": [
+        {
+          "amount_money": {
+            "amount": "100",
+            "currency": "USD"
+          },
+          "refund_id": "ref_fixture",
+          "refunded_tip_money": {
+            "amount": "0",
+            "currency": "USD"
+          },
+          "status": "pending"
+        }
+      ]
+    }
+  },
+  {
+    "name": "changed request with reused key is never retried",
+    "operation": "createRefund",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "body": {
+        "payment_intent_id": "pi_fixture",
+        "amount_money": {
+          "amount": "100",
+          "currency": "USD"
+        }
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/refunds",
+      "headers": {
+        "authorization": "Bearer test-token",
+        "flint-version": "2026-09-07"
+      },
+      "body": "{\"payment_intent_id\":\"pi_fixture\",\"amount_money\":{\"amount\":100,\"currency\":\"USD\"}}"
+    },
+    "responses": [
+      {
+        "status": 409,
+        "headers": {
+          "x-request-id": "req_conflict"
+        },
+        "body": "{\"error\":{\"type\":\"conflict_error\",\"code\":\"IDEMPOTENCY_KEY_REUSED\",\"message\":\"Different request\"}}"
+      }
+    ],
+    "error": {
+      "kind": "conflict",
+      "code": "IDEMPOTENCY_KEY_REUSED",
+      "requestId": "req_conflict"
+    },
+    "options": {
+      "idempotencyKey": "durable-refund-key"
+    }
+  },
+  {
+    "name": "payment options required",
+    "operation": "createPaymentIntent",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "body": {
+        "amount_money": {
+          "amount": "100",
+          "currency": "USD"
+        }
+      }
+    },
+    "responses": [],
+    "error": {
+      "kind": "validation"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "refund choice requires a target",
+    "operation": "createRefund",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "body": {}
+    },
+    "responses": [],
+    "error": {
+      "kind": "validation"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "negative money rejected",
+    "operation": "createRefund",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "body": {
+        "payment_intent_id": "pi_fixture",
+        "amount_money": {
+          "amount": "-1",
+          "currency": "USD"
+        }
+      }
+    },
+    "responses": [],
+    "error": {
+      "kind": "validation"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "currency pattern preserved",
+    "operation": "createPaymentIntent",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "body": {
+        "amount_money": {
+          "amount": "100",
+          "currency": "usd"
+        },
+        "payment_options": ["card"],
+        "capture_method": "manual"
+      }
+    },
+    "responses": [],
+    "error": {
+      "kind": "validation"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "refund accepts order alone",
+    "operation": "createRefund",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "body": {
+        "order_id": "ord_fixture"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/refunds",
+      "headers": {
+        "authorization": "Bearer test-token",
+        "idempotency-key": "durable-refund-key",
+        "flint-version": "2026-09-07"
+      },
+      "body": "{\"order_id\":\"ord_fixture\"}"
+    },
+    "responses": [
+      {
+        "status": 201,
+        "headers": {
+          "x-request-id": "req_fixture"
+        },
+        "body": "{\"data\":{\"amount_money\":{\"amount\":100,\"currency\":\"USD\"},\"refund_id\":\"ref_fixture\",\"refunded_tip_money\":{\"amount\":0,\"currency\":\"USD\"},\"status\":\"pending\"}}"
+      }
+    ],
+    "data": {
+      "data": {
+        "amount_money": {
+          "amount": "100",
+          "currency": "USD"
+        },
+        "refund_id": "ref_fixture",
+        "refunded_tip_money": {
+          "amount": "0",
+          "currency": "USD"
+        },
+        "status": "pending"
+      }
+    },
+    "options": {
+      "idempotencyKey": "durable-refund-key"
+    }
+  },
+  {
+    "name": "refund accepts both linked identifiers",
+    "operation": "createRefund",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "body": {
+        "order_id": "ord_fixture",
+        "payment_intent_id": "pi_fixture"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/refunds",
+      "headers": {
+        "authorization": "Bearer test-token",
+        "idempotency-key": "durable-refund-key",
+        "flint-version": "2026-09-07"
+      },
+      "body": "{\"order_id\":\"ord_fixture\",\"payment_intent_id\":\"pi_fixture\"}"
+    },
+    "responses": [
+      {
+        "status": 201,
+        "headers": {
+          "x-request-id": "req_fixture"
+        },
+        "body": "{\"data\":{\"amount_money\":{\"amount\":100,\"currency\":\"USD\"},\"refund_id\":\"ref_fixture\",\"refunded_tip_money\":{\"amount\":0,\"currency\":\"USD\"},\"status\":\"pending\"}}"
+      }
+    ],
+    "data": {
+      "data": {
+        "amount_money": {
+          "amount": "100",
+          "currency": "USD"
+        },
+        "refund_id": "ref_fixture",
+        "refunded_tip_money": {
+          "amount": "0",
+          "currency": "USD"
+        },
+        "status": "pending"
+      }
+    },
+    "options": {
+      "idempotencyKey": "durable-refund-key"
+    }
+  },
+  {
+    "name": "settled payment read preserves explicitly null error and risk",
+    "operation": "getPaymentIntent",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "payment_intent_id": "pi_fixture"
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/payment-intents/pi_fixture",
+      "headers": {
+        "authorization": "Bearer test-token",
+        "flint-version": "2026-09-07"
+      }
+    },
+    "responses": [
+      {
+        "status": 200,
+        "headers": {
+          "x-request-id": "req_fixture"
+        },
+        "body": "{\"data\":{\"amount_money\":{\"amount\":9007199254740993,\"currency\":\"USD\"},\"payment_flow\":\"api\",\"payment_intent_id\":\"pi_fixture\",\"payment_options\":[\"card\"],\"status\":\"succeeded\",\"support_reference\":\"support_fixture\",\"last_payment_error\":null,\"risk\":null}}"
+      }
+    ],
+    "data": {
+      "data": {
+        "amount_money": {
+          "amount": "9007199254740993",
+          "currency": "USD"
+        },
+        "payment_flow": "api",
+        "payment_intent_id": "pi_fixture",
+        "payment_options": ["card"],
+        "status": "succeeded",
+        "support_reference": "support_fixture",
+        "last_payment_error": null,
+        "risk": null
+      }
+    }
+  }
+]
