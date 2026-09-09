@@ -1,6 +1,6 @@
 # Support matrix (generator 0.1.0)
 
-A capability must be declared to generate its public helper. Both targets have the same contract semantics. A missing capability is not inferred from a payment resource name, HTTP verb, or field name.
+A capability must be declared to generate its public helper. Both targets implement the declared contract through bundled compiled codecs, with the target differences described below. A missing capability is not inferred from a payment resource name, HTTP verb, or field name.
 
 | Capability                 | Node.js/TypeScript                                               | PHP                                                         |
 | -------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------- |
@@ -21,6 +21,7 @@ A capability must be declared to generate its public helper. Both targets have t
 | Durable webhook example    | SQLite inbox/outbox workers, Node 22.16+                         | PDO SQLite inbox/outbox workers                             |
 | Money helpers              | Optional explicit currency precision; no implicit rounding       | Same                                                        |
 | Diagnostics                | Every HTTP attempt, including failures, no credentials/bodies    | Same                                                        |
+| Schema-taking helpers      | `serialize`, `Model`, `redact`; bundled local schema adapter     | Base `Model` and `Codec` helpers; local schema adapter      |
 | Custom runtime             | Caller-owned fetch-compatible function                           | Caller-owned Closure transport                              |
 | Client lifetime            | Reusable per event loop; default fetch connection pool           | Reusable owned cURL handle; explicit close                  |
 | Package/docs/examples      | npm, JS and TS examples/reference                                | Composer, PHP examples/reference                            |
@@ -46,6 +47,8 @@ A capability must be declared to generate its public helper. Both targets have t
 
 Descriptions, examples and defaults are metadata, not evidence of server behavior. Declared exact formats determine serialization. Generated inputs preserve presence without inferring whether a null clears data on the server.
 
+For null-only values, use `type: "null"`. The legacy `type: ["null"]` form permits non-null values in Node but rejects them in PHP; see [schema-taking helpers](using-sdks.md#schema-taking-helpers).
+
 Exact numeric enum membership compares mathematical values, including equivalent decimal/exponent spellings. PHP typed getters unwrap nested models, and object/array alternative matching distinguishes lists from objects.
 
 Integer response decoding accepts integral decimal/exponent tokens without floating-point rounding. Exponent expansion is limited to 10,000 appended zero digits to bound allocation; larger expansions produce a protocol error. Decimal precision and the public representation of unknown numeric fields are preserved. Sparse Node input arrays are rejected, including arrays in additional fields.
@@ -53,6 +56,8 @@ Integer response decoding accepts integral decimal/exponent tokens without float
 HTTP success bodies and verified webhook payloads must contain well-formed UTF-8 JSON without a byte-order mark or unpaired surrogate escapes. Malformed bodies produce a protocol error; decoding never repairs them by inserting replacement characters. HTTP error statuses remain available even when their bodies cannot be parsed.
 
 ## Compatibility analysis limitations
+
+Compatibility checks compare public declarations and runtime guarantees separately. Losing required keys in mixed objects or nested dictionary values is breaking even where TypeScript exposes `unknown`. Added-result inclusion covers explicit scalar/object/array types, dictionaries, nesting, null and absent bodies. References, complex compositions, nullable type unions and arbitrary result unions retain review findings where inclusion cannot be proved; their execution support is unchanged.
 
 Nested constraint changes in `allOf`, `anyOf`, and `not` can receive only a `review` finding even when they break existing inputs. The SemVer release policy relies on provider judgment for these findings. See [known compatibility limitations and deferred improvements](releases.md#known-compatibility-limitations).
 
@@ -64,4 +69,4 @@ Nested constraint changes in `allOf`, `anyOf`, and `not` can receive only a `rev
 
 The schema can still express per-item bulk results, resource relationships, next actions and exports as ordinary data. Automatic behavior requires a declared provider capability; a resource property alone never triggers network activity.
 
-A missing optional capability produces a diagnostic. An operation with unsupported wire semantics fails generation rather than shipping as a working SDK.
+Undeclared optional capabilities produce no helper. Unsupported or incomplete capability declarations produce diagnostics. An operation with unsupported wire semantics fails generation rather than shipping as a working SDK.

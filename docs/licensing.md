@@ -1,6 +1,6 @@
 # Licensing and redistribution
 
-The generator and bundled runtime/template code are licensed under Apache-2.0; see the repository LICENSE. Generated SDK packages include that license for the copied runtime code. Providers and consumers can inspect, modify, fork and redistribute it under those terms, retaining required notices.
+The generator and bundled codec compiler, runtime and template code are licensed under Apache-2.0; see the repository LICENSE. Generated SDK packages include that license for the copied compiler and runtime code. Providers and consumers can inspect, modify, fork and redistribute it under those terms, retaining required notices.
 
 An API definition, provider examples, trademarks, package identity and custom code do not automatically become Apache-2.0 merely because this generator processes them. Their owners retain their rights. Providers must choose accurate package-level license metadata and include any additional required notices for their material. The `license` configuration field does not replace or remove the runtime license.
 

@@ -343,13 +343,19 @@ test('pagination is lazy, bounded, cancellable and refuses foreign credential de
 test('concurrent tenants have independent request headers and diagnostics omit secrets', async () => {
   const seen = [];
   const events = [];
+  let releaseFirst;
+  const secondArrived = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
   const runtime = new Runtime(runtimeContract, {
     baseUrl: 'https://example.invalid',
     token: 'secret-key',
     diagnostics: (e) => events.push(e),
     transport: async (_url, init) => {
-      await new Promise((r) => setTimeout(r, init.headers['x-tenant'] === 'a' ? 8 : 1));
+      // Force overlap and completion order without relying on timer scheduling.
+      if (init.headers['x-tenant'] === 'a') await secondArrived;
       seen.push(init.headers['x-tenant']);
+      if (init.headers['x-tenant'] === 'b') releaseFirst();
       return Response.json(
         { id: init.headers['x-tenant'], amount: 1, status: 'pending' },
         { headers: { 'x-request-id': 'r1' } },

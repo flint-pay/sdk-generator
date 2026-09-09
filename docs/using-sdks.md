@@ -63,6 +63,28 @@ Use strings for exact int64/uint64 and JSON `number` values, including decimals:
 
 Integer responses accept integral decimal and exponent notation: `1.0` becomes `1`, and `1e3` becomes `1000`. int64/uint64 results remain exact strings. Fractional values are rejected rather than rounded, and decimal fields retain their original precision. Node request arrays must contain an explicit value at every index; sparse arrays fail validation before dispatch.
 
+## Schema-taking helpers
+
+Generated methods and model factories use the codecs included in the package. Applications can also supply schemas directly to the existing helpers:
+
+```js
+import { serialize, Model, redact } from '@example/library';
+
+const wire = serialize('9007199254740993', { type: 'integer', format: 'int64' });
+// wire is the unquoted JSON token 9007199254740993.
+
+const schema = {
+  type: 'object',
+  properties: { value: { type: 'string', 'x-sensitive': true } },
+};
+const model = new Model({ value: 'private value' }, schema);
+console.log(redact(model.toJSON(), schema)); // { value: '[REDACTED]' }
+```
+
+These helpers run locally and use the package's value execution rules. PHP retains the schema-taking base `Model` constructor, `Codec::normalize` and `Codec::redact`. `Codec::encode` writes normalized values as JSON. No generator installation or schema registry service is required by either package.
+
+For a null-only schema, use `type: 'null'`. The existing Node behavior for `type: ['null']` also permits non-null values; PHP rejects them. Nullable forms such as `type: ['string', 'null']` retain their declared non-null type in both targets.
+
 ## Client and request options
 
 Pass client defaults to `new Client({...})` in Node or `new Client(new ClientOptions(...))` in PHP. Pass request overrides as the second method argument: a plain object in Node or `new RequestOptions(...)` in PHP.

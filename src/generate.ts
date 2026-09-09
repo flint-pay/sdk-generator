@@ -16,10 +16,24 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
-import { compareSchemas } from './compatibility.js';
+import { comparePolicies } from './compatibility.js';
 import { artifactHashes, prepareSite, verifyRelease } from './distribution.js';
 import { checkVersionPolicy } from './version.js';
-import { directionalSchema, serialize } from './runtime.js';
+import { serialize } from './runtime.js';
+import {
+  inputSchema,
+  sample,
+  compileSdkContract,
+  type CompiledSdkContract,
+  type PhpModelPlan,
+} from './target-plan.js';
+import { addedResultFits } from './response-compatibility.js';
+import { compareCompiledContracts } from './compiled-compatibility.js';
+import {
+  restoreCompiledSnapshot,
+  storeCompiledSnapshot,
+  type CompiledSnapshot,
+} from './compiled-record.js';
 import {
   type Contract,
   type Config,
@@ -51,6 +65,33 @@ interface RecordFile {
   compatibility?: Compatibility[];
   previousVersion?: string;
   comparisonBase?: Contract;
+  compiled?: CompiledSnapshot;
+  compiledComparisonBase?: CompiledSnapshot;
+}
+function compiledBase(before: RecordFile, next: Contract): CompiledSnapshot | undefined {
+  const retainsBase =
+    before.interface.config.version === next.config.version ||
+    before.previousVersion === before.interface.config.version;
+  return retainsBase && before.comparisonBase ? before.compiledComparisonBase : before.compiled;
+}
+function runtimeIdentity(
+  files: Map<string, string>,
+  targets: ('node' | 'php')[],
+): CompiledSnapshot['runtimeIdentity'] {
+  return Object.fromEntries(
+    targets.map((target) => [
+      target,
+      hash(
+        stable(
+          [...files].filter(([name]) =>
+            target === 'node'
+              ? /^node\/(runtime|codec-plan|runtime-plan)\.js$/.test(name)
+              : /^php\/src\/(Runtime|SchemaAdapter)\.php$/.test(name),
+          ),
+        ),
+      ),
+    ]),
+  );
 }
 const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
@@ -80,404 +121,27 @@ function methodDoc(
       : op.deprecated;
   return `/**\n * ${comment(op.description).replaceAll('\n', '\n * ')}\n * ${op.verb} ${comment(op.path)}\n${deprecated ? ` * @deprecated ${comment(deprecated).replaceAll('\n', '\n * ')}\n` : ''} * @example client.${op.resource}.${method}(${comment(js(exampleInput(op, definitions), 0)!)})\n */\n`;
 }
-function optionalPropertyType(key: string, value: string): string {
-  // An omitted own property still exposes Object's inherited member in TypeScript.
-  return [
-    'constructor',
-    'toString',
-    'toLocaleString',
-    'valueOf',
-    'hasOwnProperty',
-    'isPrototypeOf',
-    'propertyIsEnumerable',
-  ].includes(key)
-    ? `(${value}) | Object[${JSON.stringify(key)}]`
-    : value;
-}
-type ObjectContext = 'object' | 'nullableObject' | undefined;
-function objectConstraint(s: Schema): ObjectContext {
-  const constraints = [
-    s.type === 'object'
-      ? 'object'
-      : Array.isArray(s.type) && s.type.includes('object')
-        ? 'nullableObject'
-        : undefined,
-    ...(s.allOf ?? []).map(objectConstraint),
-  ];
-  return constraints.includes('object')
-    ? 'object'
-    : constraints.includes('nullableObject')
-      ? 'nullableObject'
-      : undefined;
-}
-function type(
-  s: Schema,
-  response = false,
-  discriminator?: string,
-  known = false,
-  objectContext?: ObjectContext,
-): string {
-  if (s['x-sdk-ref']) {
-    const reference = s['x-sdk-ref'] + (response ? '' : 'Input');
-    if (!objectContext) return reference;
-    // A recursive alias may also admit nonobjects. Filter it at this use site
-    // without expanding the recursive graph or narrowing the alias globally.
-    const object = `Exclude<${reference} & object, readonly unknown[]>`;
-    return objectContext === 'nullableObject' ? `(${object}) | (${reference} & null)` : object;
-  }
-  s = directionalSchema(s, response);
-  // Composition branches constrain the same value. Object keywords alone do
-  // not exclude scalars, null or arrays, but an enclosing object type does.
-  const constraint = objectConstraint(s);
-  objectContext =
-    objectContext === 'object' || constraint === 'object'
-      ? 'object'
-      : (objectContext ?? constraint);
-  if (s.oneOf || s.anyOf || s.allOf || s.not) {
-    const { oneOf, anyOf, allOf, not, discriminator: tag, ...base } = s;
-    const parts = [type(base, response, discriminator, false, objectContext)];
-    for (const branch of allOf ?? [])
-      parts.push(type(branch, response, discriminator, false, objectContext));
-    for (const branches of [oneOf, anyOf])
-      if (branches) {
-        const alternatives = branches.map((branch) =>
-          type(branch, response, tag?.propertyName, false, objectContext),
-        );
-        if (response && !known)
-          alternatives.push(
-            objectContext === 'object' || branches.every((v) => v.type === 'object')
-              ? '{ [key: string]: unknown }'
-              : 'unknown',
-          );
-        parts.push(alternatives.map((v) => '(' + v + ')').join(' | '));
-      }
-    if (not && !response) {
-      const absent = (constraint: Schema): string => {
-        // Negating a value constraint does not imply that the field must be absent.
-        const keywords = Object.keys(constraint).filter(
-          (key) =>
-            ![
-              'description',
-              'title',
-              'default',
-              'example',
-              'examples',
-              'deprecated',
-              'readOnly',
-              'writeOnly',
-            ].includes(key) && !key.startsWith('x-'),
-        );
-        if (keywords.length !== 1) return 'unknown';
-        if (constraint.required?.length)
-          return constraint.required
-            .map(
-              (key) =>
-                '{ ' + JSON.stringify(key) + '?: ' + optionalPropertyType(key, 'never') + ' }',
-            )
-            .join(' | ');
-        if (constraint.anyOf) return constraint.anyOf.map((v) => '(' + absent(v) + ')').join(' & ');
-        return 'unknown';
-      };
-      parts.push(absent(not));
-    }
-    return (
-      parts
-        .filter((v) => v !== 'unknown')
-        .map((v) => '(' + v + ')')
-        .join(' & ') || 'unknown'
-    );
-  }
-  const types = Array.isArray(s.type) ? s.type : [s.type];
-  if (types.length > 1) return types.map((t) => type({ ...s, type: t! }, response)).join(' | ');
-  // Equivalent numeric enum values have many valid spellings (1, 1.0, 1e0).
-  // Their exact string representation is checked by the runtime, not a literal union.
-  if (
-    s.enum &&
-    (s.type === 'number' || (s.type === 'integer' && ['int64', 'uint64'].includes(s.format ?? '')))
-  )
-    return 'string';
-  if (s.enum && !response)
-    return (
-      s.enum
-        .filter(
-          (v) =>
-            !types[0] ||
-            (v === null
-              ? types[0] === 'null'
-              : typeof v === 'number'
-                ? ['number', 'integer'].includes(types[0])
-                : typeof v === types[0]),
-        )
-        .map((v) =>
-          JSON.stringify(
-            v !== null && (['int64', 'uint64'].includes(s.format ?? '') || s.type === 'number')
-              ? String(v)
-              : v,
-          ),
-        )
-        .join(' | ') || 'never'
-    );
-  switch (types[0]) {
-    case 'null':
-      return 'null';
-    case 'string':
-      return s.enum
-        ? s.enum.map((v) => JSON.stringify(v)).join(' | ') + ' | (string & {})'
-        : 'string';
-    case 'boolean':
-      return 'boolean';
-    case 'number':
-      return 'string';
-    case 'integer':
-      return ['int64', 'uint64'].includes(s.format ?? '') ? 'string' : 'number';
-    case 'array':
-      return `Array<${type(s.items!, response)}>`;
-    case undefined:
-      if (!s.properties && !s.required?.length) return 'unknown';
-      if (objectContext === 'nullableObject')
-        return `null | (${type({ ...s, type: 'object' }, response, discriminator)})`;
-      if (!objectContext)
-        return `null | boolean | number | string | unknown[] | (${type({ ...s, type: 'object' }, response, discriminator)})`;
-    case 'object':
-      if (!Object.keys(s.properties ?? {}).length && typeof s.additionalProperties === 'object')
-        return `Record<string, ${type(s.additionalProperties, response)}>`;
-      return (
-        '{ ' +
-        [...new Set([...Object.keys(s.properties ?? {}), ...(s.required ?? [])])]
-          .map((key) => [key, s.properties?.[key] ?? {}] as [string, Schema])
-          .filter(([, v]) => !response || !v.writeOnly)
-          .map(([k, v]) =>
-            !response && v.readOnly
-              ? `${JSON.stringify(k)}?: ${optionalPropertyType(k, 'never')};`
-              : `${JSON.stringify(k)}${s.required?.includes(k) ? '' : '?'}: ${s.required?.includes(k) ? type(v, response && k !== discriminator) : optionalPropertyType(k, type(v, response && k !== discriminator))};`,
-          )
-          .join(' ') +
-        (response || s.additionalProperties !== false ? ` [key: string]: unknown;` : '') +
-        ' }'
-      );
-    default:
-      return 'unknown';
-  }
-}
-function phpType(s: Schema): string {
-  if (s.oneOf || s.anyOf || s.allOf || s.type === undefined) return 'mixed';
-  const types = Array.isArray(s.type) ? s.type : [s.type];
-  return [
-    ...new Set(
-      types.map((t) =>
-        t === 'null'
-          ? 'null'
-          : t === 'integer'
-            ? ['int64', 'uint64'].includes(s.format ?? '')
-              ? 'string'
-              : 'int'
-            : t === 'number'
-              ? 'string'
-              : t === 'boolean'
-                ? 'bool'
-                : t === 'object'
-                  ? 'array|object'
-                  : t === 'array'
-                    ? 'array'
-                    : 'string',
-      ),
-    ),
-  ].join('|');
-}
-function phpShape(s: Schema, response = false): string {
-  if (s.type === 'object')
-    return (
-      'array{' +
-      Object.entries(s.properties ?? {})
-        .filter(([, v]) => (response ? !v.writeOnly : !v.readOnly))
-        .map(([k, v]) => `${php(k)}${s.required?.includes(k) ? '' : '?'}: ${phpType(v)}`)
-        .join(', ') +
-      '}'
-    );
-  return 'array<string, mixed>';
-}
-function phpDocType(s: Schema, response = false): string {
-  if (s.oneOf || s.anyOf)
-    return (
-      (s.oneOf ?? s.anyOf)!.map((v) => phpDocType(v, response)).join('|') +
-      (response ? '|mixed' : '')
-    );
-  if (s.allOf) return s.allOf.map((v) => phpDocType(v, response)).join('&');
-  if (s.type === 'array') return `list<${phpDocType(s.items!, response)}>`;
-  if (s.type === 'object')
-    return `${response ? 'object' : 'array'}{${Object.entries(s.properties ?? {})
-      .filter(([, v]) => (response ? !v.writeOnly : !v.readOnly))
-      .map(([k, v]) => `${php(k)}${s.required?.includes(k) ? '' : '?'}: ${phpDocType(v, response)}`)
-      .join(', ')}}`;
-  return phpType(s);
-}
 function phpModel(
-  name: string,
-  s: Schema,
-  response = false,
-  recursive = false,
-  validation: Config['validation'] = 'encoding',
+  plan: PhpModelPlan,
+  recursive: boolean,
+  validation: Config['validation'],
 ): string {
-  s = { ...s, 'x-sdk-validation': validation };
-  let code = `/** Presence-aware ${response ? 'response' : 'input'}; omitted fields throw when accessed. */\nfinal class ${name} extends Model {\n    /** @param ${comment(s.type === 'object' ? phpShape(s, response) : phpDocType(s, response))} $values */\n    public function __construct(${phpType(s)} $values${s.type === 'object' ? ' = []' : ''}, array $redactFields = []) { parent::__construct($values, json_decode(${php(JSON.stringify(s))}, true, 512, JSON_THROW_ON_ERROR)${recursive ? " + ['x-sdk-definitions' => SchemaRegistry::definitions()]" : ''}, ${response ? 'true' : 'false'}, $redactFields); }\n`;
+  const expression = plan.sharedCodec
+    ? `SchemaRegistry::codecs()[${php(plan.sharedCodec)}]`
+    : `json_decode(${php(JSON.stringify(plan.codec))}, true, 512, JSON_THROW_ON_ERROR)`;
+  let code = `/** Presence-aware ${plan.response ? 'response' : 'input'}; omitted fields throw when accessed. */\nfinal class ${plan.name} extends Model {\n    /** @param ${comment(plan.constructorDoc)} $values */\n    public function __construct(${plan.constructorType} $values${plan.defaultObject ? ' = []' : ''}, array $redactFields = []) { parent::__construct($values, [], ${plan.response ? 'true' : 'false'}, $redactFields, ['constraints' => ${validation === 'schema' ? 'true' : 'false'}] + ${expression}${recursive ? " + ['definitions' => SchemaRegistry::codecs()]" : ''}); }\n`;
   const accessors = new Set<string>();
-  for (const [field, v] of Object.entries(s.properties ?? {})) {
-    if (response ? v.writeOnly : v.readOnly) continue;
-    if (accessors.has(field.toLowerCase()))
+  for (const getter of plan.getters) {
+    if (accessors.has(getter.field.toLowerCase()))
       throw new Diagnostic(
-        name,
-        `PHP field accessor collision for ${field}; correct the model naming before generation`,
+        plan.name,
+        `PHP field accessor collision for ${getter.field}; correct the model naming before generation`,
       );
-    accessors.add(field.toLowerCase());
-    if (/^[A-Za-z][A-Za-z0-9_]*$/.test(field))
-      code += `    /** @return ${comment(phpDocType(v, response))} */\n    public function get${pascal(field)}(): ${phpType(v)} { return $this->get(${php(field)}); }\n`;
+    accessors.add(getter.field.toLowerCase());
+    if (getter.method)
+      code += `    /** @return ${comment(getter.doc)} */\n    public function ${getter.method}(): ${getter.type} { return $this->get(${php(getter.field)}); }\n`;
   }
   return code + '}\n';
-}
-function inputSchema(op: Operation): Schema {
-  const properties: Record<string, Schema> = Object.fromEntries(
-    op.parameters.map((p) => [p.name, p.schema]),
-  );
-  const required = op.parameters.filter((p) => p.required).map((p) => p.name);
-  if (op.body) {
-    properties.body = op.body;
-    if (op.bodyRequired) required.push('body');
-  }
-  return { type: 'object', properties, required, additionalProperties: false };
-}
-function namedType(s: Schema, models: Record<string, Schema>, response = false): string {
-  const match = Object.entries(models).find(([, value]) => stable(value) === stable(s));
-  return match ? match[0] + (response ? '' : 'Input') : type(s, response);
-}
-function operationInputType(op: Operation, models: Record<string, Schema>): string {
-  const schema = inputSchema(op);
-  return `{ ${Object.entries(schema.properties!)
-    .map(
-      ([key, value]) =>
-        `${JSON.stringify(key)}${schema.required!.includes(key) ? '' : '?'}: ${schema.required!.includes(key) ? `InputValue<${namedType(value, models)}>` : optionalPropertyType(key, `InputValue<${namedType(value, models)}>`)};`,
-    )
-    .join(' ')} }`;
-}
-function resultType(op: Operation, models: Record<string, Schema> = {}): string {
-  return [
-    ...new Set(
-      Object.entries(op.responses)
-        .filter(([k]) => /^2\d\d$/.test(k) || k === '304' || k === 'default')
-        .map(([, v]) => (v.schema ? namedType(v.schema, models, true) : 'undefined')),
-    ),
-  ].join(' | ');
-}
-function itemSchemas(op: Operation): Schema[] {
-  const descend = (s: Schema, parts: string[]): Schema[] => {
-    const child = s.properties?.[parts[0]!];
-    const own = !parts.length
-      ? s.items
-        ? [s.items]
-        : []
-      : child
-        ? descend(child, parts.slice(1))
-        : [];
-    return [
-      ...own,
-      ...[...(s.oneOf ?? []), ...(s.anyOf ?? []), ...(s.allOf ?? [])].flatMap((branch) =>
-        descend(branch, parts),
-      ),
-    ];
-  };
-  return Object.entries(op.responses)
-    .filter(([status]) => /^2\d\d$/.test(status) || status === 'default')
-    .flatMap(([, r]) => (r.schema ? descend(r.schema, op.pagination!.items.split('.')) : []));
-}
-function runtimeContract(c: Contract) {
-  return {
-    operations: c.operations,
-    validation: c.config.validation ?? 'encoding',
-    ...(c.definitions ? { definitions: c.definitions } : {}),
-    ...(c.auth ? { auth: c.auth } : {}),
-    ...(c.config.apiVersion ? { apiVersion: c.config.apiVersion } : {}),
-    ...(c.config.webhook ? { webhook: c.config.webhook } : {}),
-    ...(c.config.money ? { money: c.config.money } : {}),
-    ...(c.config.errors ? { errors: c.config.errors } : {}),
-  };
-}
-function modelsUsed(c: Contract) {
-  if (c.modelDependencies) {
-    const names = new Set([
-      ...c.operations.flatMap((op) => c.modelDependencies![op.id] ?? []),
-      ...Object.keys(c.definitions ?? {}),
-    ]);
-    return Object.fromEntries(Object.entries(c.models).filter(([name]) => names.has(name)));
-  }
-  // Compatibility with generation records predating reference dependency tracking.
-  const used = new Set<string>();
-  function visit(value: unknown) {
-    if (value && typeof value === 'object') {
-      used.add(stable(value));
-      for (const v of Object.values(value)) visit(v);
-    }
-  }
-  visit(c.operations);
-  visit(c.config.webhook);
-  return Object.fromEntries(Object.entries(c.models).filter(([, s]) => used.has(stable(s))));
-}
-function sample(
-  s: Schema,
-  inherited: Record<string, Schema> = {},
-  definitions: Record<string, Schema> = {},
-  stack: string[] = [],
-): unknown {
-  if (s['x-sdk-ref']) {
-    const name = s['x-sdk-ref'];
-    const target = definitions[name];
-    if (!target || stack.includes(name))
-      throw new Diagnostic('example', 'provide a finite example for recursive model ' + name);
-    if (Array.isArray(target.type) && target.type.includes('null')) return null;
-    return sample(target, inherited, definitions, [...stack, name]);
-  }
-  s = directionalSchema(s, false);
-  if (s.example !== undefined) return s.example;
-  if (s.oneOf || s.anyOf || s.allOf) {
-    const { oneOf, anyOf, allOf, not, discriminator, ...base } = s;
-    const collect = (shape: Schema): Record<string, Schema> =>
-      Object.assign({}, ...(shape.allOf ?? []).map(collect), shape.properties ?? {});
-    const properties = { ...inherited, ...collect(s) };
-    let result = sample(base, properties, definitions, stack);
-    for (const branch of [...(allOf ?? []), ...(oneOf ?? anyOf ?? []).slice(0, 1)]) {
-      const next = sample(branch, properties, definitions, stack);
-      result =
-        result &&
-        next &&
-        typeof result === 'object' &&
-        typeof next === 'object' &&
-        !Array.isArray(result) &&
-        !Array.isArray(next)
-          ? { ...result, ...next }
-          : next;
-    }
-    return result;
-  }
-  if (s.enum?.length)
-    return s.enum[0] !== null &&
-      (['int64', 'uint64'].includes(s.format ?? '') || s.type === 'number')
-      ? String(s.enum[0])
-      : s.enum[0];
-  const t = Array.isArray(s.type) ? s.type.find((t) => t !== 'null') : s.type;
-  if (t === 'object' || s.required || s.properties)
-    return Object.fromEntries(
-      Object.entries({
-        ...Object.fromEntries((s.required ?? []).map((key) => [key, {} as Schema])),
-        ...inherited,
-        ...s.properties,
-      })
-        .filter(([k, v]) => s.required?.includes(k) && !v.readOnly)
-        .map(([k, v]) => [k, sample(v, {}, definitions, stack)]),
-    );
-  if (t === 'array') return [];
-  if (t === 'boolean') return true;
-  if (t === 'integer') return ['int64', 'uint64'].includes(s.format ?? '') ? '100' : 1;
-  if (t === 'number') return '1.00';
-  if (t === 'null') return null;
-  return 'example';
 }
 function exampleInput(op: Operation, definitions: Record<string, Schema> = {}): unknown {
   try {
@@ -492,56 +156,15 @@ function exampleInput(op: Operation, definitions: Record<string, Schema> = {}): 
   }
 }
 export function render(c: Contract): Map<string, string> {
-  c = JSON.parse(stable(c)) as Contract;
-  // Share named nested shapes in recursive graphs. Expanding a provider's graph
-  // into every operation, factory and declaration otherwise grows exponentially.
-  if (c.definitions) {
-    const selectedModels = modelsUsed(c);
-    const names = new Map(
-      Object.entries(selectedModels)
-        .filter(([, s]) => s.type === 'object' || s.type === 'array')
-        .map(([name, s]) => [stable(s), name]),
-    );
-    const compact = (s: Schema, nested = false): Schema => {
-      const name = nested ? names.get(stable(s)) : undefined;
-      if (name)
-        return {
-          'x-sdk-ref': name,
-          ...(s.readOnly ? { readOnly: true } : {}),
-          ...(s.writeOnly ? { writeOnly: true } : {}),
-          ...(s['x-sensitive'] ? { 'x-sensitive': true } : {}),
-        };
-      const out = { ...s };
-      if (s.properties)
-        out.properties = Object.fromEntries(
-          Object.entries(s.properties).map(([k, v]) => [k, compact(v, true)]),
-        );
-      if (s.items) out.items = compact(s.items, true);
-      if (s.additionalProperties && typeof s.additionalProperties === 'object')
-        out.additionalProperties = compact(s.additionalProperties, true);
-      for (const keyword of ['allOf', 'anyOf', 'oneOf'] as const)
-        if (s[keyword]) out[keyword] = s[keyword]!.map((v) => compact(v));
-      if (s.not) out.not = compact(s.not);
-      return out;
-    };
-    c.models = Object.fromEntries(
-      Object.entries(selectedModels).map(([name, s]) => [name, compact(s)]),
-    );
-    c.definitions = c.models;
-    for (const op of c.operations) {
-      for (const p of op.parameters) p.schema = compact(p.schema);
-      if (op.body) op.body = compact(op.body);
-      for (const response of Object.values(op.responses))
-        if (response.schema) response.schema = compact(response.schema);
-    }
-    if (c.config.webhook)
-      for (const [name, s] of Object.entries(c.config.webhook.events))
-        c.config.webhook.events[name] = compact(s);
-  }
+  return renderCompiled(compileSdkContract(c));
+}
+function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map<string, string> {
+  const c = compilation.source;
+  const targetPlan = compilation.plan;
   const files = new Map<string, string>();
   const targets = c.config.targets ?? ['node', 'php'];
   const groups = [...new Set(c.operations.map((o) => o.resource))].sort();
-  const models = modelsUsed(c);
+  const models = targetPlan.node.models;
   const symbols = new Set(
     [
       'Client',
@@ -598,10 +221,10 @@ export function render(c: Contract): Map<string, string> {
   for (const op of c.operations) {
     reserve(pascal(op.resource) + pascal(op.method) + 'Input');
     reserve(pascal(op.resource) + pascal(op.method) + 'Response');
-    if (Object.values(op.responses).some((r) => r.schema?.oneOf))
+    if (targetPlan.documentation[op.id]!.reserveKnown)
       reserve(pascal(op.resource) + pascal(op.method) + 'ResponseKnown');
   }
-  const contract = runtimeContract(c);
+  const compiledRuntime = targetPlan.runtime;
   const definitions = c.definitions ?? {};
   if (c.definitions) reserve('SchemaRegistry');
   const license = readFileSync(join(here, '../LICENSE'), 'utf8');
@@ -647,31 +270,39 @@ export function render(c: Contract): Map<string, string> {
       ),
     );
     put('runtime.d.ts', readFileSync(join(here, 'runtime.d.ts'), 'utf8'));
+    for (const name of [
+      'codec-plan.js',
+      'codec-plan.d.ts',
+      'runtime-plan.js',
+      'runtime-plan.d.ts',
+      'canonical.js',
+      'canonical.d.ts',
+      'diagnostic.js',
+      'diagnostic.d.ts',
+    ])
+      put(name, readFileSync(join(here, name), 'utf8'));
     put('contract.d.ts', readFileSync(join(here, 'contract.d.ts'), 'utf8'));
-    let code = `import { Runtime, Model, isKnownVariant } from './runtime.js';\nexport { SdkError, Model, serialize, parseExact, redact } from './runtime.js';\nconst contract = ${js({ ...contract, userAgent: `${c.config.npm.name.replace(/^@/, '').replaceAll('/', '-')}/${c.config.version} (Node.js)` })};\nexport class Client {\n  #runtime;\n  constructor(options) {\n    this.#runtime = new Runtime(contract, options);\n`;
+    let code = `import { runtimeFromPlan, modelFromCodec, isKnownCodec } from './runtime.js';\nexport { SdkError, Model, serialize, parseExact, redact } from './runtime.js';\nconst contract = ${js({ ...compiledRuntime, userAgent: `${c.config.npm.name.replace(/^@/, '').replaceAll('/', '-')}/${c.config.version} (Node.js)` })};\nexport class Client {\n  #runtime;\n  constructor(options) {\n    this.#runtime = runtimeFromPlan(contract, options);\n`;
     let declarations = `import type { ClientOptions, RequestOptions, Result, InputValue } from './runtime.js';\nimport { Model } from './runtime.js';\nexport { SdkError, Model, serialize, parseExact, redact } from './runtime.js';\nexport type { ClientOptions, RequestOptions, Result, Metadata, ErrorKind, DiagnosticEvent, InputValue } from './runtime.js';\n`;
-    for (const [name, s] of Object.entries(models)) {
-      declarations += `export type ${name} = ${type(s, true)};\nexport type ${name}Input = ${type(s)};\n`;
+    for (const [name, model] of Object.entries(models)) {
+      declarations += `export type ${name} = ${model.output};\nexport type ${name}Input = ${model.input};\n`;
       // Preserve the validated object branch when a model also permits
       // nonobjects, so its factory can nest inside an object-constrained field.
-      if (
-        objectConstraint(s) !== 'object' &&
-        (s.type === undefined || (Array.isArray(s.type) && s.type.includes('object')))
-      ) {
+      if (model.objectFactory) {
         const object = `Exclude<${name}Input & object, readonly unknown[]>`;
         declarations += `export declare function make${name}(value: InputValue<${object}>): Model<${object}>;\n`;
       }
       declarations += `export declare function make${name}(value: InputValue<${name}Input>): Model<${name}Input>;\n`;
     }
     for (const op of c.operations)
-      declarations += `export type ${pascal(op.resource)}${pascal(op.method)}Input = ${operationInputType(op, models)};\nexport type ${pascal(op.resource)}${pascal(op.method)}Response = ${resultType(op, models)};\n`;
+      declarations += `export type ${pascal(op.resource)}${pascal(op.method)}Input = ${targetPlan.node.operations[op.id]!.input};\nexport type ${pascal(op.resource)}${pascal(op.method)}Response = ${targetPlan.node.operations[op.id]!.output};\n`;
     declarations += 'export declare class Client {\n  constructor(options: ClientOptions);\n';
     for (const group of groups) {
       code += `    this.${group} = Object.freeze({\n`;
       declarations += `  readonly ${group}: {\n`;
       for (const op of c.operations.filter((o) => o.resource === group)) {
         const prefix = pascal(op.resource) + pascal(op.method);
-        const required = inputSchema(op).required!.length > 0;
+        const required = targetPlan.node.operations[op.id]!.inputRequired;
         for (const method of [op.method, ...(op.aliases ?? [])]) {
           code += `      ${method}: (input = {}, options) => this.#runtime.request(${js(op.id)}, input, options),\n`;
           declarations += `    ${methodDoc(op, method, definitions)}    ${method}(input${required ? '' : '?'}: ${prefix}Input, options?: RequestOptions): Promise<Result<${prefix}Response>>;\n`;
@@ -679,12 +310,7 @@ export function render(c: Contract): Map<string, string> {
         if (op.pagination)
           for (const [suffix, runtime, returnType] of [
             ['Pages', 'pages', `Result<${prefix}Response>`],
-            [
-              'Items',
-              'items',
-              [...new Set(itemSchemas(op).map((s) => namedType(s, models, true)))].join(' | ') ||
-                'never',
-            ],
+            ['Items', 'items', targetPlan.node.operations[op.id]!.items],
           ]) {
             code += `      ${op.method}${suffix}: (input = {}, options) => this.#runtime.${runtime}(${js(op.id)}, input, options),\n`;
             declarations += `    ${op.method}${suffix}(input${required ? '' : '?'}: ${prefix}Input, options?: RequestOptions): AsyncGenerator<${returnType}>;\n`;
@@ -701,9 +327,7 @@ export function render(c: Contract): Map<string, string> {
     if (c.config.webhook) {
       code += '  verifyWebhook(...args) { return this.#runtime.verifyWebhook(...args); }\n';
       declarations += `  verifyWebhook(rawBody: Uint8Array, headers: Record<string, string>, secrets: string[], nowSeconds?: number): { event: ${
-        Object.values(c.config.webhook.events)
-          .map((s) => type(s, true))
-          .join(' | ') || 'never'
+        targetPlan.node.eventType
       }; known: true } | { event: unknown; known: false };\n`;
     }
     if (c.config.money) {
@@ -714,18 +338,18 @@ export function render(c: Contract): Map<string, string> {
     code += '}\n';
     declarations += '}\n';
     for (const op of c.operations) {
-      const schemas = Object.entries(op.responses)
-        .filter(
-          ([status, r]) => (/^2\d\d$/.test(status) || status === 'default') && r.schema?.oneOf,
-        )
-        .map(([, r]) => r.schema!);
-      if (!schemas.length) continue;
+      const known = targetPlan.node.operations[op.id]!.known;
+      if (!known) continue;
       const prefix = pascal(op.resource) + pascal(op.method) + 'Response';
-      declarations += `export type ${prefix}Known = ${schemas.map((s) => type(s, true, undefined, true)).join(' | ')};\nexport declare function is${prefix}Known(value: ${prefix}): value is ${prefix}Known;\n`;
-      code += `export function is${prefix}Known(value) { return ${js(schemas)}.some(schema => isKnownVariant(value, {...schema, ...(contract.definitions ? {'x-sdk-definitions': contract.definitions} : {})})); }\n`;
+      declarations += `export type ${prefix}Known = ${known.type};\nexport declare function is${prefix}Known(value: ${prefix}): value is ${prefix}Known;\n`;
+      code += `export function is${prefix}Known(value) { return ${js(known.codecs)}.some(codec => isKnownCodec(value, {...codec, ...(contract.definitions ? {definitions: contract.definitions} : {})})); }\n`;
     }
-    for (const [name, s] of Object.entries(models))
-      code += `export function make${name}(value) { return new Model(value, {...${js(s)}, 'x-sdk-validation': ${js(c.config.validation ?? 'encoding')}, ...(contract.definitions ? {'x-sdk-definitions': contract.definitions} : {})}); }\n`;
+    for (const [name, model] of Object.entries(targetPlan.node.models)) {
+      const expression = model.sharedCodec
+        ? `contract.definitions[${js(model.sharedCodec)}]`
+        : js(model.codec);
+      code += `export function make${name}(value) { return modelFromCodec(value, {...${expression}, constraints: ${js(c.config.validation === 'schema')}, ...(contract.definitions ? {definitions: contract.definitions} : {})}); }\n`;
+    }
     if (c.config.webhook)
       put(
         'examples/webhook-inbox.mjs',
@@ -745,45 +369,12 @@ export function render(c: Contract): Map<string, string> {
     const put = (p: string, value: string) => files.set('php/' + p, value);
     const ns = c.config.composer.namespace;
     const phpContract = {
-      ...structuredClone(contract),
+      ...targetPlan.php.runtime,
       userAgent: `${c.config.composer.name.replaceAll('/', '-')}/${c.config.version} (PHP)`,
     };
-    const responseModels: Record<string, Schema> = {};
-    for (const op of phpContract.operations)
-      for (const [status, r] of Object.entries(op.responses))
-        if ((/^2\d\d$/.test(status) || status === 'default') && r.schema?.type === 'object') {
-          const model = pascal(op.resource) + pascal(op.method) + 'Response' + pascal(status);
-          reserve(model);
-          (r as typeof r & { model: string }).model = model;
-          responseModels[model] = r.schema;
-        } else if (
-          (/^2\d\d$/.test(status) || status === 'default') &&
-          r.schema?.oneOf &&
-          r.schema.discriminator
-        ) {
-          const variants: Record<string, string> = {};
-          for (const [i, branch] of r.schema.oneOf.entries()) {
-            const model =
-              pascal(op.resource) + pascal(op.method) + 'Response' + pascal(status) + 'Variant' + i;
-            reserve(model);
-            responseModels[model] = branch;
-            for (const tag of branch.properties![r.schema.discriminator.propertyName]!.enum!)
-              variants[String(tag)] = model;
-          }
-          (r as typeof r & { variants: Record<string, string> }).variants = variants;
-        }
-    const eventModels: Record<string, string> = {};
-    if (phpContract.webhook) {
-      for (const [i, [event, schema]] of Object.entries(phpContract.webhook.events).entries()) {
-        const name = 'WebhookEvent' + i;
-        reserve(name);
-        if (schema.type === 'object') {
-          responseModels[name] = schema;
-          eventModels[event] = name;
-        }
-      }
-      Object.assign(phpContract.webhook, { eventModels });
-    }
+    for (const model of targetPlan.php.models.filter((model) => model.response))
+      reserve(model.name);
+    const eventModels = targetPlan.php.eventModels;
     put(
       'composer.json',
       stable({
@@ -800,12 +391,19 @@ export function render(c: Contract): Map<string, string> {
     put('src/contract.json', stable(phpContract));
     put('custom/.gitkeep', '');
     put(
+      'src/SchemaAdapter.php',
+      readFileSync(join(here, '../templates/SchemaAdapter.php'), 'utf8').replaceAll(
+        'SdkNamespace',
+        ns,
+      ),
+    );
+    put(
       'src/Runtime.php',
       readFileSync(join(here, '../templates/Runtime.php'), 'utf8').replaceAll('SdkNamespace', ns),
     );
     let code = `<?php\ndeclare(strict_types=1);\nnamespace ${ns};\n\nfinal class Client {\n    private Runtime $runtime;\n`;
     for (const group of groups) code += `    public readonly ${pascal(group)}Resource $${group};\n`;
-    code += `    public function __construct(ClientOptions $options) {\n        $this->runtime = new Runtime(json_decode(file_get_contents(__DIR__ . '/contract.json'), true, 512, JSON_THROW_ON_ERROR), $options);\n`;
+    code += `    public function __construct(ClientOptions $options) {\n        $this->runtime = new Runtime(json_decode(file_get_contents(__DIR__ . '/contract.json'), true, 512, JSON_THROW_ON_ERROR), $options, true);\n`;
     for (const group of groups)
       code += `        $this->${group} = new ${pascal(group)}Resource($this->runtime);\n`;
     code += '    }\n    public function close(): void { $this->runtime->close(); }\n';
@@ -819,22 +417,7 @@ export function render(c: Contract): Map<string, string> {
       code += `final class ${pascal(group)}Resource {\n    public function __construct(private readonly Runtime $runtime) {}\n`;
       for (const op of c.operations.filter((o) => o.resource === group)) {
         const inputName = pascal(op.resource) + pascal(op.method) + 'Input';
-        const responseType = Object.entries(
-          phpContract.operations.find((o) => o.id === op.id)!.responses,
-        )
-          .filter(([k]) => /^2\d\d$/.test(k) || k === '304' || k === 'default')
-          .map(([, r]) => {
-            const typed = r as typeof r & { model?: string; variants?: Record<string, string> };
-            return (
-              typed.model ??
-              (typed.variants
-                ? [...new Set(Object.values(typed.variants)), '\\stdClass'].join('|')
-                : r.schema
-                  ? phpType(r.schema)
-                  : 'null')
-            );
-          })
-          .join('|');
+        const responseType = targetPlan.php.operations[op.id]!.output;
         for (const method of [op.method, ...(op.aliases ?? [])])
           code += `    /** ${comment(op.description)}\n${method !== op.method || op.deprecated ? `     * @deprecated ${comment(method !== op.method ? 'Use ' + op.method + '.' : op.deprecated!)}\n` : ''}     * @return Result<${responseType}>\n     */\n    public function ${method}(${inputName} $input${inputSchema(op).required!.length ? '' : ' = new ' + inputName + '()'}, ?RequestOptions $options = null): Result { return $this->runtime->request(${php(op.id)}, $input->toArray(), $options); }\n`;
         if (op.pagination)
@@ -845,31 +428,20 @@ export function render(c: Contract): Map<string, string> {
             code += `    /** @return \\Generator<int, ${
               suffix === 'Pages'
                 ? `Result<${responseType}>`
-                : itemSchemas(op)
-                    .map((s) => phpDocType(s, true))
-                    .join('|') || 'mixed'
+                : targetPlan.php.operations[op.id]!.items
             }> */\n    public function ${op.method}${suffix}(${inputName} $input, ?RequestOptions $options = null): \\Generator { return $this->runtime->${runtime}(${php(op.id)}, $input->toArray(), $options); }\n`;
         if (op.polling)
           code += `    public function ${op.method}Wait(${inputName} $input, ?RequestOptions $options = null): Result { return $this->runtime->wait(${php(op.id)}, $input->toArray(), $options); }\n`;
       }
       code += '}\n';
     }
-    const phpModels = {
-      ...Object.fromEntries(Object.entries(models).map(([n, s]) => [n + 'Input', s])),
-      ...Object.fromEntries(
-        c.operations.map((op) => [
-          pascal(op.resource) + pascal(op.method) + 'Input',
-          inputSchema(op),
-        ]),
-      ),
-    };
-    if (c.definitions)
+    if (c.definitions) {
+      put('src/schema-definitions.json', stable(c.definitions));
       code +=
-        "final class SchemaRegistry { private static ?array $values = null; public static function definitions(): array { return self::$values ??= json_decode(file_get_contents(__DIR__ . '/contract.json'), true, 512, JSON_THROW_ON_ERROR)['definitions']; } }\n";
-    for (const [name, s] of Object.entries(phpModels))
-      code += phpModel(name, s, false, Boolean(c.definitions), c.config.validation);
-    for (const [name, s] of Object.entries(responseModels))
-      code += phpModel(name, s, true, Boolean(c.definitions), c.config.validation);
+        "final class SchemaRegistry { private static ?array $values = null; private static ?array $compiled = null; public static function definitions(): array { return self::$values ??= json_decode(file_get_contents(__DIR__ . '/schema-definitions.json'), true, 512, JSON_THROW_ON_ERROR); } public static function codecs(): array { return self::$compiled ??= json_decode(file_get_contents(__DIR__ . '/contract.json'), true, 512, JSON_THROW_ON_ERROR)['definitions']; } }\n";
+    }
+    for (const model of targetPlan.php.models)
+      code += phpModel(model, Boolean(c.definitions), c.config.validation);
     if (c.config.webhook)
       put(
         'examples/webhook-inbox.php',
@@ -890,7 +462,7 @@ export function render(c: Contract): Map<string, string> {
     const first = c.operations[0]!;
     files.set(
       `${target}/README.md`,
-      `# ${c.title} SDK (${target})\n\nPackage ${c.config.version}; generated for API ${c.apiVersion}.\n\n${target === 'node' ? `Requires Node.js 22+; TypeScript 5.9+. ESM JavaScript and declarations ship together.\n\nInstall: \`npm install ${c.config.npm.name}\`` : `Requires PHP 8.2+, ext-json and ext-curl; framework independent.\n\nInstall: \`composer require ${c.config.composer.name}\``}\n\nStart with [the quickstart](examples/${first.resource}-${first.method}.${target === 'node' ? 'mjs' : 'php'}). Set API_BASE_URL explicitly and API_TOKEN if authentication is declared. Examples target a placeholder sandbox and make one attempt. Provider example values must match your sandbox. Run examples from the generated package: for Node use node examples/NAME.mjs; for PHP run composer install in the generated php/ directory, then php examples/NAME.php. When copying a PHP example into an application, point its require statement at that application\'s vendor/autoload.php.\n\n## Client and request options\n\nConstruct a client with baseUrl and, for authenticated operations, token. The SDK does not discover credentials or read environment variables; the operation example scripts read API_BASE_URL and API_TOKEN explicitly. Pass per-request options as the second method argument: a plain object in Node, or RequestOptions in PHP. Defaults are timeoutMs: 10000 per attempt and deadlineMs: 30000 for the overall duration (not an absolute timestamp). Request values override client defaults. maxAttempts defaults to the operation\'s declared limit, or one when no retries are declared; overrides cannot exceed that limit. Request headers carry tenant context without shared mutable state.\n\nResults expose data, meta and explicit raw response text. Node metadata uses properties; PHP metadata uses array keys. SdkError exposes kind, outcome, retryAllowed and optional metadata; provider codes use code in Node and errorCode in PHP. outcome is not_sent, response or unknown. Reconcile an unknown mutation outcome with the provider and the original persisted idempotency key before resubmitting.\n\n## Behavior and ownership\n\nOptional properties distinguish omission from null. PHP inputs use presence-aware typed input objects constructed from arrays: omit a key to omit it; include a key with null to clear only where permitted. PHP models expose presence through has()/get(); typed getters unwrap nested models and getters for omitted optional fields throw. In object/array alternatives, PHP lists (including []) represent JSON arrays; use (object) [] for an empty JSON object. Numeric enum membership compares exact values, so equivalent decimal/exponent spellings are accepted. Large integers (int64) and decimals use exact strings, including numeric JSON wire values. Integer responses accept integral decimal/exponent notation without rounding. Sparse Node input arrays fail before dispatch. Timestamps remain strings. Unknown response fields, enum members, and tagged variants are retained. PHP response class names include status codes and, for tagged alternatives, branch positions. Adding a status can introduce a new return class even with an identical JSON shape; consult migration notes before upgrading class-based dispatch. Portable digit/word pattern escapes retain their ASCII ECMAScript meaning in both targets, including inside character classes. Full request encoding checks run locally; server business effects require provider tests.\n\nRetries count total attempts, include jitter and Retry-After, and never exceed the declared policy. Persist an idempotency key across process restarts and submissions within the server's documented retention/scope. Automatic keys cover one SDK call only. Explicit keys from operation inputs, request headers or idempotencyKey are preserved; conflicting values fail before dispatch. A timeout after dispatch can leave the remote outcome unknown; inspect SdkError.outcome. Disable nested transport/application retries to avoid multiplied attempts. 409/412 are distinct conflicts and never automatically overwritten.\n\nTimeout is per attempt, including body consumption. Deadline covers attempts and waits; pagination and polling share an overall deadline. Cancellation stops local work, not the remote operation. Node uses AbortSignal. PHP uses a Cancellation token checked during cURL progress and between waits; synchronous calls need an external signal handler to cancel while blocked. Pagination is lazy, supports maxPages/maxItems, and does not guarantee a stable snapshot or durable continuation.\n\nExplicit allowedOrigins govern all destinations, including pagination. HTTPS is required unless allowInsecureHttp is set for local tests. Redirects are rejected. Authentication is attached only after destination validation. API version headers are pinned when configured; changing them does not update generated types.\n\nClients perform no network I/O at import/construction. Node clients reuse the runtime's fetch connection pool; injected transports remain caller-owned and must honor AbortSignal and disable redirects/retries. PHP owns a reusable cURL handle, released by close()/destruction; a client supports sequential calls within one PHP execution context. Do not concurrently share a PHP client across threads/fibers. Node requests keep headers/context local and support concurrent calls. No SDK telemetry is sent. Requests identify the selected package name/version and runtime through an overridable User-Agent header.\n\nDiagnostics run once per attempted HTTP request, including transport failures, with operation, request ID, status, timing, attempt count and error kind only; hook failures are ignored. Bodies and credentials are excluded. Raw response text/headers and structured error details are privileged explicit access. Model debug printing redacts declared sensitive fields and additional field names supplied in ClientOptions.redactFields; printing arbitrary raw values is application responsibility. Injected transports are privileged and see credentials/bodies.\n\n## Webhooks and recovery\n\n${c.config.webhook ? 'Verification uses the configured HMAC-SHA256 signature format, signed headers and original body bytes, with timestamp tolerance and overlapping secrets. Preserve raw request bytes; never verify reserialized JSON. Verification is not durable deduplication. In one database transaction, insert a unique provider event ID and durable work record before acknowledging. Workers should fetch authoritative current state for out-of-order events; commit business side effects idempotently. Unknown event types must not be treated as known success.' : 'This provider has not declared webhook verification.'}\n\nCustom helpers belong in custom/; they survive regeneration. Multi-call helpers are not atomic and must expose partial completion. See [reference](REFERENCE.md).\n`,
+      `# ${c.title} SDK (${target})\n\nPackage ${c.config.version}; generated for API ${c.apiVersion}.\n\n${target === 'node' ? `Requires Node.js 22+; TypeScript 5.9+. ESM JavaScript and declarations ship together.\n\nInstall: \`npm install ${c.config.npm.name}\`` : `Requires PHP 8.2+, ext-json and ext-curl; framework independent.\n\nInstall: \`composer require ${c.config.composer.name}\``}\n\nStart with [the quickstart](examples/${first.resource}-${first.method}.${target === 'node' ? 'mjs' : 'php'}). Set API_BASE_URL explicitly and API_TOKEN if authentication is declared. Examples target a placeholder sandbox and make one attempt. Provider example values must match your sandbox. Run examples from the generated package: for Node use node examples/NAME.mjs; for PHP run composer install in the generated php/ directory, then php examples/NAME.php. When copying a PHP example into an application, point its require statement at that application\'s vendor/autoload.php.\n\n## Client and request options\n\nConstruct a client with baseUrl and, for authenticated operations, token. The SDK does not discover credentials or read environment variables; the operation example scripts read API_BASE_URL and API_TOKEN explicitly. Pass per-request options as the second method argument: a plain object in Node, or RequestOptions in PHP. Defaults are timeoutMs: 10000 per attempt and deadlineMs: 30000 for the overall duration (not an absolute timestamp). Request values override client defaults. maxAttempts defaults to the operation\'s declared limit, or one when no retries are declared; overrides cannot exceed that limit. Request headers carry tenant context without shared mutable state.\n\nResults expose data, meta and explicit raw response text. Node metadata uses properties; PHP metadata uses array keys. SdkError exposes kind, outcome, retryAllowed and optional metadata; provider codes use code in Node and errorCode in PHP. outcome is not_sent, response or unknown. Reconcile an unknown mutation outcome with the provider and the original persisted idempotency key before resubmitting.\n\n## Behavior and ownership\n\nOptional properties distinguish omission from null. PHP inputs use presence-aware typed input objects constructed from arrays: omit a key to omit it; include a key with null to clear only where permitted. PHP models expose presence through has()/get(); typed getters unwrap nested models and getters for omitted optional fields throw. In object/array alternatives, PHP lists (including []) represent JSON arrays; use (object) [] for an empty JSON object. Numeric enum membership compares exact values, so equivalent decimal/exponent spellings are accepted. Large integers (int64) and decimals use exact strings, including numeric JSON wire values. Integer responses accept integral decimal/exponent notation without rounding. Sparse Node input arrays fail before dispatch. Timestamps remain strings. Unknown response fields, enum members, and tagged variants are retained. PHP response class names include status codes and, for tagged alternatives, branch positions. Adding a status can introduce a new return class even with an identical JSON shape; consult migration notes before upgrading class-based dispatch. Portable digit/word pattern escapes retain their ASCII ECMAScript meaning in both targets, including inside character classes. Full request encoding checks run locally; server business effects require provider tests.\n\nRetries count total attempts, include jitter and Retry-After, and never exceed the declared policy. Persist an idempotency key across process restarts and submissions within the server's documented retention/scope. Automatic keys cover one SDK call only. Explicit keys from operation inputs, request headers or idempotencyKey are preserved; conflicting values fail before dispatch. A timeout after dispatch can leave the remote outcome unknown; inspect SdkError.outcome. Disable nested transport/application retries to avoid multiplied attempts. 409/412 are distinct conflicts and never automatically overwritten.\n\nTimeout is per attempt, including body consumption. Deadline covers attempts and waits; pagination and polling share an overall deadline. Cancellation stops local work, not the remote operation. Node uses AbortSignal. PHP uses a Cancellation token checked during cURL progress and between waits; synchronous calls need an external signal handler to cancel while blocked. Pagination is lazy, supports maxPages/maxItems, and does not guarantee a stable snapshot or durable continuation.\n\nExplicit allowedOrigins govern all destinations, including pagination. HTTPS is required unless allowInsecureHttp is set for local tests. Redirects are rejected. Authentication is attached only after destination validation. API version headers are pinned when configured; changing them does not update generated types.\n\nClients perform no network I/O at import/construction. Node clients reuse the runtime's fetch connection pool; injected transports remain caller-owned and must honor AbortSignal and disable redirects/retries. PHP owns a reusable cURL handle, released by close()/destruction; a client supports sequential calls within one PHP execution context. Do not concurrently share a PHP client across threads/fibers. Node requests keep headers/context local and support concurrent calls. No SDK telemetry is sent. Requests identify the selected package name/version and runtime through an overridable User-Agent header.\n\nDiagnostics run once per attempted HTTP request, including transport failures, with operation, request ID, status, timing, attempt count and error kind only; hook failures are ignored. Bodies and credentials are excluded. Raw response text/headers and structured error details are privileged explicit access. Model debug printing redacts declared sensitive fields and additional field names supplied in ClientOptions.redactFields; printing arbitrary raw values is application responsibility. Injected transports are privileged and see credentials/bodies.\n\n## Schema helpers\n\n${target === 'node' ? 'The package exports serialize(value, schema), new Model(value, schema), and redact(value, schema) for application-supplied schemas.' : 'The base Model constructor, Codec::normalize and Codec::redact accept application-supplied schemas. Codec::encode writes normalized values as JSON.'} These helpers use the package's local value execution rules and require no generator installation or schema registry service. Generated methods and factories use the codecs included in the package. For a null-only schema, use {"type":"null"}. The legacy form {"type":["null"]} also permits non-null values in Node; PHP rejects them.\n\n## Package upgrades\n\nReview provider release notes before upgrading. Compatibility checks account for public declarations, required response values and PHP class identities. Complex schema changes can still require manual review.\n\n## Webhooks and recovery\n\n${c.config.webhook ? 'Verification uses the configured HMAC-SHA256 signature format, signed headers and original body bytes, with timestamp tolerance and overlapping secrets. Preserve raw request bytes; never verify reserialized JSON. Verification is not durable deduplication. In one database transaction, insert a unique provider event ID and durable work record before acknowledging. Workers should fetch authoritative current state for out-of-order events; commit business side effects idempotently. Unknown event types must not be treated as known success.' : 'This provider has not declared webhook verification.'}\n\nCustom helpers belong in custom/; they survive regeneration. Multi-call helpers are not atomic and must expose partial completion. See [reference](REFERENCE.md).\n`,
     );
     files.set(
       `${target}/REFERENCE.md`,
@@ -898,13 +470,10 @@ export function render(c: Contract): Map<string, string> {
         c.operations
           .map(
             (op) =>
-              `## ${op.resource}.${op.method}\n\n${op.description}\n\n\`${op.verb} ${op.path}\`\n\nInput: \`${target === 'php' ? phpDocType(inputSchema(op)) : type(inputSchema(op))}\`\n\nResponse: \`${
+              `## ${op.resource}.${op.method}\n\n${op.description}\n\n\`${op.verb} ${op.path}\`\n\nInput: \`${target === 'php' ? targetPlan.documentation[op.id]!.phpInput : targetPlan.documentation[op.id]!.nodeInput}\`\n\nResponse: \`${
                 target === 'php'
-                  ? Object.entries(op.responses)
-                      .filter(([status]) => /^2\d\d$/.test(status) || status === 'default')
-                      .map(([, r]) => (r.schema ? phpDocType(r.schema, true) : 'null'))
-                      .join('|')
-                  : resultType(op)
+                  ? targetPlan.documentation[op.id]!.phpOutput
+                  : targetPlan.documentation[op.id]!.nodeOutput
               }\`\n\n${op.idempotency ? `Idempotency header: ${op.idempotency.header}; retention: ${op.idempotency.retention}; scope: ${op.idempotency.scope}.\n\n` : ''}${op.aliases?.length ? `Deprecated aliases: ${op.aliases.join(', ')} (same wire operation).\n\n` : ''}[Example](examples/${op.resource}-${op.method}.${target === 'node' ? 'mjs' : 'php'})\n`,
           )
           .join('\n'),
@@ -933,154 +502,31 @@ export function render(c: Contract): Map<string, string> {
 const resultStatus = (status: string) =>
   /^2\d\d$/.test(status) || status === '304' || status === 'default';
 
-function simpleResponseSchema(schema: Schema): boolean {
-  return (
-    !schema['x-sdk-ref'] &&
-    schema.type !== undefined &&
-    !Array.isArray(schema.type) &&
-    !schema.allOf &&
-    !schema.anyOf &&
-    !schema.oneOf &&
-    !schema.not &&
-    Object.values(schema.properties ?? {}).every(simpleResponseSchema) &&
-    (!schema.items || simpleResponseSchema(schema.items)) &&
-    (typeof schema.additionalProperties !== 'object' ||
-      simpleResponseSchema(schema.additionalProperties))
-  );
-}
-
-/** Project simple schemas to their public response fields and decoded value types. */
-function responseValueSchema(schema: Schema, requiredness: 'declared' | 'validated'): Schema {
-  const value: Schema = { type: schema.type! };
-  if (
-    schema.type === 'number' ||
-    (schema.type === 'integer' && ['int64', 'uint64'].includes(schema.format ?? ''))
-  )
-    value.type = 'string';
-  if (schema.type === 'object') {
-    const properties = Object.entries(schema.properties ?? {});
-    value.properties = Object.fromEntries(
-      properties
-        .filter(([, child]) => !child.writeOnly)
-        .map(([key, child]) => [key, responseValueSchema(child, requiredness)]),
-    );
-    value.required = (schema.required ?? []).filter((key) => !schema.properties?.[key]?.writeOnly);
-    // Match type(): only pure dictionaries declare a typed index signature.
-    // Record<string, T> does not declare required keys, even when runtime validation does.
-    // Other response objects expose unknown extra fields, even with false.
-    if (!properties.length && typeof schema.additionalProperties === 'object') {
-      if (requiredness === 'declared') value.required = [];
-      value.additionalProperties = responseValueSchema(schema.additionalProperties, requiredness);
-    } else {
-      value.additionalProperties = true;
-    }
-  }
-  if (schema.type === 'array' && schema.items)
-    value.items = responseValueSchema(schema.items, requiredness);
-  return value;
-}
-
-/** Inclusion of simple projected values, rather than changes to schema declarations. */
-function responseValuesFit(previous: Schema, added: Schema): boolean {
-  if (previous.type === undefined) return true;
-  if (previous.type !== added.type) return false;
-  if (previous.type === 'array') return responseValuesFit(previous.items ?? {}, added.items ?? {});
-  if (previous.type !== 'object') return true;
-  if (previous.required?.some((key) => !added.required?.includes(key))) return false;
-  const extra = (schema: Schema): Schema =>
-    typeof schema.additionalProperties === 'object' ? schema.additionalProperties : {};
-  const field = (schema: Schema, key: string): Schema =>
-    Object.hasOwn(schema.properties ?? {}, key) ? schema.properties![key]! : extra(schema);
-  for (const key of new Set([
-    ...Object.keys(previous.properties ?? {}),
-    ...Object.keys(added.properties ?? {}),
-  ]))
-    if (!responseValuesFit(field(previous, key), field(added, key))) return false;
-  return responseValuesFit(extra(previous), extra(added));
-}
-
-/** Prove ordinary result widening; leave schema-union inclusion for review. */
-function addedResponseBreaks(op: Operation, response: Operation['responses'][string]): boolean {
-  const previous = Object.entries(op.responses)
-    .filter(([status]) => resultStatus(status))
-    .map(([, value]) => value);
-  if (!response.schema) return previous.every((value) => value.schema);
-  const schemas = [
-    ...new Map(
-      previous
-        .filter((value) => value.schema)
-        .map((value) => [stable(value.schema), value.schema!]),
-    ).values(),
-  ];
-  if (!schemas.length) return true;
-  if (schemas.some((schema) => stable(schema) === stable(response.schema))) return false;
-  if (
-    schemas.length !== 1 ||
-    !simpleResponseSchema(schemas[0]!) ||
-    !simpleResponseSchema(response.schema)
-  )
-    return false;
-  // Preserve both TypeScript field declarations and runtime presence guarantees.
-  // A dictionary's required keys affect only the latter, at every nesting depth.
-  return (['declared', 'validated'] as const).some(
-    (requiredness) =>
-      !responseValuesFit(
-        responseValueSchema(schemas[0]!, requiredness),
-        responseValueSchema(response.schema!, requiredness),
-      ),
-  );
-}
-
-/** Match the status-specific model and variant classes emitted by render(). */
-function phpResponseHasClasses(status: string, schema?: Schema): boolean {
-  return (
-    resultStatus(status) &&
-    status !== '304' &&
-    !!schema &&
-    (schema.type === 'object' || !!(schema.oneOf && schema.discriminator))
-  );
-}
-
-function addedPhpResponseClassBreaks(
-  op: Operation,
-  status: string,
-  response: Operation['responses'][string],
-): boolean {
-  if (!phpResponseHasClasses(status, response.schema)) return false;
-  // Each new status gets new nominal classes, even for identical JSON shapes.
-  // An existing mixed/object return type already accommodates those classes.
-  return Object.entries(op.responses)
-    .filter(([previousStatus]) => resultStatus(previousStatus))
-    .every(
-      ([previousStatus, previous]) =>
-        !previous.schema ||
-        phpResponseHasClasses(previousStatus, previous.schema) ||
-        !phpType(previous.schema)
-          .split('|')
-          .some((type) => type === 'mixed' || type === 'object'),
-    );
-}
-
-/** These indices are part of the existing PHP public class names. */
-function phpVariantIndices(schema?: Schema): Map<string, number> {
-  if (!schema?.oneOf || !schema.discriminator || schema.type === 'object') return new Map();
-  const tag = schema.discriminator.propertyName;
-  return new Map(
-    schema.oneOf.flatMap((branch, index) =>
-      (branch.properties?.[tag]?.enum ?? []).map((value) => [String(value), index] as const),
-    ),
-  );
-}
-
 export function compare(before: Contract, after: Contract): Compatibility[] {
+  return compareWithCompiled(
+    before,
+    after,
+    compileSdkContract(before).plan,
+    compileSdkContract(after).plan,
+  );
+}
+function compareWithCompiled(
+  before: Contract,
+  after: Contract,
+  previousPlan?: CompiledSdkContract,
+  nextPlan?: CompiledSdkContract,
+): Compatibility[] {
+  const oldPlan = previousPlan ?? compileSdkContract(before).plan;
+  const newPlan = nextPlan ?? compileSdkContract(after).plan;
   const changes: Compatibility[] = [];
+  const compareNode = oldPlan.targets.includes('node') && newPlan.targets.includes('node');
   const comparePhp =
     (before.config.targets ?? ['node', 'php']).includes('php') &&
     (after.config.targets ?? ['node', 'php']).includes('php');
   const add = (severity: Compatibility['severity'], subject: string, message: string) =>
     changes.push({ severity, subject, message });
-  const oldModels = modelsUsed(before),
-    newModels = modelsUsed(after);
+  const oldModels = oldPlan.policy.models,
+    newModels = newPlan.policy.models;
   for (const name of Object.keys(oldModels))
     if (!Object.hasOwn(newModels, name))
       add('breaking', name, 'Exported model removed; update model imports and helper usage.');
@@ -1091,16 +537,16 @@ export function compare(before: Contract, after: Contract): Compatibility[] {
     if (next)
       for (const direction of ['input', 'response'] as const)
         changes.push(
-          ...compareSchemas(
-            directionalSchema(previous, direction === 'response'),
-            directionalSchema(next, direction === 'response'),
+          ...comparePolicies(
+            previous[direction],
+            next[direction],
             `models.${name}.${direction}`,
             direction,
           ),
         );
   }
-  for (const [name, definition] of Object.entries(before.definitions ?? {})) {
-    const next = after.definitions?.[name];
+  for (const [name, definition] of Object.entries(oldPlan.policy.definitions)) {
+    const next = newPlan.policy.definitions[name];
     if (!next)
       add(
         'review',
@@ -1109,7 +555,14 @@ export function compare(before: Contract, after: Contract): Compatibility[] {
       );
     else
       for (const direction of ['input', 'response'] as const)
-        changes.push(...compareSchemas(definition, next, `definitions.${name}`, direction));
+        changes.push(
+          ...comparePolicies(
+            definition[direction],
+            next[direction],
+            `definitions.${name}`,
+            direction,
+          ),
+        );
   }
   for (const old of before.operations) {
     const current = after.operations.find((o) => o.id === old.id);
@@ -1139,7 +592,12 @@ export function compare(before: Contract, after: Contract): Compatibility[] {
         'HTTP destination or method changed; server semantics require explicit review',
       );
     changes.push(
-      ...compareSchemas(inputSchema(old), inputSchema(current), `${old.id}.input`, 'input'),
+      ...comparePolicies(
+        oldPlan.policy.operations[old.id]!.input,
+        newPlan.policy.operations[old.id]!.input,
+        `${old.id}.input`,
+        'input',
+      ),
     );
     for (const status of new Set([
       ...Object.keys(old.responses),
@@ -1148,8 +606,29 @@ export function compare(before: Contract, after: Contract): Compatibility[] {
       const before = old.responses[status],
         after = current.responses[status];
       if (!before || !after) {
-        const widened = after && resultStatus(status) && addedResponseBreaks(old, after);
-        const newPhpClass = after && comparePhp && addedPhpResponseClassBreaks(old, status, after);
+        const shape =
+          after && resultStatus(status)
+            ? addedResultFits(
+                Object.entries(oldPlan.responses[old.id] ?? {})
+                  .filter(([key]) => resultStatus(key))
+                  .map(([, value]) => value.body),
+                newPlan.responses[old.id]?.[status]?.body,
+                `${old.id}.response.${status}`,
+                compareNode,
+              )
+            : undefined;
+        const widened = shape?.result === 'incompatible';
+        const binding = newPlan.php.runtime.operations.find((op) => op.id === old.id)?.responses[
+          status
+        ];
+        const newPhpClass =
+          after &&
+          comparePhp &&
+          resultStatus(status) &&
+          (binding?.model || binding?.variants) &&
+          !oldPlan.php.operations[old.id]?.output
+            .split('|')
+            .some((type) => type === 'mixed' || type === 'object');
         add(
           !after || widened || newPhpClass ? 'breaking' : 'review',
           `${old.id}.response.${status}`,
@@ -1163,8 +642,18 @@ export function compare(before: Contract, after: Contract): Compatibility[] {
         );
       } else {
         if (resultStatus(status) && status !== '304' && comparePhp) {
-          const previousVariants = phpVariantIndices(before.schema);
-          const nextVariants = phpVariantIndices(after.schema);
+          const previousVariants = new Map(
+            Object.entries(
+              oldPlan.php.runtime.operations.find((op) => op.id === old.id)?.responses[status]
+                ?.variants ?? {},
+            ),
+          );
+          const nextVariants = new Map(
+            Object.entries(
+              newPlan.php.runtime.operations.find((op) => op.id === old.id)?.responses[status]
+                ?.variants ?? {},
+            ),
+          );
           for (const [tag, index] of previousVariants) {
             if (nextVariants.get(tag) !== index) {
               add(
@@ -1176,16 +665,13 @@ export function compare(before: Contract, after: Contract): Compatibility[] {
             }
           }
         }
-        if (before.schema && after.schema)
+        const previousBody = oldPlan.policy.operations[old.id]!.responses[status];
+        const nextBody = newPlan.policy.operations[old.id]!.responses[status];
+        if (previousBody && nextBody)
           changes.push(
-            ...compareSchemas(
-              before.schema,
-              after.schema,
-              `${old.id}.response.${status}`,
-              'response',
-            ),
+            ...comparePolicies(previousBody, nextBody, `${old.id}.response.${status}`, 'response'),
           );
-        else if (Boolean(before.schema) !== Boolean(after.schema))
+        else if (Boolean(previousBody) !== Boolean(nextBody))
           add(
             'breaking',
             `${old.id}.response.${status}`,
@@ -1262,7 +748,8 @@ export function compare(before: Contract, after: Contract): Compatibility[] {
         key,
         'Package identity, generated types, target selection, or capability changed',
       );
-  return changes;
+  if (previousPlan && nextPlan) changes.push(...compareCompiledContracts(previousPlan, nextPlan));
+  return [...new Map(changes.map((finding) => [stable(finding), finding])).values()];
 }
 function safeTree(path: string): void {
   let stat;
@@ -1318,16 +805,31 @@ function unifiedDiff(path: string, before: string, after: string): string {
 export function preview(contract: Contract, output: string) {
   output = resolve(output);
   safeTree(output);
-  const files = render(contract);
+  const compilation = compileSdkContract(contract);
+  const files = renderCompiled(compilation);
+  const compiled: CompiledSnapshot = {
+    plan: compilation.plan,
+    runtimeIdentity: runtimeIdentity(files, compilation.plan.targets),
+  };
   const recordPath = join(output, recordName);
   const before: RecordFile | undefined = existsSync(recordPath)
     ? JSON.parse(readFileSync(recordPath, 'utf8'))
     : undefined;
-  if (before && ((before.recordVersion ?? 1) !== 1 || !before.files || !before.interface))
+  if (before && (![1, 2].includes(before.recordVersion ?? 1) || !before.files || !before.interface))
     throw new Diagnostic(
       recordPath,
       'unsupported generation record; use the recorded generator version',
     );
+  try {
+    if (before?.compiled) before.compiled = restoreCompiledSnapshot(before.compiled);
+    if (before?.compiledComparisonBase)
+      before.compiledComparisonBase = restoreCompiledSnapshot(before.compiledComparisonBase);
+    if (before?.recordVersion === 2 && !before.compiled)
+      throw new Error('Missing compiled contract in generation record');
+  } catch (error) {
+    throw new Diagnostic(recordPath, error instanceof Error ? error.message : String(error));
+  }
+  const previousCompiled = before ? compiledBase(before, contract) : undefined;
   const changes: Change[] = [];
   for (const [path, previousHash] of Object.entries(before?.files ?? {})) {
     if (!safeRelative(path)) throw new Diagnostic(recordPath, 'invalid owned file path');
@@ -1360,10 +862,42 @@ export function preview(contract: Contract, output: string) {
   return {
     files,
     before,
+    compiled,
     changes,
     compatibility: before
       ? [
-          ...compare(comparisonBase(before, contract), contract),
+          ...compareWithCompiled(
+            comparisonBase(before, contract),
+            contract,
+            previousCompiled?.plan,
+            compiled.plan,
+          ),
+          ...(!previousCompiled
+            ? [
+                {
+                  severity: 'review' as const,
+                  subject: 'compiled contract',
+                  message:
+                    'The previous generation predates compiled contract records; historical runtime guarantees require review. Existing source-level checks still apply.',
+                },
+              ]
+            : []),
+          ...(previousCompiled &&
+          (previousCompiled.plan.semantics !== compiled.plan.semantics ||
+            compiled.plan.targets.some(
+              (target) =>
+                previousCompiled.plan.targets.includes(target) &&
+                previousCompiled.runtimeIdentity[target] !== compiled.runtimeIdentity[target],
+            ))
+            ? [
+                {
+                  severity: 'review' as const,
+                  subject: 'runtime',
+                  message:
+                    'Compiled runtime implementation or semantic identity changed; equal value plans do not prove unchanged runtime behavior.',
+                },
+              ]
+            : []),
           ...(before.generator !== version
             ? [
                 {
@@ -1420,24 +954,39 @@ export function generate(contract: Contract, output: string, dryRun = false) {
       writeFileSync(join(stage, p), content);
     }
     const record: RecordFile = {
-      recordVersion: 1,
+      recordVersion: 2,
       generator: version,
       contractHash: contract.hash,
       sources: contract.sources,
       files: Object.fromEntries([...current.files].map(([p, v]) => [p, hash(v)])),
       interface: contract,
+      compiled: current.compiled,
       compatibility: current.compatibility,
       ...(current.before &&
       (current.before.comparisonBase ||
         current.changes.length ||
+        current.compatibility.length ||
         current.before.interface.config.version !== contract.config.version)
         ? {
             comparisonBase: comparisonBase(current.before, contract),
+            ...(compiledBase(current.before, contract)
+              ? { compiledComparisonBase: compiledBase(current.before, contract)! }
+              : {}),
             previousVersion: comparisonBase(current.before, contract).config.version,
           }
         : {}),
     };
-    writeFileSync(join(stage, recordName), stable(record), { mode: 0o600 });
+    writeFileSync(
+      join(stage, recordName),
+      stable({
+        ...record,
+        compiled: storeCompiledSnapshot(current.compiled),
+        ...(record.compiledComparisonBase
+          ? { compiledComparisonBase: storeCompiledSnapshot(record.compiledComparisonBase) }
+          : {}),
+      }),
+      { mode: 0o600 },
+    );
     if (existsSync(output)) {
       renameSync(output, backup);
       moved = true;

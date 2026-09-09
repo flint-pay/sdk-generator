@@ -32,20 +32,21 @@ OUTPUT/
     package.json
     index.js / index.d.ts
     runtime.js / runtime.d.ts
+    codec-plan.js / runtime-plan.js  Bundled codecs and schema adapters
     README.md / REFERENCE.md / LICENSE
     examples/           JavaScript and TypeScript operation examples
     custom/             Provider-maintained helpers
     guides/             Optional provider narrative guides
   php/                  Selected Composer target
     composer.json
-    src/                Client, runtime, models and selected contract
+    src/                Client, runtime, models and compiled contract
     README.md / REFERENCE.md / LICENSE
     examples/           PHP operation examples
     custom/             Provider-maintained helpers
     guides/             Optional provider narrative guides
 ```
 
-Only selected targets are emitted. Webhook inbox/outbox examples appear when verification is configured. The private root record is excluded from package archives; preserve it to detect hand edits, remove obsolete owned files and compare future versions. Generated packages contain their selected operation and schema information.
+Only selected targets are emitted. Webhook inbox/outbox examples appear when verification is configured. The private root record is excluded from package archives; preserve it to detect hand edits, remove obsolete owned files and compare future versions. Generated packages contain their selected operation descriptors, codecs and public types. Source schema definitions are retained where required by public schema-taking helpers.
 
 ## Using the generator as a library
 
@@ -63,7 +64,7 @@ console.log(validate('.generated/library'));
 // await validateFixtures('.generated/payments', 'tests/fixtures/http-cases.json');
 ```
 
-An installed generator exposes these exports from `@public-sdk/generator`. `render(contract)` returns a map of relative paths to contents without writing. `preview(contract, output)` returns the rendered files, previous record, changes and compatibility findings; `generate(contract, output, true)` adds unified diffs to its serializable report. `compare(before, after)` compares resolved contracts. `prepareRelease`, `publishRelease` and `publishSite` perform the corresponding release operations; the latter two take an explicit confirmed version. `validateFixtures` is asynchronous; the other listed functions are synchronous. Failures throw errors, including `Diagnostic` with a source/configuration location.
+An installed generator exposes these exports from `@public-sdk/generator`. `render(contract)` returns a map of relative paths to contents without writing. `preview(contract, output)` returns the rendered files, previous record, changes and compatibility findings; `generate(contract, output, true)` adds unified diffs to its serializable report. `compare(before, after)` compiles and compares resolved contracts using current compiler semantics. It cannot establish arbitrary historical runtime behavior; generation and release preparation use the saved compiled baseline when available. `prepareRelease`, `publishRelease` and `publishSite` perform the corresponding release operations; the latter two take an explicit confirmed version. `validateFixtures` is asynchronous; the other listed functions are synchronous. Failures throw errors, including `Diagnostic` with a source/configuration location.
 
 ## Troubleshooting
 
