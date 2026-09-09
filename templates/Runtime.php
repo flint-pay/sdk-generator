@@ -2050,7 +2050,7 @@ class Runtime
         if ($digits === null) {
             Codec::fail('currency', 'currency is not declared by this provider');
         }
-        if (!preg_match('/^-?(0|[1-9]\d*)(\.\d+)?$/', $major)) {
+        if (!preg_match('/^-?(0|[1-9]\d*)(\.\d+)?$/D', $major)) {
             Codec::fail('amount', 'expected an exact decimal string');
         }
         $negative = str_starts_with($major, '-');

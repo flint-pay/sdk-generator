@@ -59,7 +59,7 @@ PHP response classes include the response status in their names; tagged alternat
 
 `Result` contains `data`, `meta` and explicit raw response text in `raw`. Node accesses metadata with properties; PHP uses array keys. Metadata includes HTTP status, response headers, attempt count, duration and an optional provider request ID. Inspect unknown response enums or variants explicitly before treating them as a known successful business state.
 
-Use strings for exact int64/uint64 and JSON `number` values, including decimals: `"9007199254740993"`, for example. The schema determines whether the string becomes an unquoted number token on the wire. Ordinary safe integers use native numbers/integers. Do not convert an exact amount to a floating-point number before handing it to the SDK.
+Use strings for exact int64/uint64 and JSON `number` values, including decimals: `"9007199254740993"`, for example. The schema determines whether the string becomes an unquoted number token on the wire. Ordinary safe integers use native numbers/integers. Do not convert an exact amount to a floating-point number before handing it to the SDK. When configured, `money(currency, major)` converts an exact major-unit string to minor units and rejects whitespace, including trailing newlines, and excess precision.
 
 Integer responses accept integral decimal and exponent notation: `1.0` becomes `1`, and `1e3` becomes `1000`. int64/uint64 results remain exact strings. Fractional values are rejected rather than rounded, and decimal fields retain their original precision. Node request arrays must contain an explicit value at every index; sparse arrays fail validation before dispatch.
 
@@ -127,7 +127,7 @@ Ordinary error inspection and diagnostics omit sensitive bodies and credentials.
 
 ## Optional capabilities
 
-Only declared capabilities generate convenience methods. An operation named `list` with pagination exposes `listPages(input, options)` and `listItems(input, options)` on its resource. Node uses `for await ... of`; PHP uses `foreach`. Pages yield results with metadata; items yield individual values. Pagination is lazy, bounded by deadline and caller limits, and does not promise a stable snapshot.
+Only declared capabilities generate convenience methods. An operation named `list` with pagination exposes `listPages(input, options)` and `listItems(input, options)` on its resource. Node uses `for await ... of`; PHP uses `foreach`. Pages yield results with metadata; items yield individual values. Pagination is lazy, bounded by deadline and caller limits, and does not promise a stable snapshot. Providers must configure compatible continuation and query representations; generation rejects an exact integer continuation paired with an ordinary integer query parameter.
 
 A polling operation named `get` exposes `getWait(input, options)`. Unknown states keep waiting until a declared terminal state or deadline; canceling the waiter does not cancel the remote job. Conditional calls retain the declared header and surface conflicts without silently retrying an unconditional write.
 

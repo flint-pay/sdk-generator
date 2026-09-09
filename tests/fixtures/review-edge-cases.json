@@ -1,0 +1,32 @@
+{
+  "numericEnums": [
+    {
+      "name": "Decimal",
+      "schema": { "type": "number", "enum": [0, 1] },
+      "valid": ["1", "1.0", "1e0", "0", "-0", "-0.00"],
+      "invalid": ["2", "1.000000000000000001", "01"]
+    },
+    {
+      "name": "Integer",
+      "schema": { "type": "integer", "format": "int64", "enum": [0, 1] },
+      "valid": ["1", "0", "-0"],
+      "invalid": ["2", "1.0", "01"]
+    },
+    {
+      "name": "Unsigned",
+      "schema": { "type": "integer", "format": "uint64", "enum": [0, 1] },
+      "valid": ["1", "0", "-0"],
+      "invalid": ["2", "-1", "01"]
+    }
+  ],
+  "money": {
+    "valid": [
+      { "input": "1", "amount": "100" },
+      { "input": "1.00", "amount": "100" },
+      { "input": "-1.20", "amount": "-120" },
+      { "input": "-0", "amount": "0" },
+      { "input": "90071992547409.93", "amount": "9007199254740993" }
+    ],
+    "invalid": ["1\n", "1.2\n", "1\r\n", "1 ", "1\t", " 1", "1.001"]
+  }
+}
