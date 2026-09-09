@@ -141,6 +141,9 @@ final class SchemaAdapter
                 ]),
             ),
         ];
+        if (($input['type'] ?? null) === 'object') {
+            $plan['objectOnlyAlternative'] = true;
+        }
         $ranges = [
             'int32' => ['-2147483648', '2147483647'],
             'uint32' => ['0', '4294967295'],

@@ -19,6 +19,8 @@ export type ValueInstruction =
 export interface CodecPlan {
   readonly value: ValueInstruction;
   readonly nullable: boolean;
+  /** Unmatched alternatives require objects only for the legacy literal type: 'object' form. */
+  readonly objectOnlyAlternative?: boolean;
   readonly modelObjectInput: boolean;
   readonly requiredInput: readonly string[];
   readonly requiredOutput: readonly string[];
@@ -172,6 +174,7 @@ function compileNode(input: Schema, output: Schema, depth: number): CodecPlan {
         ? { kind: 'null-array' }
         : valueInstruction(kind, input.format),
     nullable: input.type === undefined || kinds.includes('null'),
+    ...(input.type === 'object' ? { objectOnlyAlternative: true } : {}),
     modelObjectInput:
       kinds.includes('object') ||
       (input.type === undefined &&
@@ -311,6 +314,8 @@ export function assertCodecPlan(
     if (node[key] !== undefined && typeof node[key] !== 'string') invalid('invalid ' + key);
   if (node.constraints !== undefined && typeof node.constraints !== 'boolean')
     invalid('invalid constraint policy');
+  if (node.objectOnlyAlternative !== undefined && typeof node.objectOnlyAlternative !== 'boolean')
+    invalid('invalid alternative policy');
   if (
     node.range !== undefined &&
     (!Array.isArray(node.range) ||

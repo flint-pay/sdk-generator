@@ -16,7 +16,7 @@ export function compileResponsePlan(schema: Schema): ResponsePlan {
 function publicGuarantee(schema: Schema, codec: CodecPlan): ValueGuarantee {
   const scalar = scalarGuarantee(codec);
   if (scalar) return scalar;
-  if (schema.type === 'array')
+  if (codec.value.kind === 'array')
     return {
       kind: 'array',
       element: schema.items

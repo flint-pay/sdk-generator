@@ -457,7 +457,7 @@ export function executeCodec(value: unknown, s: CodecPlan, context: CodecContext
       }
       if (selected.length === 0 && response && !matching) {
         if (
-          branches.every((branch) => wireKind(branch.value) === 'object') &&
+          branches.every((branch) => branch.objectOnlyAlternative) &&
           (!value || typeof value !== 'object' || Array.isArray(value))
         )
           bad(path, 'expected an object response alternative');

@@ -324,6 +324,9 @@ test('malformed historical plans fail at record ingestion with useful paths', ()
       r.compiled.plan.php.models[0].codec.value = { kind: 'future' };
     },
     (r) => {
+      r.compiled.plan.runtime.operations[0].responses['200'].codec.objectOnlyAlternative = 'yes';
+    },
+    (r) => {
       r.compiled.plan.node.operations.readValue.inputRequired = 'yes';
     },
     (r) => {

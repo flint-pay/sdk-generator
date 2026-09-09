@@ -294,6 +294,9 @@ final class Codec
         if (isset($value['constraints']) && !is_bool($value['constraints'])) {
             $invalid('invalid policy');
         }
+        if (isset($value['objectOnlyAlternative']) && !is_bool($value['objectOnlyAlternative'])) {
+            $invalid('invalid alternative policy');
+        }
         if (isset($value['range'])) {
             if (!is_array($value['range']) || count($value['range']) !== 2) {
                 $invalid('invalid range');
@@ -771,7 +774,7 @@ final class Codec
                         count(
                             array_filter(
                                 $s[$keyword],
-                                fn($branch) => self::wireKind($branch['value']) === 'object',
+                                fn($branch) => $branch['objectOnlyAlternative'] ?? false,
                             ),
                         ) === count($s[$keyword]) &&
                         !is_object($value)
@@ -1616,6 +1619,7 @@ class Runtime
                     $op['responses'][(string) $status]['codec'] ??
                         ($op['responses']['default']['codec'] ?? []),
                     $this->options->redactFields,
+                    $this->contract['definitions'] ?? [],
                 );
                 if (isset($this->contract['errors']['detailsPath'])) {
                     $details = self::field($details, $this->contract['errors']['detailsPath']);
