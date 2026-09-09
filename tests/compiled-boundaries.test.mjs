@@ -9,6 +9,7 @@ const semantic = new Set([
   'codec-plan',
   'runtime-plan',
   'schema-policy',
+  'schema-intersections',
   'target-types',
   'target-plan',
   'value-guarantee',
@@ -86,7 +87,16 @@ test('semantic modules have effect-free dependencies and no implementation cycle
 
 test('compiled executor entry points never call dynamic schema adapters', () => {
   const file = source('runtime.ts');
-  const names = new Set(['executeCodec', 'redactCodec', 'isKnownCodec']);
+  const names = new Set([
+    'executeCodec',
+    'executeNode',
+    'numericView',
+    'jointNumericView',
+    'numericViewChanged',
+    'selectAlternatives',
+    'redactCodec',
+    'isKnownCodec',
+  ]);
   for (const statement of file.statements) {
     if (!ts.isFunctionDeclaration(statement) || !names.has(statement.name?.text)) continue;
     names.delete(statement.name.text);
@@ -135,7 +145,16 @@ test('PHP compiled execution is isolated from schema lowering and dispatches eve
   );
   assert.equal(result.status, 0, result.stderr);
   const methods = JSON.parse(result.stdout);
-  for (const name of ['execute', 'executeNode', 'redactPlan']) {
+  for (const name of [
+    'execute',
+    'executeValue',
+    'executeNode',
+    'numericView',
+    'jointNumericView',
+    'numericViewChanged',
+    'selectAlternatives',
+    'redactPlan',
+  ]) {
     assert.ok(methods[name]);
     for (const token of methods[name])
       if (Array.isArray(token) && token[0] === 'T_STRING')

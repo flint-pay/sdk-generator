@@ -34,7 +34,9 @@ export function inputSchema(op: Operation): Schema {
 }
 export function namedType(s: Schema, models: Record<string, Schema>, response = false): string {
   const match = Object.entries(models).find(([, value]) => stable(value) === stable(s));
-  return match ? match[0] + (response ? '' : 'Input') : typescriptType(s, response);
+  return match
+    ? match[0] + (response ? '' : 'Input')
+    : typescriptType(s, response, undefined, false, undefined, undefined, models);
 }
 export function operationInputType(op: Operation, models: Record<string, Schema>): string {
   const schema = inputSchema(op);
@@ -55,25 +57,43 @@ export function resultType(op: Operation, models: Record<string, Schema> = {}): 
   ].join(' | ');
 }
 export function itemSchemas(op: Operation): Schema[] {
-  const descend = (s: Schema, parts: string[]): Schema[] => {
+  const intersect = (left: Schema[], right: Schema[]): Schema[] =>
+    left.flatMap((a) =>
+      right.map((b) => {
+        if (!Object.keys(a).length) return b;
+        if (!Object.keys(b).length) return a;
+        return { allOf: [a, b] };
+      }),
+    );
+  const descend = (s: Schema, parts: string[]): Schema[] | undefined => {
     const child = s.properties?.[parts[0]!];
     const own = !parts.length
       ? s.items
         ? [s.items]
-        : []
+        : undefined
       : child
         ? descend(child, parts.slice(1))
-        : [];
-    return [
-      ...own,
-      ...[...(s.oneOf ?? []), ...(s.anyOf ?? []), ...(s.allOf ?? [])].flatMap((branch) =>
-        descend(branch, parts),
-      ),
-    ];
+        : undefined;
+    const constraints = own ? [own] : [];
+    for (const branch of s.allOf ?? []) {
+      const projected = descend(branch, parts);
+      if (projected) constraints.push(projected);
+    }
+    for (const branches of [s.oneOf, s.anyOf]) {
+      if (!branches) continue;
+      const alternatives = branches.map((branch) => descend(branch, parts));
+      if (alternatives.some((projection) => projection !== undefined))
+        constraints.push(alternatives.flatMap((projection) => projection ?? [{}]));
+    }
+    // Each alternative retains all constraints on the same element. A missing
+    // declaration is neutral in a conjunction, but unconstrained in a union.
+    return constraints.length ? constraints.reduce(intersect, [{}]) : undefined;
   };
   return Object.entries(op.responses)
     .filter(([status]) => /^2\d\d$/.test(status) || status === 'default')
-    .flatMap(([, r]) => (r.schema ? descend(r.schema, op.pagination!.items.split('.')) : []));
+    .flatMap(([, r]) =>
+      r.schema ? (descend(r.schema, op.pagination!.items.split('.')) ?? []) : [],
+    );
 }
 export function runtimeContract(c: Contract) {
   return {
@@ -124,17 +144,20 @@ export function compilePhpModel(
   schema: Schema,
   response: boolean,
   shared: ReadonlyMap<string, string>,
+  declaration: Schema = schema,
 ): PhpModelPlan {
   const codec = compileCodec(schema);
   const sharedCodec = shared.get(stable(codec));
   return {
     name,
     response,
-    constructorType: phpType(schema),
+    constructorType: phpType(declaration),
     constructorDoc:
-      schema.type === 'object' ? phpShape(schema, response) : phpDocType(schema, response),
-    defaultObject: schema.type === 'object',
-    getters: Object.entries(schema.properties ?? {})
+      declaration.type === 'object'
+        ? phpShape(declaration, response)
+        : phpDocType(declaration, response),
+    defaultObject: declaration.type === 'object',
+    getters: Object.entries(declaration.properties ?? {})
       .filter(([, child]) => (response ? !child.writeOnly : !child.readOnly))
       .map(([field, child]) => ({
         field,
@@ -144,6 +167,81 @@ export function compilePhpModel(
       })),
     codec,
     ...(sharedCodec ? { sharedCodec } : {}),
+  };
+}
+
+// An allOf conjunct applies to the same instance. Expose its union for helper
+// discovery without moving any other keyword out of its original scope. Never
+// look through properties, items, alternatives or negations to find a union.
+function exposeResponseUnion(schema: Schema): Schema {
+  const find = (s: Schema, tagged: boolean): Schema | undefined =>
+    s.oneOf && (!tagged || s.discriminator)
+      ? s
+      : (s.allOf ?? []).map((child) => find(child, tagged)).find((child) => child !== undefined);
+  const union = find(schema, true) ?? find(schema, false);
+  if (!union) return schema;
+  if (union === schema) return schema;
+  const remove = (s: Schema): Schema => {
+    if (s === union) {
+      const { oneOf, discriminator, ...rest } = s;
+      return rest;
+    }
+    return { ...s, ...(s.allOf ? { allOf: s.allOf.map(remove) } : {}) };
+  };
+  const { oneOf, discriminator, ...rest } = remove(schema);
+  return {
+    ...rest,
+    ...(oneOf
+      ? { allOf: [...(rest.allOf ?? []), { oneOf, ...(discriminator ? { discriminator } : {}) }] }
+      : {}),
+    oneOf: union.oneOf!,
+    ...(union.discriminator ? { discriminator: union.discriminator } : {}),
+  };
+}
+
+function responseVariant(schema: Schema, branch: Schema): Schema {
+  const { oneOf, discriminator, ...siblings } = schema;
+  const annotations = [
+    'title',
+    'description',
+    'default',
+    'example',
+    'examples',
+    'deprecated',
+    'readOnly',
+    'writeOnly',
+  ];
+  if (Object.keys(siblings).every((key) => annotations.includes(key) || key.startsWith('x-')))
+    return branch;
+  // Tagged branches are declared objects. Keep that fact at the constructor
+  // boundary so PHP model arrays are converted to objects before validation.
+  return { type: 'object', allOf: [branch, siblings] };
+}
+
+// The codec keeps every conjunct independently. This view only supplies PHP
+// constructor/getter declarations, including fields declared by outer siblings.
+function variantDeclaration(schema: Schema): Schema {
+  const conjuncts = (s: Schema): Schema[] => [s, ...(s.allOf ?? []).flatMap(conjuncts)];
+  const shapes = conjuncts(schema);
+  const fields = new Map<string, Schema[]>();
+  for (const shape of shapes)
+    for (const [key, child] of Object.entries(shape.properties ?? {}))
+      fields.set(key, [...(fields.get(key) ?? []), child]);
+  return {
+    type: 'object',
+    required: [...new Set(shapes.flatMap((shape) => shape.required ?? []))],
+    properties: Object.fromEntries(
+      [...fields].map(([key, children]) => [
+        key,
+        children.length === 1
+          ? children[0]!
+          : {
+              allOf: children,
+              ...(children.some((child) => child.readOnly) ? { readOnly: true } : {}),
+              ...(children.some((child) => child.writeOnly) ? { writeOnly: true } : {}),
+            },
+      ]),
+    ),
   };
 }
 
@@ -205,6 +303,16 @@ export function compileSdkContract(source: Contract): {
   plan: CompiledSdkContract;
 } {
   const c = prepareTargetContract(source);
+  const exposedUnions = new Set<Schema>();
+  for (const op of c.operations)
+    for (const response of Object.values(op.responses)) {
+      if (!response.schema) continue;
+      const exposed = exposeResponseUnion(response.schema);
+      if (exposed !== response.schema) {
+        response.schema = exposed;
+        exposedUnions.add(exposed);
+      }
+    }
   const models = modelsUsed(c);
   const runtime = compileRuntimePlan(runtimeContract(c));
   const phpRuntime = structuredClone(runtime);
@@ -219,18 +327,31 @@ export function compileSdkContract(source: Contract): {
       const result = compiled.responses[status];
       if (!result) throw new Error('Missing compiled response ' + status);
       const prefix = pascal(op.resource) + pascal(op.method) + 'Response' + pascal(status);
-      if (response.schema?.type === 'object') {
-        result.model = prefix;
-        responseModels.push(compilePhpModel(prefix, response.schema, true, sharedNames));
-      } else if (response.schema?.oneOf && response.schema.discriminator) {
+      if (
+        response.schema?.oneOf &&
+        response.schema.discriminator &&
+        (response.schema.type !== 'object' || exposedUnions.has(response.schema))
+      ) {
         result.variants = {};
         for (const [index, branch] of response.schema.oneOf.entries()) {
           const name = prefix + 'Variant' + index;
-          responseModels.push(compilePhpModel(name, branch, true, sharedNames));
+          const variant = responseVariant(response.schema, branch);
+          responseModels.push(
+            compilePhpModel(
+              name,
+              variant,
+              true,
+              sharedNames,
+              variant === branch ? branch : variantDeclaration(variant),
+            ),
+          );
           for (const tag of branch.properties?.[response.schema.discriminator.propertyName]?.enum ??
             [])
             result.variants[String(tag)] = name;
         }
+      } else if (response.schema?.type === 'object') {
+        result.model = prefix;
+        responseModels.push(compilePhpModel(prefix, response.schema, true, sharedNames));
       }
     }
   }
@@ -253,8 +374,8 @@ export function compileSdkContract(source: Contract): {
         Object.entries(models).map(([name, s]) => [
           name,
           {
-            input: typescriptType(s),
-            output: typescriptType(s, true),
+            input: typescriptType(s, false, undefined, false, undefined, undefined, models),
+            output: typescriptType(s, true, undefined, false, undefined, undefined, models),
             codec: compileCodec(s),
             ...(Object.hasOwn(shared, name) ? { sharedCodec: name } : {}),
             objectFactory:
@@ -284,7 +405,19 @@ export function compileSdkContract(source: Contract): {
               ...(known.length
                 ? {
                     known: {
-                      type: known.map((s) => typescriptType(s, true, undefined, true)).join(' | '),
+                      type: known
+                        .map((s) =>
+                          typescriptType(
+                            s,
+                            true,
+                            undefined,
+                            true,
+                            s.oneOf?.every((branch) => objectConstraint(branch) === 'object')
+                              ? 'object'
+                              : undefined,
+                          ),
+                        )
+                        .join(' | '),
                       codecs: known.map(compileCodec),
                     },
                   }
@@ -349,7 +482,15 @@ export function compileSdkContract(source: Contract): {
       c.operations.map((op) => [
         op.id,
         {
-          nodeInput: typescriptType(inputSchema(op)),
+          nodeInput: typescriptType(
+            inputSchema(op),
+            false,
+            undefined,
+            false,
+            undefined,
+            undefined,
+            models,
+          ),
           nodeOutput: resultType(op),
           phpInput: phpDocType(inputSchema(op)),
           phpOutput: Object.entries(op.responses)

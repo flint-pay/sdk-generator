@@ -39,7 +39,7 @@ final class SchemaAdapter
             $contract['webhook']['events'] = array_map($root, $contract['webhook']['events']);
         }
         $contract['format'] = 1;
-        $contract['semantics'] = '1';
+        $contract['semantics'] = '2';
         return $contract;
     }
     private static function directional(array $schema, bool $response): array

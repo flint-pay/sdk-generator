@@ -1,6 +1,7 @@
 import { Diagnostic } from './diagnostic.js';
 import { valueInstruction, exactValue } from './codec-plan.js';
 import { stable } from './canonical.js';
+import { visitIntersectedProperties } from './schema-intersections.js';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname, relative as relativePath } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -197,19 +198,86 @@ function header(value: unknown, path: string) {
   if (typeof value !== 'string' || !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(value))
     fail(path, 'expected an HTTP header name');
 }
-function schemaFields(s: Schema | undefined, path: string): Schema[] {
-  if (!s) return [];
+// Project a configured field path without flattening alternatives into
+// conjunctions. An absent field contributes no type evidence in its alternative.
+function schemaField(s: Schema | undefined, path: string): Schema | undefined {
+  if (!s) return undefined;
   const [first, ...rest] = path.split('.');
-  const child = Object.hasOwn(s.properties ?? {}, first!) ? s.properties![first!] : undefined;
-  return [
-    ...(rest.length ? schemaFields(child, rest.join('.')) : child ? [child] : []),
-    ...[...(s.oneOf ?? []), ...(s.anyOf ?? []), ...(s.allOf ?? [])].flatMap((branch) =>
-      schemaFields(branch, path),
-    ),
-  ];
+  if (first === undefined) return undefined;
+  const project = (shape: Schema): Schema | undefined => {
+    const parts: Schema[] = [];
+    const child = own(shape.properties, first);
+    if (child) parts.push(child);
+    for (const branch of shape.allOf ?? []) {
+      const field = project(branch);
+      if (field) parts.push(field);
+    }
+    for (const branches of [shape.oneOf, shape.anyOf]) {
+      if (!branches) continue;
+      const fields = branches.map(project);
+      if (fields.some((field) => field !== undefined))
+        parts.push({ anyOf: fields.map((field) => field ?? {}) });
+    }
+    return parts.length ? { allOf: parts } : undefined;
+  };
+  const field = project(s);
+  return rest.length ? schemaField(field, rest.join('.')) : field;
 }
-function hasType(s: Schema, type: string) {
-  return (Array.isArray(s.type) ? s.type : [s.type]).includes(type);
+function hasType(s: Schema, type: string): boolean {
+  const possible = (shape: Schema): Set<string> => {
+    const declared =
+      shape.type === undefined
+        ? ['null', 'boolean', 'object', 'array', 'string', 'integer', 'number']
+        : Array.isArray(shape.type)
+          ? shape.type
+          : [shape.type];
+    let kinds = new Set(declared);
+    if (kinds.has('number')) kinds.add('integer');
+    const intersect = (other: Set<string>): void => {
+      kinds = new Set([...kinds].filter((kind) => other.has(kind)));
+    };
+    for (const branch of shape.allOf ?? []) intersect(possible(branch));
+    for (const branches of [shape.oneOf, shape.anyOf])
+      if (branches) intersect(new Set(branches.flatMap((branch) => [...possible(branch)])));
+    return kinds;
+  };
+  const kinds = possible(s);
+  return kinds.has(type) && [...kinds].every((kind) => kind === type || kind === 'null');
+}
+// Parameter serialization requires one explicit wire shape; conjuncts may add
+// constraints without repeating it. Alternatives remain outside this subset.
+function parameterType(s: Schema, p: string, item = false): string {
+  const shapes = (value: Schema): Schema[] => [value, ...(value.allOf ?? []).flatMap(shapes)];
+  const parts = shapes(s);
+  const declared = parts.flatMap((part) =>
+    part.type === undefined ? [] : [Array.isArray(part.type) ? part.type : [part.type]],
+  );
+  const types = declared.reduce(
+    (accepted, kinds) =>
+      accepted.filter(
+        (kind) => kinds.includes(kind) || (kind === 'integer' && kinds.includes('number')),
+      ),
+    ['null', 'boolean', 'object', 'array', 'string', 'integer', 'number'],
+  );
+  const allowed = item
+    ? ['string', 'integer', 'boolean']
+    : ['string', 'integer', 'number', 'boolean', 'array'];
+  // A number declaration also permits integer instances, using one numeric encoding.
+  if (types.includes('number')) types.splice(types.indexOf('integer'), 1);
+  if (
+    !declared.length ||
+    types.length !== 1 ||
+    !allowed.includes(String(types[0])) ||
+    parts.some((part) => part.oneOf || part.anyOf || part.not || part['x-sdk-ref'])
+  )
+    fail(p, 'parameters require an explicit non-null scalar type or scalar array');
+  const type = String(types[0]);
+  if (type === 'array') {
+    const items = parts.flatMap((part) => (part.items ? [part.items] : []));
+    if (!items.length) fail(p, 'parameter arrays require scalar items');
+    parameterType({ allOf: items }, p + '/items', true);
+  }
+  return type;
 }
 // A deliberately portable ECMAScript subset; translate differences in PCRE rather
 // than silently applying a different pattern in the PHP target.
@@ -487,7 +555,14 @@ function schema(s: Schema, p: string, legacy = false): void {
     ].includes(s.format)
   )
     fail(p + '/format', 'unsupported format ' + s.format);
-  if (types.includes('array') && !s.items) fail(p, 'arrays require items');
+  if (types.includes('array') && !s.items) {
+    const declaresItems = (shape: Schema): boolean =>
+      shape.items !== undefined || (shape.allOf ?? []).some(declaresItems);
+    if (!(s.allOf ?? []).some(declaresItems)) fail(p, 'arrays require items');
+    // The item constraint stays in its original conjunct. This neutral local
+    // declaration preserves the explicit array shape expected by target types.
+    s.items = {};
+  }
   if (s.items) schema(s.items, p + '/items', legacy);
   for (const [key, child] of Object.entries(s.properties ?? {}))
     schema(child, p + '/properties/' + key, legacy);
@@ -497,6 +572,7 @@ function schema(s: Schema, p: string, legacy = false): void {
   // Annotation-only wrappers are equivalent to their branch; semantic siblings stay composed.
   if (
     s.allOf?.length === 1 &&
+    !s.allOf[0]!['x-sdk-ref'] &&
     Object.keys(s).every(
       (key) => key === 'allOf' || annotations.includes(key) || key.startsWith('x-'),
     )
@@ -548,22 +624,34 @@ function checkRepresentations(s: Schema, p: string): void {
         inherit(branch);
     };
     inherit(s);
+    const inheritedKinds = new Set(shapes.map(scalar));
+    if (inheritedKinds.has('exact-number') && inheritedKinds.has('safe-integer'))
+      fail(
+        p,
+        'intersected numeric schemas use different SDK representations; use a consistent numeric format with the intersected bounds in a provider override',
+      );
   }
   // Compare the caller representations at corresponding paths, not just at the
   // roots of alternatives. Exact JSON numbers and JSON strings both use SDK strings.
-  const sdkTypes = (shape: Schema): string[] | undefined => {
+  type Relation = 'alternatives' | 'intersection';
+  const representationTypes = (shape: Schema, relation: Relation): string[] | undefined => {
     if (shape.type === undefined) return undefined;
-    return (Array.isArray(shape.type) ? shape.type : [shape.type]).map((type) =>
+    const types = Array.isArray(shape.type) ? shape.type : [shape.type];
+    // Intersections compare JSON kinds: native and exact SDK numbers overlap
+    // on the wire even though their TypeScript input types are disjoint.
+    if (relation === 'intersection')
+      return types.includes('number') ? [...types, 'integer'] : types;
+    return types.map((type) =>
       type === 'number' || (type === 'integer' && scalar(shape) === 'exact-number')
         ? 'string'
         : type,
     );
   };
-  const disjoint = (left: Schema[], right: Schema[]): boolean => {
+  const disjoint = (left: Schema[], right: Schema[], relation: Relation): boolean => {
     for (const a of left)
       for (const b of right) {
-        const at = sdkTypes(a),
-          bt = sdkTypes(b);
+        const at = representationTypes(a, relation),
+          bt = representationTypes(b, relation);
         if (at && bt && !at.some((type) => bt.includes(type))) return true;
         // Non-numeric enums can distinguish tagged object alternatives without
         // confusing numeric enums with their exact string representations.
@@ -591,15 +679,20 @@ function checkRepresentations(s: Schema, p: string): void {
         )
       )
         return true;
-      if (disjoint(a, b)) return true;
+      if (disjoint(a, b, relation)) return true;
     }
     return false;
   };
-  const ambiguous = (left: Schema[], right: Schema[], path: string): void => {
+  const checkOverlap = (
+    left: Schema[],
+    right: Schema[],
+    path: string,
+    relation: Relation = 'alternatives',
+  ): void => {
     if (!left.length || !right.length) return;
     left = left.flatMap(conjuncts).map(({ allOf, ...shape }) => shape);
     right = right.flatMap(conjuncts).map(({ allOf, ...shape }) => shape);
-    if (disjoint(left, right)) return;
+    if (disjoint(left, right, relation)) return;
     // Keep branch constraints together so disjoint tags are not lost while
     // looking through nested alternatives and intersections.
     for (const [side, other, reversed] of [
@@ -613,14 +706,26 @@ function checkRepresentations(s: Schema, p: string): void {
         delete base[keyword];
         for (const branch of shape[keyword]!) {
           const selected = [...side.slice(0, i), base, branch, ...side.slice(i + 1)];
-          ambiguous(reversed ? other : selected, reversed ? selected : other, path);
+          checkOverlap(reversed ? other : selected, reversed ? selected : other, path, relation);
         }
         return;
       }
     }
     const a = new Set(left.map(scalar)),
       b = new Set(right.map(scalar));
-    if ((a.has('string') && b.has('exact-number')) || (b.has('string') && a.has('exact-number')))
+    if (relation === 'intersection') {
+      if (
+        (a.has('exact-number') && b.has('safe-integer')) ||
+        (b.has('exact-number') && a.has('safe-integer'))
+      )
+        fail(
+          path,
+          'intersected numeric schemas use different SDK representations; use a consistent numeric format with the intersected bounds in a provider override',
+        );
+    } else if (
+      (a.has('string') && b.has('exact-number')) ||
+      (b.has('string') && a.has('exact-number'))
+    )
       fail(
         path,
         'string and exact-number alternatives have ambiguous SDK string inputs; provide an unambiguous provider representation before generating this operation',
@@ -638,36 +743,49 @@ function checkRepresentations(s: Schema, p: string): void {
               ? [shape.additionalProperties]
               : [];
         });
-      ambiguous(children(left), children(right), path + '/properties/' + key);
+      checkOverlap(children(left), children(right), path + '/properties/' + key, relation);
     }
-    ambiguousItems(left, right, path);
+    checkItems(left, right, path, relation);
   };
-  const ambiguousItems = (left: Schema[], right: Schema[], path: string): void => {
+  const checkItems = (left: Schema[], right: Schema[], path: string, relation: Relation): void => {
     const a = left.flatMap((shape) => (shape.items ? [shape.items] : []));
     const b = right.flatMap((shape) => (shape.items ? [shape.items] : []));
-    if (a.length && b.length) ambiguous(a, b, path + '/items');
+    if (a.length && b.length) checkOverlap(a, b, path + '/items', relation);
     const additional = (shapes: Schema[]) =>
       shapes.flatMap((shape) =>
         typeof shape.additionalProperties === 'object' ? [shape.additionalProperties] : [],
       );
     const x = additional(left),
       y = additional(right);
-    if (x.length && y.length) ambiguous(x, y, path + '/additionalProperties');
+    if (x.length && y.length) checkOverlap(x, y, path + '/additionalProperties', relation);
   };
   for (const keyword of ['oneOf', 'anyOf'] as const) {
     const alternatives = s[keyword];
     if (!alternatives) continue;
     for (let i = 0; i < alternatives.length; i++)
       for (let j = i + 1; j < alternatives.length; j++)
-        ambiguous([alternatives[i]!], [alternatives[j]!], p + '/' + keyword);
+        checkOverlap([alternatives[i]!], [alternatives[j]!], p + '/' + keyword);
   }
   if (s.allOf) {
-    const properties = new Map<string, Schema[]>();
-    for (const shape of shapes)
-      for (const [name, child] of Object.entries(shape.properties ?? {}))
-        properties.set(name, [...(properties.get(name) ?? []), child]);
-    for (const [name, children] of properties)
+    // Each flattened conjunct keeps its own alternatives. Compare overlapping
+    // branches across conjuncts without intersecting alternatives of one union.
+    const peers = shapes.map(({ allOf, ...shape }) => shape);
+    for (const [index, left] of peers.entries())
+      for (const right of peers.slice(index + 1))
+        checkOverlap([left], [right], p + '/allOf', 'intersection');
+    visitIntersectedProperties(shapes, (children, name) => {
       if (children.length > 1) checkRepresentations({ allOf: children }, p + '/properties/' + name);
+    });
+    // These conjuncts describe the same elements/values, just as matching
+    // properties describe the same field. Constraint-only schemas must see the
+    // numeric JSON kind rather than the caller's exact-number string.
+    const items = shapes.flatMap((shape) => (shape.items ? [shape.items] : []));
+    if (items.length > 1) checkRepresentations({ allOf: items }, p + '/items');
+    const additional = shapes.flatMap((shape) =>
+      typeof shape.additionalProperties === 'object' ? [shape.additionalProperties] : [],
+    );
+    if (additional.length > 1)
+      checkRepresentations({ allOf: additional }, p + '/additionalProperties');
   }
 }
 function pointer(root: unknown, pointer: string, p: string): any {
@@ -688,20 +806,48 @@ export function loadContract(definitionPath: string, configPath: string): Contra
   const references: { path: string; model: string }[] = [];
   const resolved = new Map<string, { value: any; models: string[] }>();
   const cycles = new Map<string, string>();
-  // Map keys are user names; annotations contain JSON data, not Reference Objects.
-  const referenceMaps = new Set([
-    'properties',
-    'schemas',
-    'paths',
-    'responses',
-    'content',
-    'headers',
-    'securitySchemes',
-    'requestBodies',
-    'parameters',
-  ]);
-  const literalAnnotation = (key: string) =>
-    ['example', 'examples', 'default', 'enum'].includes(key) || key.startsWith('x-');
+  // Context follows the use site, including when the target is an external fragment.
+  // Map keys and annotation values are data, never OpenAPI keywords.
+  type Context = string;
+  const childContext = (context: Context, key: string): Context => {
+    if (context.startsWith('map:')) return context.slice(4);
+    if (context === 'schema') {
+      if (key === 'properties') return 'map:schema';
+      if (['items', 'additionalProperties', 'allOf', 'anyOf', 'oneOf', 'not'].includes(key))
+        return 'schema';
+      return 'literal';
+    }
+    if (context === 'root')
+      return key === 'components' ? 'components' : key === 'paths' ? 'map:pathItem' : 'literal';
+    if (context === 'components') {
+      const kinds: Record<string, string> = {
+        schemas: 'schema',
+        parameters: 'parameter',
+        responses: 'response',
+        requestBodies: 'requestBody',
+        headers: 'header',
+        securitySchemes: 'securityScheme',
+        examples: 'example',
+        links: 'link',
+        pathItems: 'pathItem',
+      };
+      return own(kinds, key) ? 'map:' + kinds[key] : 'literal';
+    }
+    if (
+      context === 'pathItem' &&
+      ['get', 'put', 'post', 'delete', 'patch', 'head', 'options', 'trace'].includes(key)
+    )
+      return 'operation';
+    if (['operation', 'pathItem'].includes(context) && key === 'parameters') return 'parameter';
+    if (context === 'operation' && key === 'requestBody') return 'requestBody';
+    if (context === 'operation' && key === 'responses') return 'map:response';
+    if (['parameter', 'header', 'media'].includes(context) && key === 'schema') return 'schema';
+    if (['parameter', 'header', 'requestBody', 'response'].includes(context) && key === 'content')
+      return 'map:media';
+    if (context === 'response' && key === 'headers') return 'map:header';
+    if (context === 'response' && key === 'links') return 'map:link';
+    return 'literal';
+  };
   function load(file: string): any {
     file = resolve(file);
     if (!documents.has(file)) {
@@ -729,27 +875,84 @@ export function loadContract(definitionPath: string, configPath: string): Contra
     file: string,
     path: string,
     stack: { key: string; path: string }[] = [],
-    map = false,
+    context: Context = 'root',
   ): any {
-    if (Array.isArray(value)) return value.map((v, i) => deref(v, file, `${path}/${i}`, stack));
+    if (context === 'literal') return structuredClone(value);
+    if (Array.isArray(value))
+      return value.map((v, i) => deref(v, file, `${path}/${i}`, stack, context));
     if (!value || typeof value !== 'object') return value;
+    const map = context.startsWith('map:');
     if (!map && Object.keys(value).some((key) => key.startsWith('x-sdk-')))
       fail(path, 'x-sdk-* extensions are reserved for resolved generator metadata');
     if (!map && '$ref' in value) {
-      if (Object.keys(value).length !== 1)
-        fail(path, '$ref siblings are unsupported; use an explicit provider override');
+      const applySiblings = (result: any): any => {
+        if (raw.openapi.startsWith('3.0.')) return result;
+        const { $ref, ...siblings } = value;
+        if (context === 'schema') {
+          if (!Object.keys(siblings).length) return result;
+          record(result, path);
+          const local = deref(siblings, file, path, stack, context);
+          if (local.allOf !== undefined && (!Array.isArray(local.allOf) || !local.allOf.length))
+            fail(path + '/allOf', 'expected a nonempty schema array');
+          for (const key of ['readOnly', 'writeOnly', 'x-sensitive'])
+            if (local[key] !== undefined && typeof local[key] !== 'boolean')
+              fail(path + '/' + key, 'expected a boolean');
+          // Preserve keyword scope (especially additionalProperties and alternatives).
+          // The referenced target remains a separate conjunct, even at recursive edges.
+          const metadata = Object.fromEntries(
+            Object.entries(result).filter(
+              ([key]) =>
+                [
+                  'title',
+                  'description',
+                  'default',
+                  'example',
+                  'examples',
+                  'deprecated',
+                  'readOnly',
+                  'writeOnly',
+                ].includes(key) ||
+                (key.startsWith('x-') && !key.startsWith('x-sdk-')),
+            ),
+          );
+          const combined = { ...metadata, ...local, allOf: [result, ...(local.allOf ?? [])] };
+          for (const key of ['readOnly', 'writeOnly', 'x-sensitive'])
+            if (result[key] === true || local[key] === true) combined[key] = true;
+          return combined;
+        }
+        for (const key of ['summary', 'description']) {
+          if (!Object.hasOwn(siblings, key)) continue;
+          if (typeof siblings[key] !== 'string') fail(path + '/' + key, 'expected a string');
+          const supported =
+            key === 'summary'
+              ? ['example']
+              : [
+                  'parameter',
+                  'header',
+                  'response',
+                  'requestBody',
+                  'securityScheme',
+                  'example',
+                  'link',
+                ];
+          if (supported.includes(context)) result[key] = siblings[key];
+        }
+        return result;
+      };
       const ref = value.$ref;
       if (typeof ref !== 'string' || /^\w+:/.test(ref) || ref.startsWith('//'))
         fail(path, 'remote references must be vendored locally for reproducible generation');
       const [relative, fragment = ''] = ref.split('#');
       const target = resolve(dirname(file), relative || file);
       const modelMatch = /^\/components\/schemas\/([^/]+)$/.exec(fragment);
-      if (target === resolve(definitionPath) && modelMatch)
+      if (context === 'schema' && target === resolve(definitionPath) && modelMatch)
         references.push({ path, model: modelMatch[1]!.replace(/~1/g, '/').replace(/~0/g, '~') });
       const key = target + '#' + fragment;
-      const ancestor = stack.find((entry) => entry.key === key);
+      const cacheKey = context + ':' + key;
+      const ancestor = stack.find((entry) => entry.key === cacheKey);
       if (ancestor) {
         if (
+          context !== 'schema' ||
           !/\/(?:properties|items|additionalProperties)\//.test(
             path.slice(ancestor.path.length) + '/',
           )
@@ -768,30 +971,31 @@ export function loadContract(definitionPath: string, configPath: string): Contra
         if (cycles.has(mapped) && cycles.get(mapped) !== key)
           fail(path, 'recursive model name collision');
         cycles.set(mapped, key);
-        return { 'x-sdk-ref': mapped };
+        return applySiblings({ 'x-sdk-ref': mapped });
       }
-      const cached = resolved.get(key);
+      const cached = resolved.get(cacheKey);
       if (cached) {
         for (const model of cached.models) references.push({ path, model });
-        return structuredClone(cached.value);
+        return applySiblings(structuredClone(cached.value));
       }
       const before = references.length;
-      const result = deref(pointer(load(target), fragment, path), target, path, [
-        ...stack,
-        { key, path },
-      ]);
-      resolved.set(key, {
+      const result = deref(
+        pointer(load(target), fragment, path),
+        target,
+        path,
+        [...stack, { key: cacheKey, path }],
+        context,
+      );
+      resolved.set(cacheKey, {
         value: result,
         models: [...new Set(references.slice(before).map((ref) => ref.model))],
       });
-      return structuredClone(result);
+      return applySiblings(structuredClone(result));
     }
     return Object.fromEntries(
       Object.entries(value).map(([k, v]) => [
         k,
-        !map && literalAnnotation(k)
-          ? structuredClone(v)
-          : deref(v, file, `${path}/${k}`, stack, !map && referenceMaps.has(k)),
+        deref(v, file, `${path}/${k}`, stack, childContext(context, k)),
       ]),
     );
   }
@@ -987,82 +1191,104 @@ export function loadContract(definitionPath: string, configPath: string): Contra
   }
   const reachable = new Set<string>();
   const visited = new Set<string>();
-  const collect = (value: any, file: string, map = false): void => {
-    if (!value || typeof value !== 'object') return;
+  const collect = (value: any, file: string, context: Context): void => {
+    if (context === 'literal' || !value || typeof value !== 'object') return;
     if (Array.isArray(value)) {
-      for (const child of value) collect(child, file);
+      for (const child of value) collect(child, file, context);
       return;
     }
-    if (!map && typeof value.$ref === 'string') {
+    if (!context.startsWith('map:') && '$ref' in value) {
       const ref = value.$ref;
-      if (/^\w+:/.test(ref) || ref.startsWith('//'))
-        fail(ref, 'remote references must be vendored locally for reproducible generation');
+      if (typeof ref !== 'string' || /^\w+:/.test(ref) || ref.startsWith('//'))
+        fail(String(ref), 'remote references must be vendored locally for reproducible generation');
       const [relative, fragment = ''] = ref.split('#');
       const target = resolve(dirname(file), relative || file);
-      const key = target + '#' + fragment;
+      const key = context + ':' + target + '#' + fragment;
       const match = /^\/components\/schemas\/([^/]+)$/.exec(fragment);
-      if (target === resolve(definitionPath) && match)
+      if (context === 'schema' && target === resolve(definitionPath) && match)
         reachable.add(match[1]!.replace(/~1/g, '/').replace(/~0/g, '~'));
       if (!visited.has(key)) {
         visited.add(key);
-        collect(pointer(load(target), fragment, ref), target);
+        collect(pointer(load(target), fragment, ref), target, context);
       }
-    } else
-      for (const [key, child] of Object.entries(value)) {
-        if (map || !literalAnnotation(key)) collect(child, file, !map && referenceMaps.has(key));
-      }
+      // Ignored Reference Object siblings must not load files or select models.
+      if (context !== 'schema' || raw.openapi.startsWith('3.0.')) return;
+    }
+    for (const [key, child] of Object.entries(value))
+      if (key !== '$ref' || context.startsWith('map:'))
+        collect(child, file, childContext(context, key));
   };
+  type PathField = { value: any; file: string };
+  function pathFields(
+    item: any,
+    file: string,
+    path: string,
+    seen = new Set<string>(),
+  ): Record<string, PathField> {
+    record(item, path);
+    let fields: Record<string, PathField> = {};
+    if ('$ref' in item) {
+      const ref = item.$ref;
+      if (typeof ref !== 'string' || /^\w+:/.test(ref) || ref.startsWith('//'))
+        fail(path, 'remote references must be vendored locally for reproducible generation');
+      const [relative, fragment = ''] = ref.split('#');
+      const target = resolve(dirname(file), relative || file);
+      const key = target + '#' + fragment;
+      if (seen.has(key)) fail(path, 'cyclic path item reference');
+      seen.add(key);
+      fields = pathFields(pointer(load(target), fragment, path), target, path, seen);
+    }
+    for (const [key, value] of Object.entries(item)) {
+      if (key === '$ref') continue;
+      if (key.startsWith('x-sdk-'))
+        fail(path, 'x-sdk-* extensions are reserved for resolved generator metadata');
+      if (Object.hasOwn(fields, key))
+        fail(path + '/' + key, 'conflicting path item $ref field ' + key);
+      Object.defineProperty(fields, key, {
+        value: { value, file },
+        enumerable: true,
+        configurable: true,
+      });
+    }
+    return fields;
+  }
   const selectedPaths = Object.fromEntries(
     Object.entries(raw.paths ?? {}).map(([path, item]) => {
-      let file = resolve(definitionPath);
-      const pathReferences = new Set<string>();
-      while (item && typeof item === 'object' && '$ref' in item) {
-        if (Object.keys(item).length !== 1)
-          fail(
-            '/paths/' + path,
-            '$ref siblings are unsupported; use an explicit provider override',
-          );
-        const ref = (item as any).$ref;
-        if (typeof ref !== 'string' || /^\w+:/.test(ref) || ref.startsWith('//'))
-          fail(
-            '/paths/' + path,
-            'remote references must be vendored locally for reproducible generation',
-          );
-        const [relative, fragment = ''] = ref.split('#');
-        file = resolve(dirname(file), relative || file);
-        const key = file + '#' + fragment;
-        if (pathReferences.has(key)) fail('/paths/' + path, 'cyclic path item reference');
-        pathReferences.add(key);
-        item = pointer(load(file), fragment, '/paths/' + path);
-      }
-      if (!item || typeof item !== 'object' || Array.isArray(item))
-        fail('/paths/' + path, 'expected a path item');
+      const fields = pathFields(item, resolve(definitionPath), '/paths/' + path);
       let selectedAny = false;
-      const entries = Object.entries(item as Record<string, unknown>).map(([verb, operation]) => {
-        const op = operation as any;
-        if (!['get', 'post', 'put', 'patch', 'delete', 'head', 'options'].includes(verb))
-          return [verb, op];
-        record(op, '/paths/' + path + '/' + verb);
-        const c = own(config.operations, op.operationId);
-        const included =
-          !c?.hidden &&
-          (!config.include || config.include.includes(op?.operationId)) &&
-          (!config.audiences || c?.audiences?.some((a) => config.audiences!.includes(a)));
-        if (included) {
+      const entries = Object.entries(fields)
+        .filter(([key]) => key !== 'parameters')
+        .map(([verb, field]) => {
+          const { value: op, file } = field;
+          const p = '/paths/' + path + '/' + verb;
+          if (!['get', 'post', 'put', 'patch', 'delete', 'head', 'options'].includes(verb))
+            return [verb, deref(op, file, p, [], childContext('pathItem', verb))];
+          record(op, p);
+          const c = own(config.operations, op.operationId);
+          const included =
+            !c?.hidden &&
+            (!config.include || config.include.includes(op.operationId)) &&
+            (!config.audiences || c?.audiences?.some((a) => config.audiences!.includes(a)));
+          if (!included) return [verb, { operationId: op.operationId }];
           selectedAny = true;
-          collect(op, file);
-          collect((item as any).parameters, file);
-        }
-        return [verb, included ? op : { operationId: op?.operationId }];
-      });
-      return [
-        path,
-        deref(
-          Object.fromEntries(entries.filter(([key]) => key !== 'parameters' || selectedAny)),
-          file,
-          '/paths/' + path,
-        ),
-      ];
+          collect(op, file, 'operation');
+          return [verb, deref(op, file, p, [], 'operation')];
+        });
+      const parameters = own(fields, 'parameters');
+      if (selectedAny && parameters) {
+        collect(parameters.value, parameters.file, 'parameter');
+        entries.push([
+          'parameters',
+          deref(
+            parameters.value,
+            parameters.file,
+            '/paths/' + path + '/parameters',
+            [],
+            'parameter',
+          ),
+        ]);
+      }
+      return [path, Object.fromEntries(entries)];
     }),
   );
   const selected = {
@@ -1078,6 +1304,36 @@ export function loadContract(definitionPath: string, configPath: string): Contra
   const doc = deref(selected, resolve(definitionPath), '');
   // Path items have already been resolved relative to their own source files.
   doc.paths = selectedPaths;
+  // Direction and redaction are use-site facts, even when their declaration is
+  // behind a conjunction or a recursive edge. Follow only same-instance edges.
+  function effectiveFlag(value: Schema, key: string, seen = new Set<Schema>()): boolean {
+    if (!value || typeof value !== 'object' || seen.has(value)) return false;
+    seen.add(value);
+    if (value[key] === true) return true;
+    const reference = value['x-sdk-ref'];
+    const target = reference ? resolved.get('schema:' + cycles.get(reference))?.value : undefined;
+    return (
+      Boolean(target && effectiveFlag(target, key, seen)) ||
+      (Array.isArray(value.allOf) ? value.allOf : []).some((branch) =>
+        effectiveFlag(branch, key, seen),
+      )
+    );
+  }
+  function annotate(value: any, context: Context): void {
+    if (context === 'literal' || !value || typeof value !== 'object') return;
+    if (Array.isArray(value)) {
+      value.forEach((child) => annotate(child, context));
+      return;
+    }
+    for (const [key, child] of Object.entries(value)) annotate(child, childContext(context, key));
+    if (context === 'schema')
+      for (const key of ['readOnly', 'writeOnly', 'x-sensitive'])
+        if ((value[key] === undefined || value[key] === false) && effectiveFlag(value, key))
+          value[key] = true;
+  }
+  annotate(doc, 'root');
+  for (const [key, entry] of resolved)
+    if (key.startsWith('schema:')) annotate(entry.value, 'schema');
   for (const forbidden of ['webhooks', 'callbacks'])
     if (doc[forbidden])
       fail(`/${forbidden}`, 'declare supported HMAC webhooks in the SDK configuration');
@@ -1107,7 +1363,7 @@ export function loadContract(definitionPath: string, configPath: string): Contra
         'definitions/' + mapped,
         'generated external model name collides with an existing model',
       );
-    const value = models[mapped] ?? resolved.get(key)?.value;
+    const value = models[mapped] ?? resolved.get('schema:' + key)?.value;
     if (!value) fail('definitions/' + mapped, 'unresolved recursive model');
     schema(value, 'definitions/' + mapped, raw.openapi.startsWith('3.0.'));
     definitions[mapped] = value;
@@ -1231,25 +1487,7 @@ export function loadContract(definitionPath: string, configPath: string): Contra
         if (['body', '__proto__', 'constructor', 'prototype'].includes(param.name))
           fail(p, `parameter name ${param.name} conflicts with SDK input`);
         schema(param.schema, `${p}/parameters/${param.name}`, raw.openapi.startsWith('3.0.'));
-        if (
-          !['string', 'integer', 'number', 'boolean', 'array'].includes(
-            String(param.schema.type),
-          ) ||
-          Array.isArray(param.schema.type) ||
-          param.schema.oneOf ||
-          param.schema.anyOf ||
-          param.schema.allOf ||
-          param.schema.not
-        )
-          fail(
-            `${p}/parameters/${param.name}`,
-            'parameters require an explicit non-null scalar type or scalar array',
-          );
-        if (
-          param.schema.type === 'array' &&
-          !['string', 'integer', 'boolean'].includes(String(param.schema.items?.type))
-        )
-          fail(p, 'parameter arrays require scalar items');
+        parameterType(param.schema, `${p}/parameters/${param.name}`);
         const style = param.style ?? (param.in === 'query' ? 'form' : 'simple');
         if (style !== (param.in === 'query' ? 'form' : 'simple'))
           fail(p, `unsupported parameter style ${style}`);
@@ -1419,19 +1657,21 @@ export function loadContract(definitionPath: string, configPath: string): Contra
         if (verb !== 'get') fail(p, 'pagination helpers require GET');
         const parameter = parameters.find((v) => v.in === 'query' && v.name === pg.parameter);
         const nextType = pg.kind === 'offset' ? 'integer' : 'string';
-        if (pg.kind !== 'link' && parameter?.schema.type !== nextType)
+        if (pg.kind !== 'link' && parameter && parameterType(parameter.schema, p) !== nextType)
           fail(p, `${pg.kind} pagination requires a scalar ${nextType} query parameter`);
+        // Follow same-instance conjuncts and alternatives, just as field/type
+        // projection does; formats may be supplied by referenced siblings.
+        const exactInteger = (shape: Schema): boolean =>
+          exactValue(valueInstruction('integer', shape.format)) ||
+          [...(shape.allOf ?? []), ...(shape.oneOf ?? []), ...(shape.anyOf ?? [])].some(
+            exactInteger,
+          );
         for (const [, response] of Object.entries(responses).filter(([status]) =>
           /^2\d\d$/.test(status),
         )) {
-          const items = schemaFields(response.schema, pg.items);
-          const next = schemaFields(response.schema, pg.next);
-          if (
-            !items.length ||
-            items.some((s) => !hasType(s, 'array')) ||
-            !next.length ||
-            next.some((s) => !hasType(s, nextType))
-          )
+          const items = schemaField(response.schema, pg.items);
+          const next = schemaField(response.schema, pg.next);
+          if (!items || !hasType(items, 'array') || !next || !hasType(next, nextType))
             fail(
               p,
               `pagination items/next must address declared array and ${nextType} response fields`,
@@ -1439,8 +1679,9 @@ export function loadContract(definitionPath: string, configPath: string): Contra
           if (
             pg.kind === 'offset' &&
             parameter &&
-            !exactValue(valueInstruction('integer', parameter.schema.format)) &&
-            next.some((s) => exactValue(valueInstruction('integer', s.format)))
+            next &&
+            !exactInteger(parameter.schema) &&
+            exactInteger(next)
           )
             fail(
               p,
@@ -1466,8 +1707,8 @@ export function loadContract(definitionPath: string, configPath: string): Contra
         for (const [, response] of Object.entries(responses).filter(([status]) =>
           /^2\d\d$/.test(status),
         )) {
-          const states = schemaFields(response.schema, c.polling.state);
-          if (!states.length || states.some((s) => !hasType(s, 'string')))
+          const states = schemaField(response.schema, c.polling.state);
+          if (!states || !hasType(states, 'string'))
             fail(p, 'polling state must address a declared string response field');
         }
       }

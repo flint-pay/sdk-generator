@@ -206,6 +206,7 @@ final class RawNumber
 {
     public function __construct(public readonly string $value) {}
 }
+/** JSON numeric meaning, established by the parser or a positive codec declaration. */
 final class ParsedNumber
 {
     public function __construct(public readonly string $value) {}
@@ -442,13 +443,13 @@ final class Codec
         }
         return (str_starts_with($token, '-') ? '-' : '') . $digits;
     }
-    private static function combine(mixed $left, mixed $right, string $path): mixed
+    private static function combine(mixed $left, mixed $right, string $path, mixed $source): mixed
     {
         if ($left instanceof ParsedNumber || $right instanceof ParsedNumber) {
             $token = $left instanceof ParsedNumber ? $left : $right;
             $other = $left instanceof ParsedNumber ? $right : $left;
             $text =
-                $other instanceof ParsedNumber
+                $other instanceof ParsedNumber || $other instanceof RawNumber
                     ? $other->value
                     : (is_scalar($other)
                         ? (string) $other
@@ -459,24 +460,53 @@ final class Codec
             ) {
                 self::fail($path, 'alternatives have incompatible numeric representations');
             }
-            return $other;
+            return $other instanceof RawNumber ? new RawNumber($token->value) : $other;
         }
         if ($left instanceof RawNumber || $right instanceof RawNumber) {
             $token = $left instanceof RawNumber ? $left : $right;
             $other = $left instanceof RawNumber ? $right : $left;
-            if ((string) ($other instanceof RawNumber ? $other->value : $other) !== $token->value) {
+            $text =
+                $other instanceof RawNumber
+                    ? $other->value
+                    : (is_scalar($other)
+                        ? (string) $other
+                        : '');
+            if (
+                !preg_match('/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/', $text) ||
+                self::compareDecimal($token->value, $text) !== 0
+            ) {
                 self::fail($path, 'alternatives have incompatible numeric representations');
             }
             return $token;
+        }
+        // The shared source view retains JSON numeric identity after branches
+        // have decoded their tokens into public SDK strings.
+        if (
+            $source instanceof ParsedNumber &&
+            is_string($left) &&
+            is_string($right) &&
+            $left !== $right
+        ) {
+            $pattern = '/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/';
+            if (
+                !preg_match($pattern, $left) ||
+                !preg_match($pattern, $right) ||
+                self::compareDecimal($source->value, $left) !== 0 ||
+                self::compareDecimal($source->value, $right) !== 0
+            ) {
+                self::fail($path, 'alternatives have incompatible numeric representations');
+            }
+            return $source->value;
         }
         if ((is_array($left) || is_object($left)) && (is_array($right) || is_object($right))) {
             $a = (array) $left;
             $b = (array) $right;
             $out = [];
+            $original = is_array($source) || is_object($source) ? (array) $source : [];
             foreach (array_unique(array_merge(array_keys($a), array_keys($b))) as $key) {
                 $out[$key] =
                     array_key_exists($key, $a) && array_key_exists($key, $b)
-                        ? self::combine($a[$key], $b[$key], "$path.$key")
+                        ? self::combine($a[$key], $b[$key], "$path.$key", $original[$key] ?? null)
                         : (array_key_exists($key, $a)
                             ? $a[$key]
                             : $b[$key]);
@@ -572,7 +602,7 @@ final class Codec
         if ($definitions && !isset($s['x-sdk-definitions'])) {
             $s['x-sdk-definitions'] = $definitions;
         }
-        return self::executeNode(
+        return self::executeValue(
             $value,
             \SdkNamespace\Internal\SchemaAdapter::compile($s),
             $path,
@@ -590,7 +620,7 @@ final class Codec
         if (!in_array($mode, ['request', 'response', 'match'], true)) {
             throw new \InvalidArgumentException('Unknown codec execution mode');
         }
-        return self::executeNode(
+        return self::executeValue(
             $value,
             $plan,
             $context['path'] ?? 'input',
@@ -617,6 +647,774 @@ final class Codec
     private static function exactValue(array $instruction): bool
     {
         return in_array($instruction['kind'], ['exact-integer', 'decimal'], true);
+    }
+    /** Shared selection policy for numeric interpretation and validation. */
+    private static function selectAlternatives(
+        mixed $value,
+        array $s,
+        string $keyword,
+        string $path,
+        bool $response,
+        bool $matching,
+        bool $allowUnknownResponseFields,
+        callable $matches,
+    ): array {
+        $tolerateUnknownFields = $allowUnknownResponseFields;
+        if ($keyword === 'exactlyOne' && isset($s['tag'])) {
+            $tag = $s['tag'];
+            $data = (array) $value;
+            if (
+                (!is_object($value) && !is_array($value)) ||
+                !array_key_exists($tag, $data) ||
+                !is_string($data[$tag])
+            ) {
+                self::fail($path, 'expected a string discriminator');
+            }
+            $selected = array_filter(
+                $s[$keyword],
+                fn($branch) => in_array(
+                    $data[$tag],
+                    $branch['fields'][$tag]['members'] ?? [],
+                    true,
+                ),
+            );
+        } else {
+            // The closed anyOf set would be discarded by compatible selection.
+            $selected =
+                $keyword === 'some' && $response && (!$matching || $allowUnknownResponseFields)
+                    ? []
+                    : array_filter(
+                        $s[$keyword],
+                        fn($branch, $index) => $matches($branch, false, $index),
+                        ARRAY_FILTER_USE_BOTH,
+                    );
+            // Prefer exact closed exactlyOne alternatives, then a unique
+            // compatible branch. some retains every compatible branch.
+            if (
+                ($keyword === 'some' || !$selected) &&
+                $response &&
+                (!$matching || $allowUnknownResponseFields)
+            ) {
+                $compatible = array_filter(
+                    $s[$keyword],
+                    fn($branch, $index) => $matches($branch, true, $index),
+                    ARRAY_FILTER_USE_BOTH,
+                );
+                if ($keyword === 'some' || count($compatible) === 1) {
+                    $selected = $compatible;
+                    $tolerateUnknownFields = true;
+                }
+            }
+        }
+        if (!$selected && $response && !$matching) {
+            if (
+                count(
+                    array_filter(
+                        $s[$keyword],
+                        fn($branch) => $branch['objectOnlyAlternative'] ?? false,
+                    ),
+                ) === count($s[$keyword]) &&
+                !is_object($value)
+            ) {
+                self::fail($path, 'expected an object response alternative');
+            }
+        } elseif (!$selected || ($keyword === 'exactlyOne' && count($selected) !== 1)) {
+            self::fail(
+                $path,
+                $keyword === 'exactlyOne'
+                    ? 'value must match exactly one alternative'
+                    : 'value must match at least one alternative',
+            );
+        }
+        return [$selected, $tolerateUnknownFields];
+    }
+    /** Search jointly only after independent union selection stalls. Numeric
+     * declarations must belong to branches selected by the original unions.
+     */
+    private static function jointNumericView(
+        mixed $value,
+        array $unions,
+        string $path,
+        bool $response,
+        bool $matching,
+        int $depth,
+        bool $allowUnknownResponseFields,
+        \stdClass $budget,
+    ): ?array {
+        if (count($unions) < 2) {
+            return null;
+        }
+        // String-valued fields cannot change under a numeric hypothesis.
+        $choices = [];
+        foreach ($unions as [$codec, $definitions, $keyword]) {
+            $choices[] = array_filter($codec[$keyword], function (array $branch) use (
+                $value,
+                $codec,
+                $keyword,
+                $definitions,
+                $path,
+                $response,
+                $depth,
+            ): bool {
+                if (
+                    ($keyword === 'exactlyOne' && isset($codec['tag'])) ||
+                    (!is_object($value) && !is_array($value))
+                ) {
+                    return true;
+                }
+                $data = (array) $value;
+                try {
+                    foreach ($branch['fields'] ?? [] as $key => $field) {
+                        if ($field['value']['kind'] === 'string' && array_key_exists($key, $data)) {
+                            self::executeNode(
+                                $data[$key],
+                                $field,
+                                "$path.$key",
+                                $response,
+                                true,
+                                $branch['definitions'] ?? ($codec['definitions'] ?? $definitions),
+                                $depth + 1,
+                            );
+                        }
+                    }
+                    return true;
+                } catch (SdkError $e) {
+                    if ($e->kind === 'validation') {
+                        return false;
+                    }
+                    throw $e;
+                }
+            });
+        }
+        $groups = function (
+            array $branches,
+            bool $multiple,
+            int $start = 0,
+            array $prefix = [],
+        ) use (&$groups): \Generator {
+            $indices = array_keys($branches);
+            for ($i = $start; $i < count($indices); $i++) {
+                $key = $indices[$i];
+                $selected = $prefix + [$key => $branches[$key]];
+                yield $selected;
+                if ($multiple) {
+                    yield from $groups($branches, true, $i + 1, $selected);
+                }
+            }
+        };
+        $chosen = [];
+        $search = function (int $index) use (
+            &$search,
+            &$chosen,
+            $groups,
+            $value,
+            $unions,
+            $choices,
+            $path,
+            $response,
+            $matching,
+            $depth,
+            $allowUnknownResponseFields,
+            $budget,
+        ): ?array {
+            if (isset($unions[$index])) {
+                [$codec, $definitions, $keyword] = $unions[$index];
+                foreach ($groups($choices[$index], $keyword === 'some') as $branches) {
+                    $chosen[] = [$unions[$index], $branches];
+                    $found = $search($index + 1);
+                    array_pop($chosen);
+                    if ($found !== null) {
+                        return $found;
+                    }
+                }
+                return null;
+            }
+            $remaining = $budget->remaining[$path] ?? 256;
+            $budget->remaining[$path] = $remaining - 1;
+            if ($remaining <= 0) {
+                $budget->exhausted = true;
+                self::fail($path, 'numeric interpretation exceeds 256 alternative combinations');
+            }
+            try {
+                $scopes = [];
+                foreach ($chosen as [[$codec, $definitions], $branches]) {
+                    foreach ($branches as $branch) {
+                        $scopes[] = [$branch, $definitions];
+                    }
+                }
+                $candidate = self::numericView(
+                    $value,
+                    $scopes,
+                    $path,
+                    $response,
+                    $matching,
+                    $depth + 1,
+                    $allowUnknownResponseFields,
+                    $budget,
+                );
+                if (!self::numericViewChanged($value, $candidate)) {
+                    return null;
+                }
+                foreach ($chosen as [[$codec, $definitions, $keyword], $branches]) {
+                    $matches = function (array $branch, bool $allowUnknownFields) use (
+                        $candidate,
+                        $path,
+                        $response,
+                        $definitions,
+                        $depth,
+                    ): bool {
+                        try {
+                            self::executeNode(
+                                $candidate,
+                                $branch,
+                                $path,
+                                $response,
+                                true,
+                                $definitions,
+                                $depth + 1,
+                                true,
+                                $allowUnknownFields,
+                            );
+                            return true;
+                        } catch (SdkError $e) {
+                            if ($e->kind === 'validation') {
+                                return false;
+                            }
+                            throw $e;
+                        }
+                    };
+                    [$selected] = self::selectAlternatives(
+                        $candidate,
+                        $codec,
+                        $keyword,
+                        $path,
+                        $response,
+                        $matching,
+                        $allowUnknownResponseFields,
+                        $matches,
+                    );
+                    if (array_diff_key($branches, $selected)) {
+                        return null;
+                    }
+                    // Untagged branches were fully matched. Tagged branches
+                    // leave other constraints to the caller's validation mode.
+                }
+                return ['value' => $candidate];
+            } catch (SdkError $e) {
+                if ($budget->exhausted || $e->kind !== 'validation') {
+                    throw $e;
+                }
+                return null;
+            }
+        };
+        return $search(0);
+    }
+    /** Detect newly established numeric meaning without walking unchanged subtrees. */
+    private static function numericViewChanged(mixed $before, mixed $after, int $depth = 0): bool
+    {
+        if ($depth > 256 || (!is_array($before) && $before === $after)) {
+            return false;
+        }
+        if ($after instanceof ParsedNumber) {
+            return !($before instanceof ParsedNumber);
+        }
+        if (
+            (!is_object($before) && !is_array($before)) ||
+            (!is_object($after) && !is_array($after))
+        ) {
+            return false;
+        }
+        $previous = (array) $before;
+        foreach ((array) $after as $key => $child) {
+            if (self::numericViewChanged($previous[$key] ?? null, $child, $depth + 1)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    /** Merge established numeric meaning without reinterpreting either branch. */
+    private static function mergeNumericViews(mixed $left, mixed $right, int $depth = 0): mixed
+    {
+        if ($depth > 256) {
+            self::fail(
+                'value',
+                'value exceeds the supported nesting depth (256) or contains a cycle',
+            );
+        }
+        if ((!is_array($left) && $left === $right) || $left instanceof ParsedNumber) {
+            return $left;
+        }
+        if ($right instanceof ParsedNumber) {
+            return $right;
+        }
+        if ($left instanceof Model) {
+            $left = $left->jsonSerialize();
+        }
+        if ($right instanceof Model) {
+            $right = $right->jsonSerialize();
+        }
+        if ((!is_object($left) && !is_array($left)) || (!is_object($right) && !is_array($right))) {
+            return $left;
+        }
+        $out = (array) $left;
+        $other = (array) $right;
+        foreach ($out as $key => $child) {
+            $out[$key] = self::mergeNumericViews($child, $other[$key] ?? null, $depth + 1);
+        }
+        return is_object($left) ? (object) $out : $out;
+    }
+    /** Follow same-instance declarations with their reference registries. */
+    private static function codecShapes(
+        array $scopes,
+        string $path,
+        int $depth,
+        ?callable $alternatives = null,
+    ): array {
+        $shapes = [];
+        $collect = function (array $codec, array $definitions, int $level) use (
+            &$collect,
+            &$shapes,
+            $path,
+            $alternatives,
+        ): void {
+            if ($level > 256) {
+                self::fail(
+                    $path,
+                    'value exceeds the supported nesting depth (256) or contains a cycle',
+                );
+            }
+            $definitions = $codec['definitions'] ?? $definitions;
+            if (isset($codec['reference'])) {
+                $target = $definitions[$codec['reference']] ?? null;
+                if ($target === null) {
+                    self::fail($path, 'unresolved recursive model ' . $codec['reference']);
+                }
+                $collect($target, $definitions, $level + 1);
+            } else {
+                $shapes[] = [$codec, $definitions];
+                foreach (
+                    array_merge(
+                        $codec['every'] ?? [],
+                        $alternatives ? $alternatives($codec, $definitions) : [],
+                    )
+                    as $child
+                ) {
+                    $collect($child, $definitions, $level + 1);
+                }
+            }
+        };
+        foreach ($scopes as [$codec, $definitions]) {
+            $collect($codec, $definitions, $depth);
+        }
+        return $shapes;
+    }
+    /** Reject numeric contributions from branches that no longer match. */
+    private static function assertNumericSources(
+        mixed $source,
+        mixed $value,
+        array $scopes,
+        string $path,
+        bool $response,
+        bool $matching,
+        int $depth,
+        bool $allowUnknownResponseFields,
+    ): void {
+        if ($source instanceof Model) {
+            $source = $source->jsonSerialize();
+        }
+        if (!self::numericViewChanged($source, $value)) {
+            return;
+        }
+        $shapes = self::codecShapes($scopes, $path, $depth, function (
+            array $codec,
+            array $definitions,
+        ) use ($value, $path, $response, $matching, $depth, $allowUnknownResponseFields): array {
+            $active = [];
+            foreach (['exactlyOne', 'some'] as $keyword) {
+                if (!isset($codec[$keyword])) {
+                    continue;
+                }
+                [$selected] = self::selectAlternatives(
+                    $value,
+                    $codec,
+                    $keyword,
+                    $path,
+                    $response,
+                    $matching,
+                    $allowUnknownResponseFields,
+                    function (array $branch, bool $allowUnknownFields) use (
+                        $value,
+                        $path,
+                        $response,
+                        $definitions,
+                        $depth,
+                    ): bool {
+                        try {
+                            self::executeNode(
+                                $value,
+                                $branch,
+                                $path,
+                                $response,
+                                true,
+                                $definitions,
+                                $depth + 1,
+                                true,
+                                $allowUnknownFields,
+                            );
+                            return true;
+                        } catch (SdkError $e) {
+                            if ($e->kind === 'validation') {
+                                return false;
+                            }
+                            throw $e;
+                        }
+                    },
+                );
+                array_push($active, ...array_values($selected));
+            }
+            return $active;
+        });
+        if ($value instanceof ParsedNumber) {
+            foreach ($shapes as [$codec]) {
+                if (self::exactValue($codec['value'])) {
+                    return;
+                }
+            }
+            self::fail($path, 'numeric interpretation depends on an unmatched alternative');
+        }
+        if (!is_array($value) && !is_object($value)) {
+            return;
+        }
+        $original = is_array($source) || is_object($source) ? (array) $source : [];
+        $list = is_array($value) && array_is_list($value);
+        foreach ((array) $value as $key => $child) {
+            $children = [];
+            foreach ($shapes as [$codec, $definitions]) {
+                $field = $list
+                    ? $codec['element'] ?? null
+                    : $codec['fields'][$key] ??
+                        (is_array($codec['extra'] ?? null) ? $codec['extra'] : null);
+                if ($field !== null) {
+                    $children[] = [$field, $definitions];
+                }
+            }
+            self::assertNumericSources(
+                $original[$key] ?? null,
+                $child,
+                $children,
+                $list ? $path . '[' . $key . ']' : "$path.$key",
+                $response,
+                $matching,
+                $depth + 1,
+                $allowUnknownResponseFields,
+            );
+        }
+    }
+    /** Resolve exact SDK strings to JSON numbers before applying any conjunct.
+     * Named schemas are followed along the finite value, never expanded globally.
+     * Each scope carries its own registry, including during alternative matching.
+     */
+    private static function numericView(
+        mixed $value,
+        array $scopes,
+        string $path,
+        bool $response,
+        bool $matching,
+        int $depth,
+        bool $allowUnknownResponseFields,
+        \stdClass $budget,
+        ?array $previous = null,
+    ): mixed {
+        if (!$scopes) {
+            return $value;
+        }
+        // A previously matched view can be reused wherever numeric meaning did
+        // not change. Keep the same scopes and direction policy on refinement.
+        if ($previous !== null && !self::numericViewChanged($previous['value'], $value)) {
+            return $value;
+        }
+        $previousChildren =
+            $previous !== null && (is_object($previous['value']) || is_array($previous['value']))
+                ? (array) $previous['value']
+                : null;
+        if ($budget->exhausted) {
+            self::fail($path, 'numeric interpretation exceeds 256 alternative combinations');
+        }
+        if ($depth > 256) {
+            self::fail(
+                $path,
+                'value exceeds the supported nesting depth (256) or contains a cycle',
+            );
+        }
+        if ($value instanceof Model) {
+            $value = $value->jsonSerialize();
+        }
+        $shapes = self::codecShapes($scopes, $path, $depth);
+        if (is_string($value)) {
+            foreach ($shapes as [$codec]) {
+                $pattern =
+                    $codec['value']['kind'] === 'exact-integer'
+                        ? '/^-?(?:0|[1-9]\d*)$/'
+                        : '/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/';
+                if (self::exactValue($codec['value']) && preg_match($pattern, $value)) {
+                    $value = new ParsedNumber($value);
+                    break;
+                }
+            }
+        }
+        if (is_array($value) && array_is_list($value)) {
+            $children = [];
+            foreach ($shapes as [$codec, $definitions]) {
+                if (isset($codec['element'])) {
+                    $children[] = [$codec['element'], $definitions];
+                }
+            }
+            if ($children) {
+                $value = array_map(
+                    fn($child, $index) => self::numericView(
+                        $child,
+                        $children,
+                        $path . '[' . $index . ']',
+                        $response,
+                        $matching,
+                        $depth + 1,
+                        $allowUnknownResponseFields,
+                        $budget,
+                        $previousChildren !== null
+                            ? ['value' => $previousChildren[$index] ?? null]
+                            : null,
+                    ),
+                    $value,
+                    array_keys($value),
+                );
+            }
+        } elseif ((is_object($value) && !($value instanceof ParsedNumber)) || is_array($value)) {
+            $out = [];
+            foreach ((array) $value as $key => $child) {
+                $children = [];
+                foreach ($shapes as [$codec, $definitions]) {
+                    $field =
+                        $codec['fields'][$key] ??
+                        (is_array($codec['extra'] ?? null) ? $codec['extra'] : null);
+                    if ($field !== null) {
+                        $children[] = [$field, $definitions];
+                    }
+                }
+                $out[$key] = self::numericView(
+                    $child,
+                    $children,
+                    "$path.$key",
+                    $response,
+                    $matching,
+                    $depth + 1,
+                    $allowUnknownResponseFields,
+                    $budget,
+                    $previousChildren !== null
+                        ? ['value' => $previousChildren[$key] ?? null]
+                        : null,
+                );
+            }
+            $value = is_object($value) ? (object) $out : $out;
+        }
+        $unions = [];
+        foreach ($shapes as [$codec, $definitions]) {
+            foreach (['exactlyOne', 'some'] as $keyword) {
+                if (isset($codec[$keyword])) {
+                    $unions[] = [$codec, $definitions, $keyword];
+                }
+            }
+        }
+        $pending = $unions;
+        // Constraint-only unions may depend on numeric declarations in later
+        // conjuncts. Productive passes remove selections; if none can progress,
+        // retain the failure instead of returning a partially interpreted value.
+        while ($pending) {
+            $before = $value;
+            $deferred = [];
+            $failure = null;
+            foreach ($pending as $scope) {
+                [$codec, $definitions, $keyword] = $scope;
+                try {
+                    $candidates = [];
+                    $matches = function (array $branch, bool $allowUnknownFields, int $index) use (
+                        &$candidates,
+                        $value,
+                        $definitions,
+                        $path,
+                        $response,
+                        $depth,
+                        $budget,
+                    ): bool {
+                        try {
+                            $candidate = self::numericView(
+                                $value,
+                                [[$branch, $definitions]],
+                                $path,
+                                $response,
+                                true,
+                                $depth + 1,
+                                $allowUnknownFields,
+                                $budget,
+                            );
+                            self::executeNode(
+                                $candidate,
+                                $branch,
+                                $path,
+                                $response,
+                                true,
+                                $definitions,
+                                $depth + 1,
+                                true,
+                                $allowUnknownFields,
+                            );
+                            $candidates[$index] = $candidate;
+                            return true;
+                        } catch (SdkError $e) {
+                            if ($e->kind === 'validation') {
+                                return false;
+                            }
+                            throw $e;
+                        }
+                    };
+                    [$selected, $tolerateUnknownFields] = self::selectAlternatives(
+                        $value,
+                        $codec,
+                        $keyword,
+                        $path,
+                        $response,
+                        $matching,
+                        $allowUnknownResponseFields,
+                        $matches,
+                    );
+                    if (!$selected) {
+                        $deferred[] = $scope;
+                        continue;
+                    }
+                    // Reuse all matched views, refining only the subtrees where
+                    // another branch supplied additional numeric meaning.
+                    if (!array_diff_key($selected, $candidates)) {
+                        foreach ($selected as $index => $branch) {
+                            $value = self::mergeNumericViews($value, $candidates[$index]);
+                        }
+                        do {
+                            $beforeRefinement = $value;
+                            foreach ($selected as $index => $branch) {
+                                $candidate = $candidates[$index];
+                                if (!self::numericViewChanged($candidate, $value)) {
+                                    continue;
+                                }
+                                $refined = self::numericView(
+                                    $value,
+                                    [[$branch, $definitions]],
+                                    $path,
+                                    $response,
+                                    true,
+                                    $depth + 1,
+                                    $tolerateUnknownFields,
+                                    $budget,
+                                    ['value' => $candidate],
+                                );
+                                $candidates[$index] = $refined;
+                                $value = self::mergeNumericViews($value, $refined);
+                            }
+                        } while (self::numericViewChanged($beforeRefinement, $value));
+                    } else {
+                        $value = self::numericView(
+                            $value,
+                            array_map(fn($branch) => [$branch, $definitions], $selected),
+                            $path,
+                            $response,
+                            $matching,
+                            $depth + 1,
+                            $tolerateUnknownFields,
+                            $budget,
+                        );
+                    }
+                } catch (SdkError $e) {
+                    if ($e->kind !== 'validation') {
+                        throw $e;
+                    }
+                    $failure ??= $e;
+                    $deferred[] = $scope;
+                }
+            }
+            // Later conjuncts can make additional branches of an earlier anyOf
+            // compatible. Revisit selections only when numeric meaning changes.
+            if (count($unions) > 1 && self::numericViewChanged($before, $value)) {
+                $pending = $unions;
+                continue;
+            }
+            if (count($deferred) === count($pending)) {
+                $joint = self::jointNumericView(
+                    $value,
+                    $unions,
+                    $path,
+                    $response,
+                    $matching,
+                    $depth,
+                    $allowUnknownResponseFields,
+                    $budget,
+                );
+                if ($joint !== null) {
+                    $value = $joint['value'];
+                    $pending = $unions;
+                    continue;
+                }
+                if ($failure !== null) {
+                    throw $failure;
+                }
+                break;
+            }
+            $pending = $deferred;
+        }
+        if ($budget->exhausted) {
+            self::fail($path, 'numeric interpretation exceeds 256 alternative combinations');
+        }
+        return $value;
+    }
+    private static function executeValue(
+        mixed $value,
+        array $s,
+        string $path = 'input',
+        bool $response = false,
+        bool $matching = false,
+        array $definitions = [],
+        int $depth = 0,
+        bool $validateConstraints = true,
+        bool $allowUnknownResponseFields = false,
+    ): mixed {
+        $scopes = [[$s, $definitions]];
+        $interpreted = self::numericView(
+            $value,
+            $scopes,
+            $path,
+            $response,
+            $matching,
+            $depth,
+            $allowUnknownResponseFields,
+            (object) ['remaining' => [], 'exhausted' => false],
+        );
+        self::assertNumericSources(
+            $value,
+            $interpreted,
+            $scopes,
+            $path,
+            $response,
+            $matching,
+            $depth,
+            $allowUnknownResponseFields,
+        );
+        return self::executeNode(
+            $interpreted,
+            $s,
+            $path,
+            $response,
+            $matching,
+            $definitions,
+            $depth,
+            $validateConstraints,
+            $allowUnknownResponseFields,
+        );
     }
     private static function executeNode(
         mixed $value,
@@ -679,7 +1477,11 @@ final class Codec
                 $validateConstraints,
                 $allowUnknownResponseFields,
             );
+            // A successful match already executed the complete branch. Reuse
+            // it only in matching mode, with the same unknown-field policy.
+            $matched = [];
             $matches = function ($branch, bool $allowUnknownFields) use (
+                &$matched,
                 $value,
                 $path,
                 $response,
@@ -688,7 +1490,7 @@ final class Codec
                 $validateConstraints,
             ) {
                 try {
-                    self::executeNode(
+                    $result = self::executeNode(
                         $value,
                         $branch,
                         $path,
@@ -699,6 +1501,7 @@ final class Codec
                         $validateConstraints,
                         $allowUnknownFields,
                     );
+                    $matched[] = [$branch, $allowUnknownFields, $result];
                     return true;
                 } catch (SdkError $e) {
                     if ($e->kind === 'validation') {
@@ -725,76 +1528,39 @@ final class Codec
                         $allowUnknownResponseFields,
                     ),
                     $path,
+                    $value,
                 );
             }
             foreach (['exactlyOne', 'some'] as $keyword) {
                 if (!isset($s[$keyword])) {
                     continue;
                 }
-                $tolerateUnknownFields = $allowUnknownResponseFields;
-                if ($keyword === 'exactlyOne' && isset($s['tag'])) {
-                    $tag = $s['tag'];
-                    $data = (array) $value;
-                    if (
-                        (!is_object($value) && !is_array($value)) ||
-                        !array_key_exists($tag, $data) ||
-                        !is_string($data[$tag])
-                    ) {
-                        self::fail($path, 'expected a string discriminator');
-                    }
-                    $selected = array_filter(
-                        $s[$keyword],
-                        fn($branch) => in_array(
-                            $data[$tag],
-                            $branch['fields'][$tag]['members'] ?? [],
-                            true,
-                        ),
-                    );
-                } else {
-                    $selected = array_filter($s[$keyword], fn($branch) => $matches($branch, false));
-                    // Prefer exact closed exactlyOne alternatives, then a unique
-                    // compatible branch. some retains every compatible branch.
-                    if (
-                        ($keyword === 'some' || !$selected) &&
-                        $response &&
-                        (!$matching || $allowUnknownResponseFields)
-                    ) {
-                        $compatible = array_filter(
-                            $s[$keyword],
-                            fn($branch) => $matches($branch, true),
-                        );
-                        if ($keyword === 'some' || count($compatible) === 1) {
-                            $selected = $compatible;
-                            $tolerateUnknownFields = true;
+                [$selected, $tolerateUnknownFields] = self::selectAlternatives(
+                    $value,
+                    $s,
+                    $keyword,
+                    $path,
+                    $response,
+                    $matching,
+                    $allowUnknownResponseFields,
+                    $matches,
+                );
+                foreach ($selected as $branch) {
+                    $reused = false;
+                    if ($matching) {
+                        foreach ($matched as [$candidate, $allowUnknownFields, $candidateResult]) {
+                            if (
+                                $candidate === $branch &&
+                                $allowUnknownFields === $tolerateUnknownFields
+                            ) {
+                                $branchResult = $candidateResult;
+                                $reused = true;
+                                break;
+                            }
                         }
                     }
-                }
-                if (!$selected && $response && !$matching) {
-                    if (
-                        count(
-                            array_filter(
-                                $s[$keyword],
-                                fn($branch) => $branch['objectOnlyAlternative'] ?? false,
-                            ),
-                        ) === count($s[$keyword]) &&
-                        !is_object($value)
-                    ) {
-                        self::fail($path, 'expected an object response alternative');
-                    }
-                    continue;
-                }
-                if (!$selected || ($keyword === 'exactlyOne' && count($selected) !== 1)) {
-                    self::fail(
-                        $path,
-                        $keyword === 'exactlyOne'
-                            ? 'value must match exactly one alternative'
-                            : 'value must match at least one alternative',
-                    );
-                }
-                foreach ($selected as $branch) {
-                    $result = self::combine(
-                        $result,
-                        self::executeNode(
+                    if (!$reused) {
+                        $branchResult = self::executeNode(
                             $value,
                             $branch,
                             $path,
@@ -804,9 +1570,9 @@ final class Codec
                             $depth + 1,
                             $validateConstraints,
                             $tolerateUnknownFields,
-                        ),
-                        $path,
-                    );
+                        );
+                    }
+                    $result = self::combine($result, $branchResult, $path, $value);
                 }
             }
             return $result;
@@ -825,10 +1591,15 @@ final class Codec
             }
             self::fail($path, 'null is not permitted');
         }
+        // Positive declarations establish numeric meaning before matching.
+        // A negative branch must not reinterpret remaining JSON strings.
+        if ($matching && self::exactValue($s['value']) && is_string($value)) {
+            self::fail($path, "expected $type; received a JSON string");
+        }
         if ($value instanceof ParsedNumber) {
             if ($type === null) {
                 if (
-                    $matching &&
+                    (!$response || $matching) &&
                     isset($s['members']) &&
                     !array_filter(
                         $s['members'],
@@ -838,10 +1609,15 @@ final class Codec
                 ) {
                     self::fail($path, 'value is outside the declared enum');
                 }
-                if ($matching) {
-                    self::numericConstraints($value->value, $s, $path);
+                if (!$response || $matching) {
+                    self::numericConstraints(
+                        $value->value,
+                        $s,
+                        $path,
+                        $validateConstraints || $matching,
+                    );
                 }
-                return $value;
+                return $response ? $value : new RawNumber($value->value);
             }
             if ($type === 'integer') {
                 $token = self::integerToken($value->value, $path);
@@ -1603,6 +2379,18 @@ class Runtime
                     if ($model !== null && is_object($data)) {
                         $class = __NAMESPACE__ . '\\' . $model;
                         $data = new $class((array) $data, $this->options->redactFields);
+                    }
+                    // Decoding and model construction are synchronous; transport
+                    // timeouts cannot interrupt them. Include them in the deadline.
+                    $meta['durationMs'] = self::now() - $start;
+                    if (self::now() >= $deadline) {
+                        throw new SdkError(
+                            'deadline',
+                            'Response decoding exceeded the overall deadline',
+                            'response',
+                            false,
+                            $meta,
+                        );
                     }
                     return new Result($data, $meta, $raw);
                 }

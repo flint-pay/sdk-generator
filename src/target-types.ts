@@ -1,5 +1,6 @@
 import type { Schema } from './contract.js';
 import { directionalSchema, exactValue, valueInstruction } from './codec-plan.js';
+import { numericEnumDeclaration } from './schema-intersections.js';
 const php = (s: string) => "'" + s.replaceAll('\\', '\\\\').replaceAll("'", "\\'") + "'";
 
 /** The declaration policy is shared by text emission and compatibility facts. */
@@ -40,6 +41,22 @@ export function optionalPropertyType(key: string, value: string): string {
     : value;
 }
 type ObjectContext = 'object' | 'nullableObject' | undefined;
+type ArrayContext = 'array' | 'nullableArray' | undefined;
+function arrayConstraint(s: Schema): ArrayContext {
+  const constraints = [
+    s.type === 'array'
+      ? 'array'
+      : Array.isArray(s.type) && s.type.includes('array')
+        ? 'nullableArray'
+        : undefined,
+    ...(s.allOf ?? []).map(arrayConstraint),
+  ];
+  return constraints.includes('array')
+    ? 'array'
+    : constraints.includes('nullableArray')
+      ? 'nullableArray'
+      : undefined;
+}
 export function objectConstraint(s: Schema): ObjectContext {
   const constraints = [
     s.type === 'object'
@@ -61,7 +78,18 @@ export function typescriptType(
   discriminator?: string,
   known = false,
   objectContext?: ObjectContext,
+  arrayContext?: ArrayContext,
+  definitions: Readonly<Record<string, Schema>> = {},
 ): string {
+  definitions = s['x-sdk-definitions'] ?? definitions;
+  const render = (
+    schema: Schema,
+    output = false,
+    tag?: string,
+    knownVariant = false,
+    object?: ObjectContext,
+    array?: ArrayContext,
+  ): string => typescriptType(schema, output, tag, knownVariant, object, array, definitions);
   if (s['x-sdk-ref']) {
     const reference = s['x-sdk-ref'] + (response ? '' : 'Input');
     if (!objectContext) return reference;
@@ -71,6 +99,7 @@ export function typescriptType(
     return objectContext === 'nullableObject' ? `(${object}) | (${reference} & null)` : object;
   }
   s = directionalSchema(s, response);
+  if (!response && (s.allOf || s.oneOf || s.anyOf)) s = numericEnumDeclaration(s, definitions);
   // Composition branches constrain the same value. Object keywords alone do
   // not exclude scalars, null or arrays, but an enclosing object type does.
   const constraint = objectConstraint(s);
@@ -78,15 +107,17 @@ export function typescriptType(
     objectContext === 'object' || constraint === 'object'
       ? 'object'
       : (objectContext ?? constraint);
+  const array = arrayConstraint(s);
+  arrayContext = arrayContext === 'array' || array === 'array' ? 'array' : (arrayContext ?? array);
   if (s.oneOf || s.anyOf || s.allOf || s.not) {
     const { oneOf, anyOf, allOf, not, discriminator: tag, ...base } = s;
-    const parts = [typescriptType(base, response, discriminator, false, objectContext)];
+    const parts = [render(base, response, discriminator, false, objectContext, arrayContext)];
     for (const branch of allOf ?? [])
-      parts.push(typescriptType(branch, response, discriminator, false, objectContext));
+      parts.push(render(branch, response, discriminator, false, objectContext, arrayContext));
     for (const branches of [oneOf, anyOf])
       if (branches) {
         const alternatives = branches.map((branch) =>
-          typescriptType(branch, response, tag?.propertyName, false, objectContext),
+          render(branch, response, tag?.propertyName, false, objectContext, arrayContext),
         );
         if (response && !known)
           alternatives.push(
@@ -133,8 +164,7 @@ export function typescriptType(
     );
   }
   const types = Array.isArray(s.type) ? s.type : [s.type];
-  if (types.length > 1)
-    return types.map((t) => typescriptType({ ...s, type: t! }, response)).join(' | ');
+  if (types.length > 1) return types.map((t) => render({ ...s, type: t! }, response)).join(' | ');
   // Equivalent numeric enum values have many valid spellings (1, 1.0, 1e0).
   // Their exact string representation is checked by the runtime, not a literal union.
   if (s.enum && exactValue(valueInstruction(types[0], s.format))) return 'string';
@@ -173,24 +203,30 @@ export function typescriptType(
     case 'integer':
       return exactValue(valueInstruction('integer', s.format)) ? 'string' : 'number';
     case 'array':
-      return `Array<${typescriptType(s.items!, response)}>`;
+      return `Array<${render(s.items!, response)}>`;
     case undefined:
+      // Items constrain arrays without asserting the instance is an array.
+      // A surrounding conjunction supplies that assertion at this use site.
+      if (arrayContext && s.items) {
+        const items = `Array<${render(s.items, response)}>`;
+        return arrayContext === 'nullableArray' ? `null | (${items})` : items;
+      }
       if (!s.properties && !s.required?.length) return 'unknown';
       if (objectContext === 'nullableObject')
-        return `null | (${typescriptType({ ...s, type: 'object' }, response, discriminator)})`;
+        return `null | (${render({ ...s, type: 'object' }, response, discriminator)})`;
       if (!objectContext)
-        return `null | boolean | number | string | unknown[] | (${typescriptType({ ...s, type: 'object' }, response, discriminator)})`;
+        return `null | boolean | number | string | unknown[] | (${render({ ...s, type: 'object' }, response, discriminator)})`;
     case 'object': {
       const declaration = objectDeclaration(s, response);
       if (declaration.dictionary)
-        return `Record<string, ${typescriptType(declaration.dictionary, response)}>`;
+        return `Record<string, ${render(declaration.dictionary, response)}>`;
       return (
         '{ ' +
         declaration.fields
           .map(([k, v]) =>
             !response && v.readOnly
               ? `${JSON.stringify(k)}?: ${optionalPropertyType(k, 'never')};`
-              : `${JSON.stringify(k)}${s.required?.includes(k) ? '' : '?'}: ${s.required?.includes(k) ? typescriptType(v, response && k !== discriminator) : optionalPropertyType(k, typescriptType(v, response && k !== discriminator))};`,
+              : `${JSON.stringify(k)}${s.required?.includes(k) ? '' : '?'}: ${s.required?.includes(k) ? render(v, response && k !== discriminator) : optionalPropertyType(k, render(v, response && k !== discriminator))};`,
           )
           .join(' ') +
         (declaration.open ? ` [key: string]: unknown;` : '') +

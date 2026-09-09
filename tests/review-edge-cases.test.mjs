@@ -101,12 +101,36 @@ test('pagination diagnoses incompatible continuation representations and query t
       /pagination requires a scalar .* query parameter/,
     );
   }
+  const composed = paginated(
+    'reject-composed-offset',
+    'offset',
+    { allOf: [{ type: 'integer' }, { minimum: 0 }] },
+    { allOf: [{ type: ['integer', 'null'], format: 'int64' }, { minimum: 0 }] },
+  );
+  assert.throws(
+    () => loadContract(composed.api, composed.profile),
+    /offset pagination returns exact integer strings/,
+  );
 });
 
 test('compatible cursor and integer formats retrieve both pages through both generated clients', async () => {
   for (const [label, kind, query, next, token] of [
     ['cursor', 'cursor', { type: 'string' }, { type: ['string', 'null'] }, 'page/2'],
     ['native', 'offset', { type: 'integer' }, { type: ['integer', 'null'] }, 2],
+    [
+      'composed-cursor',
+      'cursor',
+      { allOf: [{ type: 'string' }, { minLength: 1 }] },
+      { type: ['string', 'null'] },
+      'page/2',
+    ],
+    [
+      'composed-exact',
+      'offset',
+      { allOf: [{ type: 'integer', format: 'int64' }, { minimum: 0 }] },
+      { allOf: [{ type: ['integer', 'null'], format: 'int64' }, { minimum: 0 }] },
+      2,
+    ],
     [
       'exact',
       'offset',
