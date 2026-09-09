@@ -963,6 +963,153 @@ final class Codec
         }
         return is_object($left) ? (object) $out : $out;
     }
+    /** Follow same-instance declarations with their reference registries. */
+    private static function codecShapes(
+        array $scopes,
+        string $path,
+        int $depth,
+        ?callable $alternatives = null,
+    ): array {
+        $shapes = [];
+        $collect = function (array $codec, array $definitions, int $level) use (
+            &$collect,
+            &$shapes,
+            $path,
+            $alternatives,
+        ): void {
+            if ($level > 256) {
+                self::fail(
+                    $path,
+                    'value exceeds the supported nesting depth (256) or contains a cycle',
+                );
+            }
+            $definitions = $codec['definitions'] ?? $definitions;
+            if (isset($codec['reference'])) {
+                $target = $definitions[$codec['reference']] ?? null;
+                if ($target === null) {
+                    self::fail($path, 'unresolved recursive model ' . $codec['reference']);
+                }
+                $collect($target, $definitions, $level + 1);
+            } else {
+                $shapes[] = [$codec, $definitions];
+                foreach (
+                    array_merge(
+                        $codec['every'] ?? [],
+                        $alternatives ? $alternatives($codec, $definitions) : [],
+                    )
+                    as $child
+                ) {
+                    $collect($child, $definitions, $level + 1);
+                }
+            }
+        };
+        foreach ($scopes as [$codec, $definitions]) {
+            $collect($codec, $definitions, $depth);
+        }
+        return $shapes;
+    }
+    /** Reject numeric contributions from branches that no longer match. */
+    private static function assertNumericSources(
+        mixed $source,
+        mixed $value,
+        array $scopes,
+        string $path,
+        bool $response,
+        bool $matching,
+        int $depth,
+        bool $allowUnknownResponseFields,
+    ): void {
+        if ($source instanceof Model) {
+            $source = $source->jsonSerialize();
+        }
+        if (!self::numericViewChanged($source, $value)) {
+            return;
+        }
+        $shapes = self::codecShapes($scopes, $path, $depth, function (
+            array $codec,
+            array $definitions,
+        ) use ($value, $path, $response, $matching, $depth, $allowUnknownResponseFields): array {
+            $active = [];
+            foreach (['exactlyOne', 'some'] as $keyword) {
+                if (!isset($codec[$keyword])) {
+                    continue;
+                }
+                [$selected] = self::selectAlternatives(
+                    $value,
+                    $codec,
+                    $keyword,
+                    $path,
+                    $response,
+                    $matching,
+                    $allowUnknownResponseFields,
+                    function (array $branch, bool $allowUnknownFields) use (
+                        $value,
+                        $path,
+                        $response,
+                        $definitions,
+                        $depth,
+                    ): bool {
+                        try {
+                            self::executeNode(
+                                $value,
+                                $branch,
+                                $path,
+                                $response,
+                                true,
+                                $definitions,
+                                $depth + 1,
+                                true,
+                                $allowUnknownFields,
+                            );
+                            return true;
+                        } catch (SdkError $e) {
+                            if ($e->kind === 'validation') {
+                                return false;
+                            }
+                            throw $e;
+                        }
+                    },
+                );
+                array_push($active, ...array_values($selected));
+            }
+            return $active;
+        });
+        if ($value instanceof ParsedNumber) {
+            foreach ($shapes as [$codec]) {
+                if (self::exactValue($codec['value'])) {
+                    return;
+                }
+            }
+            self::fail($path, 'numeric interpretation depends on an unmatched alternative');
+        }
+        if (!is_array($value) && !is_object($value)) {
+            return;
+        }
+        $original = is_array($source) || is_object($source) ? (array) $source : [];
+        $list = is_array($value) && array_is_list($value);
+        foreach ((array) $value as $key => $child) {
+            $children = [];
+            foreach ($shapes as [$codec, $definitions]) {
+                $field = $list
+                    ? $codec['element'] ?? null
+                    : $codec['fields'][$key] ??
+                        (is_array($codec['extra'] ?? null) ? $codec['extra'] : null);
+                if ($field !== null) {
+                    $children[] = [$field, $definitions];
+                }
+            }
+            self::assertNumericSources(
+                $original[$key] ?? null,
+                $child,
+                $children,
+                $list ? $path . '[' . $key . ']' : "$path.$key",
+                $response,
+                $matching,
+                $depth + 1,
+                $allowUnknownResponseFields,
+            );
+        }
+    }
     /** Resolve exact SDK strings to JSON numbers before applying any conjunct.
      * Named schemas are followed along the finite value, never expanded globally.
      * Each scope carries its own registry, including during alternative matching.
@@ -1002,35 +1149,7 @@ final class Codec
         if ($value instanceof Model) {
             $value = $value->jsonSerialize();
         }
-        $shapes = [];
-        $collect = function (array $codec, array $definitions, int $level) use (
-            &$collect,
-            &$shapes,
-            $path,
-        ): void {
-            if ($level > 256) {
-                self::fail(
-                    $path,
-                    'value exceeds the supported nesting depth (256) or contains a cycle',
-                );
-            }
-            $definitions = $codec['definitions'] ?? $definitions;
-            if (isset($codec['reference'])) {
-                $target = $definitions[$codec['reference']] ?? null;
-                if ($target === null) {
-                    self::fail($path, 'unresolved recursive model ' . $codec['reference']);
-                }
-                $collect($target, $definitions, $level + 1);
-            } else {
-                $shapes[] = [$codec, $definitions];
-                foreach ($codec['every'] ?? [] as $child) {
-                    $collect($child, $definitions, $level + 1);
-                }
-            }
-        };
-        foreach ($scopes as [$codec, $definitions]) {
-            $collect($codec, $definitions, $depth);
-        }
+        $shapes = self::codecShapes($scopes, $path, $depth);
         if (is_string($value)) {
             foreach ($shapes as [$codec]) {
                 $pattern =
@@ -1264,17 +1383,29 @@ final class Codec
         bool $validateConstraints = true,
         bool $allowUnknownResponseFields = false,
     ): mixed {
+        $scopes = [[$s, $definitions]];
+        $interpreted = self::numericView(
+            $value,
+            $scopes,
+            $path,
+            $response,
+            $matching,
+            $depth,
+            $allowUnknownResponseFields,
+            (object) ['remaining' => [], 'exhausted' => false],
+        );
+        self::assertNumericSources(
+            $value,
+            $interpreted,
+            $scopes,
+            $path,
+            $response,
+            $matching,
+            $depth,
+            $allowUnknownResponseFields,
+        );
         return self::executeNode(
-            self::numericView(
-                $value,
-                [[$s, $definitions]],
-                $path,
-                $response,
-                $matching,
-                $depth,
-                $allowUnknownResponseFields,
-                (object) ['remaining' => [], 'exhausted' => false],
-            ),
+            $interpreted,
             $s,
             $path,
             $response,

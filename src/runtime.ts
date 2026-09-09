@@ -569,6 +569,104 @@ function mergeNumericViews(left: any, right: any, depth = 0): any {
   return Object.fromEntries(entries);
 }
 
+/** Follow same-instance declarations with the registry of each reference. */
+function codecShapes(
+  scopes: readonly CodecScope[],
+  path: string,
+  depth: number,
+  alternatives?: (scope: CodecScope) => readonly CodecPlan[],
+): CodecScope[] {
+  const shapes: CodecScope[] = [];
+  const collect = ({ codec, definitions }: CodecScope, level: number): void => {
+    if (level > 256)
+      bad(path, 'value exceeds the supported nesting depth (256) or contains a cycle');
+    definitions = codec.definitions ?? definitions;
+    if (codec.reference) {
+      const target = Object.hasOwn(definitions, codec.reference)
+        ? definitions[codec.reference]
+        : undefined;
+      if (!target) bad(path, 'unresolved recursive model ' + codec.reference);
+      collect({ codec: target!, definitions }, level + 1);
+    } else {
+      shapes.push({ codec, definitions });
+      for (const child of [
+        ...(codec.every ?? []),
+        ...(alternatives?.({ codec, definitions }) ?? []),
+      ])
+        collect({ codec: child, definitions }, level + 1);
+    }
+  };
+  scopes.forEach((scope) => collect(scope, depth));
+  return shapes;
+}
+
+/** Every added number must still have a positive declaration in the final selection.
+ * Interpretation can invalidate a previously matching branch through negation.
+ * Validate provenance before any encoding, including fields accepted as unknown.
+ */
+function assertNumericSources(
+  source: unknown,
+  value: unknown,
+  scopes: readonly CodecScope[],
+  context: CodecContext,
+): void {
+  if (source instanceof Model) source = source.toJSON();
+  if (!numericViewChanged(source, value)) return;
+  const path = context.path ?? 'input';
+  const depth = context.depth ?? 0;
+  const shapes = codecShapes(scopes, path, depth, ({ codec, definitions }) =>
+    [codec.exactlyOne, codec.some].flatMap((branches) => {
+      if (!branches) return [];
+      return selectAlternatives(
+        value,
+        branches,
+        branches === codec.exactlyOne,
+        codec.tag,
+        context,
+        (branch, allowUnknownResponseFields) => {
+          try {
+            executeNode(value, branch, {
+              ...codecMode((context.direction ?? context.mode) === 'response', true),
+              path,
+              depth: depth + 1,
+              definitions,
+              allowUnknownResponseFields,
+            });
+            return true;
+          } catch (error) {
+            if (error instanceof SdkError && error.kind === 'validation') return false;
+            throw error;
+          }
+        },
+      ).selected;
+    }),
+  );
+  if (value instanceof ParsedNumber) {
+    if (!shapes.some(({ codec }) => exactValue(codec.value)))
+      bad(path, 'numeric interpretation depends on an unmatched alternative');
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  const original = source && typeof source === 'object' ? (source as Record<string, unknown>) : {};
+  for (const [key, child] of Object.entries(value)) {
+    const children = shapes.flatMap(({ codec, definitions }) => {
+      const field = Array.isArray(value)
+        ? codec.element
+        : Object.hasOwn(codec.fields ?? {}, key)
+          ? codec.fields?.[key]
+          : typeof codec.extra === 'object'
+            ? codec.extra
+            : undefined;
+      return field ? [{ codec: field, definitions }] : [];
+    });
+    assertNumericSources(original[key], child, children, {
+      ...context,
+      path: Array.isArray(value) ? `${path}[${key}]` : `${path}.${key}`,
+      depth: depth + 1,
+    });
+  }
+}
+
 /** Give every conjunct the same JSON numeric view of caller-owned SDK values.
  * Walk the finite value, resolving named shapes as needed; never expand a recursive
  * schema or infer a number from a string without a positive numeric declaration.
@@ -594,23 +692,7 @@ function numericView(
     bad(path, 'numeric interpretation exceeds 256 alternative combinations');
   if (depth > 256) bad(path, 'value exceeds the supported nesting depth (256) or contains a cycle');
   if (value instanceof Model) value = value.toJSON();
-  const shapes: CodecScope[] = [];
-  const collect = ({ codec, definitions }: CodecScope, level: number): void => {
-    if (level > 256)
-      bad(path, 'value exceeds the supported nesting depth (256) or contains a cycle');
-    definitions = codec.definitions ?? definitions;
-    if (codec.reference) {
-      const target = Object.hasOwn(definitions, codec.reference)
-        ? definitions[codec.reference]
-        : undefined;
-      if (!target) bad(path, 'unresolved recursive model ' + codec.reference);
-      collect({ codec: target!, definitions }, level + 1);
-    } else {
-      shapes.push({ codec, definitions });
-      for (const child of codec.every ?? []) collect({ codec: child, definitions }, level + 1);
-    }
-  };
-  scopes.forEach((scope) => collect(scope, depth));
+  const shapes = codecShapes(scopes, path, depth);
   if (
     typeof value === 'string' &&
     shapes.some(
@@ -782,14 +864,13 @@ function numericView(
 export function executeCodec(value: unknown, s: CodecPlan, context: CodecContext): unknown {
   if (!['request', 'response', 'match'].includes(context.mode))
     throw new Error('Unknown codec execution mode');
-  return executeNode(
-    numericView(value, [{ codec: s, definitions: context.definitions ?? {} }], {
-      ...context,
-      search: { remaining: new Map(), exhausted: false },
-    }),
-    s,
-    context,
-  );
+  const scopes = [{ codec: s, definitions: context.definitions ?? {} }];
+  const interpreted = numericView(value, scopes, {
+    ...context,
+    search: { remaining: new Map(), exhausted: false },
+  });
+  assertNumericSources(value, interpreted, scopes, context);
+  return executeNode(interpreted, s, context);
 }
 
 function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unknown {

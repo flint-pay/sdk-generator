@@ -2254,3 +2254,174 @@ c.api.sendValue({body:[[${exact ? "'5'" : '5'}]]});
     ]);
   }
 });
+
+test('numeric interpretations from invalidated alternatives fail before dispatch', async () => {
+  const numeric = {
+    type: 'object',
+    properties: { x: { type: 'number' } },
+    not: { required: ['y'], properties: { y: { enum: [1] } } },
+  };
+  const cases = [];
+  for (const validation of ['schema', 'encoding']) {
+    // Unknown fields and constraint-only fields must not retain a numeric
+    // declaration contributed by an alternative that no longer matches.
+    for (const field of [undefined, {}, { not: { type: 'object' } }]) {
+      const other = {
+        type: 'object',
+        properties: { y: { type: 'number' }, ...(field ? { x: field } : {}) },
+      };
+      for (const anyOf of [
+        [numeric, other],
+        [other, numeric],
+      ]) {
+        const choice = { anyOf };
+        const bad = { x: '2', y: '1' },
+          good = { x: '2', y: '3' };
+        const schema = {
+          type: 'object',
+          properties: {
+            direct: choice,
+            list: { type: 'array', items: choice },
+            dictionary: { type: 'object', additionalProperties: choice },
+          },
+        };
+        const i = inputs(document(schema), { ...config, validation });
+        await fixtures(i, [
+          rejected('invalidated direct contribution', { direct: bad }),
+          rejected('invalidated array contribution', { list: [bad] }),
+          rejected('invalidated dictionary contribution', { dictionary: { entry: bad } }),
+          accepted(
+            'stable matching contributions',
+            { direct: good, list: [good] },
+            '{"direct":{"x":2,"y":3},"list":[{"x":2,"y":3}]}',
+          ),
+          {
+            ...accepted('wire numbers need no SDK string interpretation', {}, '{}', {
+              direct: { x: 2, y: '1' },
+            }),
+            responses: [{ status: 200, body: '{"direct":{"x":2,"y":1}}' }],
+          },
+        ]);
+        assert.throws(() => serialize(bad, choice), /unmatched alternative/);
+        assert.equal(serialize(good, choice), '{"x":2,"y":3}');
+        cases.push(choice);
+      }
+    }
+  }
+  const php = spawnSync(
+    'php',
+    [
+      '-r',
+      String.raw`
+require 'templates/Runtime.php';
+foreach(json_decode(stream_get_contents(STDIN),true) as $schema){
+  try { \SdkNamespace\Codec::normalize((object)['x'=>'2','y'=>'1'],$schema); throw new Exception('accepted invalidated contribution'); }
+  catch(\SdkNamespace\SdkError $e){ if($e->kind!=='validation'||!str_contains($e->getMessage(),'unmatched alternative'))throw $e; }
+  if(\SdkNamespace\Codec::encode(\SdkNamespace\Codec::normalize((object)['x'=>'2','y'=>'3'],$schema))!=='{"x":2,"y":3}')throw new Exception('wrong control wire');
+}
+`,
+    ],
+    { input: JSON.stringify(cases), encoding: 'utf8' },
+  );
+  assert.equal(php.status, 0, php.stdout + php.stderr);
+});
+
+test('numeric contribution checks follow final selections across parent and child unions', async () => {
+  const child = {
+    anyOf: [
+      {
+        type: 'object',
+        properties: { x: { type: 'number' } },
+        not: { properties: { y: { enum: [1] } }, required: ['y'] },
+      },
+      {},
+    ],
+  };
+  const schema = {
+    type: 'object',
+    properties: { detail: child },
+    anyOf: [
+      {
+        type: 'object',
+        properties: { detail: { type: 'object', properties: { y: { type: 'number' } } } },
+      },
+    ],
+  };
+  await fixtures(inputs(document(schema)), [
+    rejected('parent invalidates a nested numeric contributor', { detail: { x: '2', y: '1' } }),
+    accepted(
+      'nested contributor remains valid',
+      { detail: { x: '2', y: '3' } },
+      '{"detail":{"x":2,"y":3}}',
+    ),
+  ]);
+});
+
+test('mixed numeric intersections behind unions fail diagnosis while aligned and disjoint choices remain supported', async () => {
+  for (const keyword of ['anyOf', 'oneOf']) {
+    const left = { [keyword]: [{ type: 'number' }, { type: 'boolean' }] };
+    const right = { [keyword]: [{ type: 'integer' }, { type: 'null' }] };
+    for (const allOf of [
+      [left, right],
+      [right, left],
+    ]) {
+      const conflict = { allOf };
+      for (const schema of [
+        conflict,
+        { type: 'object', properties: { amount: conflict } },
+        { type: 'array', items: conflict },
+        { type: 'object', additionalProperties: conflict },
+        { allOf: allOf.map((amount) => ({ type: 'object', properties: { amount } })) },
+        { allOf: allOf.map((items) => ({ type: 'array', items })) },
+        { allOf: allOf.map((additionalProperties) => ({ type: 'object', additionalProperties })) },
+      ])
+        assert.throws(inputs(document(schema)).load, /different SDK representations/);
+    }
+    const aligned = {
+      allOf: [left, { [keyword]: [{ type: 'integer', format: 'int64' }, { type: 'null' }] }],
+    };
+    const i = inputs(document(aligned));
+    await fixtures(i, [
+      accepted('aligned numeric input', '1', '1'),
+      rejected('incompatible boolean input', true),
+    ]);
+    writeFileSync(
+      join(i.output, 'node/consumer.ts'),
+      `import {Client} from './index.js';
+new Client({baseUrl:'https://example.invalid'}).api.sendValue({body:'1'});
+`,
+    );
+    const ts = spawnSync(
+      process.execPath,
+      [
+        'node_modules/typescript/bin/tsc',
+        '--noEmit',
+        '--strict',
+        '--skipLibCheck',
+        '--target',
+        'ES2022',
+        '--module',
+        'NodeNext',
+        join(i.output, 'node/consumer.ts'),
+      ],
+      { encoding: 'utf8' },
+    );
+    assert.equal(ts.status, 0, ts.stdout + ts.stderr);
+  }
+  const tagged = (kind, amount) => ({
+    type: 'object',
+    required: ['kind', 'amount'],
+    properties: { kind: { type: 'string', enum: [kind] }, amount },
+  });
+  const choices = {
+    anyOf: [tagged('exact', { type: 'number' }), tagged('native', { type: 'integer' })],
+  };
+  await fixtures(inputs(document({ allOf: [choices, choices] })), [
+    accepted(
+      'disjoint exact branch',
+      { kind: 'exact', amount: '1' },
+      '{"kind":"exact","amount":1}',
+    ),
+    accepted('disjoint native branch', { kind: 'native', amount: 1 }),
+  ]);
+});

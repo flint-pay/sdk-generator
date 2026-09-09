@@ -633,19 +633,25 @@ function checkRepresentations(s: Schema, p: string): void {
   }
   // Compare the caller representations at corresponding paths, not just at the
   // roots of alternatives. Exact JSON numbers and JSON strings both use SDK strings.
-  const sdkTypes = (shape: Schema): string[] | undefined => {
+  type Relation = 'alternatives' | 'intersection';
+  const representationTypes = (shape: Schema, relation: Relation): string[] | undefined => {
     if (shape.type === undefined) return undefined;
-    return (Array.isArray(shape.type) ? shape.type : [shape.type]).map((type) =>
+    const types = Array.isArray(shape.type) ? shape.type : [shape.type];
+    // Intersections compare JSON kinds: native and exact SDK numbers overlap
+    // on the wire even though their TypeScript input types are disjoint.
+    if (relation === 'intersection')
+      return types.includes('number') ? [...types, 'integer'] : types;
+    return types.map((type) =>
       type === 'number' || (type === 'integer' && scalar(shape) === 'exact-number')
         ? 'string'
         : type,
     );
   };
-  const disjoint = (left: Schema[], right: Schema[]): boolean => {
+  const disjoint = (left: Schema[], right: Schema[], relation: Relation): boolean => {
     for (const a of left)
       for (const b of right) {
-        const at = sdkTypes(a),
-          bt = sdkTypes(b);
+        const at = representationTypes(a, relation),
+          bt = representationTypes(b, relation);
         if (at && bt && !at.some((type) => bt.includes(type))) return true;
         // Non-numeric enums can distinguish tagged object alternatives without
         // confusing numeric enums with their exact string representations.
@@ -673,15 +679,20 @@ function checkRepresentations(s: Schema, p: string): void {
         )
       )
         return true;
-      if (disjoint(a, b)) return true;
+      if (disjoint(a, b, relation)) return true;
     }
     return false;
   };
-  const ambiguous = (left: Schema[], right: Schema[], path: string): void => {
+  const checkOverlap = (
+    left: Schema[],
+    right: Schema[],
+    path: string,
+    relation: Relation = 'alternatives',
+  ): void => {
     if (!left.length || !right.length) return;
     left = left.flatMap(conjuncts).map(({ allOf, ...shape }) => shape);
     right = right.flatMap(conjuncts).map(({ allOf, ...shape }) => shape);
-    if (disjoint(left, right)) return;
+    if (disjoint(left, right, relation)) return;
     // Keep branch constraints together so disjoint tags are not lost while
     // looking through nested alternatives and intersections.
     for (const [side, other, reversed] of [
@@ -695,14 +706,26 @@ function checkRepresentations(s: Schema, p: string): void {
         delete base[keyword];
         for (const branch of shape[keyword]!) {
           const selected = [...side.slice(0, i), base, branch, ...side.slice(i + 1)];
-          ambiguous(reversed ? other : selected, reversed ? selected : other, path);
+          checkOverlap(reversed ? other : selected, reversed ? selected : other, path, relation);
         }
         return;
       }
     }
     const a = new Set(left.map(scalar)),
       b = new Set(right.map(scalar));
-    if ((a.has('string') && b.has('exact-number')) || (b.has('string') && a.has('exact-number')))
+    if (relation === 'intersection') {
+      if (
+        (a.has('exact-number') && b.has('safe-integer')) ||
+        (b.has('exact-number') && a.has('safe-integer'))
+      )
+        fail(
+          path,
+          'intersected numeric schemas use different SDK representations; use a consistent numeric format with the intersected bounds in a provider override',
+        );
+    } else if (
+      (a.has('string') && b.has('exact-number')) ||
+      (b.has('string') && a.has('exact-number'))
+    )
       fail(
         path,
         'string and exact-number alternatives have ambiguous SDK string inputs; provide an unambiguous provider representation before generating this operation',
@@ -720,30 +743,36 @@ function checkRepresentations(s: Schema, p: string): void {
               ? [shape.additionalProperties]
               : [];
         });
-      ambiguous(children(left), children(right), path + '/properties/' + key);
+      checkOverlap(children(left), children(right), path + '/properties/' + key, relation);
     }
-    ambiguousItems(left, right, path);
+    checkItems(left, right, path, relation);
   };
-  const ambiguousItems = (left: Schema[], right: Schema[], path: string): void => {
+  const checkItems = (left: Schema[], right: Schema[], path: string, relation: Relation): void => {
     const a = left.flatMap((shape) => (shape.items ? [shape.items] : []));
     const b = right.flatMap((shape) => (shape.items ? [shape.items] : []));
-    if (a.length && b.length) ambiguous(a, b, path + '/items');
+    if (a.length && b.length) checkOverlap(a, b, path + '/items', relation);
     const additional = (shapes: Schema[]) =>
       shapes.flatMap((shape) =>
         typeof shape.additionalProperties === 'object' ? [shape.additionalProperties] : [],
       );
     const x = additional(left),
       y = additional(right);
-    if (x.length && y.length) ambiguous(x, y, path + '/additionalProperties');
+    if (x.length && y.length) checkOverlap(x, y, path + '/additionalProperties', relation);
   };
   for (const keyword of ['oneOf', 'anyOf'] as const) {
     const alternatives = s[keyword];
     if (!alternatives) continue;
     for (let i = 0; i < alternatives.length; i++)
       for (let j = i + 1; j < alternatives.length; j++)
-        ambiguous([alternatives[i]!], [alternatives[j]!], p + '/' + keyword);
+        checkOverlap([alternatives[i]!], [alternatives[j]!], p + '/' + keyword);
   }
   if (s.allOf) {
+    // Each flattened conjunct keeps its own alternatives. Compare overlapping
+    // branches across conjuncts without intersecting alternatives of one union.
+    const peers = shapes.map(({ allOf, ...shape }) => shape);
+    for (const [index, left] of peers.entries())
+      for (const right of peers.slice(index + 1))
+        checkOverlap([left], [right], p + '/allOf', 'intersection');
     visitIntersectedProperties(shapes, (children, name) => {
       if (children.length > 1) checkRepresentations({ allOf: children }, p + '/properties/' + name);
     });
