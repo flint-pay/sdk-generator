@@ -1,6 +1,6 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -103,6 +103,69 @@ test('mixed-object nested runtime guarantee loss blocks stable patch/minor relea
   generate(next, f.output);
   assert.doesNotThrow(() => prepareRelease(f.output, join(f.dir, 'release-major')));
 });
+
+for (const policy of ['semver', 'review'])
+  test(`release preparation includes fresh findings without file changes under ${policy} policy`, () => {
+    const f = fixture('fresh-release-' + policy, mixed, ['node']);
+    f.contract.config.release.policy = policy;
+    generate(f.contract, f.output);
+    const next = structuredClone(f.contract);
+    next.config.version = '1.0.1';
+    const added = structuredClone(next.operations[0].responses['200']);
+    delete added.schema.additionalProperties.required;
+    next.operations[0].responses['201'] = added;
+    generate(next, f.output);
+
+    const path = join(f.output, '.sdk-generator.json');
+    const record = JSON.parse(readFileSync(path));
+    const historical = {
+      severity: 'review',
+      subject: 'historical runtime',
+      message: 'Previously recorded runtime behavior requires review.',
+    };
+    // Simulate an older analyzer's findings, preserving the actual emitted
+    // files, source contracts, and compiled snapshots without modification.
+    record.compatibility = policy === 'semver' ? [] : [historical];
+    writeFileSync(path, JSON.stringify(record));
+    const fresh = preview(next, f.output);
+    assert.deepEqual(fresh.changes, []);
+    assert.ok(
+      fresh.compatibility.some(
+        (finding) => finding.severity === 'breaking' && finding.subject.endsWith('.entry.id'),
+      ),
+    );
+    if (policy === 'review') {
+      // A finding already recorded must appear only once in the release.
+      record.compatibility.push(fresh.compatibility[0]);
+      writeFileSync(path, JSON.stringify(record));
+    }
+    const original = readFileSync(path, 'utf8');
+    const destination = join(f.dir, 'release');
+    if (policy === 'semver') {
+      assert.throws(
+        () => prepareRelease(f.output, destination),
+        /breaking changes require a new major/i,
+      );
+      assert.equal(existsSync(destination), false);
+    } else {
+      const plan = prepareRelease(f.output, destination);
+      assert.deepEqual(plan.compatibility, [historical, ...fresh.compatibility]);
+      assert.equal(plan.previousVersion, '1.0.0');
+      assert.equal(plan.reviewRequired, true);
+      assert.deepEqual(
+        JSON.parse(readFileSync(join(destination, 'release-plan.json'))).compatibility,
+        plan.compatibility,
+      );
+      for (const file of ['CHANGELOG.md', 'MIGRATION.md']) {
+        const text = readFileSync(join(destination, file), 'utf8');
+        for (const finding of plan.compatibility) {
+          assert.ok(text.includes(finding.subject), file + ': missing ' + finding.subject);
+          assert.ok(text.includes(finding.message), file + ': missing ' + finding.message);
+        }
+      }
+    }
+    assert.equal(readFileSync(path, 'utf8'), original);
+  });
 
 test('generated calls in both languages execute with dynamic schema compilation disabled', () => {
   const f = fixture('execution-boundary');

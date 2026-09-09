@@ -41,7 +41,7 @@ Set `release.policy` in the SDK configuration:
 
 The generator compares against its recorded previous interface; preserve the private generation record across upgrades. On a fresh output directory, there is no earlier version to compare. A package-version bump does not change the API contract or pinned request version header.
 
-Archive preparation checks generated file integrity. Keep private provenance records, API definitions and signing secrets out of distribution repositories. npm's explicit file allowlist includes `custom/`; review custom contents before publishing. No local test suite certifies a real provider's backend. Publication to multiple registries cannot be one atomic transaction; document any partial publication and recovery.
+Archive preparation checks generated file integrity and recomputes compatibility with the current generator. It combines fresh and recorded findings for version-policy checks, the release plan, and migration notes, even when generated files are unchanged. Keep private provenance records, API definitions and signing secrets out of distribution repositories. npm's explicit file allowlist includes `custom/`; review custom contents before publishing. No local test suite certifies a real provider's backend. Publication to multiple registries cannot be one atomic transaction; document any partial publication and recovery.
 
 ## Known compatibility limitations
 

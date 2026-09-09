@@ -1074,15 +1074,21 @@ export function prepareRelease(output: string, destination: string, acknowledgeR
   output = resolve(output);
   destination = resolve(destination);
   const record: RecordFile = JSON.parse(readFileSync(join(output, recordName), 'utf8'));
-  if (record.interface.config.release?.policy === 'semver')
-    checkVersionPolicy(
-      record.previousVersion,
-      record.interface.config.version,
-      record.compatibility ?? [],
-    );
   const integrity = preview(record.interface, output);
   if (integrity.changes.length)
     throw new Diagnostic(output, 'regenerate before preparing a release');
+  // Analyzer upgrades can find breaks without changing emitted files. Retain
+  // recorded findings as well, so release preparation cannot erase prior review.
+  const compatibility = [
+    ...new Map(
+      [...(record.compatibility ?? []), ...integrity.compatibility].map((finding) => [
+        stable(finding),
+        finding,
+      ]),
+    ).values(),
+  ];
+  if (record.interface.config.release?.policy === 'semver')
+    checkVersionPolicy(record.previousVersion, record.interface.config.version, compatibility);
   validate(output);
   if (existsSync(destination))
     throw new Diagnostic(destination, 'release destination already exists; choose a new directory');
@@ -1149,7 +1155,6 @@ export function prepareRelease(output: string, destination: string, acknowledgeR
       }
     }
     const checksums: Record<string, string> = {};
-    const compatibility = record.compatibility ?? [];
     const plan = {
       compatibility,
       previousVersion: record.previousVersion ?? null,
