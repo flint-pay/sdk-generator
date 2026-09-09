@@ -1626,16 +1626,37 @@ export function loadContract(definitionPath: string, configPath: string): Contra
             'pagination requires item/continuation fields and a declared query parameter (except links)',
           );
         if (verb !== 'get') fail(p, 'pagination helpers require GET');
+        const parameter = parameters.find((v) => v.in === 'query' && v.name === pg.parameter);
+        const nextType = pg.kind === 'offset' ? 'integer' : 'string';
+        if (pg.kind !== 'link' && parameter && parameterType(parameter.schema, p) !== nextType)
+          fail(p, `${pg.kind} pagination requires a scalar ${nextType} query parameter`);
+        // Follow same-instance conjuncts and alternatives, just as field/type
+        // projection does; formats may be supplied by referenced siblings.
+        const exactInteger = (shape: Schema): boolean =>
+          exactValue(valueInstruction('integer', shape.format)) ||
+          [...(shape.allOf ?? []), ...(shape.oneOf ?? []), ...(shape.anyOf ?? [])].some(
+            exactInteger,
+          );
         for (const [, response] of Object.entries(responses).filter(([status]) =>
           /^2\d\d$/.test(status),
         )) {
           const items = schemaField(response.schema, pg.items);
           const next = schemaField(response.schema, pg.next);
-          const nextType = pg.kind === 'offset' ? 'integer' : 'string';
           if (!items || !hasType(items, 'array') || !next || !hasType(next, nextType))
             fail(
               p,
               `pagination items/next must address declared array and ${nextType} response fields`,
+            );
+          if (
+            pg.kind === 'offset' &&
+            parameter &&
+            next &&
+            !exactInteger(parameter.schema) &&
+            exactInteger(next)
+          )
+            fail(
+              p,
+              'offset pagination returns exact integer strings but its query parameter requires a native integer; use compatible integer formats or omit the pagination helper',
             );
         }
       }

@@ -635,12 +635,11 @@ export function sample(
     }
     return result;
   }
+  const t = Array.isArray(s.type) ? s.type.find((t) => t !== 'null') : s.type;
   if (s.enum?.length)
-    return s.enum[0] !== null &&
-      (exactValue(valueInstruction('integer', s.format)) || s.type === 'number')
+    return s.enum[0] !== null && exactValue(valueInstruction(t, s.format))
       ? String(s.enum[0])
       : s.enum[0];
-  const t = Array.isArray(s.type) ? s.type.find((t) => t !== 'null') : s.type;
   if (t === 'object' || s.required || s.properties)
     return Object.fromEntries(
       Object.entries({

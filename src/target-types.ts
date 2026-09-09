@@ -167,11 +167,7 @@ export function typescriptType(
   if (types.length > 1) return types.map((t) => render({ ...s, type: t! }, response)).join(' | ');
   // Equivalent numeric enum values have many valid spellings (1, 1.0, 1e0).
   // Their exact string representation is checked by the runtime, not a literal union.
-  if (
-    s.enum &&
-    exactValue(valueInstruction(typeof s.type === 'string' ? s.type : undefined, s.format))
-  )
-    return 'string';
+  if (s.enum && exactValue(valueInstruction(types[0], s.format))) return 'string';
   if (s.enum && !response)
     return (
       s.enum
