@@ -1,6 +1,6 @@
 # Configuration and contract subset
 
-The generator accepts OpenAPI **3.0/3.1 JSON**, not YAML or arbitrary JSON Schema. Keep upstream API semantics in the API document and SDK design/capabilities in a separate JSON file. Both inputs are local files. Relative local `$ref` files are resolved and hashed; vendor remote references before generation. Recursive object fields, array items and dictionary values resolve through named model definitions; nonproductive alias cycles and `$ref` siblings are rejected. Validation bounds schema traversal at 256 steps and rejects cyclic caller objects before dispatch. Generated recursive graphs share named shapes to avoid repeated expansion.
+The generator accepts OpenAPI **3.0/3.1 JSON**, not YAML or arbitrary JSON Schema. Keep upstream API semantics in the API document and SDK design/capabilities in a separate JSON file. Both inputs are local files. Relative local `$ref` files are resolved and hashed; vendor remote references before generation. Recursive object fields, array items and dictionary values resolve through named model definitions; nonproductive alias cycles are rejected. `$ref` siblings follow the version and object rules below. Validation bounds schema traversal at 256 steps and rejects cyclic caller objects before dispatch. Generated recursive graphs share named shapes to avoid repeated expansion.
 
 Generation compiles the resolved definition and configuration into public declarations, codecs and operation settings. The configuration format and defaults are the same for both targets. Credentials and request options remain client inputs.
 
@@ -36,9 +36,46 @@ Generation compiles the resolved definition and configuration into public declar
 
 GET/HEAD request bodies are rejected when Node is a selected target because its built-in fetch transport cannot send them.
 
-HTTP parameters require an explicit non-null scalar type or a supported scalar array. An empty schema or an enum without a type is insufficient for parameter encoding and fails diagnosis; declare the intended type. Typeless schemas remain supported in JSON bodies and models.
+HTTP parameters require an explicit non-null scalar type or a supported scalar array. References and conjunctive schemas may supply that type and add constraints. An empty schema or an enum without a type is insufficient for parameter encoding and fails diagnosis; declare the intended type. Typeless schemas remain supported in JSON bodies and models.
 
 Package metadata is required only for selected targets. `targets` defaults to both. Namespace segments and public names are validated; collisions and reserved identifiers fail with source locations. `license` changes distribution metadata only and must accurately describe the provider's package; bundled Apache-2.0 code and notices remain included. PHP-compatible prerelease versions use `alpha`, `beta`, or `rc`, optionally with a numeric suffix, such as `1.2.0-beta.1`.
+
+## Reference siblings
+
+Both SDK targets use the same reference rules within the supported schema subset:
+
+| Context                                                   | Sibling behavior                                                                                                                                                                          |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OpenAPI 3.1 Schema Object                                 | Referenced and sibling constraints all apply, including existing `allOf`, `anyOf`, `oneOf` and `not` constraints.                                                                         |
+| OpenAPI 3.0 Reference Object, including schema references | Siblings are ignored, including `description` and `nullable`. Ignored values do not load referenced files.                                                                                |
+| OpenAPI 3.1 Reference Object outside schemas              | Local `summary` and `description` override referenced metadata where the target object type supports those fields. Other siblings are ignored.                                            |
+| Path Item `$ref`, both versions                           | Nonoverlapping fields combine. A field present locally and in the referenced Path Item is a conflict, even if the values match. Operations and parameter lists are not implicitly merged. |
+
+For example, in OpenAPI 3.1 this schema applies both the constraints of `Name` and a maximum length of 40:
+
+```json
+{
+  "$ref": "#/components/schemas/Name",
+  "description": "Name shown on the receipt",
+  "maxLength": 40
+}
+```
+
+A narrowing `type: "array"` sibling may use the item declaration supplied by its referenced `allOf` conjunct, including a conjunct that declares `items` without its own `type`. Generated TypeScript retains those element types and any permitted nullability. The element constraints remain in their original scope; a standalone array still requires `items`.
+
+Sibling constraints cannot weaken the referenced schema. Adding properties does not open a referenced object with `additionalProperties: false`, and adding `null` to a sibling type does not make a non-null target nullable. Local descriptive metadata takes precedence for display. A true `readOnly`, `writeOnly` or `x-sensitive` flag on either side remains effective; contradictory read/write direction is rejected.
+
+For OpenAPI 3.0, put annotations and nullable behavior on an explicit wrapper:
+
+```json
+{
+  "description": "Optional name shown on the receipt",
+  "nullable": true,
+  "allOf": [{ "$ref": "#/components/schemas/Name" }]
+}
+```
+
+Relative references inside sibling fields resolve from the file declaring those fields, including siblings of external references. References retain operation selection, model customization and source hashing. Alias cycles that never descend through a property, item or dictionary value still fail diagnosis.
 
 ## Configuration fields
 
@@ -71,6 +108,8 @@ See [CLI usage](cli.md) to diagnose or preview these inputs, and [using generate
 `operations` keys are exact upstream `operationId` values. `resource` and `method` customize the public call while preserving HTTP method/path. `aliases` create deprecated methods invoking the same wire operation. Stale operation/model customization targets fail.
 
 `deprecated` supplies a migration message for an operation. OpenAPI `deprecated: true` also produces a notice. Generated TypeScript declarations include operation descriptions, usage examples and deprecation annotations. Tagged operation responses export an `is<Resource><Method>ResponseKnown` guard: check it before switching on known discriminator values; unknown variants remain available unchanged.
+
+A response union reached through `allOf`, including a resolved `$ref` with sibling constraints, also generates its known-variant guard. The guard checks the complete composed schema, including sibling required fields, bounds and `not` constraints, before narrowing. Tagged unions wrapped this way retain PHP variant classes; their constructors validate the selected branch together with the surrounding constraints and their getters include sibling fields. Normal response decoding and PHP response constructors retain the documented tolerance for business bounds and future fields.
 
 Providers can supply `documentation.overview` as Markdown and `documentation.guides` as a map of lowercase guide slugs to Markdown. Both packages and the release site include version-matched guidance. Keep workflow assumptions and provider-specific recovery instructions here, alongside operation examples.
 
@@ -112,13 +151,23 @@ Overrides replace the addressed value and apply before reference resolution. The
 
 JSON `number` values, including plain numbers and float/double formats, use exact strings in SDK inputs and outputs. Unsafe JS numeric inputs fail before transmission. The safe integer range shared by both runtimes is ±9,007,199,254,740,991. Exact numeric strings may be larger. Currency support is optional and never inferred from a property name.
 
-`allOf` validates every branch, `anyOf` requires at least one matching branch, and `oneOf` requires exactly one. Field-choice rules can use `required` and `not` without repeating an object shape or declaring a discriminator. An optional discriminator requires disjoint required string enum tags. Composition retains sibling constraints and exact numeric encoding. Unknown response tags and enum values remain unchanged; they are not converted to a known result. Unknown numeric response fields use numbers for safe integers and strings for larger/decimal tokens. Response fields required by known schemas must exist and known field shapes must be representable. Request enums and unknown-property restrictions are enforced. Ordinary schema defaults are documentation, never silently inserted into a request. Generated quickstart inputs are validated during rendering; if an inferred or configured example cannot satisfy the schema, generation identifies `config/operations/<id>/example` so the provider can supply a valid example. OpenAPI 3.0 `nullable` is normalized before generation, including reference wrappers. Required readOnly fields are response requirements; sending them is rejected. Required writeOnly fields are input requirements and are excluded from response declarations and ordinary inspection. Nullable and field-choice rules are checked through both generated public clients. Untagged object response alternatives preserve future objects through an unknown-object branch; the generated known-variant guard verifies shape and sibling requirements before narrowing.
+`allOf` validates every branch, `anyOf` requires at least one matching branch, and `oneOf` requires exactly one. Matching numeric branches merge equivalent values using exact decimal comparison, so spellings such as `1.0` and `1e0` remain valid for `anyOf` combining decimal and exact-integer schemas. Numeric merging preserves the original request token; it does not turn JSON strings into numbers or relax `oneOf` exclusivity. Field-choice rules can use `required` and `not` without repeating an object shape or declaring a discriminator. An optional discriminator requires disjoint required string enum tags. Composition retains sibling constraints and exact numeric encoding. Unknown response tags and enum values remain unchanged; they are not converted to a known result. Unknown numeric response fields use numbers for safe integers and strings for larger/decimal tokens. Response fields required by known schemas must exist and known field shapes must be representable. Request enums and unknown-property restrictions are enforced. Ordinary schema defaults are documentation, never silently inserted into a request. Generated quickstart inputs are validated during rendering; if an inferred or configured example cannot satisfy the schema, generation identifies `config/operations/<id>/example` so the provider can supply a valid example. OpenAPI 3.0 `nullable` is normalized before generation, including reference wrappers. Required readOnly fields are response requirements; sending them is rejected. Required writeOnly fields are input requirements and are excluded from response declarations and ordinary inspection. Nullable and field-choice rules are checked through both generated public clients. Untagged object response alternatives preserve future objects through an unknown-object branch; the generated known-variant guard verifies shape and sibling requirements before narrowing.
 
 Nested `x-sensitive: true` metadata affects model debug representations and parsed error details, not wire serialization. Explicit raw response/body access remains sensitive. Set top-level `"validation": "schema"` to check declared minimum/maximum, exclusive bounds, string lengths, patterns and array lengths on requests and model factories. The default `"encoding"` policy retains required fields, declared types/enums, field choices, nullability, exact numeric representation and integer format ranges; business limits remain server checks. Alternative selection and known-variant guards use the full supported constraints so they never choose an incompatible wire representation. Responses retain values beyond these business constraints while still checking representable field shapes. Bounds and numeric enum membership use exact decimal comparisons without floating-point coercion of caller values. Numeric enums accept equivalent spellings such as `1`, `1.0` and `1e0`; generated TypeScript represents exact numeric enum inputs as strings and enforces membership at runtime. Integer formats int32/uint32/int64/uint64 enforce their request ranges; uint64 uses exact strings. String lengths count Unicode code points, not bytes or UTF-16 units. Patterns use a portable Unicode ECMAScript subset, translated for PHP: character classes, groups, alternation, anchors and quantifiers; lookarounds, backreferences, special groups and unsupported escapes receive diagnostics. Other textual formats are annotations. OpenAPI 3.0 exclusive booleans normalize with their associated bounds. Unsupported validation keywords, including multipleOf, fail with diagnostics. Numeric bound literals must be finite, with integer literals in the safe range of the generator's JSON parser.
+
+Numeric bounds and enums also apply when array items or dictionary values receive their type and constraints from separate `allOf` branches or `$ref` siblings. This includes named properties constrained by another branch's `additionalProperties` schema. Exact-number strings retain their numeric JSON meaning during those checks, including in nested collections; specializing a named field does not change the dictionary rule for other keys.
+
+The same numeric interpretation applies to sibling constraints around `oneOf`/`anyOf` alternatives and recursive references. It follows the selected branch's declared representation: a numeric-looking value in a string branch remains a JSON string. Recursive field, item and dictionary constraints apply at every value depth. Known-response guards enforce those constraints for tagged and untagged unions, including when ordinary response decoding tolerates a value outside a business bound.
+
+Mutually dependent unions can establish their numeric interpretation jointly. This search checks the original branch constraints and exclusivity before accepting a candidate. It is bounded at 256 combinations per value path in one codec execution; exceeding the bound produces a validation failure (a protocol error when decoding a response). A provider can reduce search complexity with an explicit discriminator or an equivalent schema that places each field's type and constraints together.
 
 Portable patterns retain ECMAScript's ASCII meaning for `\d`, `\D`, `\w`, and `\W` in both targets, including inside character classes. For example, `^\w+$` rejects `é` and non-ASCII digits. Use explicit Unicode characters or ranges when those values should be accepted.
 
 ## Declared capabilities
+
+Pagination and polling field types may come from multiple conjuncts, including properties constrained beside a response `$ref`. Every alternative must still provide the required field type, either itself or through a shared conjunct.
+
+Pagination item declarations intersect all constraints on each element. Adding constraint-only `items` siblings, including `minLength`, preserves the referenced element type. Different response alternatives still produce a union of their item types.
 
 - `retry`: all four fields are required. `maxAttempts` includes the initial attempt (1–10); caller/client overrides may lower it but cannot exceed the declared limit. HTTP method alone does not enable retries. Mutation retries require an idempotency declaration and a nonempty key. Neither 409 nor 412 can appear in blanket retry statuses; specific 409 error codes can be declared through `errors` on the retry policy. 412 is never retried. Transport replay applies only to fully encoded JSON bodies.
 - `idempotency`: header name, retention and scope descriptions are mandatory. `auto` defaults false. An automatically generated key is stable only within one SDK call; persist a caller key for application resubmissions and recovery across restarts. Explicit keys supplied through operation header inputs, request headers, or `idempotencyKey` are preserved across retries; conflicting values fail before dispatch. Empty keys and keys with leading or trailing spaces or tabs are rejected before dispatch because HTTP transports can change their wire identity. Automatic keys are generated only when no explicit key was supplied.
@@ -169,7 +218,7 @@ Supported credentials are HTTP bearer or a header API key. When the definition d
 
 Every client requires an explicit `baseUrl`. Credentials come from `token`; the generator never takes a credential in configuration. `allowedOrigins` defaults to the base URL's origin (scheme, host, port). Configure additional credential destinations deliberately. HTTPS is required unless `allowInsecureHttp` is explicitly enabled for local tests. Redirects are rejected. Per-request headers allow tenant context without shared mutable state. Node options are plain objects; PHP uses `ClientOptions` and `RequestOptions` value objects.
 
-The default per-attempt `timeoutMs` is 10,000 and overall `deadlineMs` is 30,000. Both are durations in milliseconds; request values override client defaults. Attempts default to the operation's declared policy, or one attempt when none is declared. The [consumer option reference](using-sdks.md#client-and-request-options) lists all options and language differences.
+The default per-attempt `timeoutMs` is 10,000 and overall `deadlineMs` is 30,000. Both are durations in milliseconds; request values override client defaults. The overall deadline is checked again after response decoding and model construction. Synchronous decoding cannot be interrupted, but an overrun returns a deadline error with response metadata instead of a late success. Attempts default to the operation's declared policy, or one attempt when none is declared. The [consumer option reference](using-sdks.md#client-and-request-options) lists all options and language differences.
 
 Privileged injected transports must honor timeout/cancellation and destination constraints, and must disable their own redirects/retries. Node uses the fetch signature. PHP receives `{url, method, headers, body, timeoutMs, cancellation}` and returns `{status, headers, body}`. The SDK does not close caller-owned transports. PHP's built-in reusable cURL handle is SDK-owned and released on close/destruction. Node uses the built-in fetch pool and does not own a separate pool to dispose.
 

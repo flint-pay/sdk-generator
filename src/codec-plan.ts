@@ -58,7 +58,8 @@ export interface CodecPlan {
 }
 
 export const CODEC_FORMAT = 1;
-export const CODEC_SEMANTICS = '1';
+// Numeric constraints share the JSON value interpretation across compositions.
+export const CODEC_SEMANTICS = '2';
 
 export function valueInstruction(type: string | undefined, format?: string): ValueInstruction {
   switch (type) {

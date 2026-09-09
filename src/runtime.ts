@@ -102,6 +102,7 @@ const exactDecimal = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
 class RawNumber {
   constructor(readonly value: string) {}
 }
+// JSON numeric meaning, established by the wire parser or a positive codec declaration.
 class ParsedNumber {
   constructor(readonly value: string) {}
 }
@@ -216,30 +217,53 @@ function encode(value: unknown, depth = 0): string {
   return bad('value', 'unsupported JSON value');
 }
 /** Merge independently validated representations without discarding typed numeric tokens. */
-function combine(left: any, right: any, path: string): any {
+function combine(left: any, right: any, path: string, source: unknown): any {
   if (left instanceof ParsedNumber || right instanceof ParsedNumber) {
     const token = left instanceof ParsedNumber ? left : right;
     const other = left instanceof ParsedNumber ? right : left;
-    const text = other instanceof ParsedNumber ? other.value : String(other);
+    const text =
+      other instanceof ParsedNumber || other instanceof RawNumber ? other.value : String(other);
     if (!exactDecimal.test(text) || compareDecimal(token.value, text) !== 0)
       bad(path, 'alternatives have incompatible numeric representations');
-    return other;
+    return other instanceof RawNumber ? new RawNumber(token.value) : other;
   }
   if (left instanceof RawNumber || right instanceof RawNumber) {
     const token = left instanceof RawNumber ? left : right;
     const other = left instanceof RawNumber ? right : left;
-    if (String(other instanceof RawNumber ? other.value : other) !== token.value)
+    const text = other instanceof RawNumber ? other.value : String(other);
+    if (!exactDecimal.test(text) || compareDecimal(token.value, text) !== 0)
       bad(path, 'alternatives have incompatible numeric representations');
     return token;
   }
+  // Decoding can unwrap both numeric tokens into SDK strings before a later
+  // branch is merged. The shared source view proves these are JSON numbers.
+  if (
+    source instanceof ParsedNumber &&
+    typeof left === 'string' &&
+    typeof right === 'string' &&
+    left !== right
+  ) {
+    if (
+      !exactDecimal.test(left) ||
+      !exactDecimal.test(right) ||
+      compareDecimal(source.value, left) !== 0 ||
+      compareDecimal(source.value, right) !== 0
+    )
+      bad(path, 'alternatives have incompatible numeric representations');
+    return source.value;
+  }
+  const childSource = (key: string): unknown =>
+    source && typeof source === 'object' && Object.hasOwn(source, key)
+      ? (source as Record<string, unknown>)[key]
+      : undefined;
   if (Array.isArray(left) && Array.isArray(right))
-    return left.map((v, i) => combine(v, right[i], `${path}[${i}]`));
+    return left.map((v, i) => combine(v, right[i], `${path}[${i}]`, childSource(String(i))));
   if (left && right && typeof left === 'object' && typeof right === 'object')
     return Object.fromEntries(
       [...new Set([...Object.keys(left), ...Object.keys(right)])].map((key) => [
         key,
         Object.hasOwn(left, key) && Object.hasOwn(right, key)
-          ? combine(left[key], right[key], `${path}.${key}`)
+          ? combine(left[key], right[key], `${path}.${key}`, childSource(key))
           : Object.hasOwn(left, key)
             ? left[key]
             : right[key],
@@ -335,10 +359,440 @@ export type CodecContext = CodecMode & {
   allowUnknownResponseFields?: boolean;
 };
 
+/** Keep branch selection identical during numeric interpretation and validation. */
+function selectAlternatives(
+  value: unknown,
+  branches: readonly CodecPlan[],
+  oneOf: boolean,
+  tag: string | undefined,
+  context: CodecContext,
+  matches: (branch: CodecPlan, allowUnknownFields: boolean) => boolean,
+): { selected: readonly CodecPlan[]; tolerateUnknownFields: boolean } {
+  const response = (context.direction ?? context.mode) === 'response';
+  const matching = context.mode === 'match';
+  const path = context.path ?? 'input';
+  let tolerateUnknownFields = context.allowUnknownResponseFields ?? false;
+  let selected: readonly CodecPlan[];
+  if (oneOf && tag) {
+    if (
+      !value ||
+      typeof value !== 'object' ||
+      Array.isArray(value) ||
+      !Object.hasOwn(value, tag) ||
+      typeof (value as Record<string, unknown>)[tag] !== 'string'
+    )
+      bad(path, 'expected a string discriminator');
+    selected = branches.filter((branch) =>
+      branch.fields?.[tag]?.members?.some(
+        (member) => member === (value as Record<string, unknown>)[tag],
+      ),
+    );
+  } else {
+    // anyOf response selection always uses the compatible set. Computing the
+    // discarded closed set first doubles work at each recursive anyOf edge.
+    selected =
+      !oneOf && response && (!matching || tolerateUnknownFields)
+        ? []
+        : branches.filter((branch) => matches(branch, false));
+    // Prefer closed oneOf matches before tolerating new response fields. anyOf
+    // retains every compatible branch's declared numeric representations.
+    if ((!oneOf || !selected.length) && response && (!matching || tolerateUnknownFields)) {
+      const compatible = branches.filter((branch) => matches(branch, true));
+      if (!oneOf || compatible.length === 1) {
+        selected = compatible;
+        tolerateUnknownFields = true;
+      }
+    }
+  }
+  if (!selected.length && response && !matching) {
+    if (
+      branches.every((branch) => branch.objectOnlyAlternative) &&
+      (!value || typeof value !== 'object' || Array.isArray(value))
+    )
+      bad(path, 'expected an object response alternative');
+  } else if (!selected.length || (oneOf && selected.length !== 1)) {
+    bad(
+      path,
+      oneOf
+        ? 'value must match exactly one alternative'
+        : 'value must match at least one alternative',
+    );
+  }
+  return { selected, tolerateUnknownFields };
+}
+
+type CodecScope = { codec: CodecPlan; definitions: Readonly<Record<string, CodecPlan>> };
+type UnionScope = CodecScope & { branches: readonly CodecPlan[] };
+type NumericContext = CodecContext & {
+  search: { remaining: Map<string, number>; exhausted: boolean };
+};
+const numericSearchLimit = 256;
+
+/** Resolve circular dependencies only after ordinary union selection stalls.
+ * A hypothesis contributes numeric meaning only if its branches are selected
+ * by the original unions, including their oneOf and response-tolerance policies.
+ */
+function jointNumericView(
+  value: unknown,
+  unions: readonly UnionScope[],
+  context: NumericContext,
+): { value: unknown } | undefined {
+  if (unions.length < 2) return undefined;
+  const path = context.path ?? 'input';
+  // An explicitly string-valued field cannot change under a numeric hypothesis.
+  // Reuse full validation for these fields to prune incompatible literal tags.
+  const choices = unions.map(({ codec, definitions, branches }) =>
+    branches.filter((branch) => {
+      if ((branches === codec.exactlyOne && codec.tag) || !value || typeof value !== 'object')
+        return true;
+      try {
+        for (const [key, field] of Object.entries(branch.fields ?? {}))
+          if (field.value.kind === 'string' && Object.hasOwn(value, key))
+            executeNode((value as Record<string, unknown>)[key], field, {
+              ...codecMode((context.direction ?? context.mode) === 'response', true),
+              definitions: branch.definitions ?? codec.definitions ?? definitions,
+              path: `${path}.${key}`,
+              depth: (context.depth ?? 0) + 1,
+            });
+        return true;
+      } catch (error) {
+        if (error instanceof SdkError && error.kind === 'validation') return false;
+        throw error;
+      }
+    }),
+  );
+  function* groups(
+    branches: readonly CodecPlan[],
+    multiple: boolean,
+    start = 0,
+    prefix: readonly CodecPlan[] = [],
+  ): Generator<readonly CodecPlan[]> {
+    for (let i = start; i < branches.length; i++) {
+      const branch = branches[i];
+      if (!branch) continue;
+      const selected = [...prefix, branch];
+      yield selected;
+      if (multiple) yield* groups(branches, true, i + 1, selected);
+    }
+  }
+  const chosen: { scope: UnionScope; branches: readonly CodecPlan[] }[] = [];
+  const search = (index: number): { value: unknown } | undefined => {
+    const scope = unions[index];
+    if (scope) {
+      for (const branches of groups(choices[index] ?? [], scope.branches === scope.codec.some)) {
+        chosen.push({ scope, branches });
+        const found = search(index + 1);
+        chosen.pop();
+        if (found) return found;
+      }
+      return undefined;
+    }
+    const remaining = context.search.remaining.get(path) ?? numericSearchLimit;
+    context.search.remaining.set(path, remaining - 1);
+    if (remaining <= 0) {
+      context.search.exhausted = true;
+      bad(path, 'numeric interpretation exceeds 256 alternative combinations');
+    }
+    try {
+      const candidate = numericView(
+        value,
+        chosen.flatMap(({ scope, branches }) =>
+          branches.map((codec) => ({ codec, definitions: scope.definitions })),
+        ),
+        { ...context, depth: (context.depth ?? 0) + 1 },
+      );
+      if (!numericViewChanged(value, candidate)) return undefined;
+      for (const { scope, branches } of chosen) {
+        const branchContext: CodecContext = {
+          ...codecMode((context.direction ?? context.mode) === 'response', true),
+          path: context.path ?? 'input',
+          definitions: scope.definitions,
+          depth: (context.depth ?? 0) + 1,
+        };
+        const { selected } = selectAlternatives(
+          candidate,
+          scope.branches,
+          scope.branches === scope.codec.exactlyOne,
+          scope.codec.tag,
+          context,
+          (branch, allowUnknownResponseFields) => {
+            try {
+              executeNode(candidate, branch, { ...branchContext, allowUnknownResponseFields });
+              return true;
+            } catch (error) {
+              if (error instanceof SdkError && error.kind === 'validation') return false;
+              throw error;
+            }
+          },
+        );
+        if (branches.some((branch) => !selected.includes(branch))) return undefined;
+        // Untagged selection fully validates its branches. Tagged selection
+        // deliberately leaves other constraints to the caller's validation mode.
+      }
+      return { value: candidate };
+    } catch (error) {
+      if (context.search.exhausted) throw error;
+      if (error instanceof SdkError && error.kind === 'validation') return undefined;
+      throw error;
+    }
+  };
+  return search(0);
+}
+
+/** Interpretation only adds numeric meaning; unchanged subtrees need no traversal. */
+function numericViewChanged(before: unknown, after: unknown, depth = 0): boolean {
+  if (before === after || depth > 256) return false;
+  if (after instanceof ParsedNumber) return !(before instanceof ParsedNumber);
+  if (!before || !after || typeof before !== 'object' || typeof after !== 'object') return false;
+  return Object.entries(after).some(([key, child]) =>
+    numericViewChanged((before as Record<string, unknown>)[key], child, depth + 1),
+  );
+}
+
+/** Branch views differ only in established numeric meaning, never in JSON data. */
+function mergeNumericViews(left: any, right: any, depth = 0): any {
+  if (depth > 256)
+    bad('value', 'value exceeds the supported nesting depth (256) or contains a cycle');
+  if (left === right || left instanceof ParsedNumber) return left;
+  if (right instanceof ParsedNumber) return right;
+  if (left instanceof Model) left = left.toJSON();
+  if (right instanceof Model) right = right.toJSON();
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return left;
+  if (Array.isArray(left)) {
+    const children = left.map((child, index) => mergeNumericViews(child, right[index], depth + 1));
+    return children.every((child, index) => child === left[index]) ? left : children;
+  }
+  const entries = Object.entries(left).map(
+    ([key, child]) => [key, mergeNumericViews(child, right[key], depth + 1)] as const,
+  );
+  if (entries.every(([key, child]) => child === left[key])) return left;
+  return Object.fromEntries(entries);
+}
+
+/** Give every conjunct the same JSON numeric view of caller-owned SDK values.
+ * Walk the finite value, resolving named shapes as needed; never expand a recursive
+ * schema or infer a number from a string without a positive numeric declaration.
+ * Alternative candidates establish their own view before full branch matching.
+ */
+function numericView(
+  value: unknown,
+  scopes: readonly CodecScope[],
+  context: NumericContext,
+  previous?: { value: unknown },
+): unknown {
+  if (!scopes.length) return value;
+  // Revisit a matched branch only where another branch added numeric meaning.
+  // The previous view was computed with these same scopes and direction policy.
+  if (previous && !numericViewChanged(previous.value, value)) return value;
+  const previousChild = (key: string): { value: unknown } | undefined =>
+    previous && previous.value && typeof previous.value === 'object'
+      ? { value: (previous.value as Record<string, unknown>)[key] }
+      : undefined;
+  const depth = context.depth ?? 0;
+  const path = context.path ?? 'input';
+  if (context.search.exhausted)
+    bad(path, 'numeric interpretation exceeds 256 alternative combinations');
+  if (depth > 256) bad(path, 'value exceeds the supported nesting depth (256) or contains a cycle');
+  if (value instanceof Model) value = value.toJSON();
+  const shapes: CodecScope[] = [];
+  const collect = ({ codec, definitions }: CodecScope, level: number): void => {
+    if (level > 256)
+      bad(path, 'value exceeds the supported nesting depth (256) or contains a cycle');
+    definitions = codec.definitions ?? definitions;
+    if (codec.reference) {
+      const target = Object.hasOwn(definitions, codec.reference)
+        ? definitions[codec.reference]
+        : undefined;
+      if (!target) bad(path, 'unresolved recursive model ' + codec.reference);
+      collect({ codec: target!, definitions }, level + 1);
+    } else {
+      shapes.push({ codec, definitions });
+      for (const child of codec.every ?? []) collect({ codec: child, definitions }, level + 1);
+    }
+  };
+  scopes.forEach((scope) => collect(scope, depth));
+  if (
+    typeof value === 'string' &&
+    shapes.some(
+      ({ codec }) =>
+        exactValue(codec.value) &&
+        (codec.value.kind === 'exact-integer' ? exactInteger : exactDecimal).test(value as string),
+    )
+  )
+    value = new ParsedNumber(value);
+  if (Array.isArray(value)) {
+    const children = shapes.flatMap(({ codec, definitions }) =>
+      codec.element ? [{ codec: codec.element, definitions }] : [],
+    );
+    if (children.length) {
+      denseArray(value, path);
+      value = value.map((child, i) =>
+        numericView(
+          child,
+          children,
+          { ...context, path: `${path}[${i}]`, depth: depth + 1 },
+          previousChild(String(i)),
+        ),
+      );
+    }
+  } else if (value && typeof value === 'object' && !(value instanceof ParsedNumber)) {
+    value = Object.fromEntries(
+      Object.entries(value).map(([key, child]) => {
+        // Request omission is decided before a property's union is matched.
+        // Required fields are still checked by executeNode on the parent.
+        if (child === undefined && (context.direction ?? context.mode) !== 'response')
+          return [key, child];
+        const children = shapes.flatMap(({ codec, definitions }) => {
+          const field = Object.hasOwn(codec.fields ?? {}, key)
+            ? codec.fields![key]
+            : typeof codec.extra === 'object'
+              ? codec.extra
+              : undefined;
+          return field ? [{ codec: field, definitions }] : [];
+        });
+        return [
+          key,
+          numericView(
+            child,
+            children,
+            { ...context, path: `${path}.${key}`, depth: depth + 1 },
+            previousChild(key),
+          ),
+        ];
+      }),
+    );
+  }
+  const unions = shapes.flatMap(({ codec, definitions }) =>
+    [codec.exactlyOne, codec.some].flatMap((branches) =>
+      branches ? [{ codec, definitions, branches }] : [],
+    ),
+  );
+  let pending = unions;
+  // A constraint-only union may need the numeric view supplied by another
+  // conjunct. Retry it after successful selections, independent of allOf order.
+  // Each productive pass removes a union. If no selection can progress, retain
+  // the validation failure rather than returning a partially interpreted value.
+  while (pending.length) {
+    const before = value;
+    const deferred: typeof pending = [];
+    let failure: SdkError | undefined;
+    for (const scope of pending) {
+      const { codec, definitions, branches } = scope;
+      try {
+        const candidates = new Map<CodecPlan, unknown>();
+        const { selected, tolerateUnknownFields } = selectAlternatives(
+          value,
+          branches,
+          branches === codec.exactlyOne,
+          codec.tag,
+          context,
+          (branch, allowUnknownFields) => {
+            try {
+              const branchContext: NumericContext = {
+                ...codecMode((context.direction ?? context.mode) === 'response', true),
+                search: context.search,
+                path,
+                definitions,
+                depth: depth + 1,
+                allowUnknownResponseFields: allowUnknownFields,
+              };
+              const candidate = numericView(value, [{ codec: branch, definitions }], branchContext);
+              executeNode(candidate, branch, branchContext);
+              candidates.set(branch, candidate);
+              return true;
+            } catch (error) {
+              if (error instanceof SdkError && error.kind === 'validation') return false;
+              throw error;
+            }
+          },
+        );
+        if (!selected.length) {
+          deferred.push(scope);
+          continue;
+        }
+        // Reuse every matched view. Rewalking all selected branches makes
+        // overlapping recursive anyOf schemas exponential even without numbers.
+        if (selected.every((branch) => candidates.has(branch))) {
+          for (const branch of selected) value = mergeNumericViews(value, candidates.get(branch));
+          let changed: boolean;
+          do {
+            const beforeRefinement = value;
+            for (const branch of selected) {
+              const candidate = candidates.get(branch);
+              if (!numericViewChanged(candidate, value)) continue;
+              const refined = numericView(
+                value,
+                [{ codec: branch, definitions }],
+                {
+                  ...codecMode((context.direction ?? context.mode) === 'response', true),
+                  search: context.search,
+                  path,
+                  depth: depth + 1,
+                  allowUnknownResponseFields: tolerateUnknownFields,
+                },
+                { value: candidate },
+              );
+              candidates.set(branch, refined);
+              value = mergeNumericViews(value, refined);
+            }
+            changed = numericViewChanged(beforeRefinement, value);
+          } while (changed);
+        } else {
+          value = numericView(
+            value,
+            selected.map((branch) => ({ codec: branch, definitions })),
+            {
+              ...context,
+              depth: depth + 1,
+              allowUnknownResponseFields: tolerateUnknownFields,
+            },
+          );
+        }
+      } catch (error) {
+        if (!(error instanceof SdkError) || error.kind !== 'validation') throw error;
+        failure ??= error;
+        deferred.push(scope);
+      }
+    }
+    // An earlier anyOf may gain compatible numeric branches after a later
+    // conjunct supplies their required numeric context. Retry all unions only
+    // when numeric meaning changed; single recursive unions keep their fast path.
+    if (unions.length > 1 && numericViewChanged(before, value)) {
+      pending = unions;
+      continue;
+    }
+    if (deferred.length === pending.length) {
+      const joint = jointNumericView(value, unions, context);
+      if (joint) {
+        value = joint.value;
+        pending = unions;
+        continue;
+      }
+      if (failure) throw failure;
+      break;
+    }
+    pending = deferred;
+  }
+  if (context.search.exhausted)
+    bad(path, 'numeric interpretation exceeds 256 alternative combinations');
+  return value;
+}
+
 /** Internal descriptor entry point. Raw schemas are accepted only by the adapter above. */
 export function executeCodec(value: unknown, s: CodecPlan, context: CodecContext): unknown {
   if (!['request', 'response', 'match'].includes(context.mode))
     throw new Error('Unknown codec execution mode');
+  return executeNode(
+    numericView(value, [{ codec: s, definitions: context.definitions ?? {} }], {
+      ...context,
+      search: { remaining: new Map(), exhausted: false },
+    }),
+    s,
+    context,
+  );
+}
+
+function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unknown {
   const {
     path = 'input',
     redactFields = [],
@@ -354,7 +808,7 @@ export function executeCodec(value: unknown, s: CodecPlan, context: CodecContext
   if (s.reference) {
     const target = Object.hasOwn(definitions, s.reference) ? definitions[s.reference] : undefined;
     if (!target) return bad(path, 'unresolved recursive model ' + s.reference);
-    return executeCodec(value, target, {
+    return executeNode(value, target, {
       ...codecMode(response, matching),
       path: path,
       redactFields: redactFields,
@@ -375,7 +829,7 @@ export function executeCodec(value: unknown, s: CodecPlan, context: CodecContext
       tag: discriminator,
       ...base
     } = s;
-    let result = executeCodec(value, base, {
+    let result = executeNode(value, base, {
       ...codecMode(response, matching),
       path: path,
       redactFields: redactFields,
@@ -384,9 +838,14 @@ export function executeCodec(value: unknown, s: CodecPlan, context: CodecContext
       validateConstraints: validateConstraints,
       allowUnknownResponseFields: allowUnknownResponseFields,
     });
+    // Matching executes the complete branch. Reuse that result when this node
+    // is itself matching; re-executing each selected recursive branch doubles
+    // the work at every value depth. Ordinary decoding/encoding still runs in
+    // its own mode, whose enum, bound and unknown-field policies differ.
+    const matched = new Map<CodecPlan, Map<boolean, unknown>>();
     const matches = (branch: CodecPlan, allowUnknownFields: boolean): boolean => {
       try {
-        executeCodec(value, branch, {
+        const result = executeNode(value, branch, {
           ...codecMode(response, true),
           path: path,
           redactFields: redactFields,
@@ -395,6 +854,9 @@ export function executeCodec(value: unknown, s: CodecPlan, context: CodecContext
           validateConstraints: validateConstraints,
           allowUnknownResponseFields: allowUnknownFields,
         });
+        const results = matched.get(branch) ?? new Map<boolean, unknown>();
+        results.set(allowUnknownFields, result);
+        matched.set(branch, results);
         return true;
       } catch (error) {
         if (error instanceof SdkError && error.kind === 'validation') return false;
@@ -405,7 +867,7 @@ export function executeCodec(value: unknown, s: CodecPlan, context: CodecContext
     for (const branch of allOf ?? [])
       result = combine(
         result,
-        executeCodec(value, branch, {
+        executeNode(value, branch, {
           ...codecMode(response, matching),
           path: path,
           redactFields: redactFields,
@@ -415,75 +877,40 @@ export function executeCodec(value: unknown, s: CodecPlan, context: CodecContext
           allowUnknownResponseFields: allowUnknownResponseFields,
         }),
         path,
+        value,
       );
     for (const [keyword, branches] of [
       ['oneOf', oneOf],
       ['anyOf', anyOf],
     ] as const) {
       if (!branches) continue;
-      let selected: readonly CodecPlan[];
-      let tolerateUnknownFields = allowUnknownResponseFields;
-      if (keyword === 'oneOf' && discriminator) {
-        const tag = discriminator;
-        if (
-          !value ||
-          typeof value !== 'object' ||
-          Array.isArray(value) ||
-          !Object.hasOwn(value, tag) ||
-          typeof (value as Record<string, unknown>)[tag] !== 'string'
-        )
-          bad(path, 'expected a string discriminator');
-        selected = branches.filter((branch) =>
-          branch.fields?.[tag]?.members?.some(
-            (member) => member === (value as Record<string, unknown>)[tag],
-          ),
-        );
-      } else {
-        selected = branches.filter((branch) => matches(branch, false));
-        // Prefer exact closed oneOf alternatives, then a unique branch allowing
-        // extra response fields. anyOf keeps every compatible branch so a generic
-        // match does not discard another branch's known field representations.
-        if (
-          (keyword === 'anyOf' || !selected.length) &&
-          response &&
-          (!matching || allowUnknownResponseFields)
-        ) {
-          const compatible = branches.filter((branch) => matches(branch, true));
-          if (keyword === 'anyOf' || compatible.length === 1) {
-            selected = compatible;
-            tolerateUnknownFields = true;
-          }
-        }
-      }
-      if (selected.length === 0 && response && !matching) {
-        if (
-          branches.every((branch) => branch.objectOnlyAlternative) &&
-          (!value || typeof value !== 'object' || Array.isArray(value))
-        )
-          bad(path, 'expected an object response alternative');
-        continue;
-      }
-      if (!selected.length || (keyword === 'oneOf' && selected.length !== 1))
-        bad(
-          path,
-          keyword === 'oneOf'
-            ? 'value must match exactly one alternative'
-            : 'value must match at least one alternative',
-        );
-      for (const branch of selected)
+      const { selected, tolerateUnknownFields } = selectAlternatives(
+        value,
+        branches,
+        keyword === 'oneOf',
+        discriminator,
+        context,
+        matches,
+      );
+      for (const branch of selected) {
+        const results = matched.get(branch);
         result = combine(
           result,
-          executeCodec(value, branch, {
-            ...codecMode(response, matching),
-            path: path,
-            redactFields: redactFields,
-            definitions: definitions,
-            depth: depth + 1,
-            validateConstraints: validateConstraints,
-            allowUnknownResponseFields: tolerateUnknownFields,
-          }),
+          matching && results?.has(tolerateUnknownFields)
+            ? results.get(tolerateUnknownFields)
+            : executeNode(value, branch, {
+                ...codecMode(response, matching),
+                path: path,
+                redactFields: redactFields,
+                definitions: definitions,
+                depth: depth + 1,
+                validateConstraints: validateConstraints,
+                allowUnknownResponseFields: tolerateUnknownFields,
+              }),
           path,
+          value,
         );
+      }
     }
     if (
       response &&
@@ -507,17 +934,23 @@ export function executeCodec(value: unknown, s: CodecPlan, context: CodecContext
     return bad(path, 'null is not permitted');
   }
   const type = wireKind(s.value);
+  // Positive declarations establish numeric meaning in numericView before
+  // matching. A remaining string is JSON text, including inside a negation;
+  // the numeric branch being tested must not reinterpret it as an SDK number.
+  if (matching && exactValue(s.value) && typeof value === 'string')
+    return bad(path, `expected ${type}; received a JSON string`);
   if (value instanceof ParsedNumber) {
     if (type === undefined) {
       const token = value.value;
       if (
-        matching &&
+        (!response || matching) &&
         s.members &&
         !s.members.some((v) => typeof v === 'number' && compareDecimal(token, String(v)) === 0)
       )
         bad(path, 'value is outside the declared enum');
-      if (matching) numericConstraints(value.value, s, path);
-      return value;
+      if (!response || matching)
+        numericConstraints(value.value, s, path, validateConstraints || matching);
+      return response ? value : new RawNumber(value.value);
     }
     if (type === 'integer') {
       const token = integerToken(value.value, path);
@@ -576,7 +1009,7 @@ export function executeCodec(value: unknown, s: CodecPlan, context: CodecContext
       const child = Object.hasOwn(s.fields ?? {}, k) ? s.fields![k] : undefined;
       if (!response && child?.rejectInput) bad(`${path}.${k}`, 'readOnly fields cannot be sent');
       if (child)
-        out[k] = executeCodec(v, child, {
+        out[k] = executeNode(v, child, {
           ...codecMode(response, matching),
           path: `${path}.${k}`,
           redactFields: redactFields,
@@ -588,7 +1021,7 @@ export function executeCodec(value: unknown, s: CodecPlan, context: CodecContext
       else if ((!response || (matching && !allowUnknownResponseFields)) && s.extra === false)
         bad(`${path}.${k}`, 'unknown request field');
       else if (typeof s.extra === 'object')
-        out[k] = executeCodec(v, s.extra, {
+        out[k] = executeNode(v, s.extra, {
           ...codecMode(response, matching),
           path: `${path}.${k}`,
           redactFields: redactFields,
@@ -616,7 +1049,7 @@ export function executeCodec(value: unknown, s: CodecPlan, context: CodecContext
         bad(path, 'array violates maxItems');
     }
     return value.map((v, i) =>
-      executeCodec(v, s.element ?? ANY_CODEC, {
+      executeNode(v, s.element ?? ANY_CODEC, {
         ...codecMode(response, matching),
         path: `${path}[${i}]`,
         redactFields: redactFields,
@@ -1120,6 +1553,17 @@ export class Runtime {
               raw,
             );
           }
+          // Synchronous decoding cannot yield to the abort timer. Check the
+          // overall duration again before reporting a successful response.
+          meta.durationMs = performance.now() - start;
+          if (performance.now() >= deadline)
+            throw new SdkError(
+              'deadline',
+              'Response decoding exceeded the overall deadline',
+              'response',
+              false,
+              meta,
+            );
           const result = { data: data as T, meta, raw };
           Object.defineProperty(result, inspect.custom, {
             value: () => ({
