@@ -5,10 +5,13 @@ The generator is a TypeScript CLI/library. There is no daemon, telemetry, hosted
 Start with the [CLI and library reference](cli.md) for invocation, [configuration](configuration.md) for provider inputs, or [using generated SDKs](using-sdks.md) for the consumer API.
 
 1. `src/contract.ts` reads local inputs, resolves references, applies explicit provider overrides, validates the supported subset, selects operations, and produces a language-neutral resolved contract. Source hashes record all referenced files, including the configuration.
-2. `src/generate.ts` creates Node and PHP source/package/documentation artifacts from the same contract. Inputs/responses have separate public representations. Selected operations include required models but not excluded API surfaces.
-3. `src/runtime.ts` is the Node runtime copied into the npm output. `templates/Runtime.php` implements the corresponding PHP semantics. They have no dependency on the installed generator.
-4. `src/fixtures.ts` and `templates/fixtures.php` exercise generated public clients with externally supplied expected HTTP cases. Tests also install packages and call both default transports against a local HTTP server.
-5. A private ownership/provenance record drives previews, conflict detection and regeneration. Generated packages do not include this record or upstream private definitions. The selected operations and schemas are part of the SDK source, so an SDK for a private API must be distributed privately.
+2. `src/target-plan.ts` compiles that input into a versioned SDK contract: public Node/PHP declarations, PHP class routing, operation descriptors, codecs, and compatibility facts. `codec-plan.ts` owns numeric representation, direction, requiredness, and execution instructions; `target-types.ts` owns declaration policies. Selected operations include required models but not excluded API surfaces.
+3. `src/generate.ts` renders those plans into standalone packages. `src/runtime.ts` and `templates/Runtime.php` execute the compiled descriptors using their existing language-specific JSON and transport primitives. Ordinary generated calls do not compile schemas.
+4. Public schema-taking helpers remain available. Node bundles the same pure codec compiler used during generation. PHP's isolated `Internal\SchemaAdapter` translates schemas into the common descriptor format. Both adapters delegate to the descriptor executor; they are not fallback paths for generated operations. No global schema cache or installed generator is required.
+5. `src/fixtures.ts` and `templates/fixtures.php` exercise generated public clients with independently specified expected HTTP cases. Tests also install packages and call both default transports against a local HTTP server. Compiler dependency checks inspect TypeScript imports and PHP tokens, and generated-client tests disable adapters to enforce the execution boundary.
+6. The private generation record stores both resolved source provenance and compiled snapshots. Compatibility compares saved previous decisions with new plans. This record is excluded from SDK archives. Selected descriptors and public dynamic schema definitions are SDK source, so an SDK for a private API must be distributed privately.
+
+Public declarations and runtime guarantees remain separate facts in the compiled contract. A target exposing `unknown` or `mixed` does not discard guarantees enforced by its codec.
 
 ## Regeneration transaction
 
@@ -20,7 +23,7 @@ Deterministic rendering normalizes object-key order, excludes timestamps/absolut
 
 ## Extending the project
 
-For a new schema construct or API capability, add its contract type and validation first. Implement observable semantics in **both** runtimes, update the support matrix, add independently expected HTTP fixtures and negative scenarios, and test published artifacts. A language-specific convenience may vary, but must preserve shared API semantics. A requested feature that is not supported stays a diagnostic failure until both runtimes implement it.
+For a new schema construct or API capability, add its contract type and validation first. Add explicit compiler decisions and implement their execution in **both** runtimes, update the support matrix, add independently expected HTTP fixtures and negative scenarios, and test published artifacts. A language-specific convenience may vary, but must preserve shared API semantics. A requested feature that is not supported stays a diagnostic failure until both runtimes implement it.
 
 Ordinary diagnostics hooks receive operation/attempt/status/request ID/timing only. Transport injection is a separate privileged boundary: it sees URLs, headers and bodies. Keep credentials out of diagnostics and examples. The application owns injected transports and any downstream retry/connection policy.
 
@@ -28,4 +31,4 @@ Provider-owned domain helpers live in generated package `custom/` directories an
 
 Node consumers import helpers using `package-name/custom/helper.js`; matching `.d.ts` files can supply helper types. PHP classes in `custom/` are discovered by Composer's generated classmap during installation or `composer dump-autoload`. The generator owns only the PHP directory marker and never overwrites handwritten helper files. Both package archives include intentional custom files and exclude unrelated neighboring source files.
 
-`src/compatibility.ts` compares schema evolution in the direction of input acceptance and response guarantees. `src/distribution.ts` prepares and deploys an independently hosted Composer repository and versioned documentation. Markdown rendering disables raw HTML; downloadable examples receive a `.txt` suffix so PHP-capable hosting cannot execute them as scripts. Release checksums cover docs and examples as well as archives.
+`src/compatibility.ts` compares compiled input/wire policies. `src/compiled-compatibility.ts` compares saved public declarations, PHP identities, and response guarantees. `value-guarantee.ts` owns bounded returned-value inclusion; unsupported proofs remain review findings. The public schema comparison entry points compile their arguments under current semantics and cannot recover arbitrary historical runtime behavior. `src/distribution.ts` prepares and deploys an independently hosted Composer repository and versioned documentation. Markdown rendering disables raw HTML; downloadable examples receive a `.txt` suffix so PHP-capable hosting cannot execute them as scripts. Release checksums cover docs and examples as well as archives.

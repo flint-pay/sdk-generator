@@ -2,6 +2,8 @@
 
 The generator accepts OpenAPI **3.0/3.1 JSON**, not YAML or arbitrary JSON Schema. Keep upstream API semantics in the API document and SDK design/capabilities in a separate JSON file. Both inputs are local files. Relative local `$ref` files are resolved and hashed; vendor remote references before generation. Recursive object fields, array items and dictionary values resolve through named model definitions; nonproductive alias cycles and `$ref` siblings are rejected. Validation bounds schema traversal at 256 steps and rejects cyclic caller objects before dispatch. Generated recursive graphs share named shapes to avoid repeated expansion.
 
+Generation compiles the resolved definition and configuration into public declarations, codecs and operation settings. The configuration format and defaults are the same for both targets. Credentials and request options remain client inputs.
+
 ```json
 {
   "version": "1.0.0",
@@ -76,9 +78,9 @@ Providers can supply `documentation.overview` as Markdown and `documentation.gui
 
 `include` selects operation IDs. `audiences` selects operations whose declared `audiences` intersect it. `hidden: true` excludes an operation. Selection never confers server authorization. Only models needed by selected operations/events are exported; the private generation record retains the resolved selected contract and source hashes. Unselected unsupported schema components do not prevent a supported slice from generating.
 
-`models` maps component schema names to SDK names. Public request/response types are emitted independently to preserve response extensibility. Node creates `Name`, `NameInput`, and `makeName` model helpers. PHP emits presence-aware `NameInput` classes plus operation input/response classes, PHPDoc shapes and native typed field accessors. Object inputs use `new OperationInput(['field' => null])`; scalar, array and nullable named model constructors accept their corresponding values and expose them with `jsonSerialize()`; omitted keys remain omitted. `has()` and `get()` distinguish a missing key from null. Getters for omitted optional fields throw, rather than inventing a value. TypeScript models field-absence constraints where possible; value-specific `not` constraints retain a broader input type and are enforced at runtime.
+`models` maps component schema names to SDK names. Public request and response types are compiled separately to preserve response extensibility. The same compilation produces the codecs bundled with each package. Node creates `Name`, `NameInput`, and `makeName` model helpers. PHP emits presence-aware `NameInput` classes plus operation input/response classes, PHPDoc shapes and native typed field accessors. Object inputs use `new OperationInput(['field' => null])`; scalar, array and nullable named model constructors accept their corresponding values and expose them with `jsonSerialize()`; omitted keys remain omitted. `has()` and `get()` distinguish a missing key from null. Getters for omitted optional fields throw, rather than inventing a value. TypeScript models field-absence constraints where possible; value-specific `not` constraints retain a broader input type and are enforced at runtime.
 
-Optional TypeScript fields named like inherited `Object` members (for example `toString`) include the inherited signature in their type so callers can omit the own field. Explicit own values still undergo wire-schema validation; functions are never serialized as strings. Required fields retain their declared types. The runtime reads only own request properties.
+Optional TypeScript fields named like inherited `Object` members (for example `toString`) include the inherited signature in their type so callers can omit the own field. Explicit own values still undergo runtime validation; functions are never serialized as strings. Required fields retain their declared types. The runtime reads only own request properties.
 
 `example`, `examples`, `default`, `enum`, and custom extension payloads retain literal JSON data, including fields named `$ref`. Internal `x-sdk-*` extensions are reserved and cannot be supplied in source definitions.
 

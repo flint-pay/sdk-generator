@@ -1,3 +1,6 @@
+import { Diagnostic } from './diagnostic.js';
+import { valueInstruction, exactValue } from './codec-plan.js';
+import { stable } from './canonical.js';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname, relative as relativePath } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -131,24 +134,8 @@ export interface Contract {
   sources: Record<string, string>;
   hash: string;
 }
-export class Diagnostic extends Error {
-  constructor(
-    public location: string,
-    message: string,
-  ) {
-    super(`${location}: ${message}`);
-    this.name = 'Diagnostic';
-  }
-}
-export const stable = (value: unknown): string =>
-  JSON.stringify(
-    value,
-    (_k, v: unknown) =>
-      v && typeof v === 'object' && !Array.isArray(v)
-        ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b, 'en')))
-        : v,
-    2,
-  ) + '\n';
+export { Diagnostic } from './diagnostic.js';
+export { stable } from './canonical.js';
 export const hash = (value: string): string => createHash('sha256').update(value).digest('hex');
 const fail = (p: string, m: string): never => {
   throw new Diagnostic(p, m);
@@ -525,7 +512,9 @@ function checkRepresentations(s: Schema, p: string): void {
     const type = Array.isArray(shape.type) ? shape.type.find((t) => t !== 'null') : shape.type;
     if (type === 'number') return 'exact-number';
     if (type === 'integer')
-      return ['int64', 'uint64'].includes(shape.format ?? '') ? 'exact-number' : 'safe-integer';
+      return exactValue(valueInstruction('integer', shape.format))
+        ? 'exact-number'
+        : 'safe-integer';
     return type === 'string' ? 'string' : undefined;
   };
   const shapes = conjuncts(s);

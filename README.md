@@ -1,6 +1,6 @@
 # Public SDK generator
 
-Generate portable Node.js/TypeScript and PHP SDKs locally from an OpenAPI 3.0/3.1 JSON definition and a separate SDK configuration. The generator is a TypeScript CLI and library. Generated packages have no dependency on the generator or on a hosted service.
+Generate portable Node.js/TypeScript and PHP SDKs locally from an OpenAPI 3.0/3.1 JSON definition and a separate SDK configuration. The generator is a TypeScript CLI and library. It compiles selected operations into public type and runtime codec plans before emitting packages. Generated packages have no dependency on the generator or on a hosted service.
 
 Generator version `0.1.0` supports the [contract subset in the support matrix](docs/support-matrix.md). Generated packages carry their own configured versions. Every command runs from a source checkout and does not require a published generator package.
 
@@ -77,7 +77,7 @@ Generated Node packages support Node.js 22+, ESM JavaScript and TypeScript 5.9+.
 - Typed interfaces and examples in both targets. Exact integer and decimal encoding, a distinction between an omitted field and an explicit null, and responses that keep unknown fields, enum values and tagged alternatives instead of failing on them.
 - Explicit credential destinations, per-request headers, structured errors, request metadata, redacted diagnostics, injectable transports, cancellation, deadlines, and retries and idempotency bounded by what the contract declares.
 - Declared cursor, offset and link pagination, conditional requests, bounded polling, HMAC webhook verification and optional money conversion.
-- Deterministic regeneration that detects hand edits, previews without writing, reports structural compatibility, validates packages, and prepares release archives, reference documentation and migration notes.
+- Deterministic regeneration that detects hand edits, previews without writing, compares public interfaces and runtime guarantees against saved compiled contracts, validates packages, and prepares release archives, reference documentation and migration notes.
 - Provider narrative guides, npm publication, and coordinated deployment of versioned documentation and a Composer repository with artifact checksums and immutable releases.
 - Shared HTTP conformance fixtures, local HTTP transport tests, npm and Composer installation tests, and durable duplicate-event examples.
 

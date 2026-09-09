@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 namespace SdkNamespace;
+require_once __DIR__ . '/SchemaAdapter.php';
 
 final class SdkError extends \RuntimeException
 {
@@ -109,22 +110,26 @@ final class ClientOptions
 class Model implements \JsonSerializable
 {
     protected readonly mixed $values;
+    private readonly array $codec;
+    protected readonly array $schema;
+    protected readonly array $redactFields;
     public function __construct(
         mixed $values,
-        protected readonly array $schema,
+        array $schema,
         bool $response = false,
-        protected readonly array $redactFields = [],
+        array $redactFields = [],
+        ?array $compiled = null,
     ) {
-        $types = is_array($schema['type'] ?? null) ? $schema['type'] : [$schema['type'] ?? null];
-        if (
-            is_array($values) &&
-            (in_array('object', $types, true) ||
-                (!isset($schema['type']) &&
-                    (isset($schema['properties']) || isset($schema['required']))))
-        ) {
+        $this->schema = $schema;
+        $codec = $compiled ?? \SdkNamespace\Internal\SchemaAdapter::compile($schema);
+        $this->codec = $codec;
+        $this->redactFields = $redactFields;
+        if (is_array($values) && $codec['modelObjectInput']) {
             $values = (object) $values;
         }
-        $normalized = Codec::normalize($values, $schema, response: $response);
+        $normalized = Codec::execute($values, $codec, [
+            'mode' => $response ? 'response' : 'request',
+        ]);
         // Store public values: unwrap nested models and exact wire-number wrappers,
         // while retaining the normalized distinction between objects and lists.
         $unwrap = function (mixed $value, int $depth = 0) use (&$unwrap): mixed {
@@ -191,7 +196,7 @@ class Model implements \JsonSerializable
     }
     public function __debugInfo(): array
     {
-        $redacted = Codec::redact($this->values, $this->schema, $this->redactFields);
+        $redacted = Codec::redactPlan($this->values, $this->codec, $this->redactFields);
         return is_array($redacted) || is_object($redacted)
             ? (array) $redacted
             : ['value' => $redacted];
@@ -207,6 +212,124 @@ final class ParsedNumber
 }
 final class Codec
 {
+    private const ANY_CODEC = [
+        'value' => ['kind' => 'dynamic'],
+        'nullable' => true,
+        'modelObjectInput' => false,
+        'requiredInput' => [],
+        'requiredOutput' => [],
+        'rejectInput' => false,
+        'hiddenOutput' => false,
+        'sensitive' => false,
+        'checks' => [],
+    ];
+    public static function assertPlan(mixed $value, string $path = 'codec', int $depth = 0): void
+    {
+        $invalid = static fn($reason) => throw new \InvalidArgumentException(
+            "$path: invalid compiled codec ($reason)",
+        );
+        if ($depth > 256 || !is_array($value)) {
+            $invalid('shape or nesting limit');
+        }
+        if (!is_array($value['value'] ?? null)) {
+            $invalid('missing value instruction');
+        }
+        if (
+            ($value['value']['kind'] ?? null) === 'opaque' &&
+            !is_string($value['value']['label'] ?? null)
+        ) {
+            $invalid('missing opaque label');
+        }
+        self::wireKind($value['value']);
+        foreach (
+            ['nullable', 'modelObjectInput', 'rejectInput', 'hiddenOutput', 'sensitive']
+            as $key
+        ) {
+            if (!is_bool($value[$key] ?? null)) {
+                $invalid('missing boolean ' . $key);
+            }
+        }
+        foreach (['requiredInput', 'requiredOutput'] as $key) {
+            if (!is_array($value[$key] ?? null)) {
+                $invalid('invalid required keys');
+            }
+            foreach ($value[$key] as $name) {
+                if (!is_string($name)) {
+                    $invalid('invalid required key');
+                }
+            }
+        }
+        if (!is_array($value['checks'] ?? null)) {
+            $invalid('missing checks');
+        }
+        foreach ($value['checks'] as $key => $item) {
+            if (
+                $key === 'pattern'
+                    ? !is_string($item)
+                    : !in_array(
+                            $key,
+                            [
+                                'minimum',
+                                'maximum',
+                                'exclusiveMinimum',
+                                'exclusiveMaximum',
+                                'minLength',
+                                'maxLength',
+                                'minItems',
+                                'maxItems',
+                            ],
+                            true,
+                        ) ||
+                        (!is_int($item) && !is_float($item)) ||
+                        !is_finite((float) $item)
+            ) {
+                $invalid('invalid constraint');
+            }
+        }
+        foreach (['reference', 'tag', 'phpPattern'] as $key) {
+            if (isset($value[$key]) && !is_string($value[$key])) {
+                $invalid('invalid ' . $key);
+            }
+        }
+        if (isset($value['constraints']) && !is_bool($value['constraints'])) {
+            $invalid('invalid policy');
+        }
+        if (isset($value['objectOnlyAlternative']) && !is_bool($value['objectOnlyAlternative'])) {
+            $invalid('invalid alternative policy');
+        }
+        if (isset($value['range'])) {
+            if (!is_array($value['range']) || count($value['range']) !== 2) {
+                $invalid('invalid range');
+            }
+            foreach ($value['range'] as $bound) {
+                if (!is_string($bound) || !preg_match('/^-?\d+$/', $bound)) {
+                    $invalid('invalid range bound');
+                }
+            }
+        }
+        if (isset($value['members']) && !is_array($value['members'])) {
+            $invalid('invalid members');
+        }
+        foreach (['fields', 'definitions', 'every', 'some', 'exactlyOne'] as $key) {
+            if (!isset($value[$key])) {
+                continue;
+            }
+            if (!is_array($value[$key])) {
+                $invalid('invalid ' . $key);
+            }
+            foreach ($value[$key] as $name => $child) {
+                self::assertPlan($child, "$path.$key.$name", $depth + 1);
+            }
+        }
+        foreach (['element', 'exclude'] as $key) {
+            if (isset($value[$key])) {
+                self::assertPlan($value[$key], "$path.$key", $depth + 1);
+            }
+        }
+        if (isset($value['extra']) && !is_bool($value['extra'])) {
+            self::assertPlan($value['extra'], "$path.extra", $depth + 1);
+        }
+    }
     public static function fail(string $path, string $reason): never
     {
         throw new SdkError('validation', "$path: $reason");
@@ -406,13 +529,7 @@ final class Codec
         string $path,
         bool $full = true,
     ): void {
-        $ranges = [
-            'int32' => ['-2147483648', '2147483647'],
-            'uint32' => ['0', '4294967295'],
-            'int64' => ['-9223372036854775808', '9223372036854775807'],
-            'uint64' => ['0', '18446744073709551615'],
-        ];
-        $range = $ranges[$s['format'] ?? ''] ?? null;
+        $range = $s['range'] ?? null;
         if (
             $range &&
             (self::compareDecimal($token, $range[0]) < 0 ||
@@ -424,10 +541,13 @@ final class Codec
             return;
         }
         foreach (['minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum'] as $keyword) {
-            if (!isset($s[$keyword])) {
+            if (!isset($s['checks'][$keyword])) {
                 continue;
             }
-            $order = self::compareDecimal($token, json_encode($s[$keyword], JSON_THROW_ON_ERROR));
+            $order = self::compareDecimal(
+                $token,
+                json_encode($s['checks'][$keyword], JSON_THROW_ON_ERROR),
+            );
             if (
                 ($keyword === 'minimum' && $order < 0) ||
                 ($keyword === 'maximum' && $order > 0) ||
@@ -449,22 +569,80 @@ final class Codec
         bool $validateConstraints = true,
         bool $allowUnknownResponseFields = false,
     ): mixed {
+        if ($definitions && !isset($s['x-sdk-definitions'])) {
+            $s['x-sdk-definitions'] = $definitions;
+        }
+        return self::executeNode(
+            $value,
+            \SdkNamespace\Internal\SchemaAdapter::compile($s),
+            $path,
+            $response,
+            $matching,
+            [],
+            $depth,
+            $validateConstraints,
+            $allowUnknownResponseFields,
+        );
+    }
+    public static function execute(mixed $value, array $plan, array $context = []): mixed
+    {
+        $mode = $context['mode'] ?? 'request';
+        if (!in_array($mode, ['request', 'response', 'match'], true)) {
+            throw new \InvalidArgumentException('Unknown codec execution mode');
+        }
+        return self::executeNode(
+            $value,
+            $plan,
+            $context['path'] ?? 'input',
+            ($context['direction'] ?? $mode) === 'response',
+            $mode === 'match',
+            $context['definitions'] ?? [],
+            $context['depth'] ?? 0,
+            $context['validateConstraints'] ?? true,
+            $context['allowUnknownResponseFields'] ?? false,
+        );
+    }
+    public static function wireKind(array $instruction): ?string
+    {
+        return match ($instruction['kind'] ?? null) {
+            'dynamic' => null,
+            'null-array' => 'null',
+            'null', 'boolean', 'string', 'object', 'array' => $instruction['kind'],
+            'safe-integer', 'exact-integer' => 'integer',
+            'decimal' => 'number',
+            'opaque' => $instruction['label'],
+            default => throw new \InvalidArgumentException('Unknown codec instruction'),
+        };
+    }
+    private static function exactValue(array $instruction): bool
+    {
+        return in_array($instruction['kind'], ['exact-integer', 'decimal'], true);
+    }
+    private static function executeNode(
+        mixed $value,
+        array $s,
+        string $path = 'input',
+        bool $response = false,
+        bool $matching = false,
+        array $definitions = [],
+        int $depth = 0,
+        bool $validateConstraints = true,
+        bool $allowUnknownResponseFields = false,
+    ): mixed {
         if ($depth > 256) {
             self::fail(
                 $path,
                 'value exceeds the supported nesting depth (256) or contains a cycle',
             );
         }
-        $validateConstraints = isset($s['x-sdk-validation'])
-            ? $s['x-sdk-validation'] === 'schema'
-            : $validateConstraints;
-        $definitions = $s['x-sdk-definitions'] ?? $definitions;
-        if (isset($s['x-sdk-ref'])) {
-            $target = $definitions[$s['x-sdk-ref']] ?? null;
+        $validateConstraints = isset($s['constraints']) ? $s['constraints'] : $validateConstraints;
+        $definitions = $s['definitions'] ?? $definitions;
+        if (isset($s['reference'])) {
+            $target = $definitions[$s['reference']] ?? null;
             if ($target === null) {
-                self::fail($path, 'unresolved recursive model ' . $s['x-sdk-ref']);
+                self::fail($path, 'unresolved recursive model ' . $s['reference']);
             }
-            return self::normalize(
+            return self::executeNode(
                 $value,
                 $target,
                 $path,
@@ -479,40 +657,18 @@ final class Codec
         if ($value instanceof Model) {
             $value = $value->jsonSerialize();
         }
-        $omitted = [];
-        $collect = function ($schema) use (&$collect, &$omitted, $response) {
-            foreach ($schema['properties'] ?? [] as $key => $child) {
-                if ($response ? $child['writeOnly'] ?? false : $child['readOnly'] ?? false) {
-                    $omitted[$key] = true;
-                }
-            }
-            foreach ($schema['allOf'] ?? [] as $branch) {
-                $collect($branch);
-            }
-        };
-        $collect($s);
-        if ($omitted) {
-            $project = function ($schema) use (&$project, $omitted) {
-                if (isset($schema['required'])) {
-                    $schema['required'] = array_values(
-                        array_filter($schema['required'], fn($key) => !isset($omitted[$key])),
-                    );
-                }
-                foreach (['allOf', 'anyOf', 'oneOf'] as $keyword) {
-                    if (isset($schema[$keyword])) {
-                        $schema[$keyword] = array_map($project, $schema[$keyword]);
-                    }
-                }
-                return $schema;
-            };
-            $s = $project($s);
-        }
-        if (isset($s['allOf']) || isset($s['anyOf']) || isset($s['oneOf']) || isset($s['not'])) {
+        self::wireKind($s['value']);
+        if (
+            isset($s['every']) ||
+            isset($s['some']) ||
+            isset($s['exactlyOne']) ||
+            isset($s['exclude'])
+        ) {
             $base = array_diff_key(
                 $s,
-                array_flip(['allOf', 'anyOf', 'oneOf', 'not', 'discriminator']),
+                array_flip(['every', 'some', 'exactlyOne', 'exclude', 'tag']),
             );
-            $result = self::normalize(
+            $result = self::executeNode(
                 $value,
                 $base,
                 $path,
@@ -532,7 +688,7 @@ final class Codec
                 $validateConstraints,
             ) {
                 try {
-                    self::normalize(
+                    self::executeNode(
                         $value,
                         $branch,
                         $path,
@@ -551,13 +707,13 @@ final class Codec
                     throw $e;
                 }
             };
-            if (isset($s['not']) && $matches($s['not'], false)) {
+            if (isset($s['exclude']) && $matches($s['exclude'], false)) {
                 self::fail($path, 'value matches a forbidden combination');
             }
-            foreach ($s['allOf'] ?? [] as $branch) {
+            foreach ($s['every'] ?? [] as $branch) {
                 $result = self::combine(
                     $result,
-                    self::normalize(
+                    self::executeNode(
                         $value,
                         $branch,
                         $path,
@@ -571,13 +727,13 @@ final class Codec
                     $path,
                 );
             }
-            foreach (['oneOf', 'anyOf'] as $keyword) {
+            foreach (['exactlyOne', 'some'] as $keyword) {
                 if (!isset($s[$keyword])) {
                     continue;
                 }
                 $tolerateUnknownFields = $allowUnknownResponseFields;
-                if ($keyword === 'oneOf' && isset($s['discriminator'])) {
-                    $tag = $s['discriminator']['propertyName'];
+                if ($keyword === 'exactlyOne' && isset($s['tag'])) {
+                    $tag = $s['tag'];
                     $data = (array) $value;
                     if (
                         (!is_object($value) && !is_array($value)) ||
@@ -590,16 +746,16 @@ final class Codec
                         $s[$keyword],
                         fn($branch) => in_array(
                             $data[$tag],
-                            $branch['properties'][$tag]['enum'] ?? [],
+                            $branch['fields'][$tag]['members'] ?? [],
                             true,
                         ),
                     );
                 } else {
                     $selected = array_filter($s[$keyword], fn($branch) => $matches($branch, false));
-                    // Prefer exact closed oneOf alternatives, then a unique
-                    // compatible branch. anyOf retains every compatible branch.
+                    // Prefer exact closed exactlyOne alternatives, then a unique
+                    // compatible branch. some retains every compatible branch.
                     if (
-                        ($keyword === 'anyOf' || !$selected) &&
+                        ($keyword === 'some' || !$selected) &&
                         $response &&
                         (!$matching || $allowUnknownResponseFields)
                     ) {
@@ -607,7 +763,7 @@ final class Codec
                             $s[$keyword],
                             fn($branch) => $matches($branch, true),
                         );
-                        if ($keyword === 'anyOf' || count($compatible) === 1) {
+                        if ($keyword === 'some' || count($compatible) === 1) {
                             $selected = $compatible;
                             $tolerateUnknownFields = true;
                         }
@@ -618,7 +774,7 @@ final class Codec
                         count(
                             array_filter(
                                 $s[$keyword],
-                                fn($branch) => ($branch['type'] ?? null) === 'object',
+                                fn($branch) => $branch['objectOnlyAlternative'] ?? false,
                             ),
                         ) === count($s[$keyword]) &&
                         !is_object($value)
@@ -627,10 +783,10 @@ final class Codec
                     }
                     continue;
                 }
-                if (!$selected || ($keyword === 'oneOf' && count($selected) !== 1)) {
+                if (!$selected || ($keyword === 'exactlyOne' && count($selected) !== 1)) {
                     self::fail(
                         $path,
-                        $keyword === 'oneOf'
+                        $keyword === 'exactlyOne'
                             ? 'value must match exactly one alternative'
                             : 'value must match at least one alternative',
                     );
@@ -638,7 +794,7 @@ final class Codec
                 foreach ($selected as $branch) {
                     $result = self::combine(
                         $result,
-                        self::normalize(
+                        self::executeNode(
                             $value,
                             $branch,
                             $path,
@@ -655,19 +811,16 @@ final class Codec
             }
             return $result;
         }
-        $types = (array) ($s['type'] ?? []);
-        $type =
-            array_values(array_filter($types, fn($t) => $t !== 'null'))[0] ??
-            (isset($s['type']) ? 'null' : null);
+        $type = self::wireKind($s['value']);
         if ($value === null) {
             if (
                 (!$response || $matching) &&
-                isset($s['enum']) &&
-                !in_array(null, $s['enum'], true)
+                isset($s['members']) &&
+                !in_array(null, $s['members'], true)
             ) {
                 self::fail($path, 'null is outside the declared enum');
             }
-            if (!isset($s['type']) || in_array('null', $types, true)) {
+            if ($s['nullable']) {
                 return null;
             }
             self::fail($path, 'null is not permitted');
@@ -676,9 +829,9 @@ final class Codec
             if ($type === null) {
                 if (
                     $matching &&
-                    isset($s['enum']) &&
+                    isset($s['members']) &&
                     !array_filter(
-                        $s['enum'],
+                        $s['members'],
                         fn($v) => is_int($v) &&
                             self::compareDecimal($value->value, (string) $v) === 0,
                     )
@@ -692,21 +845,17 @@ final class Codec
             }
             if ($type === 'integer') {
                 $token = self::integerToken($value->value, $path);
-                $value = in_array($s['format'] ?? '', ['int64', 'uint64'], true)
-                    ? $token
-                    : (int) $token;
+                $value = self::exactValue($s['value']) ? $token : (int) $token;
             } elseif ($type === 'number') {
                 $value = $value->value;
             } else {
                 self::fail($path, "expected $type; received a JSON number");
             }
         }
-        $exactEnum =
-            $type === 'number' ||
-            ($type === 'integer' && in_array($s['format'] ?? '', ['int64', 'uint64'], true));
+        $exactEnum = self::exactValue($s['value']);
         if (
             (!$response || $matching) &&
-            isset($s['enum']) &&
+            isset($s['members']) &&
             !($exactEnum
                 ? (is_string($value) || is_int($value)) &&
                     preg_match(
@@ -714,16 +863,16 @@ final class Codec
                         (string) $value,
                     ) &&
                     array_filter(
-                        $s['enum'],
+                        $s['members'],
                         fn($member) => is_int($member) &&
                             self::compareDecimal((string) $value, (string) $member) === 0,
                     )
-                : in_array($value, $s['enum'], true))
+                : in_array($value, $s['members'], true))
         ) {
             self::fail($path, 'value is outside the declared enum');
         }
         if ($type === 'integer' || $type === 'number') {
-            if ($type === 'number' || in_array($s['format'] ?? '', ['int64', 'uint64'], true)) {
+            if (self::exactValue($s['value'])) {
                 $token = is_int($value) ? (string) $value : $value;
                 $pattern =
                     $type === 'integer'
@@ -758,8 +907,7 @@ final class Codec
             ($type === null &&
                 (is_object($value) ||
                     (is_array($value) &&
-                        (!array_is_list($value) ||
-                            (!$value && (isset($s['required']) || isset($s['properties'])))))))
+                        (!array_is_list($value) || (!$value && $s['modelObjectInput'])))))
         ) {
             if (
                 !is_object($value) &&
@@ -770,27 +918,20 @@ final class Codec
                 self::fail($path, 'expected an object');
             }
             $data = (array) $value;
-            foreach ($s['required'] ?? [] as $key) {
-                if (
-                    $response
-                        ? $s['properties'][$key]['writeOnly'] ?? false
-                        : $s['properties'][$key]['readOnly'] ?? false
-                ) {
-                    continue;
-                }
+            foreach ($response ? $s['requiredOutput'] : $s['requiredInput'] as $key) {
                 if (!array_key_exists($key, $data)) {
                     self::fail("$path.$key", 'required field is missing');
                 }
             }
             $out = new \stdClass();
             foreach ($data as $key => $v) {
-                if (isset($s['properties'][$key])) {
-                    if (!$response && ($s['properties'][$key]['readOnly'] ?? false)) {
+                if (isset($s['fields'][$key])) {
+                    if (!$response && ($s['fields'][$key]['rejectInput'] ?? false)) {
                         self::fail("$path.$key", 'readOnly fields cannot be sent');
                     }
-                    $out->{$key} = self::normalize(
+                    $out->{$key} = self::executeNode(
                         $v,
-                        $s['properties'][$key],
+                        $s['fields'][$key],
                         "$path.$key",
                         $response,
                         $matching,
@@ -801,13 +942,13 @@ final class Codec
                     );
                 } elseif (
                     (!$response || ($matching && !$allowUnknownResponseFields)) &&
-                    ($s['additionalProperties'] ?? true) === false
+                    ($s['extra'] ?? true) === false
                 ) {
                     self::fail("$path.$key", 'unknown request field');
-                } elseif (is_array($s['additionalProperties'] ?? null)) {
-                    $out->{$key} = self::normalize(
+                } elseif (is_array($s['extra'] ?? null)) {
+                    $out->{$key} = self::executeNode(
                         $v,
-                        $s['additionalProperties'],
+                        $s['extra'],
                         "$path.$key",
                         $response,
                         $matching,
@@ -827,17 +968,17 @@ final class Codec
                 self::fail($path, 'expected an array');
             }
             if ((!$response || $matching) && ($validateConstraints || $matching)) {
-                if (isset($s['minItems']) && count($value) < $s['minItems']) {
+                if (isset($s['checks']['minItems']) && count($value) < $s['checks']['minItems']) {
                     self::fail($path, 'array violates minItems');
                 }
-                if (isset($s['maxItems']) && count($value) > $s['maxItems']) {
+                if (isset($s['checks']['maxItems']) && count($value) > $s['checks']['maxItems']) {
                     self::fail($path, 'array violates maxItems');
                 }
             }
             return array_map(
-                fn($v) => self::normalize(
+                fn($v) => self::executeNode(
                     $v,
-                    $s['items'] ?? [],
+                    $s['element'] ?? self::ANY_CODEC,
                     "{$path}[]",
                     $response,
                     $matching,
@@ -858,16 +999,14 @@ final class Codec
                 self::fail($path, 'expected well-formed Unicode');
             }
             if ($validateConstraints || $matching) {
-                if (isset($s['minLength']) && $length < $s['minLength']) {
+                if (isset($s['checks']['minLength']) && $length < $s['checks']['minLength']) {
                     self::fail($path, 'string violates minLength');
                 }
-                if (isset($s['maxLength']) && $length > $s['maxLength']) {
+                if (isset($s['checks']['maxLength']) && $length > $s['checks']['maxLength']) {
                     self::fail($path, 'string violates maxLength');
                 }
-                if (isset($s['pattern'])) {
-                    $pattern =
-                        $s['x-sdk-pattern-php'] ??
-                        '~' . str_replace('~', '\\~', $s['pattern']) . '~uD';
+                if (isset($s['checks']['pattern'])) {
+                    $pattern = $s['phpPattern'];
                     if (preg_match($pattern, $value) !== 1) {
                         self::fail($path, 'string violates pattern');
                     }
@@ -926,18 +1065,36 @@ final class Codec
         array $definitions = [],
         int $depth = 0,
     ): mixed {
+        if ($definitions && !isset($schema['x-sdk-definitions'])) {
+            $schema['x-sdk-definitions'] = $definitions;
+        }
+        return self::redactPlan(
+            $value,
+            \SdkNamespace\Internal\SchemaAdapter::compile($schema),
+            $fields,
+            [],
+            $depth,
+        );
+    }
+    public static function redactPlan(
+        mixed $value,
+        array $schema = [],
+        array $fields = [],
+        array $definitions = [],
+        int $depth = 0,
+    ): mixed {
         if ($depth > 256) {
             return '[Nesting limit]';
         }
-        $definitions = $schema['x-sdk-definitions'] ?? $definitions;
+        $definitions = $schema['definitions'] ?? $definitions;
         $shapes = function ($s) use (&$shapes, $definitions) {
-            if (isset($s['x-sdk-ref'])) {
-                return isset($definitions[$s['x-sdk-ref']])
-                    ? $shapes($definitions[$s['x-sdk-ref']])
+            if (isset($s['reference'])) {
+                return isset($definitions[$s['reference']])
+                    ? $shapes($definitions[$s['reference']])
                     : [];
             }
             $out = [$s];
-            foreach (['allOf', 'oneOf', 'anyOf'] as $key) {
+            foreach (['every', 'exactlyOne', 'some'] as $key) {
                 foreach ($s[$key] ?? [] as $branch) {
                     $out = array_merge($out, $shapes($branch));
                 }
@@ -946,19 +1103,25 @@ final class Codec
         };
         $schemas = $shapes($schema);
         foreach ($schemas as $shape) {
-            if (($shape['x-sensitive'] ?? false) || ($shape['writeOnly'] ?? false)) {
+            if ($shape['sensitive'] ?? false) {
                 return '[REDACTED]';
             }
         }
         if (is_array($value) && array_is_list($value)) {
             $items = array_values(
                 array_filter(
-                    array_map(fn($s) => $s['items'] ?? null, $schemas),
+                    array_map(fn($s) => $s['element'] ?? null, $schemas),
                     fn($s) => $s !== null,
                 ),
             );
             return array_map(
-                fn($v) => self::redact($v, ['allOf' => $items], $fields, $definitions, $depth + 1),
+                fn($v) => self::redactPlan(
+                    $v,
+                    ['every' => $items],
+                    $fields,
+                    $definitions,
+                    $depth + 1,
+                ),
                 $value,
             );
         }
@@ -969,15 +1132,15 @@ final class Codec
                     in_array((string) $k, $fields, true) ||
                     preg_match('/authorization|token|secret|password|api.?key/i', (string) $k)
                         ? '[REDACTED]'
-                        : self::redact(
+                        : self::redactPlan(
                             $v,
                             [
-                                'allOf' => array_values(
+                                'every' => array_values(
                                     array_filter(
                                         array_map(
-                                            fn($s) => $s['properties'][$k] ??
-                                                (is_array($s['additionalProperties'] ?? null)
-                                                    ? $s['additionalProperties']
+                                            fn($s) => $s['fields'][$k] ??
+                                                (is_array($s['extra'] ?? null)
+                                                    ? $s['extra']
                                                     : null),
                                             $schemas,
                                         ),
@@ -1000,48 +1163,74 @@ class Runtime
     private array $allowed;
     protected readonly array $contract;
     private mixed $curl = null;
-    public function __construct(array $contract, private readonly ClientOptions $options)
-    {
+    public function __construct(
+        array $contract,
+        private readonly ClientOptions $options,
+        bool $compiled = false,
+    ) {
         if (
             parse_url($options->baseUrl, PHP_URL_QUERY) !== null ||
             preg_match('/[\\\\\r\n]/', $options->baseUrl)
         ) {
             Codec::fail('baseUrl', 'base URL must not contain a query or backslash');
         }
-        $attach = fn($schema) => $schema + [
-                'x-sdk-validation' => $contract['validation'] ?? 'schema',
-            ] +
-            (isset($contract['definitions'])
-                ? ['x-sdk-definitions' => $contract['definitions']]
-                : []);
-        foreach ($contract['operations'] as &$operation) {
-            foreach ($operation['parameters'] as &$parameter) {
-                $parameter['schema'] = $attach($parameter['schema']);
+        $this->contract = $compiled
+            ? $contract
+            : \SdkNamespace\Internal\SchemaAdapter::runtimePlan($contract);
+        if (
+            ($this->contract['format'] ?? null) !== 1 ||
+            !is_string($this->contract['semantics'] ?? null)
+        ) {
+            throw new \InvalidArgumentException('Unsupported compiled runtime format');
+        }
+        if (!is_array($this->contract['operations'] ?? null)) {
+            throw new \InvalidArgumentException('Missing compiled operations');
+        }
+        foreach ($this->contract['operations'] as $op) {
+            if (
+                !is_array($op) ||
+                !is_string($op['id'] ?? null) ||
+                !is_string($op['path'] ?? null) ||
+                !is_string($op['verb'] ?? null) ||
+                !is_array($op['parameters'] ?? null) ||
+                !is_array($op['responses'] ?? null)
+            ) {
+                throw new \InvalidArgumentException('Invalid compiled operation');
             }
-            unset($parameter);
-            if (isset($operation['body'])) {
-                $operation['body'] = $attach($operation['body']);
+            foreach ($op['parameters'] as $parameter) {
+                Codec::assertPlan($parameter['codec'], $op['id'] . '.parameter');
             }
-            foreach ($operation['responses'] as &$response) {
+            if (isset($op['body'])) {
+                Codec::assertPlan($op['body'], $op['id'] . '.body');
+            }
+            foreach ($op['responses'] as $status => $response) {
                 if (isset($response['schema'])) {
-                    $response['schema'] = $attach($response['schema']);
+                    throw new \InvalidArgumentException('Raw schema in compiled response');
+                }
+                if (isset($response['codec'])) {
+                    Codec::assertPlan($response['codec'], $op['id'] . '.response.' . $status);
                 }
             }
-            unset($response);
         }
-        unset($operation);
-        if (isset($contract['webhook'])) {
-            foreach ($contract['webhook']['events'] as &$event) {
-                $event = $attach($event);
-            }
+        foreach ($this->contract['definitions'] ?? [] as $name => $codec) {
+            Codec::assertPlan($codec, 'definitions.' . $name);
         }
-        unset($event);
-        $this->contract = $contract;
+        foreach ($this->contract['webhook']['events'] ?? [] as $name => $codec) {
+            Codec::assertPlan($codec, 'events.' . $name);
+        }
         $this->allowed = $options->allowedOrigins ?? [self::origin($options->baseUrl)];
         $this->checkUrl($options->baseUrl);
         if ($options->timeoutMs <= 0 || $options->deadlineMs <= 0) {
             Codec::fail('options', 'timeouts must be positive');
         }
+    }
+    private function decode(mixed $value, array $codec, array $context = []): mixed
+    {
+        return Codec::execute(
+            $value,
+            $codec,
+            $context + ['definitions' => $this->contract['definitions'] ?? []],
+        );
     }
     private static function now(): int
     {
@@ -1169,7 +1358,7 @@ class Runtime
                 }
                 continue;
             }
-            $v = Codec::normalize($input[$p['name']], $p['schema'], $p['name']);
+            $v = $this->decode($input[$p['name']], $p['codec'], ['path' => $p['name']]);
             $scalar = fn($v) => $v instanceof RawNumber
                 ? $v->value
                 : (is_bool($v)
@@ -1283,7 +1472,7 @@ class Runtime
             if (!isset($op['body'])) {
                 Codec::fail('body', 'operation does not accept a body');
             }
-            $body = Codec::encode(Codec::normalize($input['body'], $op['body']));
+            $body = Codec::encode($this->decode($input['body'], $op['body']));
             $set('content-type', $op['mediaType']);
         } elseif ($op['bodyRequired']) {
             Codec::fail('body', 'required body is missing');
@@ -1382,12 +1571,15 @@ class Runtime
                         );
                     }
                     try {
-                        if (isset($declared['schema'])) {
+                        if (isset($declared['codec'])) {
                             if ($raw === '') {
                                 throw new \RuntimeException('Missing body');
                             }
                             $data = Codec::plainNumbers(
-                                Codec::normalize($data, $declared['schema'], 'response', true),
+                                $this->decode($data, $declared['codec'], [
+                                    'mode' => 'response',
+                                    'path' => 'response',
+                                ]),
                             );
                         } elseif ($raw !== '') {
                             throw new \RuntimeException('Unexpected body for an empty response');
@@ -1405,7 +1597,7 @@ class Runtime
                     }
                     $model = $declared['model'] ?? null;
                     if (isset($declared['variants']) && is_object($data)) {
-                        $tag = $declared['schema']['discriminator']['propertyName'];
+                        $tag = $declared['codec']['tag'];
                         $model = $declared['variants'][$data->{$tag} ?? ''] ?? null;
                     }
                     if ($model !== null && is_object($data)) {
@@ -1422,11 +1614,12 @@ class Runtime
                     default => 'api',
                 };
                 $code = self::field($data, $this->contract['errors']['codePath'] ?? 'code');
-                $details = Codec::redact(
+                $details = Codec::redactPlan(
                     $data,
-                    $op['responses'][(string) $status]['schema'] ??
-                        ($op['responses']['default']['schema'] ?? []),
+                    $op['responses'][(string) $status]['codec'] ??
+                        ($op['responses']['default']['codec'] ?? []),
                     $this->options->redactFields,
+                    $this->contract['definitions'] ?? [],
                 );
                 if (isset($this->contract['errors']['detailsPath'])) {
                     $details = self::field($details, $this->contract['errors']['detailsPath']);
@@ -1839,7 +2032,7 @@ class Runtime
         $eventType = self::field($event, $w['typeField']);
         $schema = is_string($eventType) ? $w['events'][$eventType] ?? null : null;
         if ($schema) {
-            $event = Codec::normalize($event, $schema, 'event', true);
+            $event = $this->decode($event, $schema, ['mode' => 'response', 'path' => 'event']);
         }
         $event = Codec::plainNumbers($event);
         if (is_string($eventType) && isset($w['eventModels'][$eventType]) && is_object($event)) {

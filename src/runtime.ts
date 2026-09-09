@@ -1,7 +1,16 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { inspect } from 'node:util';
-import type { Operation, Schema, Auth, Webhook, Config } from './contract.js';
+import type { Schema } from './contract.js';
+import {
+  compileRuntimePlan,
+  assertRuntimePlan,
+  type RuntimeContract,
+  type CompiledRuntimePlan,
+} from './runtime-plan.js';
+export type { RuntimeContract } from './runtime-plan.js';
 export type { Operation, Schema } from './contract.js';
+import { compileCodec, ANY_CODEC, exactValue, wireKind, type CodecPlan } from './codec-plan.js';
+export { directionalSchema } from './codec-plan.js';
 
 export type ErrorKind =
   | 'transport'
@@ -84,17 +93,6 @@ export interface ClientOptions {
   transport?: typeof fetch;
   diagnostics?: (event: DiagnosticEvent) => void;
   redactFields?: string[];
-}
-export interface RuntimeContract {
-  userAgent?: string;
-  validation?: Config['validation'];
-  operations: Operation[];
-  definitions?: Record<string, Schema>;
-  auth?: Auth;
-  apiVersion?: { header: string; value: string };
-  webhook?: Webhook;
-  money?: { currencies: Record<string, number> };
-  errors?: Config['errors'];
 }
 const bad = (path: string, reason: string): never => {
   throw new SdkError('validation', `${path}: ${reason}`);
@@ -252,25 +250,6 @@ function combine(left: any, right: any, path: string): any {
   if (typeof right === 'number' && typeof left === 'string' && String(right) === left) return left;
   return bad(path, 'alternatives have incompatible representations');
 }
-/** Requiredness on composed object schemas follows request/response field direction. */
-export function directionalSchema(schema: Schema, response: boolean): Schema {
-  const omitted = new Set<string>();
-  const collect = (s: Schema) => {
-    for (const [key, child] of Object.entries(s.properties ?? {}))
-      if (response ? child.writeOnly : child.readOnly) omitted.add(key);
-    for (const branch of s.allOf ?? []) collect(branch);
-  };
-  collect(schema);
-  if (!omitted.size) return schema;
-  const project = (s: Schema): Schema => ({
-    ...s,
-    ...(s.required ? { required: s.required.filter((key) => !omitted.has(key)) } : {}),
-    ...(s.allOf ? { allOf: s.allOf.map(project) } : {}),
-    ...(s.anyOf ? { anyOf: s.anyOf.map(project) } : {}),
-    ...(s.oneOf ? { oneOf: s.oneOf.map(project) } : {}),
-  });
-  return project(schema);
-}
 // Compare finite decimal tokens without floating-point conversion or expanding
 // exponents. Bounds originate in the contract; even enormous caller exponents
 // can be ordered against them with bounded memory.
@@ -294,20 +273,14 @@ function compareDecimal(left: string, right: string): number {
     y = b.digits.padEnd(size, '0');
   return a.sign * (x < y ? -1 : x > y ? 1 : 0);
 }
-function numericConstraints(token: string, s: Schema, path: string, full = true) {
-  const ranges: Record<string, [string, string]> = {
-    int32: ['-2147483648', '2147483647'],
-    uint32: ['0', '4294967295'],
-    int64: ['-9223372036854775808', '9223372036854775807'],
-    uint64: ['0', '18446744073709551615'],
-  };
-  const range = ranges[s.format ?? ''];
+function numericConstraints(token: string, s: CodecPlan, path: string, full = true) {
+  const range = s.range;
   if (range && (compareDecimal(token, range[0]) < 0 || compareDecimal(token, range[1]) > 0))
     bad(path, 'value is outside the declared integer format range');
   if (!full) return;
   for (const keyword of ['minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum'] as const) {
-    if (s[keyword] === undefined) continue;
-    const order = compareDecimal(token, String(s[keyword]));
+    if (s.checks[keyword] === undefined) continue;
+    const order = compareDecimal(token, String(s.checks[keyword]));
     if (
       (keyword === 'minimum' && order < 0) ||
       (keyword === 'maximum' && order > 0) ||
@@ -329,58 +302,99 @@ export function normalize(
   validateConstraints = true,
   allowUnknownResponseFields = false,
 ): any {
+  return executeCodec(value, compileCodec(schemaWithDefinitions(s, definitions)), {
+    ...codecMode(response, matching),
+    path,
+    redactFields,
+    depth,
+    validateConstraints,
+    allowUnknownResponseFields,
+  });
+}
+
+function schemaWithDefinitions(schema: Schema, definitions: Record<string, Schema>): Schema {
+  return Object.keys(definitions).length && !schema['x-sdk-definitions']
+    ? { ...schema, 'x-sdk-definitions': definitions }
+    : schema;
+}
+
+type CodecMode =
+  | { mode: 'request' | 'response'; direction?: never }
+  | { mode: 'match'; direction: 'request' | 'response' };
+function codecMode(response: boolean, matching: boolean): CodecMode {
+  return matching
+    ? { mode: 'match', direction: response ? 'response' : 'request' }
+    : { mode: response ? 'response' : 'request' };
+}
+export type CodecContext = CodecMode & {
+  path?: string;
+  redactFields?: string[];
+  definitions?: Readonly<Record<string, CodecPlan>>;
+  depth?: number;
+  validateConstraints?: boolean;
+  allowUnknownResponseFields?: boolean;
+};
+
+/** Internal descriptor entry point. Raw schemas are accepted only by the adapter above. */
+export function executeCodec(value: unknown, s: CodecPlan, context: CodecContext): unknown {
+  if (!['request', 'response', 'match'].includes(context.mode))
+    throw new Error('Unknown codec execution mode');
+  const {
+    path = 'input',
+    redactFields = [],
+    depth = 0,
+    allowUnknownResponseFields = false,
+  } = context;
+  const response = (context.direction ?? context.mode) === 'response';
+  const matching = context.mode === 'match';
+  let validateConstraints = s.constraints ?? context.validateConstraints ?? true;
+  let definitions = s.definitions ?? context.definitions ?? {};
+
   if (depth > 256) bad(path, 'value exceeds the supported nesting depth (256) or contains a cycle');
-  validateConstraints =
-    s['x-sdk-validation'] === undefined ? validateConstraints : s['x-sdk-validation'] === 'schema';
-  definitions = s['x-sdk-definitions'] ?? definitions;
-  if (s['x-sdk-ref']) {
-    const target = Object.hasOwn(definitions, s['x-sdk-ref'])
-      ? definitions[s['x-sdk-ref']]
-      : undefined;
-    if (!target) return bad(path, 'unresolved recursive model ' + s['x-sdk-ref']);
-    return normalize(
-      value,
-      target,
-      path,
-      response,
-      redactFields,
-      matching,
-      definitions,
-      depth + 1,
-      validateConstraints,
-      allowUnknownResponseFields,
-    );
+  if (s.reference) {
+    const target = Object.hasOwn(definitions, s.reference) ? definitions[s.reference] : undefined;
+    if (!target) return bad(path, 'unresolved recursive model ' + s.reference);
+    return executeCodec(value, target, {
+      ...codecMode(response, matching),
+      path: path,
+      redactFields: redactFields,
+      definitions: definitions,
+      depth: depth + 1,
+      validateConstraints: validateConstraints,
+      allowUnknownResponseFields: allowUnknownResponseFields,
+    });
   }
   if (value instanceof Model) value = value.toJSON();
-  s = directionalSchema(s, response);
-  if (s.allOf || s.anyOf || s.oneOf || s.not) {
-    const { allOf, anyOf, oneOf, not, discriminator, ...base } = s;
-    let result = normalize(
-      value,
-      base,
-      path,
-      response,
-      redactFields,
-      matching,
-      definitions,
-      depth + 1,
-      validateConstraints,
-      allowUnknownResponseFields,
-    );
-    const matches = (branch: Schema, allowUnknownFields: boolean): boolean => {
+  wireKind(s.value); // Exhaustively reject unknown instruction kinds.
+  if (s.every || s.some || s.exactlyOne || s.exclude) {
+    const {
+      every: allOf,
+      some: anyOf,
+      exactlyOne: oneOf,
+      exclude: not,
+      tag: discriminator,
+      ...base
+    } = s;
+    let result = executeCodec(value, base, {
+      ...codecMode(response, matching),
+      path: path,
+      redactFields: redactFields,
+      definitions: definitions,
+      depth: depth + 1,
+      validateConstraints: validateConstraints,
+      allowUnknownResponseFields: allowUnknownResponseFields,
+    });
+    const matches = (branch: CodecPlan, allowUnknownFields: boolean): boolean => {
       try {
-        normalize(
-          value,
-          branch,
-          path,
-          response,
-          redactFields,
-          true,
-          definitions,
-          depth + 1,
-          validateConstraints,
-          allowUnknownFields,
-        );
+        executeCodec(value, branch, {
+          ...codecMode(response, true),
+          path: path,
+          redactFields: redactFields,
+          definitions: definitions,
+          depth: depth + 1,
+          validateConstraints: validateConstraints,
+          allowUnknownResponseFields: allowUnknownFields,
+        });
         return true;
       } catch (error) {
         if (error instanceof SdkError && error.kind === 'validation') return false;
@@ -391,18 +405,15 @@ export function normalize(
     for (const branch of allOf ?? [])
       result = combine(
         result,
-        normalize(
-          value,
-          branch,
-          path,
-          response,
-          redactFields,
-          matching,
-          definitions,
-          depth + 1,
-          validateConstraints,
-          allowUnknownResponseFields,
-        ),
+        executeCodec(value, branch, {
+          ...codecMode(response, matching),
+          path: path,
+          redactFields: redactFields,
+          definitions: definitions,
+          depth: depth + 1,
+          validateConstraints: validateConstraints,
+          allowUnknownResponseFields: allowUnknownResponseFields,
+        }),
         path,
       );
     for (const [keyword, branches] of [
@@ -410,20 +421,22 @@ export function normalize(
       ['anyOf', anyOf],
     ] as const) {
       if (!branches) continue;
-      let selected: Schema[];
+      let selected: readonly CodecPlan[];
       let tolerateUnknownFields = allowUnknownResponseFields;
       if (keyword === 'oneOf' && discriminator) {
-        const tag = discriminator.propertyName;
+        const tag = discriminator;
         if (
           !value ||
           typeof value !== 'object' ||
           Array.isArray(value) ||
           !Object.hasOwn(value, tag) ||
-          typeof (value as any)[tag] !== 'string'
+          typeof (value as Record<string, unknown>)[tag] !== 'string'
         )
           bad(path, 'expected a string discriminator');
         selected = branches.filter((branch) =>
-          branch.properties?.[tag]?.enum?.includes((value as any)[tag]),
+          branch.fields?.[tag]?.members?.some(
+            (member) => member === (value as Record<string, unknown>)[tag],
+          ),
         );
       } else {
         selected = branches.filter((branch) => matches(branch, false));
@@ -444,7 +457,7 @@ export function normalize(
       }
       if (selected.length === 0 && response && !matching) {
         if (
-          branches.every((branch) => branch.type === 'object') &&
+          branches.every((branch) => branch.objectOnlyAlternative) &&
           (!value || typeof value !== 'object' || Array.isArray(value))
         )
           bad(path, 'expected an object response alternative');
@@ -460,18 +473,15 @@ export function normalize(
       for (const branch of selected)
         result = combine(
           result,
-          normalize(
-            value,
-            branch,
-            path,
-            response,
-            redactFields,
-            matching,
-            definitions,
-            depth + 1,
-            validateConstraints,
-            tolerateUnknownFields,
-          ),
+          executeCodec(value, branch, {
+            ...codecMode(response, matching),
+            path: path,
+            redactFields: redactFields,
+            definitions: definitions,
+            depth: depth + 1,
+            validateConstraints: validateConstraints,
+            allowUnknownResponseFields: tolerateUnknownFields,
+          }),
           path,
         );
     }
@@ -484,31 +494,26 @@ export function normalize(
     ) {
       const object = Object.assign(Object.create(null), result);
       Object.defineProperty(object, inspect.custom, {
-        value: () => redact(object, s, redactFields, definitions),
+        value: () => redactCodec(object, s, redactFields, definitions),
       });
       return object;
     }
     return result;
   }
   if (value === null) {
-    if ((!response || matching) && s.enum && !s.enum.includes(null))
+    if ((!response || matching) && s.members && !s.members.includes(null))
       bad(path, 'null is outside the declared enum');
-    if (
-      s.type === undefined ||
-      s.type === 'null' ||
-      (Array.isArray(s.type) && s.type.includes('null'))
-    )
-      return null;
+    if (s.nullable) return null;
     return bad(path, 'null is not permitted');
   }
-  const type = Array.isArray(s.type) ? s.type.find((v) => v !== 'null') : s.type;
+  const type = wireKind(s.value);
   if (value instanceof ParsedNumber) {
     if (type === undefined) {
       const token = value.value;
       if (
         matching &&
-        s.enum &&
-        !s.enum.some((v) => typeof v === 'number' && compareDecimal(token, String(v)) === 0)
+        s.members &&
+        !s.members.some((v) => typeof v === 'number' && compareDecimal(token, String(v)) === 0)
       )
         bad(path, 'value is outside the declared enum');
       if (matching) numericConstraints(value.value, s, path);
@@ -516,27 +521,26 @@ export function normalize(
     }
     if (type === 'integer') {
       const token = integerToken(value.value, path);
-      value = ['int64', 'uint64'].includes(s.format ?? '') ? token : Number(token);
+      value = exactValue(s.value) ? token : Number(token);
     } else if (type === 'number') value = value.value;
     else return bad(path, `expected ${type}; received a JSON number`);
   }
-  const exactEnum =
-    type === 'number' || (type === 'integer' && ['int64', 'uint64'].includes(s.format ?? ''));
+  const exactEnum = exactValue(s.value);
   if (
     (!response || matching) &&
-    s.enum &&
+    s.members &&
     !(exactEnum
       ? (typeof value === 'string' || typeof value === 'number') &&
         exactDecimal.test(String(value)) &&
-        s.enum.some(
+        s.members.some(
           (member) =>
             typeof member === 'number' && compareDecimal(String(value), String(member)) === 0,
         )
-      : s.enum.includes(value as any))
+      : s.members.some((member) => member === value))
   )
     bad(path, 'value is outside the declared enum');
   if (type === 'integer' || type === 'number') {
-    const exact = type === 'number' || ['int64', 'uint64'].includes(s.format ?? '');
+    const exact = exactValue(s.value);
     if (exact) {
       const token =
         typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : value;
@@ -563,51 +567,41 @@ export function normalize(
     if (!value || typeof value !== 'object' || Array.isArray(value))
       return bad(path, 'expected an object');
     const entries = value as Record<string, unknown>;
-    for (const k of s.required ?? [])
-      if (response ? !s.properties?.[k]?.writeOnly : !s.properties?.[k]?.readOnly)
-        if (!Object.hasOwn(entries, k) || entries[k] === undefined)
-          bad(`${path}.${k}`, 'required field is missing');
+    for (const k of response ? s.requiredOutput : s.requiredInput)
+      if (!Object.hasOwn(entries, k) || entries[k] === undefined)
+        bad(`${path}.${k}`, 'required field is missing');
     const out: Record<string, unknown> = Object.create(null);
     for (const [k, v] of Object.entries(entries)) {
       if (v === undefined && !response) continue;
-      const child = Object.hasOwn(s.properties ?? {}, k) ? s.properties![k] : undefined;
-      if (!response && child?.readOnly) bad(`${path}.${k}`, 'readOnly fields cannot be sent');
+      const child = Object.hasOwn(s.fields ?? {}, k) ? s.fields![k] : undefined;
+      if (!response && child?.rejectInput) bad(`${path}.${k}`, 'readOnly fields cannot be sent');
       if (child)
-        out[k] = normalize(
-          v,
-          child,
-          `${path}.${k}`,
-          response,
-          redactFields,
-          matching,
-          definitions,
-          depth + 1,
-          validateConstraints,
-          allowUnknownResponseFields,
-        );
-      else if (
-        (!response || (matching && !allowUnknownResponseFields)) &&
-        s.additionalProperties === false
-      )
+        out[k] = executeCodec(v, child, {
+          ...codecMode(response, matching),
+          path: `${path}.${k}`,
+          redactFields: redactFields,
+          definitions: definitions,
+          depth: depth + 1,
+          validateConstraints: validateConstraints,
+          allowUnknownResponseFields: allowUnknownResponseFields,
+        });
+      else if ((!response || (matching && !allowUnknownResponseFields)) && s.extra === false)
         bad(`${path}.${k}`, 'unknown request field');
-      else if (typeof s.additionalProperties === 'object')
-        out[k] = normalize(
-          v,
-          s.additionalProperties,
-          `${path}.${k}`,
-          response,
-          redactFields,
-          matching,
-          definitions,
-          depth + 1,
-          validateConstraints,
-          allowUnknownResponseFields,
-        );
+      else if (typeof s.extra === 'object')
+        out[k] = executeCodec(v, s.extra, {
+          ...codecMode(response, matching),
+          path: `${path}.${k}`,
+          redactFields: redactFields,
+          definitions: definitions,
+          depth: depth + 1,
+          validateConstraints: validateConstraints,
+          allowUnknownResponseFields: allowUnknownResponseFields,
+        });
       else out[k] = v;
     }
     if (response)
       Object.defineProperty(out, inspect.custom, {
-        value: () => redact(out, s, redactFields, definitions),
+        value: () => redactCodec(out, s, redactFields, definitions),
         enumerable: false,
       });
     return out;
@@ -616,24 +610,21 @@ export function normalize(
     if (!Array.isArray(value)) return bad(path, 'expected an array');
     denseArray(value, path);
     if ((!response || matching) && (validateConstraints || matching)) {
-      if (s.minItems !== undefined && value.length < s.minItems)
+      if (s.checks.minItems !== undefined && value.length < s.checks.minItems)
         bad(path, 'array violates minItems');
-      if (s.maxItems !== undefined && value.length > s.maxItems)
+      if (s.checks.maxItems !== undefined && value.length > s.checks.maxItems)
         bad(path, 'array violates maxItems');
     }
     return value.map((v, i) =>
-      normalize(
-        v,
-        s.items ?? {},
-        `${path}[${i}]`,
-        response,
-        redactFields,
-        matching,
-        definitions,
-        depth + 1,
-        validateConstraints,
-        allowUnknownResponseFields,
-      ),
+      executeCodec(v, s.element ?? ANY_CODEC, {
+        ...codecMode(response, matching),
+        path: `${path}[${i}]`,
+        redactFields: redactFields,
+        definitions: definitions,
+        depth: depth + 1,
+        validateConstraints: validateConstraints,
+        allowUnknownResponseFields: allowUnknownResponseFields,
+      }),
     );
   }
   if (type === 'string' && typeof value !== 'string') return bad(path, 'expected a string');
@@ -641,9 +632,11 @@ export function normalize(
     if (/[\uD800-\uDFFF]/u.test(value)) bad(path, 'expected well-formed Unicode');
     if (validateConstraints || matching) {
       const length = [...value].length;
-      if (s.minLength !== undefined && length < s.minLength) bad(path, 'string violates minLength');
-      if (s.maxLength !== undefined && length > s.maxLength) bad(path, 'string violates maxLength');
-      if (s.pattern !== undefined && !new RegExp(s.pattern, 'u').test(value))
+      if (s.checks.minLength !== undefined && length < s.checks.minLength)
+        bad(path, 'string violates minLength');
+      if (s.checks.maxLength !== undefined && length > s.checks.maxLength)
+        bad(path, 'string violates maxLength');
+      if (s.checks.pattern !== undefined && !new RegExp(s.checks.pattern, 'u').test(value))
         bad(path, 'string violates pattern');
     }
   }
@@ -656,23 +649,34 @@ export function serialize(value: unknown, schema: Schema): string {
   return encode(normalize(value, schema));
 }
 export function isKnownVariant(value: unknown, schema: Schema): boolean {
-  if (!schema.oneOf && !schema.anyOf) return false;
-  const tag = schema.discriminator?.propertyName;
+  return isKnownCodec(value, compileCodec(schema));
+}
+export function isKnownCodec(value: unknown, codec: CodecPlan): boolean {
+  if (!codec.exactlyOne && !codec.some) return false;
+  const tag = codec.tag;
   if (
     tag &&
     (!value ||
       typeof value !== 'object' ||
       !Object.hasOwn(value, tag) ||
-      !schema.oneOf!.some((branch) =>
-        branch.properties?.[tag]?.enum?.includes((value as any)[tag]),
+      !codec.exactlyOne?.some((branch) =>
+        branch.fields?.[tag]?.members?.some(
+          (member) => member === (value as Record<string, unknown>)[tag],
+        ),
       ))
   )
     return false;
   try {
-    normalize(value, schema, 'response', true, [], true, {}, 0, true, true);
+    executeCodec(value, codec, {
+      mode: 'match',
+      direction: 'response',
+      path: 'response',
+      allowUnknownResponseFields: true,
+    });
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if (error instanceof SdkError && error.kind === 'validation') return false;
+    throw error;
   }
 }
 export function redact(
@@ -682,25 +686,43 @@ export function redact(
   definitions: Record<string, Schema> = {},
   depth = 0,
 ): unknown {
+  return redactCodec(
+    value,
+    schema ? compileCodec(schemaWithDefinitions(schema, definitions)) : undefined,
+    fields,
+    {},
+    depth,
+  );
+}
+
+export function redactCodec(
+  value: unknown,
+  schema?: CodecPlan,
+  fields: string[] = [],
+  definitions: Readonly<Record<string, CodecPlan>> = {},
+  depth = 0,
+): unknown {
   if (depth > 256) return '[Nesting limit]';
-  definitions = schema?.['x-sdk-definitions'] ?? definitions;
-  if (schema?.['x-sdk-ref']) {
-    const target = definitions[schema['x-sdk-ref']];
-    return target ? redact(value, target, fields, definitions, depth + 1) : '[Unresolved model]';
+  definitions = schema?.definitions ?? definitions;
+  if (schema?.reference) {
+    const target = definitions[schema.reference];
+    return target
+      ? redactCodec(value, target, fields, definitions, depth + 1)
+      : '[Unresolved model]';
   }
-  const shapes = (s?: Schema): Schema[] =>
-    s?.['x-sdk-ref']
-      ? shapes(definitions[s['x-sdk-ref']])
+  const shapes = (s?: CodecPlan): CodecPlan[] =>
+    s?.reference
+      ? shapes(definitions[s.reference])
       : s
-        ? [s, ...[...(s.allOf ?? []), ...(s.anyOf ?? []), ...(s.oneOf ?? [])].flatMap(shapes)]
+        ? [s, ...[...(s.every ?? []), ...(s.some ?? []), ...(s.exactlyOne ?? [])].flatMap(shapes)]
         : [];
   const schemas = shapes(schema);
-  if (schemas.some((s) => s['x-sensitive'] || s.writeOnly)) return '[REDACTED]';
+  if (schemas.some((s) => s.sensitive)) return '[REDACTED]';
   if (Array.isArray(value))
     return value.map((v) =>
-      redact(
+      redactCodec(
         v,
-        { allOf: schemas.flatMap((s) => (s.items ? [s.items] : [])) },
+        { ...ANY_CODEC, every: schemas.flatMap((s) => (s.element ? [s.element] : [])) },
         fields,
         definitions,
         depth + 1,
@@ -712,14 +734,15 @@ export function redact(
         k,
         fields.includes(k) || /authorization|token|secret|password|api.?key/i.test(k)
           ? '[REDACTED]'
-          : redact(
+          : redactCodec(
               v,
               {
-                allOf: schemas.flatMap((s) =>
-                  Object.hasOwn(s.properties ?? {}, k)
-                    ? [s.properties![k]!]
-                    : typeof s.additionalProperties === 'object'
-                      ? [s.additionalProperties]
+                ...ANY_CODEC,
+                every: schemas.flatMap((s) =>
+                  Object.hasOwn(s.fields ?? {}, k)
+                    ? [s.fields![k]!]
+                    : typeof s.extra === 'object'
+                      ? [s.extra]
                       : [],
                 ),
               },
@@ -742,10 +765,12 @@ export type InputValue<T> =
         : never);
 export class Model<T = unknown> {
   private readonly value: T;
-  constructor(
-    value: InputValue<T>,
-    private readonly schema: Schema,
-  ) {
+  private readonly codec: CodecPlan;
+  private readonly dynamicSchema: Schema | undefined;
+  constructor(value: InputValue<T>, schema: Schema);
+  constructor(value: InputValue<T>, schema: Schema, compiled?: CodecPlan) {
+    this.dynamicSchema = compiled ? undefined : schema;
+    this.codec = compiled ?? compileCodec(schema);
     const unwrap = (v: any, depth = 0): any => {
       if (depth > 256)
         bad('value', 'value exceeds the supported nesting depth or contains a cycle');
@@ -761,14 +786,22 @@ export class Model<T = unknown> {
         );
       return v;
     };
-    this.value = unwrap(normalize(value, schema)) as T;
+    this.value = unwrap(executeCodec(value, this.codec, { mode: 'request' })) as T;
   }
   toJSON() {
     return this.value;
   }
   [inspect.custom]() {
-    return redact(this.value, this.schema);
+    return redactCodec(
+      this.value,
+      this.dynamicSchema ? compileCodec(this.dynamicSchema) : this.codec,
+    );
   }
+}
+/** Internal factory; does not expand the public Model class method surface. */
+export function modelFromCodec<T>(value: InputValue<T>, codec: CodecPlan): Model<T> {
+  // Reflect invokes the implementation-only third argument on the known Model constructor.
+  return Reflect.construct(Model, [value, {}, codec]) as Model<T>;
 }
 const field = (value: any, path: string): any =>
   path
@@ -832,42 +865,18 @@ export class Runtime {
   private readonly options: ClientOptions;
   private readonly base: URL;
   private readonly allowed: Set<string>;
-  constructor(
-    private readonly contract: RuntimeContract,
-    options: ClientOptions,
-  ) {
-    const attach = (schema: Schema): Schema => ({
-      ...schema,
-      'x-sdk-validation': contract.validation ?? 'schema',
-      ...(contract.definitions ? { 'x-sdk-definitions': contract.definitions } : {}),
-    });
-    this.contract = {
-      ...contract,
-      operations: contract.operations.map((op) => ({
-        ...op,
-        parameters: op.parameters.map((p) => ({ ...p, schema: attach(p.schema) })),
-        ...(op.body ? { body: attach(op.body) } : {}),
-        responses: Object.fromEntries(
-          Object.entries(op.responses).map(([status, response]) => [
-            status,
-            { ...response, ...(response.schema ? { schema: attach(response.schema) } : {}) },
-          ]),
-        ),
-      })),
-      ...(contract.webhook
-        ? {
-            webhook: {
-              ...contract.webhook,
-              events: Object.fromEntries(
-                Object.entries(contract.webhook.events).map(([name, schema]) => [
-                  name,
-                  attach(schema),
-                ]),
-              ),
-            },
-          }
-        : {}),
-    };
+  private readonly compiledContract: CompiledRuntimePlan;
+  private readonly dynamicContract: RuntimeContract | undefined;
+  private get contract(): CompiledRuntimePlan {
+    // Public source-taking Runtime construction retains caller-owned schemas.
+    // Generated clients always supply compiledContract and never enter this adapter.
+    return this.dynamicContract ? compileRuntimePlan(this.dynamicContract) : this.compiledContract;
+  }
+  constructor(contract: RuntimeContract, options: ClientOptions);
+  constructor(contract: RuntimeContract, options: ClientOptions, compiled?: CompiledRuntimePlan) {
+    this.dynamicContract = compiled ? undefined : contract;
+    this.compiledContract = compiled ?? compileRuntimePlan(contract);
+    assertRuntimePlan(this.compiledContract);
     this.options = { ...options };
     if (/[\\\r\n]/.test(options.baseUrl)) bad('baseUrl', 'invalid URL');
     this.base = new URL(options.baseUrl.endsWith('/') ? options.baseUrl : options.baseUrl + '/');
@@ -880,6 +889,9 @@ export class Runtime {
   }
   [inspect.custom]() {
     return { baseUrl: this.base.origin, credentials: '[REDACTED]' };
+  }
+  private decode(value: unknown, codec: CodecPlan, context: CodecContext): unknown {
+    return executeCodec(value, codec, { ...context, definitions: this.contract.definitions ?? {} });
   }
   private checkUrl(url: URL) {
     if (
@@ -938,7 +950,7 @@ export class Runtime {
         if (p.required) bad(p.name, 'required parameter is missing');
         continue;
       }
-      const normalized = normalize(value, p.schema, p.name);
+      const normalized = this.decode(value, p.codec, { mode: 'request', path: p.name });
       const values = Array.isArray(normalized) ? normalized.map(scalar) : [scalar(normalized)];
       if (p.in === 'path') {
         if (values.some((v) => v === '.' || v === '..'))
@@ -1000,7 +1012,7 @@ export class Runtime {
       if (!op.body) bad('body', 'operation does not accept a body');
       if (['GET', 'HEAD'].includes(op.verb))
         bad('body', 'GET/HEAD request bodies are unsupported by the Node transport');
-      body = serialize(input.body, op.body!);
+      body = encode(this.decode(input.body, op.body!, { mode: 'request' }));
       setHeader('content-type', op.mediaType!);
     } else if (op.bodyRequired) bad('body', 'required body is missing');
     for (const key of Object.keys(input))
@@ -1085,10 +1097,14 @@ export class Runtime {
           if (!declared)
             throw new SdkError('protocol', 'Undeclared success status', 'response', false, meta);
           try {
-            if (declared.schema) {
+            if (declared.codec) {
               if (data === undefined) throw new Error('Missing body');
               data = plainNumbers(
-                normalize(data, declared.schema, 'response', true, this.options.redactFields),
+                this.decode(data, declared.codec, {
+                  mode: 'response',
+                  path: 'response',
+                  redactFields: this.options.redactFields ?? [],
+                }),
               );
             } else if (raw) throw new Error('Unexpected body for an empty response');
           } catch (cause) {
@@ -1107,7 +1123,12 @@ export class Runtime {
           const result = { data: data as T, meta, raw };
           Object.defineProperty(result, inspect.custom, {
             value: () => ({
-              data: redact(data, declared.schema, this.options.redactFields),
+              data: redactCodec(
+                data,
+                declared.codec,
+                this.options.redactFields,
+                this.contract.definitions,
+              ),
               meta: {
                 status: meta.status,
                 requestId: meta.requestId,
@@ -1144,17 +1165,19 @@ export class Runtime {
           typeof code === 'string' ? code : undefined,
           this.contract.errors?.detailsPath
             ? field(
-                redact(
+                redactCodec(
                   data,
-                  (op.responses[String(response.status)] ?? op.responses.default)?.schema,
+                  (op.responses[String(response.status)] ?? op.responses.default)?.codec,
                   this.options.redactFields,
+                  this.contract.definitions,
                 ),
                 this.contract.errors.detailsPath,
               )
-            : redact(
+            : redactCodec(
                 data,
-                (op.responses[String(response.status)] ?? op.responses.default)?.schema,
+                (op.responses[String(response.status)] ?? op.responses.default)?.codec,
                 this.options.redactFields,
+                this.contract.definitions,
               ),
           undefined,
           raw,
@@ -1416,7 +1439,13 @@ export class Runtime {
         : undefined;
     return {
       event: plainNumbers(
-        schema ? normalize(event, schema, 'event', true, this.options.redactFields) : event,
+        schema
+          ? this.decode(event, schema, {
+              mode: 'response',
+              path: 'event',
+              redactFields: this.options.redactFields ?? [],
+            })
+          : event,
       ),
       known: Boolean(schema),
     };
@@ -1435,4 +1464,9 @@ export class Runtime {
     const amount = BigInt(whole! + fraction.padEnd(digits, '0')) * (negative ? -1n : 1n);
     return { currency, amount: amount.toString() };
   }
+}
+
+/** Internal factory for generated clients; public Runtime construction remains schema-based. */
+export function runtimeFromPlan(contract: CompiledRuntimePlan, options: ClientOptions): Runtime {
+  return Reflect.construct(Runtime, [{ operations: [] }, options, contract]) as Runtime;
 }
