@@ -1417,12 +1417,15 @@ export function loadContract(definitionPath: string, configPath: string): Contra
             'pagination requires item/continuation fields and a declared query parameter (except links)',
           );
         if (verb !== 'get') fail(p, 'pagination helpers require GET');
+        const parameter = parameters.find((v) => v.in === 'query' && v.name === pg.parameter);
+        const nextType = pg.kind === 'offset' ? 'integer' : 'string';
+        if (pg.kind !== 'link' && parameter?.schema.type !== nextType)
+          fail(p, `${pg.kind} pagination requires a scalar ${nextType} query parameter`);
         for (const [, response] of Object.entries(responses).filter(([status]) =>
           /^2\d\d$/.test(status),
         )) {
           const items = schemaFields(response.schema, pg.items);
           const next = schemaFields(response.schema, pg.next);
-          const nextType = pg.kind === 'offset' ? 'integer' : 'string';
           if (
             !items.length ||
             items.some((s) => !hasType(s, 'array')) ||
@@ -1432,6 +1435,16 @@ export function loadContract(definitionPath: string, configPath: string): Contra
             fail(
               p,
               `pagination items/next must address declared array and ${nextType} response fields`,
+            );
+          if (
+            pg.kind === 'offset' &&
+            parameter &&
+            !exactValue(valueInstruction('integer', parameter.schema.format)) &&
+            next.some((s) => exactValue(valueInstruction('integer', s.format)))
+          )
+            fail(
+              p,
+              'offset pagination returns exact integer strings but its query parameter requires a native integer; use compatible integer formats or omit the pagination helper',
             );
         }
       }
