@@ -614,8 +614,14 @@ test('real Node timeout and cancellation release a stalled response', async () =
       allowInsecureHttp: true,
     });
     const start = performance.now();
+    // Keep the overall deadline clear of process scheduling during the full
+    // fixture suite; this case exercises the 20-ms HTTP-attempt timeout.
     await assert.rejects(
-      runtime.request('getPayment', { id: 'p' }, { timeoutMs: 20, deadlineMs: 50, maxAttempts: 1 }),
+      runtime.request(
+        'getPayment',
+        { id: 'p' },
+        { timeoutMs: 20, deadlineMs: 1000, maxAttempts: 1 },
+      ),
       (e) => ['transport', 'deadline'].includes(e.kind) && e.outcome === 'unknown',
     );
     assert.ok(performance.now() - start < 500);

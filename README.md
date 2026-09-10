@@ -105,6 +105,7 @@ Write fixtures that state the expected wire behavior independently of the schema
 | Check supported schemas and runtime requirements | [Support matrix](docs/support-matrix.md)                              |
 | Prepare, publish and upgrade packages            | [Releases and compatibility](docs/releases.md)                        |
 | Understand or extend the implementation          | [Architecture](docs/architecture.md), [contributing](CONTRIBUTING.md) |
+| Propose a change or decide whether to fork       | [Scope and maintenance](CONTRIBUTING.md#scope-and-maintenance)        |
 | Report vulnerabilities                           | [Security reporting](SECURITY.md)                                     |
 
 ## License

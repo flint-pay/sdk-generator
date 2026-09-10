@@ -1,0 +1,1909 @@
+[
+  {
+    "name": "getInvoicePDF",
+    "operation": "getInvoicePDF",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "invoice_id": "inv_test"
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/invoices/inv_test/pdf",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"]
+    },
+    "responses": [
+      {
+        "status": 200,
+        "headers": {
+          "content-type": "application/pdf"
+        },
+        "bodyBase64": "JVBERi0xLjcA/4AK"
+      }
+    ],
+    "dataBase64": "JVBERi0xLjcA/4AK",
+    "status": 200
+  },
+  {
+    "name": "getCreditNotePDF",
+    "operation": "getCreditNotePDF",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "credit_note_id": "cn_test"
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/credit-notes/cn_test/pdf",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"]
+    },
+    "responses": [
+      {
+        "status": 200,
+        "headers": {
+          "content-type": "application/pdf"
+        },
+        "bodyBase64": "JVBERi0xLjcA/4AK"
+      }
+    ],
+    "dataBase64": "JVBERi0xLjcA/4AK",
+    "status": 200
+  },
+  {
+    "name": "getMeInvoicePDF",
+    "operation": "getMeInvoicePDF",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "invoice_id": "inv_test"
+    },
+    "options": {
+      "authMode": "customer",
+      "credentials": {
+        "CustomerSessionBearer": "customer-test"
+      }
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/me/invoices/inv_test/pdf",
+      "headers": {
+        "authorization": "Bearer customer-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"]
+    },
+    "responses": [
+      {
+        "status": 200,
+        "headers": {
+          "content-type": "application/pdf"
+        },
+        "bodyBase64": "JVBERi0xLjcA/4AK"
+      }
+    ],
+    "dataBase64": "JVBERi0xLjcA/4AK",
+    "status": 200
+  },
+  {
+    "name": "getMeCreditNotePDF",
+    "operation": "getMeCreditNotePDF",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "invoice_id": "inv_test",
+      "credit_note_id": "cn_test"
+    },
+    "options": {
+      "authMode": "invoice",
+      "credentials": {
+        "InvoiceAccessTokenBearer": "invoice-test"
+      }
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/me/invoices/inv_test/credit-notes/cn_test/pdf",
+      "headers": {
+        "authorization": "Bearer invoice-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"]
+    },
+    "responses": [
+      {
+        "status": 200,
+        "headers": {
+          "content-type": "application/pdf"
+        },
+        "bodyBase64": "JVBERi0xLjcA/4AK"
+      }
+    ],
+    "dataBase64": "JVBERi0xLjcA/4AK",
+    "status": 200
+  },
+  {
+    "name": "PDF JSON error",
+    "operation": "getInvoicePDF",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "invoice_id": "inv_test"
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/invoices/inv_test/pdf",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"]
+    },
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+      }
+    ],
+    "error": {
+      "kind": "validation",
+      "code": "SDK_TEST"
+    }
+  },
+  {
+    "name": "report 307",
+    "operation": "getReportDownload",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "report_download_id": "rpt_test"
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/report-downloads/rpt_test",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"]
+    },
+    "responses": [
+      {
+        "status": 307,
+        "headers": {
+          "location": "https://storage.example.invalid/report.csv"
+        },
+        "body": ""
+      }
+    ],
+    "status": 307,
+    "data": {
+      "location": "https://storage.example.invalid/report.csv"
+    }
+  },
+  {
+    "name": "OAuth 302",
+    "operation": "authorizePartnerInstall",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "response_type": "code",
+      "client_id": "app_test",
+      "redirect_uri": "https://client.example.invalid/callback",
+      "mode": "test",
+      "state": "csrf_test"
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/oauth/authorize?response_type=code&client_id=app_test&redirect_uri=https%3A%2F%2Fclient.example.invalid%2Fcallback&mode=test&state=csrf_test",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"]
+    },
+    "responses": [
+      {
+        "status": 302,
+        "headers": {
+          "location": "/authorize/consent"
+        }
+      }
+    ],
+    "status": 302,
+    "data": {
+      "location": "/authorize/consent"
+    }
+  },
+  {
+    "name": "quote mapping buyer",
+    "operation": "getCheckoutSessionDeliveryQuote",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "checkout_session_id": "cs_test",
+      "delivery_quote_id": "dq_test"
+    },
+    "options": {
+      "authMode": "checkout",
+      "credentials": {
+        "CheckoutSessionIDHeader": "cs_test",
+        "CheckoutSessionSecretHeader": "checkout-test"
+      }
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/checkout-sessions/cs_test/delivery-quotes/dq_test",
+      "headers": {
+        "x-checkout-session-id": "cs_test",
+        "x-checkout-session-secret": "checkout-test"
+      },
+      "absentHeaders": ["authorization"]
+    },
+    "responses": [
+      {
+        "status": 200,
+        "body": "{\"data\":{\"audience\":\"buyer\",\"buyer_reasons\":[],\"choice_groups\":[],\"delivery_quote_id\":\"dq_test\",\"evaluated_at\":\"2026-01-01T00:00:00Z\",\"evaluation_status\":\"complete\",\"expires_at\":\"2026-01-01T00:00:00Z\",\"input_requirements\":[],\"selection_required\":true,\"status\":\"active\"}}"
+      }
+    ],
+    "data": {
+      "data": {
+        "audience": "buyer",
+        "buyer_reasons": [],
+        "choice_groups": [],
+        "delivery_quote_id": "dq_test",
+        "evaluated_at": "2026-01-01T00:00:00Z",
+        "evaluation_status": "complete",
+        "expires_at": "2026-01-01T00:00:00Z",
+        "input_requirements": [],
+        "selection_required": true,
+        "status": "active"
+      }
+    }
+  },
+  {
+    "name": "selection mapping buyer",
+    "operation": "createCheckoutSessionDeliverySelection",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "checkout_session_id": "cs_test",
+      "body": {
+        "choices": [],
+        "delivery_quote_id": "dq_test",
+        "expected_delivery_selection_id": null
+      }
+    },
+    "options": {
+      "authMode": "checkout",
+      "credentials": {
+        "CheckoutSessionIDHeader": "cs_test",
+        "CheckoutSessionSecretHeader": "checkout-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/checkout-sessions/cs_test/delivery-selections",
+      "headers": {
+        "x-checkout-session-id": "cs_test",
+        "x-checkout-session-secret": "checkout-test"
+      },
+      "absentHeaders": ["authorization"],
+      "body": "{\"choices\":[],\"delivery_quote_id\":\"dq_test\",\"expected_delivery_selection_id\":null}"
+    },
+    "responses": [
+      {
+        "status": 201,
+        "body": "{\"data\":{\"audience\":\"buyer\",\"checkout_session\":{\"checkout_session_id\":\"cs_test\",\"delivery_method_ids\":[],\"delivery_selection_required\":false,\"problems\":[],\"recovery_mode\":false,\"status\":\"open\",\"surface\":\"hosted\"},\"delivery_selection\":{\"amount_money\":{\"amount\":0,\"currency\":\"USD\"},\"choices\":[],\"delivery_quote_id\":\"dq_test\",\"delivery_selection_id\":\"ds_test\",\"expires_at\":\"2026-01-01T00:00:00Z\",\"status\":\"selected\"},\"order\":{\"line_items\":[],\"order_id\":\"ord_test\",\"payment_status\":\"unpaid\",\"pricing_amounts\":{\"charge_money\":{\"amount\":0,\"currency\":\"USD\"},\"discount_money\":{\"amount\":0,\"currency\":\"USD\"},\"requested_tip_money\":{\"amount\":0,\"currency\":\"USD\"},\"subtotal_money\":{\"amount\":0,\"currency\":\"USD\"},\"tax_money\":{\"amount\":0,\"currency\":\"USD\"},\"total_money\":{\"amount\":0,\"currency\":\"USD\"}},\"refund_status\":\"none\",\"settlement_amounts\":{\"balance_money\":{\"amount\":0,\"currency\":\"USD\"},\"credit_money\":{\"amount\":0,\"currency\":\"USD\"},\"net_collected_money\":{\"amount\":0,\"currency\":\"USD\"},\"outstanding_money\":{\"amount\":0,\"currency\":\"USD\"},\"paid_money\":{\"amount\":0,\"currency\":\"USD\"},\"refunded_money\":{\"amount\":0,\"currency\":\"USD\"},\"settled_tip_money\":{\"amount\":0,\"currency\":\"USD\"}},\"status\":\"open\",\"tax\":{\"enabled\":false,\"mode\":\"none\",\"status\":\"none\",\"taxability_reason\":\"none\"}}}}"
+      }
+    ],
+    "data": {
+      "data": {
+        "audience": "buyer",
+        "checkout_session": {
+          "checkout_session_id": "cs_test",
+          "delivery_method_ids": [],
+          "delivery_selection_required": false,
+          "problems": [],
+          "recovery_mode": false,
+          "status": "open",
+          "surface": "hosted"
+        },
+        "delivery_selection": {
+          "amount_money": {
+            "amount": "0",
+            "currency": "USD"
+          },
+          "choices": [],
+          "delivery_quote_id": "dq_test",
+          "delivery_selection_id": "ds_test",
+          "expires_at": "2026-01-01T00:00:00Z",
+          "status": "selected"
+        },
+        "order": {
+          "line_items": [],
+          "order_id": "ord_test",
+          "payment_status": "unpaid",
+          "pricing_amounts": {
+            "charge_money": {
+              "amount": "0",
+              "currency": "USD"
+            },
+            "discount_money": {
+              "amount": "0",
+              "currency": "USD"
+            },
+            "requested_tip_money": {
+              "amount": "0",
+              "currency": "USD"
+            },
+            "subtotal_money": {
+              "amount": "0",
+              "currency": "USD"
+            },
+            "tax_money": {
+              "amount": "0",
+              "currency": "USD"
+            },
+            "total_money": {
+              "amount": "0",
+              "currency": "USD"
+            }
+          },
+          "refund_status": "none",
+          "settlement_amounts": {
+            "balance_money": {
+              "amount": "0",
+              "currency": "USD"
+            },
+            "credit_money": {
+              "amount": "0",
+              "currency": "USD"
+            },
+            "net_collected_money": {
+              "amount": "0",
+              "currency": "USD"
+            },
+            "outstanding_money": {
+              "amount": "0",
+              "currency": "USD"
+            },
+            "paid_money": {
+              "amount": "0",
+              "currency": "USD"
+            },
+            "refunded_money": {
+              "amount": "0",
+              "currency": "USD"
+            },
+            "settled_tip_money": {
+              "amount": "0",
+              "currency": "USD"
+            }
+          },
+          "status": "open",
+          "tax": {
+            "enabled": false,
+            "mode": "none",
+            "status": "none",
+            "taxability_reason": "none"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "effective mapping buyer",
+    "operation": "getCheckoutSessionCurrentDeliverySelection",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "checkout_session_id": "cs_test"
+    },
+    "options": {
+      "authMode": "checkout",
+      "credentials": {
+        "CheckoutSessionIDHeader": "cs_test",
+        "CheckoutSessionSecretHeader": "checkout-test"
+      }
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/checkout-sessions/cs_test/delivery-selections/current",
+      "headers": {
+        "x-checkout-session-id": "cs_test",
+        "x-checkout-session-secret": "checkout-test"
+      },
+      "absentHeaders": ["authorization"]
+    },
+    "responses": [
+      {
+        "status": 200,
+        "body": "{\"data\":{\"audience\":\"buyer\",\"mutable\":true,\"source\":\"none\"}}"
+      }
+    ],
+    "data": {
+      "data": {
+        "audience": "buyer",
+        "mutable": true,
+        "source": "none"
+      }
+    }
+  },
+  {
+    "name": "quote mapping merchant",
+    "operation": "getCheckoutSessionDeliveryQuote",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "checkout_session_id": "cs_test",
+      "delivery_quote_id": "dq_test"
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/checkout-sessions/cs_test/delivery-quotes/dq_test",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"]
+    },
+    "responses": [
+      {
+        "status": 200,
+        "body": "{\"data\":{\"audience\":\"merchant\",\"checkout_session_id\":\"cs_test\",\"choice_groups\":[],\"delivery_quote_id\":\"dq_test\",\"delivery_quote_revision\":0,\"eligibility_context_revision\":0,\"evaluated_at\":\"2026-01-01T00:00:00Z\",\"evaluation_status\":\"complete\",\"expires_at\":\"2026-01-01T00:00:00Z\",\"input_requirements\":[],\"merchant_diagnostics\":[],\"order_id\":\"ord_test\",\"selection_required\":true,\"status\":\"active\"}}"
+      }
+    ],
+    "data": {
+      "data": {
+        "audience": "merchant",
+        "checkout_session_id": "cs_test",
+        "choice_groups": [],
+        "delivery_quote_id": "dq_test",
+        "delivery_quote_revision": "0",
+        "eligibility_context_revision": "0",
+        "evaluated_at": "2026-01-01T00:00:00Z",
+        "evaluation_status": "complete",
+        "expires_at": "2026-01-01T00:00:00Z",
+        "input_requirements": [],
+        "merchant_diagnostics": [],
+        "order_id": "ord_test",
+        "selection_required": true,
+        "status": "active"
+      }
+    }
+  },
+  {
+    "name": "selection mapping merchant",
+    "operation": "createCheckoutSessionDeliverySelection",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "checkout_session_id": "cs_test",
+      "body": {
+        "choices": [],
+        "delivery_quote_id": "dq_test",
+        "expected_delivery_selection_id": null
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/checkout-sessions/cs_test/delivery-selections",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
+      "body": "{\"choices\":[],\"delivery_quote_id\":\"dq_test\",\"expected_delivery_selection_id\":null}"
+    },
+    "responses": [
+      {
+        "status": 201,
+        "body": "{\"data\":{\"audience\":\"merchant\",\"checkout_session\":{\"checkout_session_id\":\"cs_test\",\"delivery_method_ids\":[],\"delivery_selection_required\":false,\"problems\":[],\"recovery_mode\":false,\"status\":\"open\",\"surface\":\"hosted\"},\"delivery_selection\":{\"amount_money\":{\"amount\":0,\"currency\":\"USD\"},\"calculation_expires_at\":\"2026-01-01T00:00:00Z\",\"checkout_session_id\":\"cs_test\",\"choices\":[],\"created_at\":\"2026-01-01T00:00:00Z\",\"delivery_quote_id\":\"dq_test\",\"delivery_quote_revision\":0,\"delivery_selection_id\":\"ds_test\",\"eligibility_context_revision\":0,\"expires_at\":\"2026-01-01T00:00:00Z\",\"lifecycle_updated_at\":\"2026-01-01T00:00:00Z\",\"limiting_deadline_reason\":\"selection_guarantee_expiry\",\"order_id\":\"ord_test\",\"status\":\"selected\"},\"order\":{\"line_items\":[],\"order_id\":\"ord_test\",\"payment_status\":\"unpaid\",\"pricing_amounts\":{\"charge_money\":{\"amount\":0,\"currency\":\"USD\"},\"discount_money\":{\"amount\":0,\"currency\":\"USD\"},\"requested_tip_money\":{\"amount\":0,\"currency\":\"USD\"},\"subtotal_money\":{\"amount\":0,\"currency\":\"USD\"},\"tax_money\":{\"amount\":0,\"currency\":\"USD\"},\"total_money\":{\"amount\":0,\"currency\":\"USD\"}},\"refund_status\":\"none\",\"settlement_amounts\":{\"balance_money\":{\"amount\":0,\"currency\":\"USD\"},\"credit_money\":{\"amount\":0,\"currency\":\"USD\"},\"net_collected_money\":{\"amount\":0,\"currency\":\"USD\"},\"outstanding_money\":{\"amount\":0,\"currency\":\"USD\"},\"paid_money\":{\"amount\":0,\"currency\":\"USD\"},\"refunded_money\":{\"amount\":0,\"currency\":\"USD\"},\"settled_tip_money\":{\"amount\":0,\"currency\":\"USD\"}},\"status\":\"open\",\"tax\":{\"enabled\":false,\"mode\":\"none\",\"status\":\"none\",\"taxability_reason\":\"none\"}}}}"
+      }
+    ],
+    "data": {
+      "data": {
+        "audience": "merchant",
+        "checkout_session": {
+          "checkout_session_id": "cs_test",
+          "delivery_method_ids": [],
+          "delivery_selection_required": false,
+          "problems": [],
+          "recovery_mode": false,
+          "status": "open",
+          "surface": "hosted"
+        },
+        "delivery_selection": {
+          "amount_money": {
+            "amount": "0",
+            "currency": "USD"
+          },
+          "calculation_expires_at": "2026-01-01T00:00:00Z",
+          "checkout_session_id": "cs_test",
+          "choices": [],
+          "created_at": "2026-01-01T00:00:00Z",
+          "delivery_quote_id": "dq_test",
+          "delivery_quote_revision": "0",
+          "delivery_selection_id": "ds_test",
+          "eligibility_context_revision": "0",
+          "expires_at": "2026-01-01T00:00:00Z",
+          "lifecycle_updated_at": "2026-01-01T00:00:00Z",
+          "limiting_deadline_reason": "selection_guarantee_expiry",
+          "order_id": "ord_test",
+          "status": "selected"
+        },
+        "order": {
+          "line_items": [],
+          "order_id": "ord_test",
+          "payment_status": "unpaid",
+          "pricing_amounts": {
+            "charge_money": {
+              "amount": "0",
+              "currency": "USD"
+            },
+            "discount_money": {
+              "amount": "0",
+              "currency": "USD"
+            },
+            "requested_tip_money": {
+              "amount": "0",
+              "currency": "USD"
+            },
+            "subtotal_money": {
+              "amount": "0",
+              "currency": "USD"
+            },
+            "tax_money": {
+              "amount": "0",
+              "currency": "USD"
+            },
+            "total_money": {
+              "amount": "0",
+              "currency": "USD"
+            }
+          },
+          "refund_status": "none",
+          "settlement_amounts": {
+            "balance_money": {
+              "amount": "0",
+              "currency": "USD"
+            },
+            "credit_money": {
+              "amount": "0",
+              "currency": "USD"
+            },
+            "net_collected_money": {
+              "amount": "0",
+              "currency": "USD"
+            },
+            "outstanding_money": {
+              "amount": "0",
+              "currency": "USD"
+            },
+            "paid_money": {
+              "amount": "0",
+              "currency": "USD"
+            },
+            "refunded_money": {
+              "amount": "0",
+              "currency": "USD"
+            },
+            "settled_tip_money": {
+              "amount": "0",
+              "currency": "USD"
+            }
+          },
+          "status": "open",
+          "tax": {
+            "enabled": false,
+            "mode": "none",
+            "status": "none",
+            "taxability_reason": "none"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "effective mapping merchant",
+    "operation": "getCheckoutSessionCurrentDeliverySelection",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "checkout_session_id": "cs_test"
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/checkout-sessions/cs_test/delivery-selections/current",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"]
+    },
+    "responses": [
+      {
+        "status": 200,
+        "body": "{\"data\":{\"audience\":\"merchant\",\"mutable\":true,\"source\":\"none\"}}"
+      }
+    ],
+    "data": {
+      "data": {
+        "audience": "merchant",
+        "mutable": true,
+        "source": "none"
+      }
+    }
+  },
+  {
+    "name": "FulfillmentTransitionRequest accept",
+    "operation": "transitionFulfillment",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "fulfillment_id": "ful_test",
+      "body": {
+        "action": "accept"
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/fulfillments/ful_test/transitions",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
+      "body": "{\"action\":\"accept\"}"
+    },
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+      }
+    ],
+    "error": {
+      "kind": "validation",
+      "code": "SDK_TEST"
+    },
+    "attempts": 1
+  },
+  {
+    "name": "FulfillmentTransitionRequest cancel",
+    "operation": "transitionFulfillment",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "fulfillment_id": "ful_test",
+      "body": {
+        "action": "cancel"
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/fulfillments/ful_test/transitions",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
+      "body": "{\"action\":\"cancel\"}"
+    },
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+      }
+    ],
+    "error": {
+      "kind": "validation",
+      "code": "SDK_TEST"
+    },
+    "attempts": 1
+  },
+  {
+    "name": "FulfillmentTransitionRequest complete",
+    "operation": "transitionFulfillment",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "fulfillment_id": "ful_test",
+      "body": {
+        "action": "complete"
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/fulfillments/ful_test/transitions",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
+      "body": "{\"action\":\"complete\"}"
+    },
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+      }
+    ],
+    "error": {
+      "kind": "validation",
+      "code": "SDK_TEST"
+    },
+    "attempts": 1
+  },
+  {
+    "name": "FulfillmentTransitionRequest dispatch",
+    "operation": "transitionFulfillment",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "fulfillment_id": "ful_test",
+      "body": {
+        "action": "dispatch"
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/fulfillments/ful_test/transitions",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
+      "body": "{\"action\":\"dispatch\"}"
+    },
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+      }
+    ],
+    "error": {
+      "kind": "validation",
+      "code": "SDK_TEST"
+    },
+    "attempts": 1
+  },
+  {
+    "name": "FulfillmentTransitionRequest fail",
+    "operation": "transitionFulfillment",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "fulfillment_id": "ful_test",
+      "body": {
+        "action": "fail",
+        "release_quantity": false
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/fulfillments/ful_test/transitions",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
+      "body": "{\"action\":\"fail\",\"release_quantity\":false}"
+    },
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+      }
+    ],
+    "error": {
+      "kind": "validation",
+      "code": "SDK_TEST"
+    },
+    "attempts": 1
+  },
+  {
+    "name": "FulfillmentTransitionRequest hold",
+    "operation": "transitionFulfillment",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "fulfillment_id": "ful_test",
+      "body": {
+        "action": "hold",
+        "reason": "other"
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/fulfillments/ful_test/transitions",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
+      "body": "{\"action\":\"hold\",\"reason\":\"other\"}"
+    },
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+      }
+    ],
+    "error": {
+      "kind": "validation",
+      "code": "SDK_TEST"
+    },
+    "attempts": 1
+  },
+  {
+    "name": "FulfillmentTransitionRequest mark_no_show",
+    "operation": "transitionFulfillment",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "fulfillment_id": "ful_test",
+      "body": {
+        "action": "mark_no_show",
+        "reason": "other"
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/fulfillments/ful_test/transitions",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
+      "body": "{\"action\":\"mark_no_show\",\"reason\":\"other\"}"
+    },
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+      }
+    ],
+    "error": {
+      "kind": "validation",
+      "code": "SDK_TEST"
+    },
+    "attempts": 1
+  },
+  {
+    "name": "FulfillmentTransitionRequest mark_packed",
+    "operation": "transitionFulfillment",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "fulfillment_id": "ful_test",
+      "body": {
+        "action": "mark_packed"
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/fulfillments/ful_test/transitions",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
+      "body": "{\"action\":\"mark_packed\"}"
+    },
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+      }
+    ],
+    "error": {
+      "kind": "validation",
+      "code": "SDK_TEST"
+    },
+    "attempts": 1
+  },
+  {
+    "name": "FulfillmentTransitionRequest mark_picked",
+    "operation": "transitionFulfillment",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "fulfillment_id": "ful_test",
+      "body": {
+        "action": "mark_picked"
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/fulfillments/ful_test/transitions",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
+      "body": "{\"action\":\"mark_picked\"}"
+    },
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+      }
+    ],
+    "error": {
+      "kind": "validation",
+      "code": "SDK_TEST"
+    },
+    "attempts": 1
+  },
+  {
+    "name": "FulfillmentTransitionRequest mark_preparing",
+    "operation": "transitionFulfillment",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "fulfillment_id": "ful_test",
+      "body": {
+        "action": "mark_preparing"
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/fulfillments/ful_test/transitions",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
+      "body": "{\"action\":\"mark_preparing\"}"
+    },
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+      }
+    ],
+    "error": {
+      "kind": "validation",
+      "code": "SDK_TEST"
+    },
+    "attempts": 1
+  },
+  {
+    "name": "FulfillmentTransitionRequest mark_ready",
+    "operation": "transitionFulfillment",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "fulfillment_id": "ful_test",
+      "body": {
+        "action": "mark_ready"
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/fulfillments/ful_test/transitions",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
+      "body": "{\"action\":\"mark_ready\"}"
+    },
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+      }
+    ],
+    "error": {
+      "kind": "validation",
+      "code": "SDK_TEST"
+    },
+    "attempts": 1
+  },
+  {
+    "name": "FulfillmentTransitionRequest schedule",
+    "operation": "transitionFulfillment",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "fulfillment_id": "ful_test",
+      "body": {
+        "action": "schedule",
+        "scheduled_start_at": "2026-01-01T00:00:00Z",
+        "scheduled_end_at": "2026-01-01T01:00:00Z"
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/fulfillments/ful_test/transitions",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
+      "body": "{\"action\":\"schedule\",\"scheduled_start_at\":\"2026-01-01T00:00:00Z\",\"scheduled_end_at\":\"2026-01-01T01:00:00Z\"}"
+    },
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+      }
+    ],
+    "error": {
+      "kind": "validation",
+      "code": "SDK_TEST"
+    },
+    "attempts": 1
+  },
+  {
+    "name": "FulfillmentTransitionRequest start",
+    "operation": "transitionFulfillment",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "fulfillment_id": "ful_test",
+      "body": {
+        "action": "start"
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/fulfillments/ful_test/transitions",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
+      "body": "{\"action\":\"start\"}"
+    },
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+      }
+    ],
+    "error": {
+      "kind": "validation",
+      "code": "SDK_TEST"
+    },
+    "attempts": 1
+  },
+  {
+    "name": "FulfillmentTransitionRequest unknown action",
+    "operation": "transitionFulfillment",
+    "input": {
+      "fulfillment_id": "test",
+      "body": {
+        "action": "future_action"
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "responses": [],
+    "error": {
+      "kind": "validation"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "PackageTransitionRequest mark_delivered",
+    "operation": "transitionPackage",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "package_id": "pkg_test",
+      "body": {
+        "action": "mark_delivered"
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/packages/pkg_test/transitions",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
+      "body": "{\"action\":\"mark_delivered\"}"
+    },
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+      }
+    ],
+    "error": {
+      "kind": "validation",
+      "code": "SDK_TEST"
+    },
+    "attempts": 1
+  },
+  {
+    "name": "PackageTransitionRequest mark_delivery_attempted",
+    "operation": "transitionPackage",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "package_id": "pkg_test",
+      "body": {
+        "action": "mark_delivery_attempted"
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/packages/pkg_test/transitions",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
+      "body": "{\"action\":\"mark_delivery_attempted\"}"
+    },
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+      }
+    ],
+    "error": {
+      "kind": "validation",
+      "code": "SDK_TEST"
+    },
+    "attempts": 1
+  },
+  {
+    "name": "PackageTransitionRequest mark_exception",
+    "operation": "transitionPackage",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "package_id": "pkg_test",
+      "body": {
+        "action": "mark_exception"
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/packages/pkg_test/transitions",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
+      "body": "{\"action\":\"mark_exception\"}"
+    },
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+      }
+    ],
+    "error": {
+      "kind": "validation",
+      "code": "SDK_TEST"
+    },
+    "attempts": 1
+  },
+  {
+    "name": "PackageTransitionRequest mark_in_transit",
+    "operation": "transitionPackage",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "package_id": "pkg_test",
+      "body": {
+        "action": "mark_in_transit"
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/packages/pkg_test/transitions",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
+      "body": "{\"action\":\"mark_in_transit\"}"
+    },
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+      }
+    ],
+    "error": {
+      "kind": "validation",
+      "code": "SDK_TEST"
+    },
+    "attempts": 1
+  },
+  {
+    "name": "PackageTransitionRequest mark_out_for_delivery",
+    "operation": "transitionPackage",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "package_id": "pkg_test",
+      "body": {
+        "action": "mark_out_for_delivery"
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/packages/pkg_test/transitions",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
+      "body": "{\"action\":\"mark_out_for_delivery\"}"
+    },
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+      }
+    ],
+    "error": {
+      "kind": "validation",
+      "code": "SDK_TEST"
+    },
+    "attempts": 1
+  },
+  {
+    "name": "PackageTransitionRequest mark_packed",
+    "operation": "transitionPackage",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "package_id": "pkg_test",
+      "body": {
+        "action": "mark_packed"
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/packages/pkg_test/transitions",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
+      "body": "{\"action\":\"mark_packed\"}"
+    },
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+      }
+    ],
+    "error": {
+      "kind": "validation",
+      "code": "SDK_TEST"
+    },
+    "attempts": 1
+  },
+  {
+    "name": "PackageTransitionRequest mark_returned",
+    "operation": "transitionPackage",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "package_id": "pkg_test",
+      "body": {
+        "action": "mark_returned"
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/packages/pkg_test/transitions",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
+      "body": "{\"action\":\"mark_returned\"}"
+    },
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+      }
+    ],
+    "error": {
+      "kind": "validation",
+      "code": "SDK_TEST"
+    },
+    "attempts": 1
+  },
+  {
+    "name": "PackageTransitionRequest mark_shipped",
+    "operation": "transitionPackage",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "package_id": "pkg_test",
+      "body": {
+        "action": "mark_shipped"
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/packages/pkg_test/transitions",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
+      "body": "{\"action\":\"mark_shipped\"}"
+    },
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+      }
+    ],
+    "error": {
+      "kind": "validation",
+      "code": "SDK_TEST"
+    },
+    "attempts": 1
+  },
+  {
+    "name": "PackageTransitionRequest unknown action",
+    "operation": "transitionPackage",
+    "input": {
+      "package_id": "test",
+      "body": {
+        "action": "future_action"
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "responses": [],
+    "error": {
+      "kind": "validation"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "PayOrderRequest confirm_payment_intents",
+    "operation": "payOrder",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "order_id": "ord_test",
+      "body": {
+        "action": "confirm_payment_intents",
+        "payment_intents": [
+          {
+            "payment_intent_id": "pi_test"
+          }
+        ]
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/orders/ord_test/pay",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
+      "body": "{\"action\":\"confirm_payment_intents\",\"payment_intents\":[{\"payment_intent_id\":\"pi_test\"}]}"
+    },
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+      }
+    ],
+    "error": {
+      "kind": "validation",
+      "code": "SDK_TEST"
+    },
+    "attempts": 1
+  },
+  {
+    "name": "PayOrderRequest pay",
+    "operation": "payOrder",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "order_id": "ord_test",
+      "body": {
+        "action": "pay"
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/orders/ord_test/pay",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
+      "body": "{\"action\":\"pay\"}"
+    },
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+      }
+    ],
+    "error": {
+      "kind": "validation",
+      "code": "SDK_TEST"
+    },
+    "attempts": 1
+  },
+  {
+    "name": "PayOrderRequest resume",
+    "operation": "payOrder",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "order_id": "ord_test",
+      "body": {
+        "action": "resume",
+        "payment_attempt_id": "pat_test"
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/orders/ord_test/pay",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
+      "body": "{\"action\":\"resume\",\"payment_attempt_id\":\"pat_test\"}"
+    },
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+      }
+    ],
+    "error": {
+      "kind": "validation",
+      "code": "SDK_TEST"
+    },
+    "attempts": 1
+  },
+  {
+    "name": "PayOrderRequest setup",
+    "operation": "payOrder",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "order_id": "ord_test",
+      "body": {
+        "action": "setup",
+        "setup_payment_source": {
+          "token": "tok_test"
+        }
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/orders/ord_test/pay",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
+      "body": "{\"action\":\"setup\",\"setup_payment_source\":{\"token\":\"tok_test\"}}"
+    },
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+      }
+    ],
+    "error": {
+      "kind": "validation",
+      "code": "SDK_TEST"
+    },
+    "attempts": 1
+  },
+  {
+    "name": "PayOrderRequest unknown action",
+    "operation": "payOrder",
+    "input": {
+      "order_id": "test",
+      "body": {
+        "action": "future_action"
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "responses": [],
+    "error": {
+      "kind": "validation"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "missing CheckoutSessionIDHeader",
+    "operation": "getCheckoutSessionCurrentDeliverySelection",
+    "input": {
+      "checkout_session_id": "cs_test"
+    },
+    "options": {
+      "authMode": "checkout",
+      "credentials": {
+        "CheckoutSessionSecretHeader": "checkout-test"
+      }
+    },
+    "responses": [],
+    "error": {
+      "kind": "authentication"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "missing CheckoutSessionSecretHeader",
+    "operation": "getCheckoutSessionCurrentDeliverySelection",
+    "input": {
+      "checkout_session_id": "cs_test"
+    },
+    "options": {
+      "authMode": "checkout",
+      "credentials": {
+        "CheckoutSessionIDHeader": "cs_test"
+      }
+    },
+    "responses": [],
+    "error": {
+      "kind": "authentication"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "ACH required purpose",
+    "operation": "createPaymentIntent",
+    "input": {
+      "body": {
+        "amount_money": {
+          "amount": "100",
+          "currency": "USD"
+        },
+        "capture_method": "manual",
+        "payment_options": ["ach_debit"]
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "responses": [],
+    "error": {
+      "kind": "validation"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "ACH valid purpose",
+    "operation": "createPaymentIntent",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "body": {
+        "amount_money": {
+          "amount": "100",
+          "currency": "USD"
+        },
+        "capture_method": "manual",
+        "payment_options": ["ach_debit"],
+        "transaction_purpose": "goods"
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/payment-intents",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
+      "body": "{\"amount_money\":{\"amount\":100,\"currency\":\"USD\"},\"capture_method\":\"manual\",\"payment_options\":[\"ach_debit\"],\"transaction_purpose\":\"goods\"}"
+    },
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+      }
+    ],
+    "error": {
+      "kind": "validation",
+      "code": "SDK_TEST"
+    },
+    "attempts": 1
+  },
+  {
+    "name": "Affirm required URL",
+    "operation": "createPaymentIntent",
+    "input": {
+      "body": {
+        "amount_money": {
+          "amount": "100",
+          "currency": "USD"
+        },
+        "capture_method": "manual",
+        "payment_options": ["affirm"]
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "responses": [],
+    "error": {
+      "kind": "validation"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "Affirm valid URL",
+    "operation": "createPaymentIntent",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "body": {
+        "amount_money": {
+          "amount": "100",
+          "currency": "USD"
+        },
+        "capture_method": "manual",
+        "payment_options": ["affirm"],
+        "payment_return_url": "https://shop.example.invalid/return"
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/payment-intents",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
+      "body": "{\"amount_money\":{\"amount\":100,\"currency\":\"USD\"},\"capture_method\":\"manual\",\"payment_options\":[\"affirm\"],\"payment_return_url\":\"https://shop.example.invalid/return\"}"
+    },
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+      }
+    ],
+    "error": {
+      "kind": "validation",
+      "code": "SDK_TEST"
+    },
+    "attempts": 1
+  },
+  {
+    "name": "card without dependent fields",
+    "operation": "createPaymentIntent",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "body": {
+        "amount_money": {
+          "amount": "100",
+          "currency": "USD"
+        },
+        "capture_method": "manual",
+        "payment_options": ["card"]
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/payment-intents",
+      "headers": {
+        "authorization": "Bearer merchant-test"
+      },
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
+      "body": "{\"amount_money\":{\"amount\":100,\"currency\":\"USD\"},\"capture_method\":\"manual\",\"payment_options\":[\"card\"]}"
+    },
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+      }
+    ],
+    "error": {
+      "kind": "validation",
+      "code": "SDK_TEST"
+    },
+    "attempts": 1
+  },
+  {
+    "name": "non-ACH rejects purpose",
+    "operation": "createPaymentIntent",
+    "input": {
+      "body": {
+        "amount_money": {
+          "amount": "100",
+          "currency": "USD"
+        },
+        "capture_method": "manual",
+        "payment_options": ["card"],
+        "transaction_purpose": "goods"
+      }
+    },
+    "options": {
+      "authMode": "merchant",
+      "credentials": {
+        "BearerAuth": "merchant-test"
+      }
+    },
+    "responses": [],
+    "error": {
+      "kind": "validation"
+    },
+    "attempts": 0
+  }
+]

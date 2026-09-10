@@ -35,6 +35,12 @@ foreach ($cases as $index => $case) {
         foreach ($expected['headers'] ?? [] as $k => $v) {
             check(($r['headers'][$k] ?? null) === $v, $case['name'] . ': header ' . $k);
         }
+        foreach ($expected['absentHeaders'] ?? [] as $key) {
+            check(
+                !array_key_exists(strtolower($key), $r['headers']),
+                $case['name'] . ': unexpected header ' . $key,
+            );
+        }
         $response =
             $case['responses'][$attempt++] ?? throw new RuntimeException('Too many attempts');
         if ($response['transportError'] ?? false) {
@@ -43,7 +49,9 @@ foreach ($cases as $index => $case) {
         return [
             'status' => $response['status'],
             'headers' => $response['headers'] ?? [],
-            'body' => $response['body'] ?? '',
+            'body' => isset($response['bodyBase64'])
+                ? base64_decode($response['bodyBase64'], true)
+                : $response['body'] ?? '',
         ];
     };
     $client = new $clientClass(
@@ -84,6 +92,8 @@ foreach ($cases as $index => $case) {
                 deadlineMs: $o['deadlineMs'] ?? null,
                 timeoutMs: $o['timeoutMs'] ?? null,
                 headers: $o['headers'] ?? [],
+                authMode: $o['authMode'] ?? null,
+                credentials: $o['credentials'] ?? null,
             ),
         );
         check(!isset($case['error']), $case['name'] . ': expected error');
@@ -95,6 +105,16 @@ foreach ($cases as $index => $case) {
         }
         if ($case['empty'] ?? false) {
             check($result->data === null, $case['name'] . ': empty');
+        }
+        if (isset($case['dataBase64'])) {
+            check(
+                is_string($result->data) && base64_encode($result->data) === $case['dataBase64'],
+                $case['name'] . ': binary data',
+            );
+            check($result->raw === $result->data, $case['name'] . ': raw bytes');
+        }
+        if (isset($case['status'])) {
+            check($result->meta['status'] === $case['status'], $case['name'] . ': status');
         }
         $report[] = ['name' => $case['name'], 'ok' => true];
     } catch (\Throwable $e) {

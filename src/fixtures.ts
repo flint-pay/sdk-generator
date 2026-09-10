@@ -12,14 +12,23 @@ interface Scenario {
   input: Record<string, unknown>;
   baseUrl?: string;
   options?: Record<string, unknown>;
-  expected?: { method: string; path: string; headers?: Record<string, string>; body?: string };
+  expected?: {
+    method: string;
+    path: string;
+    headers?: Record<string, string>;
+    absentHeaders?: string[];
+    body?: string;
+  };
   responses: {
     status?: number;
     headers?: Record<string, string>;
     body?: string;
+    bodyBase64?: string;
     transportError?: boolean;
   }[];
   data?: unknown;
+  dataBase64?: string;
+  status?: number;
   empty?: boolean;
   error?: Record<string, unknown>;
   attempts?: number;
@@ -67,11 +76,7 @@ export async function validateFixtures(
   const c = JSON.parse(readFileSync(join(output, '.sdk-generator.json'), 'utf8'))
     .interface as Contract;
   const contract = {
-    operations: c.operations,
-    auth: c.auth,
-    apiVersion: c.config.apiVersion,
-    webhook: c.config.webhook,
-    money: c.config.money,
+    operations: c.operations.map(({ id, resource, method }) => ({ id, resource, method })),
   };
   const report: { target: string; scenarios: number }[] = [];
   if ((c.config.targets ?? ['node', 'php']).includes('node')) {
@@ -98,11 +103,17 @@ export async function validateFixtures(
           if (expected.body !== undefined) assert.equal(init.body, expected.body);
           for (const [k, v] of Object.entries(expected.headers ?? {}))
             assert.equal(init.headers[k.toLowerCase()], v);
+          for (const key of expected.absentHeaders ?? [])
+            assert.equal(init.headers[key.toLowerCase()], undefined);
           const response = scenario.responses[attempts++];
           assert.ok(response, 'unexpected extra attempt');
           if (response.transportError) throw new Error('Fixture: lost response');
           return new Response(
-            [204, 304].includes(response.status!) ? null : (response.body ?? ''),
+            [204, 304].includes(response.status!)
+              ? null
+              : response.bodyBase64 !== undefined
+                ? Buffer.from(response.bodyBase64, 'base64')
+                : (response.body ?? ''),
             { status: response.status!, headers: response.headers ?? {} },
           );
         },
@@ -124,6 +135,12 @@ export async function validateFixtures(
           );
           if (scenario.data !== undefined)
             assert.deepEqual(JSON.parse(JSON.stringify(result.data)), scenario.data);
+          if (scenario.dataBase64 !== undefined) {
+            assert.ok(result.data instanceof Uint8Array);
+            assert.equal(Buffer.from(result.data).toString('base64'), scenario.dataBase64);
+            assert.equal(result.raw, result.data);
+          }
+          if (scenario.status !== undefined) assert.equal(result.meta.status, scenario.status);
           if (scenario.empty) assert.equal(result.data, undefined);
         }
         assert.equal(attempts, scenario.attempts ?? 1);

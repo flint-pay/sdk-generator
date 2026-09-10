@@ -1,0 +1,82 @@
+{
+  "version": "1.0.0",
+  "npm": {
+    "name": "@example/flint-full-sdk"
+  },
+  "composer": {
+    "name": "example/flint-full-sdk",
+    "namespace": "Example\\FlintFull"
+  },
+  "validation": "schema",
+  "numericUnions": "explicit",
+  "schemaSharing": "named",
+  "models": {
+    "Money": "MoneyValue",
+    "Return": "ReturnResource",
+    "DeliveryCalculatedPricingStrategyInput": "DeliveryCalculatedPricingStrategyRequest",
+    "DeliveryDistanceUnitPriceInput": "DeliveryDistanceUnitPriceRequest",
+    "DeliveryEstimateRuleInput": "DeliveryEstimateRuleRequest",
+    "DeliveryFixedPricingStrategyInput": "DeliveryFixedPricingStrategyRequest",
+    "DeliveryMethodConfigurationInput": "DeliveryMethodConfigurationRequest",
+    "DeliveryMethodOriginSelectorInput": "DeliveryMethodOriginSelectorRequest",
+    "DeliveryPricingRateInput": "DeliveryPricingRateRequest",
+    "DeliveryPricingStrategyInput": "DeliveryPricingStrategyRequest",
+    "DeliveryPricingTierBandInput": "DeliveryPricingTierBandRequest",
+    "DeliveryProfileConfigurationInput": "DeliveryProfileConfigurationRequest",
+    "DeliveryProfileOriginPolicyInput": "DeliveryProfileOriginPolicyRequest",
+    "DeliveryRateTablePricingStrategyInput": "DeliveryRateTablePricingStrategyRequest",
+    "DeliveryScheduleWindowRuleInput": "DeliveryScheduleWindowRuleRequest",
+    "DeliveryTieredPricingStrategyInput": "DeliveryTieredPricingStrategyRequest",
+    "DeliveryWeightUnitPriceInput": "DeliveryWeightUnitPriceRequest",
+    "FulfillmentLineItemInput": "FulfillmentLineItemRequest",
+    "ImageInput": "ImageRequest",
+    "InventoryReceiptLineInput": "InventoryReceiptLineRequest",
+    "InventoryRoutingSourceInput": "InventoryRoutingSourceRequest",
+    "InventorySourceSystemInput": "InventorySourceSystemRequest",
+    "InventoryTransferLineInput": "InventoryTransferLineRequest",
+    "LocationInventoryInput": "LocationInventoryRequest",
+    "ModifierInput": "ModifierRequest",
+    "ModifierSetGroupInput": "ModifierSetGroupRequest",
+    "OnboardingProfileInput": "OnboardingProfileRequest",
+    "OrderChargeInput": "OrderChargeRequest",
+    "OrderDeliveryDestinationAddressInput": "OrderDeliveryDestinationAddressRequest",
+    "OrderDeliveryDestinationInput": "OrderDeliveryDestinationRequest",
+    "OrderDeliveryDestinationRecipientInput": "OrderDeliveryDestinationRecipientRequest",
+    "OrderLineItemModifierInput": "OrderLineItemModifierRequest",
+    "OrderTaxInput": "OrderTaxRequest",
+    "OrderTaxLocationInput": "OrderTaxLocationRequest",
+    "PaymentLinkCustomFieldInput": "PaymentLinkCustomFieldRequest",
+    "PaymentLinkLineItemInput": "PaymentLinkLineItemRequest",
+    "ProductVariantInput": "ProductVariantRequest",
+    "ReturnInspectionLineItemInput": "ReturnInspectionLineItemRequest",
+    "ReturnLineItemInput": "ReturnLineItemRequest",
+    "ReturnPolicyRevisionInput": "ReturnPolicyRevisionRequest",
+    "ReturnReceiptLineItemInput": "ReturnReceiptLineItemRequest",
+    "ReturnReplacementLineItemInput": "ReturnReplacementLineItemRequest",
+    "ReturnResolutionAdjustmentInput": "ReturnResolutionAdjustmentRequest",
+    "ReturnResolutionLineItemInput": "ReturnResolutionLineItemRequest",
+    "SubscriptionPlanLineItemInput": "SubscriptionPlanLineItemRequest",
+    "SubscriptionServiceLocationInput": "SubscriptionServiceLocationRequest",
+    "TextModifierConfigInput": "TextModifierConfigRequest"
+  },
+  "errors": {
+    "codePath": "error.code",
+    "detailsPath": "error",
+    "requestIdHeader": "X-Request-Id"
+  },
+  "webhook": {
+    "algorithm": "hmac-sha256",
+    "format": "standard-webhooks",
+    "header": "webhook-signature",
+    "timestampHeader": "webhook-timestamp",
+    "idHeader": "webhook-id",
+    "separator": ".",
+    "toleranceSeconds": 300,
+    "typeField": "event_type",
+    "events": {}
+  },
+  "apiVersion": {
+    "header": "Flint-Version",
+    "value": "2026-09-07"
+  }
+}

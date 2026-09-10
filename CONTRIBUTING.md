@@ -1,6 +1,6 @@
 # Contributing
 
-Use Node.js 22+, PHP 8.2+ with curl/json/pdo_sqlite/zip, and Composer 2. The SQLite Node example tests require Node.js 22.16+.
+Use Node.js 22+, PHP 8.2+ with curl/json/pdo_sqlite/zip/pcntl (pcntl is used only by cancellation tests), and Composer 2. The SQLite Node example tests require Node.js 22.16+.
 
 ```sh
 npm ci
@@ -17,6 +17,23 @@ When changing shared semantics, update the owning compiler decision and the affe
 For bug reports, include generator/package/runtime versions, a minimal sanitized API/configuration example, the expected and observed wire behavior, and a request ID when safe. Explain whether the reproduction uses local fixtures, a sandbox or a live provider. Redact credentials and sensitive bodies.
 
 The generator is pre-1.0 and has no paid support SLA. Support covers the published capability and runtime matrix. Record deprecations and breaking changes in release notes, with the effect on both targets described. A new language or provider capability starts from a concrete contract and its tests.
+
+## Scope and maintenance
+
+This generator exists to produce and maintain the Flint Pay SDKs. It is published under Apache-2.0 so that others can use it, learn from it and adapt it, but it is not a general-purpose SDK generator and does not aim to become one. The maintainers are a small team whose first obligation is to the packages Flint Pay ships from this code.
+
+Every merged change is a maintenance commitment. It has to be understood, tested on each release, kept working through refactors and defended when a bug report arrives. Before opening a substantial pull request, open an issue describing the problem, the proposed approach and the ongoing cost. Expect a discussion about scope before a review of code.
+
+A pull request may be declined even when it is correct, well tested and well written. The usual reasons are:
+
+- It adds a target language, provider capability, transport or configuration surface that Flint Pay does not use and cannot realistically keep verified.
+- Its size or spread across the compiler, emitters and both runtimes is large enough that a regression in it would put the existing SDKs at risk.
+- It introduces a public API, option or generated-output shape that would have to be supported indefinitely without a concrete consumer here.
+- It would require expertise or infrastructure the maintainers do not have.
+
+Small, focused changes are the most likely to be merged: bug fixes with a failing test, corrections to documentation, diagnostics for inputs that currently fail silently, and support-matrix gaps that Flint Pay also needs. If you are unsure whether a change fits, ask in an issue first.
+
+If your needs go beyond that, please fork. The license permits it, generated packages carry no dependency on this repository, and a fork that serves its own consumers well is a better outcome than a shared codebase that serves nobody well. We are happy to answer questions from forks and to accept upstream fixes for shared behavior.
 
 ## Code design and review rules
 

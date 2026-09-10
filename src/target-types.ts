@@ -1,6 +1,6 @@
-import type { Schema } from './contract.js';
+import type { Json, Schema } from './contract.js';
 import { directionalSchema, exactValue, valueInstruction } from './codec-plan.js';
-import { numericEnumDeclaration } from './schema-intersections.js';
+import { numericEnumDeclaration, valueScopes } from './schema-intersections.js';
 const php = (s: string) => "'" + s.replaceAll('\\', '\\\\').replaceAll("'", "\\'") + "'";
 
 /** The declaration policy is shared by text emission and compatibility facts. */
@@ -90,6 +90,75 @@ export function typescriptType(
     object?: ObjectContext,
     array?: ArrayContext,
   ): string => typescriptType(schema, output, tag, knownVariant, object, array, definitions);
+  if (!response && Object.hasOwn(s, 'const')) {
+    // A constant can wrap a reference or composition that supplies its numeric
+    // representation. Follow positive declarations at each value path before
+    // rendering the literal, just as the surrounding input declaration does.
+    const literal = (value: Json, declarations: readonly Schema[]): string => {
+      const shapes = declarations.flatMap((shape) => valueScopes(shape, definitions));
+      if (Array.isArray(value))
+        return (
+          'readonly [' +
+          value
+            .map((child) =>
+              literal(
+                child,
+                shapes.flatMap((shape) => (shape.items ? [shape.items] : [])),
+              ),
+            )
+            .join(', ') +
+          ']'
+        );
+      if (value && typeof value === 'object')
+        return (
+          '{ ' +
+          Object.entries(value)
+            .map(
+              ([key, child]) =>
+                JSON.stringify(key) +
+                ': ' +
+                literal(
+                  child,
+                  shapes.flatMap((shape) => {
+                    const field = Object.hasOwn(shape.properties ?? {}, key)
+                      ? shape.properties?.[key]
+                      : undefined;
+                    return field
+                      ? [field]
+                      : typeof shape.additionalProperties === 'object'
+                        ? [shape.additionalProperties]
+                        : [];
+                  }),
+                ) +
+                ';',
+            )
+            .join(' ') +
+          ' }'
+        );
+      if (typeof value === 'number') {
+        const representations = shapes.flatMap((shape) => {
+          const types = Array.isArray(shape.type) ? shape.type : [shape.type];
+          return types.flatMap((type) =>
+            exactValue(valueInstruction(type, shape.format))
+              ? [shape['x-sdk-number-input'] === 'explicit' ? 'ExactNumber' : 'string']
+              : type === 'integer'
+                ? [JSON.stringify(value)]
+                : [],
+          );
+        });
+        if (representations.length) return '(' + [...new Set(representations)].join(' | ') + ')';
+      }
+      return JSON.stringify(value);
+    };
+    const { const: value, ...rest } = s;
+    return (
+      '(' +
+      render(rest, response, discriminator, known, objectContext, arrayContext) +
+      ') & (' +
+      literal(value!, [s]) +
+      ')'
+    );
+  }
   if (s['x-sdk-ref']) {
     const reference = s['x-sdk-ref'] + (response ? '' : 'Input');
     if (!objectContext) return reference;
@@ -167,6 +236,12 @@ export function typescriptType(
   if (types.length > 1) return types.map((t) => render({ ...s, type: t! }, response)).join(' | ');
   // Equivalent numeric enum values have many valid spellings (1, 1.0, 1e0).
   // Their exact string representation is checked by the runtime, not a literal union.
+  if (
+    !response &&
+    s['x-sdk-number-input'] === 'explicit' &&
+    exactValue(valueInstruction(types[0], s.format))
+  )
+    return 'ExactNumber';
   if (s.enum && exactValue(valueInstruction(types[0], s.format))) return 'string';
   if (s.enum && !response)
     return (
@@ -275,6 +350,7 @@ export function phpShape(s: Schema, response = false): string {
   return 'array<string, mixed>';
 }
 export function phpDocType(s: Schema, response = false): string {
+  if (!response && s['x-sdk-number-input'] === 'explicit') return 'ExactNumber';
   if (s.oneOf || s.anyOf)
     return (
       (s.oneOf ?? s.anyOf)!.map((v) => phpDocType(v, response)).join('|') +

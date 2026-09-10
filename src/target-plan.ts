@@ -1,4 +1,6 @@
+import { codecSharing } from './codec-sharing.js';
 import { Diagnostic } from './diagnostic.js';
+import { valueScopes } from './schema-intersections.js';
 import type { Contract, Operation, Schema } from './contract.js';
 import { stable } from './canonical.js';
 import {
@@ -11,14 +13,16 @@ import {
 } from './target-types.js';
 import {
   compileCodec,
+  discriminatorBindings,
   directionalSchema,
   exactValue,
   valueInstruction,
   type CodecPlan,
 } from './codec-plan.js';
-import { compileRuntimePlan, type CompiledRuntimePlan } from './runtime-plan.js';
-import { compileResponsePlan, type ResponsePlan } from './response-plan.js';
+import { compileRuntimePlan, successStatus, type CompiledRuntimePlan } from './runtime-plan.js';
+import { compileResultPlan, type ResponsePlan } from './response-plan.js';
 import { compileSchemaPolicy, type SchemaPolicy } from './schema-policy.js';
+export { successStatus };
 const pascal = (s: string) => s[0]!.toUpperCase() + s.slice(1);
 
 export function inputSchema(op: Operation): Schema {
@@ -32,8 +36,16 @@ export function inputSchema(op: Operation): Schema {
   }
   return { type: 'object', properties, required, additionalProperties: false };
 }
+const modelIndexes = new WeakMap<Record<string, Schema>, Map<string, string>>();
 export function namedType(s: Schema, models: Record<string, Schema>, response = false): string {
-  const match = Object.entries(models).find(([, value]) => stable(value) === stable(s));
+  const identity = stable(s);
+  const indexed = modelIndexes.get(models);
+  const name = indexed?.get(identity);
+  const match = indexed
+    ? name
+      ? [name]
+      : undefined
+    : Object.entries(models).find(([, value]) => stable(value) === identity);
   return match
     ? match[0] + (response ? '' : 'Input')
     : typescriptType(s, response, undefined, false, undefined, undefined, models);
@@ -51,8 +63,18 @@ export function resultType(op: Operation, models: Record<string, Schema> = {}): 
   return [
     ...new Set(
       Object.entries(op.responses)
-        .filter(([k]) => /^2\d\d$/.test(k) || k === '304' || k === 'default')
-        .map(([, v]) => (v.schema ? namedType(v.schema, models, true) : 'undefined')),
+        .filter(([k]) => successStatus(k) || k === 'default')
+        .map(([, v]) =>
+          v.bodyKind === 'sse'
+            ? 'EventStream'
+            : v.bodyKind === 'binary'
+              ? 'Uint8Array'
+              : v.classification === 'redirect'
+                ? '{ location?: string }'
+                : v.schema
+                  ? namedType(v.schema, models, true)
+                  : 'undefined',
+        ),
     ),
   ].join(' | ');
 }
@@ -90,7 +112,7 @@ export function itemSchemas(op: Operation): Schema[] {
     return constraints.length ? constraints.reduce(intersect, [{}]) : undefined;
   };
   return Object.entries(op.responses)
-    .filter(([status]) => /^2\d\d$/.test(status) || status === 'default')
+    .filter(([status]) => successStatus(status) || status === 'default')
     .flatMap(([, r]) =>
       r.schema ? (descend(r.schema, op.pagination!.items.split('.')) ?? []) : [],
     );
@@ -98,9 +120,11 @@ export function itemSchemas(op: Operation): Schema[] {
 export function runtimeContract(c: Contract) {
   return {
     operations: c.operations,
+    ...(c.incoming ? { incoming: c.incoming } : {}),
     validation: c.config.validation ?? 'encoding',
     ...(c.definitions ? { definitions: c.definitions } : {}),
     ...(c.auth ? { auth: c.auth } : {}),
+    ...(c.authentication ? { authentication: c.authentication } : {}),
     ...(c.config.apiVersion ? { apiVersion: c.config.apiVersion } : {}),
     ...(c.config.webhook ? { webhook: c.config.webhook } : {}),
     ...(c.config.money ? { money: c.config.money } : {}),
@@ -112,6 +136,7 @@ export function modelsUsed(c: Contract) {
     const names = new Set([
       ...c.operations.flatMap((op) => c.modelDependencies![op.id] ?? []),
       ...Object.keys(c.definitions ?? {}),
+      ...(c.incoming ?? []).flatMap((item) => [item.model, ...item.dependencies]),
     ]);
     return Object.fromEntries(Object.entries(c.models).filter(([name]) => names.has(name)));
   }
@@ -125,6 +150,7 @@ export function modelsUsed(c: Contract) {
   }
   visit(c.operations);
   visit(c.config.webhook);
+  visit(c.incoming);
   return Object.fromEntries(Object.entries(c.models).filter(([, s]) => used.has(stable(s))));
 }
 
@@ -314,6 +340,12 @@ export function compileSdkContract(source: Contract): {
       }
     }
   const models = modelsUsed(c);
+  const index = new Map<string, string>();
+  for (const [name, schema] of Object.entries(models)) {
+    const key = stable(schema);
+    if (!index.has(key)) index.set(key, name);
+  }
+  modelIndexes.set(models, index);
   const runtime = compileRuntimePlan(runtimeContract(c));
   const phpRuntime = structuredClone(runtime);
   const responseModels: PhpModelPlan[] = [];
@@ -323,7 +355,7 @@ export function compileSdkContract(source: Contract): {
     const compiled = phpRuntime.operations.find((value) => value.id === op.id);
     if (!compiled) throw new Error('Missing compiled operation ' + op.id);
     for (const [status, response] of Object.entries(op.responses)) {
-      if (!(/^2\d\d$/.test(status) || status === 'default')) continue;
+      if (!(successStatus(status) || status === 'default')) continue;
       const result = compiled.responses[status];
       if (!result) throw new Error('Missing compiled response ' + status);
       const prefix = pascal(op.resource) + pascal(op.method) + 'Response' + pascal(status);
@@ -345,9 +377,8 @@ export function compileSdkContract(source: Contract): {
               variant === branch ? branch : variantDeclaration(variant),
             ),
           );
-          for (const tag of branch.properties?.[response.schema.discriminator.propertyName]?.enum ??
-            [])
-            result.variants[String(tag)] = name;
+          for (const [tag, target] of Object.entries(discriminatorBindings(response.schema) ?? {}))
+            if (target === index) result.variants[tag] = name;
         }
       } else if (response.schema?.type === 'object') {
         result.model = prefix;
@@ -357,7 +388,7 @@ export function compileSdkContract(source: Contract): {
   }
   const eventModels: Record<string, string> = {};
   for (const [index, [event, schema]] of Object.entries(c.config.webhook?.events ?? {}).entries()) {
-    if (schema.type === 'object') {
+    if (objectConstraint(schema) === 'object') {
       const name = 'WebhookEvent' + index;
       eventModels[event] = name;
       responseModels.push(compilePhpModel(name, schema, true, sharedNames));
@@ -366,7 +397,7 @@ export function compileSdkContract(source: Contract): {
   if (phpRuntime.webhook) phpRuntime.webhook.eventModels = eventModels;
   const plan: CompiledSdkContract = {
     format: 1,
-    semantics: runtime.semantics,
+    semantics: runtime.semantics + '/results-1',
     targets: [...(c.config.targets ?? ['node', 'php'])],
     runtime,
     node: {
@@ -388,7 +419,7 @@ export function compileSdkContract(source: Contract): {
         c.operations.map((op) => {
           const known = Object.entries(op.responses)
             .filter(
-              ([status, r]) => (/^2\d\d$/.test(status) || status === 'default') && r.schema?.oneOf,
+              ([status, r]) => (successStatus(status) || status === 'default') && r.schema?.oneOf,
             )
             .flatMap(([, r]) => (r.schema ? [r.schema] : []));
           return [
@@ -452,13 +483,18 @@ export function compileSdkContract(source: Contract): {
           op.id,
           {
             output: Object.entries(op.responses)
-              .filter(
-                ([status]) => /^2\d\d$/.test(status) || status === '304' || status === 'default',
-              )
+              .filter(([status]) => successStatus(status) || status === 'default')
               .map(([status, response]) => {
                 const binding = phpRuntime.operations.find((value) => value.id === op.id)
                   ?.responses[status];
                 return (
+                  (response.bodyKind === 'sse'
+                    ? 'EventStream'
+                    : response.bodyKind === 'binary'
+                      ? 'string'
+                      : response.classification === 'redirect'
+                        ? '\\stdClass'
+                        : undefined) ??
                   binding?.model ??
                   (binding?.variants
                     ? [...new Set(Object.values(binding.variants)), '\\stdClass'].join('|')
@@ -494,7 +530,7 @@ export function compileSdkContract(source: Contract): {
           nodeOutput: resultType(op),
           phpInput: phpDocType(inputSchema(op)),
           phpOutput: Object.entries(op.responses)
-            .filter(([status]) => /^2\d\d$/.test(status) || status === 'default')
+            .filter(([status]) => successStatus(status) || status === 'default')
             .map(([, response]) => (response.schema ? phpDocType(response.schema, true) : 'null'))
             .join('|'),
           reserveKnown: Object.values(op.responses).some((response) =>
@@ -507,10 +543,10 @@ export function compileSdkContract(source: Contract): {
       source.operations.map((op) => [
         op.id,
         Object.fromEntries(
-          Object.entries(op.responses).map(([status, response]) => [
-            status,
-            response.schema ? { body: compileResponsePlan(response.schema) } : {},
-          ]),
+          Object.entries(op.responses).map(([status, response]) => {
+            const body = compileResultPlan(status, response);
+            return [status, body ? { body } : {}];
+          }),
         ),
       ]),
     ),
@@ -545,6 +581,15 @@ export function compileSdkContract(source: Contract): {
       ),
     },
   };
+  if (c.config.schemaSharing === 'named') {
+    const sharing = codecSharing(plan.runtime.definitions ?? {});
+    sharing.runtime(plan.runtime);
+    sharing.runtime(plan.php.runtime);
+    for (const model of Object.values(plan.node.models)) model.codec = sharing.compact(model.codec);
+    for (const operation of Object.values(plan.node.operations))
+      if (operation.known) operation.known.codecs = operation.known.codecs.map(sharing.compact);
+    for (const model of plan.php.models) model.codec = sharing.compact(model.codec);
+  }
   return { source: c, plan };
 }
 
@@ -553,7 +598,7 @@ export function prepareTargetContract(c: Contract): Contract {
   c = JSON.parse(stable(c)) as Contract;
   // Share named nested shapes in recursive graphs. Expanding a provider's graph
   // into every operation, factory and declaration otherwise grows exponentially.
-  if (c.definitions) {
+  if (c.definitions && c.config.schemaSharing !== 'named') {
     const selectedModels = modelsUsed(c);
     const names = new Map(
       Object.entries(selectedModels)
@@ -580,6 +625,8 @@ export function prepareTargetContract(c: Contract): Contract {
       for (const keyword of ['allOf', 'anyOf', 'oneOf'] as const)
         if (s[keyword]) out[keyword] = s[keyword]!.map((v) => compact(v));
       if (s.not) out.not = compact(s.not);
+      if (s.contains) out.contains = compact(s.contains);
+      for (const key of ['if', 'then', 'else'] as const) if (s[key]) out[key] = compact(s[key]);
       return out;
     };
     c.models = Object.fromEntries(
@@ -592,11 +639,17 @@ export function prepareTargetContract(c: Contract): Contract {
       for (const response of Object.values(op.responses))
         if (response.schema) response.schema = compact(response.schema);
     }
+    for (const item of c.incoming ?? []) item.schema = compact(item.schema);
     if (c.config.webhook)
       for (const [name, s] of Object.entries(c.config.webhook.events))
         c.config.webhook.events[name] = compact(s);
   }
   return c;
+}
+
+/** An exact numeric SDK input in a sample, materialized by the target emitter. */
+export class ExactNumberSample {
+  constructor(readonly token: string) {}
 }
 
 export function sample(
@@ -615,19 +668,72 @@ export function sample(
   }
   s = directionalSchema(s, false);
   if (s.example !== undefined) return s.example;
+  if (Object.hasOwn(s, 'const')) {
+    const literal = (value: import('./contract.js').Json, declarations: Schema[]): unknown => {
+      const shapes = declarations.flatMap((shape) => valueScopes(shape, definitions));
+      if (Array.isArray(value))
+        return value.map((child) =>
+          literal(
+            child,
+            shapes.flatMap((shape) => (shape.items ? [shape.items] : [])),
+          ),
+        );
+      if (value && typeof value === 'object')
+        return Object.fromEntries(
+          Object.entries(value).map(([key, child]) => [
+            key,
+            literal(
+              child,
+              shapes.flatMap((shape) => {
+                const field = Object.hasOwn(shape.properties ?? {}, key)
+                  ? shape.properties?.[key]
+                  : undefined;
+                return field
+                  ? [field]
+                  : typeof shape.additionalProperties === 'object'
+                    ? [shape.additionalProperties]
+                    : [];
+              }),
+            ),
+          ]),
+        );
+      if (typeof value === 'number') {
+        const numeric = shapes.find((shape) =>
+          (Array.isArray(shape.type) ? shape.type : [shape.type]).some((type) =>
+            exactValue(valueInstruction(type, shape.format)),
+          ),
+        );
+        if (numeric)
+          return numeric['x-sdk-number-input'] === 'explicit'
+            ? new ExactNumberSample(String(value))
+            : String(value);
+      }
+      return value;
+    };
+    return literal(s.const!, [s]);
+  }
   if (s.oneOf || s.anyOf || s.allOf) {
     const { oneOf, anyOf, allOf, not, discriminator, ...base } = s;
     const collect = (shape: Schema): Record<string, Schema> =>
       Object.assign({}, ...(shape.allOf ?? []).map(collect), shape.properties ?? {});
     const properties = { ...inherited, ...collect(s) };
+    const typed = [base, ...(allOf ?? [])].find((shape) => shape.type !== undefined);
+    const item = [base, ...(allOf ?? [])].find((shape) => shape.items !== undefined)?.items;
     let result = sample(base, properties, definitions, stack);
     for (const branch of [...(allOf ?? []), ...(oneOf ?? anyOf ?? []).slice(0, 1)]) {
-      const next = sample(branch, properties, definitions, stack);
+      const next = sample(
+        { ...(typed ? { type: typed.type } : {}), ...(item ? { items: item } : {}), ...branch },
+        properties,
+        definitions,
+        stack,
+      );
       result =
         result &&
         next &&
         typeof result === 'object' &&
         typeof next === 'object' &&
+        !(result instanceof ExactNumberSample) &&
+        !(next instanceof ExactNumberSample) &&
         !Array.isArray(result) &&
         !Array.isArray(next)
           ? { ...result, ...next }
@@ -638,22 +744,69 @@ export function sample(
   const t = Array.isArray(s.type) ? s.type.find((t) => t !== 'null') : s.type;
   if (s.enum?.length)
     return s.enum[0] !== null && exactValue(valueInstruction(t, s.format))
-      ? String(s.enum[0])
+      ? s['x-sdk-number-input'] === 'explicit'
+        ? new ExactNumberSample(String(s.enum[0]))
+        : String(s.enum[0])
       : s.enum[0];
-  if (t === 'object' || s.required || s.properties)
-    return Object.fromEntries(
-      Object.entries({
-        ...Object.fromEntries((s.required ?? []).map((key) => [key, {} as Schema])),
-        ...inherited,
-        ...s.properties,
-      })
-        .filter(([k, v]) => s.required?.includes(k) && !v.readOnly)
-        .map(([k, v]) => [k, sample(v, {}, definitions, stack)]),
+  if (t === 'object' || s.required || s.properties) {
+    const fields = Object.entries({
+      ...Object.fromEntries((s.required ?? []).map((key) => [key, {} as Schema])),
+      ...inherited,
+      ...s.properties,
+    }).filter(([, child]) => !child.readOnly);
+    const selected = fields.filter(([key]) => s.required?.includes(key));
+    for (const field of fields)
+      if (selected.length < (s.minProperties ?? 0) && !selected.includes(field))
+        selected.push(field);
+    const result = Object.fromEntries(
+      selected.map(([key, child]) => [key, sample(child, {}, definitions, stack)]),
     );
-  if (t === 'array') return [];
+    if (Object.keys(result).length < (s.minProperties ?? 0) && s.additionalProperties !== false) {
+      for (let i = Object.keys(result).length; i < (s.minProperties ?? 0); i++)
+        result['example' + i] = sample(
+          typeof s.additionalProperties === 'object' ? s.additionalProperties : {},
+          {},
+          definitions,
+          stack,
+        );
+    }
+    return result;
+  }
+  if (t === 'array')
+    return Array.from({ length: Math.max(s.minItems ?? 0, s.contains ? 1 : 0) }, (_, index) =>
+      sample(
+        index === 0 && s.contains ? { allOf: [s.items ?? {}, s.contains] } : (s.items ?? {}),
+        {},
+        definitions,
+        stack,
+      ),
+    );
   if (t === 'boolean') return true;
-  if (t === 'integer') return exactValue(valueInstruction('integer', s.format)) ? '100' : 1;
-  if (t === 'number') return '1.00';
+  if (t === 'integer' || t === 'number') {
+    const fallback = t === 'integer' ? (exactValue(valueInstruction(t, s.format)) ? 100 : 1) : 1;
+    const step = s.multipleOf ?? (t === 'integer' ? 1 : 0.01);
+    let value =
+      s.minimum ?? (s.exclusiveMinimum !== undefined ? s.exclusiveMinimum + step : fallback);
+    if (s.multipleOf) value = Math.ceil(value / s.multipleOf) * s.multipleOf;
+    if (s.maximum !== undefined) value = Math.min(value, s.maximum);
+    if (s.exclusiveMaximum !== undefined && value >= s.exclusiveMaximum)
+      value = s.exclusiveMaximum - step;
+    if (!exactValue(valueInstruction(t, s.format))) return value;
+    const token =
+      t === 'number' && value === 1 && s.multipleOf === undefined ? '1.00' : String(value);
+    return s['x-sdk-number-input'] === 'explicit' ? new ExactNumberSample(token) : token;
+  }
+  if (t === 'string') {
+    const formatted =
+      s.format === 'date'
+        ? '2026-01-01'
+        : s.format === 'date-time'
+          ? '2026-01-01T00:00:00Z'
+          : s.format === 'email'
+            ? 'example@example.invalid'
+            : 'example';
+    return formatted.padEnd(s.minLength ?? 0, 'x').slice(0, s.maxLength);
+  }
   if (t === 'null') return null;
   return 'example';
 }

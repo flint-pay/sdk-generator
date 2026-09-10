@@ -1,0 +1,69 @@
+{
+  "profiles": ["full-common-sdk.json"],
+  "include": [
+    "advanceOnboarding",
+    "createDemoSession",
+    "createDeveloperPartnerApp",
+    "createDeveloperSandbox",
+    "createMerchantAccountSession",
+    "createOnboardingAPIKey",
+    "deleteDeveloperSandbox",
+    "exchangePartnerInstallToken",
+    "getDeveloperPartnerApp",
+    "getDeveloperPartnerAppInstall",
+    "getDeveloperSandbox",
+    "getOnboardingState",
+    "getOpenAPISpec",
+    "getPaymentLinkPublic",
+    "issueDeveloperSandboxTestKey",
+    "listDeveloperPartnerAppInstalls",
+    "listDeveloperPartnerApps",
+    "listDeveloperSandboxes",
+    "previewPartnerInstallAuthorization",
+    "refreshCustomerSession",
+    "refreshMerchantAccountSession",
+    "resetDemoSession",
+    "resetDeveloperSandbox",
+    "resolvePaymentLink",
+    "revokeDeveloperPartnerAppInstall",
+    "revokeDeveloperPartnerEnvironmentGrant",
+    "rotateDeveloperPartnerAppSecret",
+    "startOnboarding",
+    "updateDeveloperPartnerApp",
+    "verifyOnboardingEmail"
+  ],
+  "auth": {
+    "modes": {
+      "onboarding": {
+        "schemes": ["OnboardingSessionBearer"],
+        "operations": [
+          "advanceOnboarding",
+          "createDeveloperPartnerApp",
+          "createDeveloperSandbox",
+          "createMerchantAccountSession",
+          "createOnboardingAPIKey",
+          "deleteDeveloperSandbox",
+          "getDeveloperPartnerApp",
+          "getDeveloperPartnerAppInstall",
+          "getDeveloperSandbox",
+          "getOnboardingState",
+          "issueDeveloperSandboxTestKey",
+          "listDeveloperPartnerAppInstalls",
+          "listDeveloperPartnerApps",
+          "listDeveloperSandboxes",
+          "refreshMerchantAccountSession",
+          "resetDeveloperSandbox",
+          "revokeDeveloperPartnerAppInstall",
+          "revokeDeveloperPartnerEnvironmentGrant",
+          "rotateDeveloperPartnerAppSecret",
+          "updateDeveloperPartnerApp"
+        ]
+      }
+    }
+  },
+  "operations": {
+    "exchangePartnerInstallToken": {
+      "requestMediaType": "application/json"
+    }
+  }
+}

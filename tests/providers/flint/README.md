@@ -27,4 +27,27 @@ node dist/cli.js validate .generated/flint-risk --fixtures tests/providers/flint
 
 When updating the fixture set, obtain a matching versioned source export, retain the original schemas, and record any required corrections in the profiles with a source-backed reason. Keep the API date, header pin and generated types aligned. Verify expected HTTP behavior independently of generator output before updating hashes; the manifest is an integrity check, not proof of provider acceptance.
 
-Large amounts and future status values probe serialization and response compatibility. They do not assert transaction eligibility or a successful server mutation. Schema checks do not replace provider business validation, and these fixtures do not cover every Flint endpoint or payment method.
+Large amounts and future status values probe serialization and response compatibility. They do not assert transaction eligibility or a successful server mutation. Schema checks do not replace provider business validation. The slice wire cases cover selected behavior; the full export suite below checks every outbound operation and incoming declaration.
+
+## Full public export
+
+`full-openapi.json` pins the unmodified public export at revision `039b96023179d960bdce89cb34eea1baf3faeb67`, API version `2026-09-07`. Its deterministic inventory contains 497 outbound operations, 189 incoming webhook declarations, six discriminator mappings, four PDF downloads, two redirect operations and one event stream. Incoming declarations never become outbound methods.
+
+Generate the complete packages with:
+
+```sh
+node --max-old-space-size=3072 dist/cli.js generate tests/providers/flint/full-openapi.json tests/providers/flint/full-sdk.json output/full
+node --max-old-space-size=3072 dist/cli.js validate output/full --fixtures tests/providers/flint/full-http-cases.json
+```
+
+The combined profile composes merchant bearer, merchant API-key, customer, onboarding, checkout-session and invoice-token profiles. Each profile's operation bindings come from complete OpenAPI security alternatives; the checkout mode requires both ID and secret headers. Anonymous operations are retained. All profile selections together equal the 497-operation inventory.
+
+`full-common-sdk.json` enables schema validation, explicit numeric wrappers for ambiguous string/number inputs, named graph sharing, version headers and the declared Standard Webhooks signing convention. Model renames distinguish provider request models from generated `Input` aliases and reserved runtime names. The complete source and all its assertions remain intact. `provenance.json` records the example corrections: the delivery-method creation example needs a name and minimum option lifetime, the update example must select an update field, and exact integer examples use SDK strings.
+
+`full-http-cases.json` contains independently specified wire/error expectations covering downloads, redirects, every discriminator alias, checkout credentials and ACH/Affirm conditions. `full-model-cases.json` covers the remaining return-policy conditional/containment branches. The full package suite diagnoses every profile, checks exact operation/event inventories, validates both complete packages, verifies deterministic preview/regeneration, installs npm and Composer consumers, and exercises compiled factories and signed webhooks with dynamic schema adapters disabled. Generation budgets are 180 seconds, 4 GiB peak RSS and 300 MiB total generated files including the private record. These are repeatable regression limits, not claims of live provider transaction acceptance.
+
+The `getBundle` diagnostic control retains the original referenced graph. Its failure occurred during discriminator ingestion: the previous check required a directly declared object/tag, but nested branches obtain their object type and required literal tag through referenced `allOf` intersections. The fix derives effective branch facts once; deleting a mapping is unnecessary. The separate regression decodes the inherited variant in both clients.
+
+Transport tests also enforce slow-consumer buffer budgets over 2,048 16-KiB event frames: less than 24 MiB additional Node array-buffer memory and 8 MiB additional PHP managed memory, including repeated PHP stream opens and early closes. A 15,000-object uniqueness case has a ten-second bound per target.
+
+The complete export needs a 3-GiB Node heap during generator commands; the examples set `--max-old-space-size=3072` explicitly because Node 22 defaults to a smaller heap in constrained environments. This stays inside the tested 4-GiB process budget. The installed SDKs do not require that generator setting; PHP consumers run with the default 128-MiB memory limit.

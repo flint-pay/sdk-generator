@@ -34,6 +34,8 @@ Generation compiles the resolved definition and configuration into public declar
 }
 ```
 
+Request bodies support `application/json` and `application/merge-patch+json`. When exactly one supported representation is declared, it is selected automatically, even if unsupported representations are also present. If both are available, set `operations.<operationId>.requestMediaType` explicitly. The selector must name a declared supported media type; only its schema controls request encoding. For example, select `application/json` for an OAuth operation that also offers form encoding.
+
 GET/HEAD request bodies are rejected when Node is a selected target because its built-in fetch transport cannot send them.
 
 HTTP parameters require an explicit non-null scalar type or a supported scalar array. References and conjunctive schemas may supply that type and add constraints. An empty schema or an enum without a type is insufficient for parameter encoding and fails diagnosis; declare the intended type. Typeless schemas remain supported in JSON bodies and models.
@@ -153,7 +155,7 @@ JSON `number` values, including plain numbers and float/double formats, use exac
 
 `allOf` validates every branch, `anyOf` requires at least one matching branch, and `oneOf` requires exactly one. Matching numeric branches merge equivalent values using exact decimal comparison, so spellings such as `1.0` and `1e0` remain valid for `anyOf` combining decimal and exact-integer schemas. Numeric merging preserves the original request token; it does not turn JSON strings into numbers or relax `oneOf` exclusivity. Field-choice rules can use `required` and `not` without repeating an object shape or declaring a discriminator. An optional discriminator requires disjoint required string enum tags. Composition retains sibling constraints and exact numeric encoding. If the shared numeric interpretation invalidates every branch that supplied a numeric conversion, the SDK rejects the value before dispatch. Unknown response tags and enum values remain unchanged; they are not converted to a known result. Unknown numeric response fields use numbers for safe integers and strings for larger/decimal tokens. Response fields required by known schemas must exist and known field shapes must be representable. Request enums and unknown-property restrictions are enforced. Ordinary schema defaults are documentation, never silently inserted into a request. Generated quickstart inputs are validated during rendering; if an inferred or configured example cannot satisfy the schema, generation identifies `config/operations/<id>/example` so the provider can supply a valid example. OpenAPI 3.0 `nullable` is normalized before generation, including reference wrappers. Required readOnly fields are response requirements; sending them is rejected. Required writeOnly fields are input requirements and are excluded from response declarations and ordinary inspection. Nullable and field-choice rules are checked through both generated public clients. Untagged object response alternatives preserve future objects through an unknown-object branch; the generated known-variant guard verifies shape and sibling requirements before narrowing.
 
-Nested `x-sensitive: true` metadata affects model debug representations and parsed error details, not wire serialization. Explicit raw response/body access remains sensitive. Set top-level `"validation": "schema"` to check declared minimum/maximum, exclusive bounds, string lengths, patterns and array lengths on requests and model factories. The default `"encoding"` policy retains required fields, declared types/enums, field choices, nullability, exact numeric representation and integer format ranges; business limits remain server checks. Alternative selection and known-variant guards use the full supported constraints so they never choose an incompatible wire representation. Responses retain values beyond these business constraints while still checking representable field shapes. Bounds and numeric enum membership use exact decimal comparisons without floating-point coercion of caller values. Numeric enums accept equivalent spellings such as `1`, `1.0` and `1e0`; generated TypeScript represents exact numeric enum inputs as strings and enforces membership at runtime, including single-element type arrays such as `type: ["number"]`. Integer formats int32/uint32/int64/uint64 enforce their request ranges; uint64 uses exact strings. String lengths count Unicode code points, not bytes or UTF-16 units. Patterns use a portable Unicode ECMAScript subset, translated for PHP: character classes, groups, alternation, anchors and quantifiers; lookarounds, backreferences, special groups and unsupported escapes receive diagnostics. Other textual formats are annotations. OpenAPI 3.0 exclusive booleans normalize with their associated bounds. Unsupported validation keywords, including multipleOf, fail with diagnostics. Numeric bound literals must be finite, with integer literals in the safe range of the generator's JSON parser.
+Nested `x-sensitive: true` metadata affects model debug representations and parsed error details, not wire serialization. Explicit raw response/body access remains sensitive. Set top-level `"validation": "schema"` to check declared minimum/maximum, exclusive bounds, string lengths, patterns, array lengths, multipleOf, uniqueItems, contains and object property counts on requests and model factories. The default `"encoding"` policy retains required fields, declared types/enums, field choices, nullability, exact numeric representation and integer format ranges; business limits remain server checks. Alternative selection and known-variant guards use the full supported constraints so they never choose an incompatible wire representation. Responses retain values beyond these business constraints while still checking representable field shapes. Bounds and numeric enum membership use exact decimal comparisons without floating-point coercion of caller values. Numeric enums accept equivalent spellings such as `1`, `1.0` and `1e0`; generated TypeScript represents exact numeric enum inputs as strings and enforces membership at runtime, including single-element type arrays such as `type: ["number"]`. Integer formats int32/uint32/int64/uint64 enforce their request ranges; uint64 uses exact strings. String lengths count Unicode code points, not bytes or UTF-16 units. Patterns use a portable Unicode ECMAScript subset, translated for PHP: character classes, groups, alternation, anchors and quantifiers; lookarounds, backreferences, special groups and unsupported escapes receive diagnostics. Other textual formats are annotations. OpenAPI 3.0 exclusive booleans normalize with their associated bounds. Unsupported validation keywords, including minContains and maxContains, fail with diagnostics. Numeric bound literals must be finite, with integer literals in the safe range of the generator's JSON parser.
 
 Numeric bounds and enums also apply when array items or dictionary values receive their type and constraints from separate `allOf` branches or `$ref` siblings. This includes named properties constrained by another branch's `additionalProperties` schema. Exact-number strings retain their numeric JSON meaning during those checks, including in nested collections; specializing a named field does not change the dictionary rule for other keys.
 
@@ -230,7 +232,7 @@ These checks invoke generated public clients in the selected targets, including 
 
 ## Running operation examples
 
-Generated scripts read `API_BASE_URL` and optional `API_TOKEN` explicitly; client construction itself does not read environment variables. Run Node examples from the generated `node/` package with `node examples/RESOURCE-METHOD.mjs`. For PHP, run `composer install` inside the generated `php/` package first, then `php examples/RESOURCE-METHOD.php`. When copying a PHP example into an application, update its `require` path to the application's `vendor/autoload.php`.
+Generated scripts read `API_BASE_URL` and optional `API_TOKEN` explicitly for legacy authentication. Named-mode examples read `API_MODE_SCHEME` variables, with the mode and scheme converted to uppercase and punctuation replaced by underscores; client construction itself does not read environment variables. Run Node examples from the generated `node/` package with `node examples/RESOURCE-METHOD.mjs`. For PHP, run `composer install` inside the generated `php/` package first, then `php examples/RESOURCE-METHOD.php`. When copying a PHP example into an application, update its `require` path to the application's `vendor/autoload.php`.
 
 Operation examples also accept `API_ALLOW_INSECURE_HTTP=1` for deliberate local HTTP testing. This is disabled by default. Do not set it for a normal HTTPS integration. TypeScript examples are normally compiled with TypeScript; Node 22 test execution can use `--experimental-strip-types`.
 
@@ -238,7 +240,7 @@ Operation examples also accept `API_ALLOW_INSECURE_HTTP=1` for deliberate local 
 
 Named model factories can be nested in TypeScript client inputs through `InputValue<T>`. For models that also permit nonobjects, passing an object preserves its declared object branch in the factory return type so it can be used in object-constrained fields, including recursive references. Factories normalize nested wrappers into plain typed values, and request serialization revalidates them. PHP wrappers unwrap nested models into plain values for typed getters and preserve object/array/scalar/null shapes; `toArray()` applies only to array or object models. In object/array alternatives, PHP lists (including `[]`) represent JSON arrays, associative arrays represent JSON objects, and `(object) []` explicitly represents an empty JSON object. A directly declared object input still accepts `[]` as an empty object. Responses retain the object/array distinction from JSON decoding. Cyclic values, including opaque additional fields, fail before HTTP dispatch.
 
-Alternatives mixing strings with exact-number strings, including corresponding nested object properties, array items and dictionary values, fail with a source diagnostic when the branches cannot be distinguished. Distinct required tags can separate object alternatives and preserve their wire representations. Numeric intersections requiring different SDK representations also fail, including intersections hidden inside `anyOf`/`oneOf` branches. Safe-integer/string alternatives remain distinct and supported. Use a provider correction only when it preserves the upstream wire contract; do not silently rewrite ambiguous values.
+Without `numericUnions: "explicit"`, alternatives mixing strings with exact-number strings, including corresponding nested object properties, array items and dictionary values, fail with a source diagnostic when the branches cannot be distinguished. Distinct required tags can separate object alternatives and preserve their wire representations. Numeric intersections requiring different SDK representations also fail, including intersections hidden inside `anyOf`/`oneOf` branches. Safe-integer/string alternatives remain distinct and supported. Use a provider correction only when it preserves the upstream wire contract; do not silently rewrite ambiguous values.
 
 ## Request identification
 
@@ -247,3 +249,46 @@ Generated clients send a User-Agent containing the provider-selected package nam
 ## Publication metadata
 
 `npm.registry` optionally selects an HTTPS registry URL without embedded credentials, query or fragment. `npm.access` optionally selects `public` or `restricted`; npm requires a scoped package for restricted access. Defaults are the public npm registry and public access. These settings appear in package publishConfig and the reviewable release plan. Publishing requires a separate explicit command and version acknowledgement; credentials are supplied by the caller's npm configuration. See [release policy](releases.md#version-policy) for `release.policy` and [distribution](releases.md#coordinated-composer-and-documentation-distribution) for `release.baseUrl`.
+
+## Full contracts, authentication modes, and profile composition
+
+`profiles` lists local JSON profiles relative to the configuration file. Compatible settings merge, operation selections and mode bindings form unions, and conflicting scalar settings fail diagnosis. A referenced profile without `include` contributes the full operation selection. The final configuration may supply its own explicit selection. Profile cycles fail diagnosis.
+
+Use `auth.modes` to name complete OpenAPI security alternatives. Each mode has `schemes` and optional `operations` bindings. A checkout ID and secret belong in the same scheme list. Modes sharing a bearer destination may represent different roles; bind those roles to their allowed operation IDs. One selected mode supplies the complete credential set for a request.
+
+```json
+{
+  "auth": {
+    "modes": {
+      "merchant": { "schemes": ["BearerAuth"] },
+      "checkout": { "schemes": ["CheckoutId", "CheckoutSecret"] }
+    }
+  }
+}
+```
+
+Legacy `auth: { "scheme": "BearerAuth" }` and `token` remain supported. An ambiguous request needs an explicit mode. An incomplete scheme set, contradictory header override, or inapplicable mode fails before dispatch. Anonymous operations do not acquire a client default credential mode unless the operation permits it.
+
+`numericUnions: "explicit"` enables exact-number/string alternatives without changing their JSON schemas. At ambiguous input paths, strings remain JSON strings and `new ExactNumber("1.2500")` selects an exact JSON number in either target. Other exact numeric inputs retain their existing string representation. Numeric intersections with inconsistent representations remain unsupported.
+
+`schemaSharing: "named"` retains named payload dependencies as local compiled references. This bounds repeated schema expansion for large exports; it does not remove operations or constraints. Large exports can require a larger generator heap, for example `node --max-old-space-size=3072 dist/cli.js generate API.json SDK.json OUTPUT`. The full 497-operation fixture tests this setting within a 4-GiB process budget; installed clients do not need the generator heap setting. Top-level OpenAPI `webhooks` are incoming contracts and never generate outbound client methods. When HMAC verification is configured, effective literal event types bind the incoming payload schemas to the verifier. Incompatible explicit bindings fail diagnosis.
+
+## Event stream configuration
+
+A declared successful `text/event-stream` response produces a closeable event stream. Optional operation configuration supplies limits and explicit event payload schemas:
+
+```json
+{
+  "operations": {
+    "watchEvents": {
+      "stream": {
+        "idleTimeoutMs": 30000,
+        "maxEventBytes": 1048576,
+        "events": { "ready": "#/components/schemas/ReadyEvent" }
+      }
+    }
+  }
+}
+```
+
+Only configured event names have JSON payload decoding. Unknown event names retain raw strings. The media schema is not interpreted as a per-event JSON contract. Default limits are 30 seconds of idle reading and 1 MiB per event. Request options `streamIdleTimeoutMs` and `streamLifetimeMs` control idle reading and optional total lifetime. Connection setup uses the usual timeout/deadline; the stream owns its connection after the method returns. Resume uses the operation's declared last-event-ID input. Reconnection is caller-controlled; no event is automatically replayed.

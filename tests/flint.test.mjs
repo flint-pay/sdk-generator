@@ -28,6 +28,18 @@ test('provider regression inputs match their pinned fixture manifest', () => {
   assert.equal(manifest.specRevision, provenance.revision);
   assert.equal(manifest.behaviorRevision, provenance.behaviorRevision);
   assert.deepEqual(Object.keys(manifest.files).sort(), [
+    'full-checkout-sdk.json',
+    'full-common-sdk.json',
+    'full-customer-sdk.json',
+    'full-http-cases.json',
+    'full-inventory.json',
+    'full-invoice-sdk.json',
+    'full-merchant-sdk.json',
+    'full-merchantKey-sdk.json',
+    'full-model-cases.json',
+    'full-onboarding-sdk.json',
+    'full-openapi.json',
+    'full-sdk.json',
     'http-cases.json',
     'openapi.json',
     'risk-http-cases.json',

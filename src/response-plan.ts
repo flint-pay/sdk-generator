@@ -1,4 +1,4 @@
-import type { Schema } from './contract.js';
+import type { Operation, Schema } from './contract.js';
 import { compileCodec, ANY_CODEC, exactValue, wireKind, type CodecPlan } from './codec-plan.js';
 import type { ValueGuarantee } from './value-guarantee.js';
 import { objectDeclaration } from './target-types.js';
@@ -6,6 +6,45 @@ import { objectDeclaration } from './target-types.js';
 export interface ResponsePlan {
   publicType: ValueGuarantee;
   runtime: ValueGuarantee;
+  phpRuntime?: ValueGuarantee;
+}
+
+/** Non-JSON results have observable values even without a response schema. */
+export function compileResultPlan(
+  status: string,
+  response: Operation['responses'][string],
+): ResponsePlan | undefined {
+  if (response.classification === 'redirect' || status === '302' || status === '307') {
+    const publicType: ValueGuarantee = {
+      kind: 'object',
+      fields: { location: { kind: 'string' } },
+      required: [],
+      extra: { kind: 'unknown' },
+    };
+    return {
+      publicType,
+      runtime: { ...publicType, required: response.locationRequired ? ['location'] : [] },
+    };
+  }
+  const kind = response.bodyKind ?? (response.schema ? 'json' : 'empty');
+  switch (kind) {
+    case 'binary':
+      return {
+        publicType: { kind: 'binary' },
+        runtime: { kind: 'binary' },
+        phpRuntime: { kind: 'string' },
+      };
+    case 'sse':
+      return { publicType: { kind: 'stream' }, runtime: { kind: 'stream' } };
+    case 'json':
+      return response.schema ? compileResponsePlan(response.schema) : undefined;
+    case 'empty':
+      return undefined;
+    default: {
+      const unreachable: never = kind;
+      throw new Error('Unknown response body kind: ' + unreachable);
+    }
+  }
 }
 
 export function compileResponsePlan(schema: Schema): ResponsePlan {
@@ -56,6 +95,7 @@ function scalarGuarantee(codec: CodecPlan): ValueGuarantee | undefined {
     codec.some ||
     codec.exactlyOne ||
     codec.exclude ||
+    codec.when ||
     (codec.nullable && codec.value.kind !== 'null')
   )
     return {
