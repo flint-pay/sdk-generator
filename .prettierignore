@@ -3,3 +3,5 @@ dist/
 .context/
 node_modules/
 package-lock.json
+# Preserve the pinned upstream export byte-for-byte.
+tests/providers/flint/full-openapi.json

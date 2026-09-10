@@ -34,7 +34,7 @@ export interface Metadata {
 export interface Result<T> {
   data: T;
   meta: Metadata;
-  raw: string;
+  raw: T extends Uint8Array ? Uint8Array : string;
 }
 export class SdkError extends Error {
   constructor(
@@ -72,6 +72,10 @@ export interface DiagnosticEvent {
   errorKind?: ErrorKind;
 }
 export interface RequestOptions {
+  streamIdleTimeoutMs?: number;
+  streamLifetimeMs?: number;
+  authMode?: string;
+  credentials?: Record<string, string>;
   headers?: Record<string, string>;
   idempotencyKey?: string;
   ifMatch?: string;
@@ -85,6 +89,8 @@ export interface RequestOptions {
 export interface ClientOptions {
   baseUrl: string;
   token?: string;
+  authMode?: string;
+  credentials?: Record<string, Record<string, string>>;
   allowedOrigins?: string[];
   allowInsecureHttp?: boolean;
   timeoutMs?: number;
@@ -93,6 +99,194 @@ export interface ClientOptions {
   transport?: typeof fetch;
   diagnostics?: (event: DiagnosticEvent) => void;
   redactFields?: string[];
+}
+export interface ServerSentEvent {
+  event: string;
+  id: string;
+  data: unknown;
+  rawData: string;
+  retry?: number;
+}
+
+/** A single-consumer stream. Breaking iteration releases the response connection. */
+export class EventStream implements AsyncIterable<ServerSentEvent> {
+  private closed = false;
+  private started = false;
+  private failure: SdkError | undefined;
+  private lifetime: ReturnType<typeof setTimeout> | undefined;
+  private readonly abort = () => {
+    this.failure = new SdkError('cancelled', 'Stream cancelled', 'response', false, this.meta);
+    void this.close();
+  };
+  constructor(
+    private readonly reader: ReadableStreamDefaultReader<Uint8Array>,
+    readonly meta: Metadata,
+    private readonly settings: {
+      idleTimeoutMs: number;
+      maxEventBytes: number;
+      lifetimeMs?: number;
+      signal?: AbortSignal;
+    },
+    private readonly decodeEvent: (event: string, data: string) => unknown = (_event, data) => data,
+    private readonly released: () => void = () => {},
+  ) {
+    settings.signal?.addEventListener('abort', this.abort, { once: true });
+    if (settings.signal?.aborted) this.abort();
+    if (settings.lifetimeMs)
+      this.lifetime = setTimeout(() => {
+        this.failure = new SdkError(
+          'deadline',
+          'Stream lifetime exceeded',
+          'response',
+          false,
+          this.meta,
+        );
+        void this.close();
+      }, settings.lifetimeMs);
+  }
+  async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    clearTimeout(this.lifetime);
+    this.settings.signal?.removeEventListener('abort', this.abort);
+    this.released();
+    await this.reader.cancel().catch(() => {});
+  }
+  [inspect.custom]() {
+    return { meta: this.meta, closed: this.closed };
+  }
+  async *[Symbol.asyncIterator](): AsyncGenerator<ServerSentEvent> {
+    if (this.started) throw new SdkError('validation', 'A stream can only be consumed once');
+    this.started = true;
+    const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+    let firstCharacter = true;
+    let line = '',
+      data = '',
+      event = '',
+      id = '',
+      skipLF = false,
+      bytes = 0;
+    let retry: number | undefined;
+    const consumeLine = (): ServerSentEvent | undefined => {
+      if (line === '') {
+        const frame =
+          data === ''
+            ? undefined
+            : {
+                event: event || 'message',
+                id,
+                rawData: data.slice(0, -1),
+                data: this.decodeEvent(event || 'message', data.slice(0, -1)),
+                ...(retry !== undefined ? { retry } : {}),
+              };
+        data = '';
+        event = '';
+        bytes = 0;
+        return frame;
+      }
+      if (!line.startsWith(':')) {
+        const colon = line.indexOf(':');
+        const field = colon < 0 ? line : line.slice(0, colon);
+        let value = colon < 0 ? '' : line.slice(colon + 1);
+        if (value.startsWith(' ')) value = value.slice(1);
+        if (field === 'data') data += value + '\n';
+        else if (field === 'event') event = value;
+        else if (field === 'id' && !value.includes('\0')) id = value;
+        else if (field === 'retry' && /^\d+$/.test(value) && Number.isSafeInteger(Number(value)))
+          retry = Number(value);
+      }
+      line = '';
+      return undefined;
+    };
+    try {
+      while (!this.closed) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const next = await Promise.race([
+          this.reader.read(),
+          new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(
+              () =>
+                reject(
+                  new SdkError(
+                    'deadline',
+                    'Stream idle timeout exceeded',
+                    'response',
+                    false,
+                    this.meta,
+                  ),
+                ),
+              this.settings.idleTimeoutMs,
+            );
+          }),
+        ]).finally(() => clearTimeout(timer));
+        if (this.failure) throw this.failure;
+        if (next.done) {
+          decoder.decode();
+          break;
+        }
+        const text = decoder.decode(next.value, { stream: true });
+        for (const character of text) {
+          if (this.closed) break;
+          if (firstCharacter) {
+            firstCharacter = false;
+            if (character === '\ufeff') {
+              bytes = 3;
+              if (bytes > this.settings.maxEventBytes)
+                throw new SdkError(
+                  'protocol',
+                  'SSE event exceeds configured size limit',
+                  'response',
+                );
+              continue;
+            }
+          }
+          if (skipLF) {
+            skipLF = false;
+            if (character === '\n') continue;
+          }
+          if (character === '\r' || character === '\n') {
+            if (++bytes > this.settings.maxEventBytes)
+              throw new SdkError(
+                'protocol',
+                'SSE event exceeds configured size limit',
+                'response',
+                false,
+                this.meta,
+              );
+            skipLF = character === '\r';
+            const frame = consumeLine();
+            if (frame) yield frame;
+          } else {
+            bytes += Buffer.byteLength(character);
+            if (bytes > this.settings.maxEventBytes)
+              throw new SdkError(
+                'protocol',
+                'SSE event exceeds configured size limit',
+                'response',
+                false,
+                this.meta,
+              );
+            line += character;
+          }
+        }
+      }
+      if (this.failure) throw this.failure;
+    } catch (cause) {
+      if (cause instanceof SdkError && cause.kind !== 'validation') throw cause;
+      throw new SdkError(
+        'protocol',
+        'Invalid or interrupted SSE stream',
+        'response',
+        false,
+        this.meta,
+        undefined,
+        undefined,
+        { cause },
+      );
+    } finally {
+      await this.close();
+    }
+  }
 }
 const bad = (path: string, reason: string): never => {
   throw new SdkError('validation', `${path}: ${reason}`);
@@ -105,6 +299,15 @@ class RawNumber {
 // JSON numeric meaning, established by the wire parser or a positive codec declaration.
 class ParsedNumber {
   constructor(readonly value: string) {}
+}
+/** An explicit JSON number for inputs whose schema also permits JSON strings. */
+export class ExactNumber extends ParsedNumber {
+  constructor(value: string) {
+    if (typeof value !== 'string' || !exactDecimal.test(value))
+      bad('ExactNumber', 'expected a JSON number token');
+    super(value);
+    Object.freeze(this);
+  }
 }
 /** Parse JSON without rounding integers or decimal tokens. Unknown numeric tokens remain exact strings. */
 export function parseExact(text: string): unknown {
@@ -297,11 +500,66 @@ function compareDecimal(left: string, right: string): number {
     y = b.digits.padEnd(size, '0');
   return a.sign * (x < y ? -1 : x > y ? 1 : 0);
 }
+// Collision-free JSON value identity: numeric spellings and object key order
+// are immaterial, while arrays and JSON strings retain their own identity.
+function jsonIdentity(value: unknown, depth = 0): string {
+  if (depth > 256) return bad('value', 'JSON equality exceeds nesting limit or contains a cycle');
+  if (value instanceof ParsedNumber || value instanceof RawNumber || typeof value === 'number') {
+    const text = typeof value === 'number' ? String(value) : value.value;
+    const [coefficient = '', exponent = '0'] = text.toLowerCase().split('e');
+    const fraction = coefficient.split('.')[1]?.length ?? 0;
+    const digits = coefficient.replace(/[-.]/g, '').replace(/^0+/, '');
+    const trimmed = digits.replace(/0+$/, '');
+    if (!trimmed) return '["number","0"]';
+    return JSON.stringify([
+      'number',
+      coefficient.startsWith('-') ? '-' + trimmed : trimmed,
+      String(BigInt(exponent) - BigInt(fraction) + BigInt(digits.length - trimmed.length)),
+    ]);
+  }
+  if (Array.isArray(value))
+    return JSON.stringify(['array', value.map((child) => jsonIdentity(child, depth + 1))]);
+  if (value && typeof value === 'object')
+    return JSON.stringify([
+      'object',
+      Object.entries(value)
+        .filter(([, child]) => child !== undefined)
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .map(([key, child]) => [key, jsonIdentity(child, depth + 1)]),
+    ]);
+  return JSON.stringify([typeof value, value]);
+}
+function decimalMultiple(token: string, divisor: string, path: string): boolean {
+  const parts = (text: string) => {
+    const [coefficient = '', exponent = '0'] = text.toLowerCase().split('e');
+    const fraction = coefficient.split('.')[1]?.length ?? 0;
+    const digits = coefficient.replace(/[-.]/g, '').replace(/^0+/, '');
+    const trimmed = digits.replace(/0+$/, '');
+    return {
+      digits: trimmed,
+      power:
+        Math.max(-1e9, Math.min(1e9, Number(exponent))) - fraction + digits.length - trimmed.length,
+    };
+  };
+  const a = parts(token),
+    b = parts(divisor);
+  if (!a.digits) return true;
+  const shift = a.power - b.power;
+  if (shift < 0) return false;
+  if (b.digits === '1') return true;
+  if (shift > 10000) return bad(path, 'multipleOf exponent expansion exceeds 10000 digits');
+  return BigInt(a.digits + '0'.repeat(shift)) % BigInt(b.digits) === 0n;
+}
 function numericConstraints(token: string, s: CodecPlan, path: string, full = true) {
   const range = s.range;
   if (range && (compareDecimal(token, range[0]) < 0 || compareDecimal(token, range[1]) > 0))
     bad(path, 'value is outside the declared integer format range');
   if (!full) return;
+  if (
+    s.checks.multipleOf !== undefined &&
+    !decimalMultiple(token, String(s.checks.multipleOf), path)
+  )
+    bad(path, 'value violates multipleOf');
   for (const keyword of ['minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum'] as const) {
     if (s.checks[keyword] === undefined) continue;
     const order = compareDecimal(token, String(s.checks[keyword]));
@@ -383,7 +641,7 @@ function selectAlternatives(
     )
       bad(path, 'expected a string discriminator');
     selected = branches.filter((branch) =>
-      branch.fields?.[tag]?.members?.some(
+      (branch.tagValues ?? branch.fields?.[tag]?.members)?.some(
         (member) => member === (value as Record<string, unknown>)[tag],
       ),
     );
@@ -422,6 +680,27 @@ function selectAlternatives(
 }
 
 type CodecScope = { codec: CodecPlan; definitions: Readonly<Record<string, CodecPlan>> };
+function conditionalBranch(
+  value: unknown,
+  { codec, definitions }: CodecScope,
+  context: CodecContext,
+): CodecPlan | undefined {
+  if (!codec.when) return undefined;
+  let matched = true;
+  try {
+    executeNode(value, codec.when.test, {
+      ...codecMode((context.direction ?? context.mode) === 'response', true),
+      path: context.path ?? 'input',
+      depth: (context.depth ?? 0) + 1,
+      definitions,
+      allowUnknownResponseFields: false,
+    });
+  } catch (error) {
+    if (!(error instanceof SdkError) || error.kind !== 'validation') throw error;
+    matched = false;
+  }
+  return matched ? codec.when.then : codec.when.else;
+}
 type UnionScope = CodecScope & { branches: readonly CodecPlan[] };
 type NumericContext = CodecContext & {
   search: { remaining: Map<string, number>; exhausted: boolean };
@@ -438,6 +717,19 @@ function jointNumericView(
   context: NumericContext,
 ): { value: unknown } | undefined {
   if (unions.length < 2) return undefined;
+  const convertible = (child: unknown, depth = 0): boolean => {
+    if (depth > 256)
+      bad(context.path ?? 'input', 'value exceeds supported nesting depth or contains a cycle');
+    if (typeof child === 'string') return exactDecimal.test(child);
+    if (child instanceof ParsedNumber || child instanceof RawNumber) return false;
+    if (child instanceof Model) child = modelInputs.get(child) ?? child.toJSON();
+    return Boolean(
+      child &&
+        typeof child === 'object' &&
+        Object.values(child).some((value) => convertible(value, depth + 1)),
+    );
+  };
+  if (!convertible(value)) return undefined;
   const path = context.path ?? 'input';
   // An explicitly string-valued field cannot change under a numeric hypothesis.
   // Reuse full validation for these fields to prune incompatible literal tags.
@@ -614,33 +906,37 @@ function assertNumericSources(
   if (!numericViewChanged(source, value)) return;
   const path = context.path ?? 'input';
   const depth = context.depth ?? 0;
-  const shapes = codecShapes(scopes, path, depth, ({ codec, definitions }) =>
-    [codec.exactlyOne, codec.some].flatMap((branches) => {
-      if (!branches) return [];
-      return selectAlternatives(
-        value,
-        branches,
-        branches === codec.exactlyOne,
-        codec.tag,
-        context,
-        (branch, allowUnknownResponseFields) => {
-          try {
-            executeNode(value, branch, {
-              ...codecMode((context.direction ?? context.mode) === 'response', true),
-              path,
-              depth: depth + 1,
-              definitions,
-              allowUnknownResponseFields,
-            });
-            return true;
-          } catch (error) {
-            if (error instanceof SdkError && error.kind === 'validation') return false;
-            throw error;
-          }
-        },
-      ).selected;
-    }),
-  );
+  const shapes = codecShapes(scopes, path, depth, ({ codec, definitions }) => {
+    const conditional = conditionalBranch(value, { codec, definitions }, context);
+    return [
+      ...(conditional ? [conditional] : []),
+      ...[codec.exactlyOne, codec.some].flatMap((branches) => {
+        if (!branches) return [];
+        return selectAlternatives(
+          value,
+          branches,
+          branches === codec.exactlyOne,
+          codec.tag,
+          context,
+          (branch, allowUnknownResponseFields) => {
+            try {
+              executeNode(value, branch, {
+                ...codecMode((context.direction ?? context.mode) === 'response', true),
+                path,
+                depth: depth + 1,
+                definitions,
+                allowUnknownResponseFields,
+              });
+              return true;
+            } catch (error) {
+              if (error instanceof SdkError && error.kind === 'validation') return false;
+              throw error;
+            }
+          },
+        ).selected;
+      }),
+    ];
+  });
   if (value instanceof ParsedNumber) {
     if (!shapes.some(({ codec }) => exactValue(codec.value)))
       bad(path, 'numeric interpretation depends on an unmatched alternative');
@@ -691,13 +987,14 @@ function numericView(
   if (context.search.exhausted)
     bad(path, 'numeric interpretation exceeds 256 alternative combinations');
   if (depth > 256) bad(path, 'value exceeds the supported nesting depth (256) or contains a cycle');
-  if (value instanceof Model) value = value.toJSON();
+  if (value instanceof Model) value = modelInputs.get(value) ?? value.toJSON();
   const shapes = codecShapes(scopes, path, depth);
   if (
     typeof value === 'string' &&
     shapes.some(
       ({ codec }) =>
         exactValue(codec.value) &&
+        codec.numberInput !== 'explicit' &&
         (codec.value.kind === 'exact-integer' ? exactInteger : exactDecimal).test(value as string),
     )
   )
@@ -857,6 +1154,14 @@ function numericView(
   }
   if (context.search.exhausted)
     bad(path, 'numeric interpretation exceeds 256 alternative combinations');
+  for (const scope of shapes) {
+    const branch = conditionalBranch(value, scope, context);
+    if (branch)
+      value = numericView(value, [{ codec: branch, definitions: scope.definitions }], {
+        ...context,
+        depth: depth + 1,
+      });
+  }
   return value;
 }
 
@@ -884,6 +1189,12 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
   const matching = context.mode === 'match';
   let validateConstraints = s.constraints ?? context.validateConstraints ?? true;
   let definitions = s.definitions ?? context.definitions ?? {};
+  if (
+    (!response || matching) &&
+    s.literal !== undefined &&
+    jsonIdentity(value) !== jsonIdentity(parseJson(s.literal, true))
+  )
+    bad(path, 'value is outside the declared const');
 
   if (depth > 256) bad(path, 'value exceeds the supported nesting depth (256) or contains a cycle');
   if (s.reference) {
@@ -899,15 +1210,16 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
       allowUnknownResponseFields: allowUnknownResponseFields,
     });
   }
-  if (value instanceof Model) value = value.toJSON();
+  if (value instanceof Model) value = modelInputs.get(value) ?? value.toJSON();
   wireKind(s.value); // Exhaustively reject unknown instruction kinds.
-  if (s.every || s.some || s.exactlyOne || s.exclude) {
+  if (s.every || s.some || s.exactlyOne || s.exclude || s.when) {
     const {
       every: allOf,
       some: anyOf,
       exactlyOne: oneOf,
       exclude: not,
       tag: discriminator,
+      when,
       ...base
     } = s;
     let result = executeNode(value, base, {
@@ -945,7 +1257,8 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
       }
     };
     if (not && matches(not, false)) bad(path, 'value matches a forbidden combination');
-    for (const branch of allOf ?? [])
+    const conditional = conditionalBranch(value, { codec: s, definitions }, context);
+    for (const branch of [...(allOf ?? []), ...(conditional ? [conditional] : [])])
       result = combine(
         result,
         executeNode(value, branch, {
@@ -1018,7 +1331,11 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
   // Positive declarations establish numeric meaning in numericView before
   // matching. A remaining string is JSON text, including inside a negation;
   // the numeric branch being tested must not reinterpret it as an SDK number.
-  if (matching && exactValue(s.value) && typeof value === 'string')
+  if (
+    (matching || (!response && s.numberInput === 'explicit')) &&
+    exactValue(s.value) &&
+    typeof value === 'string'
+  )
     return bad(path, `expected ${type}; received a JSON string`);
   if (value instanceof ParsedNumber) {
     if (type === undefined) {
@@ -1113,6 +1430,13 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
         });
       else out[k] = v;
     }
+    if ((!response || matching) && (validateConstraints || matching)) {
+      const count = Object.keys(out).length;
+      if (s.checks.minProperties !== undefined && count < s.checks.minProperties)
+        bad(path, 'object violates minProperties');
+      if (s.checks.maxProperties !== undefined && count > s.checks.maxProperties)
+        bad(path, 'object violates maxProperties');
+    }
     if (response)
       Object.defineProperty(out, inspect.custom, {
         value: () => redactCodec(out, s, redactFields, definitions),
@@ -1128,6 +1452,30 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
         bad(path, 'array violates minItems');
       if (s.checks.maxItems !== undefined && value.length > s.checks.maxItems)
         bad(path, 'array violates maxItems');
+      if (
+        s.checks.uniqueItems &&
+        new Set(value.map((child) => jsonIdentity(child, depth + 1))).size !== value.length
+      )
+        bad(path, 'array violates uniqueItems');
+      if (
+        s.includes &&
+        !value.some((child, index) => {
+          try {
+            executeNode(child, s.includes!, {
+              ...codecMode(response, true),
+              path: `${path}[${index}]`,
+              definitions,
+              depth: depth + 1,
+              allowUnknownResponseFields: false,
+            });
+            return true;
+          } catch (error) {
+            if (error instanceof SdkError && error.kind === 'validation') return false;
+            throw error;
+          }
+        })
+      )
+        bad(path, 'array violates contains');
     }
     return value.map((v, i) =>
       executeNode(v, s.element ?? ANY_CODEC, {
@@ -1174,7 +1522,7 @@ export function isKnownCodec(value: unknown, codec: CodecPlan): boolean {
       typeof value !== 'object' ||
       !Object.hasOwn(value, tag) ||
       !codec.exactlyOne?.some((branch) =>
-        branch.fields?.[tag]?.members?.some(
+        (branch.tagValues ?? branch.fields?.[tag]?.members)?.some(
           (member) => member === (value as Record<string, unknown>)[tag],
         ),
       ))
@@ -1228,7 +1576,16 @@ export function redactCodec(
     s?.reference
       ? shapes(definitions[s.reference])
       : s
-        ? [s, ...[...(s.every ?? []), ...(s.some ?? []), ...(s.exactlyOne ?? [])].flatMap(shapes)]
+        ? [
+            s,
+            ...[
+              ...(s.every ?? []),
+              ...(s.some ?? []),
+              ...(s.exactlyOne ?? []),
+              ...(s.when?.then ? [s.when.then] : []),
+              ...(s.when?.else ? [s.when.else] : []),
+            ].flatMap(shapes),
+          ]
         : [];
   const schemas = shapes(schema);
   if (schemas.some((s) => s.sensitive)) return '[REDACTED]';
@@ -1277,6 +1634,7 @@ export type InputValue<T> =
       : T extends object
         ? { [Key in keyof T]: InputValue<T[Key]> }
         : never);
+const modelInputs = new WeakMap<object, unknown>();
 export class Model<T = unknown> {
   private readonly value: T;
   private readonly codec: CodecPlan;
@@ -1300,7 +1658,9 @@ export class Model<T = unknown> {
         );
       return v;
     };
-    this.value = unwrap(executeCodec(value, this.codec, { mode: 'request' })) as T;
+    const normalized = executeCodec(value, this.codec, { mode: 'request' });
+    modelInputs.set(this, parseJson(encode(normalized), true));
+    this.value = unwrap(normalized) as T;
   }
   toJSON() {
     return this.value;
@@ -1376,6 +1736,10 @@ async function delay(ms: number, signal?: AbortSignal) {
   });
 }
 export class Runtime {
+  private readonly streams = new Set<EventStream>();
+  async close(): Promise<void> {
+    await Promise.all([...this.streams].map((stream) => stream.close()));
+  }
   private readonly options: ClientOptions;
   private readonly base: URL;
   private readonly allowed: Set<string>;
@@ -1433,12 +1797,24 @@ export class Runtime {
     const deadline =
       start + positive(options.deadlineMs ?? this.options.deadlineMs ?? 30000, 'deadlineMs');
     const timeout = positive(options.timeoutMs ?? this.options.timeoutMs ?? 10000, 'timeoutMs');
+    if (options.streamIdleTimeoutMs !== undefined)
+      positive(options.streamIdleTimeoutMs, 'streamIdleTimeoutMs');
+    if (options.streamLifetimeMs !== undefined)
+      positive(options.streamLifetimeMs, 'streamLifetimeMs');
     const policy = op.retry ?? { maxAttempts: 1, statuses: [], transport: false, baseDelayMs: 100 };
     const attempts = options.maxAttempts ?? this.options.maxAttempts ?? policy.maxAttempts;
     if (!Number.isInteger(attempts) || attempts < 1 || attempts > policy.maxAttempts)
       bad('maxAttempts', 'must be within the provider-declared retry limit');
     const headers: Record<string, string> = Object.assign(Object.create(null), {
-      accept: 'application/json',
+      accept:
+        [
+          ...new Set(
+            Object.values(op.responses)
+              .filter((response) => response.classification === 'success')
+              .map((response) => response.mediaType)
+              .filter(Boolean),
+          ),
+        ].join(', ') || 'application/json',
       'user-agent': this.contract.userAgent ?? 'PublicSDK (Node.js)',
     });
     const setHeader = (name: string, value: string) => {
@@ -1485,7 +1861,44 @@ export class Runtime {
         );
     this.checkUrl(url);
     for (const [k, v] of Object.entries(options.headers ?? {})) setHeader(k, v);
-    if (op.authenticated || (op.optionalAuthentication && this.options.token)) {
+    if (this.contract.authentication) {
+      const permitted = op.authModes ?? [];
+      let modeName = options.authMode ?? (permitted.length ? this.options.authMode : undefined);
+      if (modeName === undefined && op.authenticated && permitted.length === 1)
+        modeName = permitted[0];
+      if (modeName === undefined && op.authenticated)
+        throw new SdkError('authentication', 'Select an explicit authentication mode');
+      const selected = modeName === undefined ? undefined : this.contract.authentication[modeName];
+      if (modeName !== undefined && (!selected || !permitted.includes(modeName)))
+        throw new SdkError(
+          'authentication',
+          'Authentication mode is not permitted for this operation',
+        );
+      const expected: Record<string, string> = Object.create(null);
+      if (selected && modeName !== undefined) {
+        const credentials = options.credentials ?? this.options.credentials?.[modeName];
+        for (const scheme of selected.schemes) {
+          const credential = credentials?.[scheme.name];
+          if (typeof credential !== 'string' || !credential || /[\r\n]/.test(credential))
+            throw new SdkError(
+              'authentication',
+              'A complete credential set is required for the selected mode',
+            );
+          expected[scheme.header.toLowerCase()] =
+            scheme.type === 'bearer' ? 'Bearer ' + credential : credential;
+        }
+      }
+      for (const mode of Object.values(this.contract.authentication))
+        for (const scheme of mode.schemes) {
+          const name = scheme.header.toLowerCase();
+          if (headers[name] !== undefined && headers[name] !== expected[name])
+            throw new SdkError(
+              'authentication',
+              'Request headers conflict with the selected authentication mode',
+            );
+        }
+      for (const [name, value] of Object.entries(expected)) setHeader(name, value);
+    } else if (op.authenticated || (op.optionalAuthentication && this.options.token)) {
       if (!this.options.token || !this.contract.auth)
         throw new SdkError('authentication', 'Explicit API credentials are required');
       setHeader(
@@ -1545,7 +1958,9 @@ export class Runtime {
       const controller = new AbortController();
       const abort = () => controller.abort();
       options.signal?.addEventListener('abort', abort, { once: true });
-      const timer = setTimeout(abort, Math.min(timeout, remaining));
+      // Timers truncate fractional durations; rounding up prevents an overall
+      // deadline from being reported as an earlier per-attempt transport error.
+      const timer = setTimeout(abort, Math.ceil(Math.min(timeout, remaining)));
       let retryAfter = 0;
       let error: SdkError | undefined;
       let diagnosticMeta: Metadata | undefined;
@@ -1577,13 +1992,93 @@ export class Runtime {
             : {}),
         };
         diagnosticMeta = meta;
+        const declaredResponse = op.responses[String(response.status)] ?? op.responses.default;
+        if (response.ok && declaredResponse?.bodyKind === 'sse') {
+          if (
+            response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() !==
+              'text/event-stream' ||
+            !response.body
+          ) {
+            await response.body?.cancel();
+            throw new SdkError(
+              'protocol',
+              'Expected an SSE response stream',
+              'response',
+              false,
+              meta,
+            );
+          }
+          const idleTimeoutMs = options.streamIdleTimeoutMs ?? op.stream?.idleTimeoutMs ?? 30000;
+          positive(idleTimeoutMs, 'streamIdleTimeoutMs');
+          if (options.streamLifetimeMs !== undefined)
+            positive(options.streamLifetimeMs, 'streamLifetimeMs');
+          const stream = new EventStream(
+            response.body.getReader(),
+            meta,
+            {
+              idleTimeoutMs,
+              maxEventBytes: op.stream?.maxEventBytes ?? 1048576,
+              ...(options.streamLifetimeMs !== undefined
+                ? { lifetimeMs: options.streamLifetimeMs }
+                : {}),
+              ...(options.signal ? { signal: options.signal } : {}),
+            },
+            (event, raw) => {
+              const codec = op.streamEventCodecs?.[event];
+              return codec
+                ? plainNumbers(
+                    this.decode(parseJson(raw, true), codec, {
+                      mode: 'response',
+                      path: 'event',
+                      redactFields: this.options.redactFields ?? [],
+                    }),
+                  )
+                : raw;
+            },
+            () => this.streams.delete(stream),
+          );
+          this.streams.add(stream);
+          return { data: stream, meta, raw: '' } as Result<T>;
+        }
         const bytes = await abortable(response.arrayBuffer(), controller.signal);
+        const redirect = op.responses[String(response.status)]?.classification === 'redirect';
+        if (response.ok && declaredResponse?.bodyKind === 'binary') {
+          const contentType = response.headers
+            .get('content-type')
+            ?.split(';')[0]
+            ?.trim()
+            .toLowerCase();
+          if (contentType !== declaredResponse.mediaType)
+            throw new SdkError(
+              'protocol',
+              'Unexpected binary response media type',
+              'response',
+              false,
+              meta,
+            );
+          meta.durationMs = performance.now() - start;
+          if (performance.now() >= deadline)
+            throw new SdkError(
+              'deadline',
+              'Response exceeded the overall deadline',
+              'response',
+              false,
+              meta,
+            );
+          const data = new Uint8Array(bytes);
+          const result = { data, meta, raw: data };
+          Object.defineProperty(result, inspect.custom, {
+            value: () => ({ data: '[Binary response]', meta }),
+          });
+          return result as Result<T>;
+        }
         let raw = Buffer.from(bytes).toString('utf8');
         meta.durationMs = performance.now() - start;
         let data: any;
         try {
           raw = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
-          data = raw ? parseJson(raw, response.ok || response.status === 304) : undefined;
+          data =
+            raw && !redirect ? parseJson(raw, response.ok || response.status === 304) : undefined;
         } catch (cause) {
           if (response.ok)
             throw new SdkError(
@@ -1598,7 +2093,7 @@ export class Runtime {
               raw,
             );
         }
-        if (response.status >= 300 && response.status < 400 && response.status !== 304)
+        if (response.status >= 300 && response.status < 400 && response.status !== 304 && !redirect)
           throw new SdkError(
             'destination',
             'Redirects are not followed; explicitly configure an approved endpoint',
@@ -1606,12 +2101,19 @@ export class Runtime {
             false,
             meta,
           );
-        if (response.ok || response.status === 304) {
+        if (response.ok || response.status === 304 || redirect) {
           const declared = op.responses[String(response.status)] ?? op.responses.default;
           if (!declared)
             throw new SdkError('protocol', 'Undeclared success status', 'response', false, meta);
           try {
-            if (declared.codec) {
+            if (redirect) {
+              const location = response.headers.get('location');
+              if (declared.locationRequired && !location)
+                throw new Error('Missing Location header');
+              if (location !== null && /[\u0000-\u001f\u007f]/.test(location))
+                throw new Error('Invalid Location header');
+              data = location === null ? {} : { location };
+            } else if (declared.codec) {
               if (data === undefined) throw new Error('Missing body');
               data = plainNumbers(
                 this.decode(data, declared.codec, {
@@ -1662,7 +2164,7 @@ export class Runtime {
               },
             }),
           });
-          return result;
+          return result as Result<T>;
         }
         const kind: ErrorKind = [401, 403].includes(response.status)
           ? 'authentication'

@@ -308,7 +308,7 @@ test('map keys and annotation payloads are literal; unsupported active siblings 
   };
   const i = inputs(document(schema, { Text: { type: 'string' } }));
   assert.equal(serialize({ $ref: 'a' }, i.load().operations[0].body), '{"$ref":"a"}');
-  for (const sibling of [{ multipleOf: 2 }, { 'x-sdk-ref': 'Forged' }, { readOnly: 'yes' }])
+  for (const sibling of [{ minContains: 2 }, { 'x-sdk-ref': 'Forged' }, { readOnly: 'yes' }])
     assert.throws(
       inputs(document(ref('Text', sibling), { Text: { type: 'string', readOnly: true } })).load,
       /unsupported|reserved|boolean/,
@@ -1842,10 +1842,17 @@ c.api.sendValue({body:null});
     { encoding: 'utf8' },
   );
   assert.equal(types.status, 0, types.stdout + types.stderr);
-  assert.throws(inputs(document({ type: 'array' })).load, /arrays require items/);
-  assert.throws(
-    inputs(document({ type: 'array', anyOf: [{ items: { type: 'string' } }, {}] })).load,
-    /arrays require items/,
+  assert.equal(
+    serialize([1, 'text'], inputs(document({ type: 'array' })).load().operations[0].body),
+    '[1,"text"]',
+  );
+  assert.equal(
+    serialize(
+      [1],
+      inputs(document({ type: 'array', anyOf: [{ items: { type: 'string' } }, {}] })).load()
+        .operations[0].body,
+    ),
+    '[1]',
   );
 });
 

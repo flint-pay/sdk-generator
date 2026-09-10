@@ -7,6 +7,7 @@ const semantic = new Set([
   'canonical',
   'diagnostic',
   'codec-plan',
+  'codec-sharing',
   'runtime-plan',
   'schema-policy',
   'schema-intersections',
@@ -175,4 +176,50 @@ test('PHP compiled execution is isolated from schema lowering and dispatches eve
     .map((token) => token[1].slice(1, -1));
   for (const kind of kinds)
     assert.ok(dispatch.includes(kind), 'PHP lacks codec instruction ' + kind);
+});
+
+test('new compiled assertions and stream descriptors reject malformed serialized instructions', async () => {
+  const { compileCodec, assertCodecPlan, CODEC_FORMAT, CODEC_SEMANTICS } = await import(
+    '../dist/codec-plan.js'
+  );
+  const { assertRuntimePlan } = await import('../dist/runtime-plan.js');
+  const codec = compileCodec({
+    type: 'object',
+    const: {},
+    minProperties: 0,
+    maxProperties: 0,
+    if: { required: ['x'] },
+    then: { properties: { x: { const: true } } },
+  });
+  assert.doesNotThrow(() => assertCodecPlan(codec));
+  for (const patch of [
+    { literal: '{' },
+    { literal: {} },
+    { when: {} },
+    { when: { test: codec, then: false } },
+    { includes: false },
+    { tagValues: [1] },
+    { numberInput: 'explicit' },
+    { numberInput: 'guess' },
+    { checks: { multipleOf: 0 } },
+    { checks: { multipleOf: Infinity } },
+    { checks: { uniqueItems: 1 } },
+    { checks: { minProperties: -1 } },
+    { checks: { maxProperties: 0.1 } },
+  ])
+    assert.throws(() => assertCodecPlan({ ...codec, ...patch }), /invalid compiled codec/);
+  const runtime = { format: CODEC_FORMAT, semantics: CODEC_SEMANTICS, operations: [] };
+  assert.doesNotThrow(() => assertRuntimePlan(runtime));
+  for (const patch of [
+    { streamEventSchemas: {} },
+    { streamEventCodecs: { ready: false } },
+    { stream: { idleTimeoutMs: 0, maxEventBytes: 1 } },
+    { stream: { idleTimeoutMs: 1, maxEventBytes: -1 } },
+  ])
+    assert.throws(() =>
+      assertRuntimePlan({
+        ...runtime,
+        operations: [{ id: 'watch', path: '/events', verb: 'get', parameters: [], ...patch }],
+      }),
+    );
 });

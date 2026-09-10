@@ -136,3 +136,61 @@ A polling operation named `get` exposes `getWait(input, options)`. Unknown state
 When webhook verification is declared, use the generated `verifyWebhook` with original body bytes, signed headers and active rotation secrets. Verification alone does not deduplicate an event. The optional SQLite inbox/outbox examples demonstrate durable acknowledgement, transactional effects, current-state reconciliation and downstream idempotency. Applications supply the database, processing callbacks and retention policy. See [webhook configuration](configuration.md#declared-capabilities) and the generated examples for the selected signing format.
 
 Keep handwritten domain helpers in the generated package's `custom/` directory so regeneration preserves them. See [architecture](architecture.md#extending-the-project) for imports and Composer autoloading.
+
+Request methods use the media type selected by the provider profile and set `Content-Type` accordingly. A JSON request remains JSON when the source also declares a form representation. With schema validation enabled, object property bounds count the encoded keys, including explicit null fields and additional properties; omitted optional fields do not count. Ordinary response decoding remains tolerant of these business bounds.
+
+## Authentication modes
+
+For a composed client, supply `credentials` keyed by mode and security scheme, then select `authMode` on the client or request. Per-request `credentials` contains only that mode's scheme keys. Credentials and headers stay request-local.
+
+```js
+const client = new Client({
+  baseUrl,
+  credentials: {
+    merchant: { BearerAuth: merchantToken },
+    checkout: { CheckoutId: checkoutId, CheckoutSecret: checkoutSecret },
+  },
+});
+const result = await client.orders.get(input, { authMode: 'merchant' });
+```
+
+PHP uses the same associative maps in `ClientOptions` and `RequestOptions`. Constructor additions are optional named arguments; legacy token-based clients continue to work.
+
+## PDF downloads and declared redirects
+
+PDF methods return `Result<Uint8Array>` in Node and binary-safe strings in PHP. Both `data` and `raw` preserve the bytes, including zero and non-UTF-8 bytes. JSON error responses retain ordinary SDK error decoding. Do not convert binary results to UTF-8 text before saving them.
+
+Explicit `302` and `307` results expose status and headers in `meta` and an optional `data.location`. Required Location headers are checked. Relative and cross-origin locations are returned without following them. Following a returned location is a separate application decision. Undeclared redirects still fail.
+
+## Consuming server-sent events
+
+```js
+const result = await client.events.watch(input, { signal, streamIdleTimeoutMs: 30000 });
+try {
+  for await (const event of result.data) {
+    console.log(event.event, event.id, event.data);
+    // Persist a cursor only after your application's event work succeeds.
+  }
+} finally {
+  await result.data.close();
+}
+await client.close();
+```
+
+PHP exposes the same result fields and closeable iteration:
+
+```php
+$result = $client->events->watch($input, new RequestOptions(streamIdleTimeoutMs: 30000));
+try {
+  foreach ($result->data as $event) {
+    processEvent($event->event, $event->id, $event->data);
+  }
+} finally {
+  $result->data->close();
+}
+$client->close();
+```
+
+Events expose `event`, `id`, `data`, `rawData`, and optional `retry` milliseconds. The parser handles comments, multiline data, split UTF-8 and CR/LF/CRLF. Incomplete final events are discarded. Invalid UTF-8, malformed configured JSON payloads, and oversized events close the stream with a protocol error. Breaking iteration closes the iterator's connection. Explicit close also handles streams that were never iterated. Client close releases owned streams.
+
+Iteration provides backpressure. PHP's default cURL multi transport queues at most one write chunk and pauses further writes until consumed. PHP cancellation and lifetime checks are cooperative while reading/iterating; synchronous injected transports must honor cancellation while blocked. Node uses AbortSignal, including during an idle read. A PHP injected transport returns a `ByteStream` in `response['stream']`; `read(): ?string` returns bounded chunks or null at EOF and `close(): void` releases resources. The injected request includes stream limits and cancellation. Connection retries can occur only before a stream result is returned, under the operation's declared retry policy. There is no automatic reconnect or delivery guarantee.

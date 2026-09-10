@@ -56,6 +56,7 @@ function scalarGuarantee(codec: CodecPlan): ValueGuarantee | undefined {
     codec.some ||
     codec.exactlyOne ||
     codec.exclude ||
+    codec.when ||
     (codec.nullable && codec.value.kind !== 'null')
   )
     return {

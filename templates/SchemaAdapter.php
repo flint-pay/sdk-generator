@@ -5,6 +5,67 @@ namespace SdkNamespace\Internal;
 /** Compatibility boundary for schemas supplied by callers after SDK installation. */
 final class SchemaAdapter
 {
+    private static function conjuncts(array $schema): array
+    {
+        $parts = [$schema];
+        foreach ($schema['allOf'] ?? [] as $child) {
+            $parts = array_merge($parts, self::conjuncts($child));
+        }
+        return $parts;
+    }
+    private static function discriminatorBindings(array $schema): ?array
+    {
+        $property = $schema['discriminator']['propertyName'] ?? null;
+        if ($property === null || !isset($schema['oneOf'])) {
+            return null;
+        }
+        $result = [];
+        $siblings = $schema;
+        unset($siblings['oneOf']);
+        foreach ($schema['oneOf'] as $index => $branch) {
+            $parts = array_merge(self::conjuncts($siblings), self::conjuncts($branch));
+            $object = false;
+            $required = false;
+            $sets = [];
+            foreach ($parts as $part) {
+                $object = $object || ($part['type'] ?? null) === 'object';
+                $required = $required || in_array($property, $part['required'] ?? [], true);
+                foreach (
+                    isset($part['properties'][$property])
+                        ? self::conjuncts($part['properties'][$property])
+                        : []
+                    as $field
+                ) {
+                    if (array_key_exists('const', $field)) {
+                        $sets[] = [$field['const']];
+                    } elseif (isset($field['enum'])) {
+                        $sets[] = $field['enum'];
+                    }
+                }
+            }
+            if (!$object || !$required || !$sets) {
+                return null;
+            }
+            $tags = array_filter($sets[0], static function ($value) use ($sets) {
+                foreach ($sets as $set) {
+                    if (!in_array($value, $set, true)) {
+                        return false;
+                    }
+                }
+                return true;
+            });
+            if (!$tags) {
+                return null;
+            }
+            foreach ($tags as $tag) {
+                if (!is_string($tag) || array_key_exists($tag, $result)) {
+                    return null;
+                }
+                $result[$tag] = $index;
+            }
+        }
+        return $result;
+    }
     public static function compile(array $schema): array
     {
         return self::node($schema, $schema, 0);
@@ -23,6 +84,10 @@ final class SchemaAdapter
             if (isset($op['body'])) {
                 $op['body'] = $root($op['body']);
             }
+            if (isset($op['streamEventSchemas'])) {
+                $op['streamEventCodecs'] = array_map($root, $op['streamEventSchemas']);
+                unset($op['streamEventSchemas']);
+            }
             foreach ($op['responses'] as &$response) {
                 if (isset($response['schema'])) {
                     $response['codec'] = $root($response['schema']);
@@ -39,7 +104,14 @@ final class SchemaAdapter
             $contract['webhook']['events'] = array_map($root, $contract['webhook']['events']);
         }
         $contract['format'] = 1;
-        $contract['semantics'] = '2';
+        $contract['semantics'] = '3';
+        if (isset($contract['incoming'])) {
+            foreach ($contract['incoming'] as &$entry) {
+                $entry['codec'] = $root($entry['schema']);
+                unset($entry['schema']);
+            }
+            unset($entry);
+        }
         return $contract;
     }
     private static function directional(array $schema, bool $response): array
@@ -104,9 +176,16 @@ final class SchemaAdapter
             $kind = 'null-array';
         }
         $plan = [
+            ...($input['x-sdk-number-input'] ?? null) === 'explicit'
+                ? ['numberInput' => 'explicit']
+                : [],
             'value' => ['kind' => $kind] + ($kind === 'opaque' ? ['label' => $type] : []),
             'nullable' => !isset($input['type']) || in_array('null', $types, true),
             'modelObjectInput' =>
+                (bool) array_filter(
+                    self::conjuncts($input),
+                    fn($part) => ($part['type'] ?? null) === 'object',
+                ) ||
                 in_array('object', $types, true) ||
                 (!isset($input['type']) &&
                     (isset($input['properties']) || isset($input['required']))),
@@ -133,10 +212,14 @@ final class SchemaAdapter
                     'maximum',
                     'exclusiveMinimum',
                     'exclusiveMaximum',
+                    'multipleOf',
                     'minLength',
                     'maxLength',
                     'minItems',
                     'maxItems',
+                    'minProperties',
+                    'maxProperties',
+                    'uniqueItems',
                     'pattern',
                 ]),
             ),
@@ -169,6 +252,9 @@ final class SchemaAdapter
         if (isset($input['enum'])) {
             $plan['members'] = $input['enum'];
         }
+        if (array_key_exists('const', $input)) {
+            $plan['literal'] = json_encode($input['const'], JSON_THROW_ON_ERROR);
+        }
         if (isset($input['pattern'])) {
             $plan['phpPattern'] =
                 $input['x-sdk-pattern-php'] ??
@@ -195,8 +281,27 @@ final class SchemaAdapter
         if (isset($input['not'])) {
             $plan['exclude'] = self::node($input['not'], $input['not'], $depth + 1);
         }
-        if (isset($input['discriminator'])) {
+        if (isset($input['contains'])) {
+            $plan['includes'] = self::node($input['contains'], $input['contains'], $depth + 1);
+        }
+        if (isset($input['if'])) {
+            $plan['when'] = ['test' => self::node($input['if'], $input['if'], $depth + 1)];
+            foreach (['then', 'else'] as $key) {
+                if (isset($input[$key])) {
+                    $plan['when'][$key] = self::node($input[$key], $input[$key], $depth + 1);
+                }
+            }
+        }
+        $bindings = self::discriminatorBindings($input);
+        if (isset($input['discriminator']) && $bindings !== null) {
             $plan['tag'] = $input['discriminator']['propertyName'];
+            foreach ($plan['exactlyOne'] as $index => &$branch) {
+                $branch['tagValues'] = array_map(
+                    strval(...),
+                    array_keys(array_filter($bindings, fn($target) => $target === $index)),
+                );
+            }
+            unset($branch);
         }
         if (isset($input['x-sdk-ref'])) {
             $plan['reference'] = $input['x-sdk-ref'];

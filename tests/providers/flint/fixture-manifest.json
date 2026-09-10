@@ -7,6 +7,19 @@
     "http-cases.json": "74b520744581651f3ea407d2802a9679e603c3e18d335919da25394283ba309b",
     "risk-openapi.json": "7077821046302edb8c39d5e14c24b0ac6ff4ad6c28bda437534474e89210da68",
     "risk-sdk.json": "a0db996a5578a2b6de61947528f602bdab2546f2710cb11c63ffcf2c10d54e02",
-    "risk-http-cases.json": "81b0057b02d1880ed3051f5e6cd1f998fa4ffed491d123b480a42de73e1927fb"
-  }
+    "risk-http-cases.json": "81b0057b02d1880ed3051f5e6cd1f998fa4ffed491d123b480a42de73e1927fb",
+    "full-openapi.json": "e22e6f13d62b5ad90b79104c2c171731037fb8092981a2139c744701d9344371",
+    "full-inventory.json": "c3d798fdb3b0a71bf1d681ebd902a3a92020eb580f620ea4b2931838716391b0",
+    "full-checkout-sdk.json": "b3feb6aa25298bc7295e5e1ca8c28229602a55eac25b9fda5df60c017ba0bbab",
+    "full-common-sdk.json": "15268f07d816cd7317c1146eb7feb95b67ccb7503d072389583e8ef1f484d8d7",
+    "full-customer-sdk.json": "f0517fc4da1f34ea86f802570e5242874a2c451e8b68330faaf8740d77098bf2",
+    "full-http-cases.json": "d39e7999486d0594e19f1b0f719ee4a1e35ebfd3c5dd129ded76524119802a95",
+    "full-invoice-sdk.json": "1bfb537fa660fb188d9b9b1297c8dc8ded8b4bb210da3c8d18a99e413f79b693",
+    "full-merchant-sdk.json": "375fa9efcfcfcd7d0fbe654b70a6cde31dc57023879ca87dd6998fefd587058d",
+    "full-merchantKey-sdk.json": "308cf892ace5df9ba0d6a2847edc5863f9dd1c3802ad07d71dd8fe474af8a1f4",
+    "full-model-cases.json": "a6647672707a4489b0ae59c59c8991b019f0a4d0b269575d01828510443b87f4",
+    "full-onboarding-sdk.json": "237f7b2811f160733fc8c5bf0eed348a9685827f25a8afd10046933ae1c08bdb",
+    "full-sdk.json": "1bba5a442917f1dbcf41096acb96805b176467e597cdc71d8eaa4cf5eec6bd13"
+  },
+  "fullSpecRevision": "039b96023179d960bdce89cb34eea1baf3faeb67"
 }

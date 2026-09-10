@@ -1,0 +1,79 @@
+{
+  "profiles": ["full-common-sdk.json"],
+  "include": [
+    "applyOrderDiscount",
+    "cancelOrderPayment",
+    "cancelOrderPaymentAttempt",
+    "confirmPaymentIntent",
+    "createCheckoutSessionDeliveryQuote",
+    "createCheckoutSessionDeliverySelection",
+    "createDemoSession",
+    "createOrderPaymentIntent",
+    "deleteCheckoutSessionCurrentDeliverySelection",
+    "exchangePartnerInstallToken",
+    "getCheckoutSession",
+    "getCheckoutSessionCurrentDeliverySelection",
+    "getCheckoutSessionDeliveryQuote",
+    "getOpenAPISpec",
+    "getOrder",
+    "getOrderPaymentAttempt",
+    "getPaymentIntent",
+    "getPaymentLinkPublic",
+    "getPaymentMethod",
+    "listOrderPaymentAttempts",
+    "listPaymentMethods",
+    "payOrder",
+    "previewOrderDiscounts",
+    "previewPartnerInstallAuthorization",
+    "queryCheckoutSessionPickupAvailability",
+    "refreshCustomerSession",
+    "removeOrderDiscounts",
+    "repriceOrderDiscounts",
+    "resendOrderReceipt",
+    "resetDemoSession",
+    "resolvePaymentLink",
+    "startOnboarding",
+    "updateOrder",
+    "updateOrderLineItem",
+    "verifyOnboardingEmail"
+  ],
+  "auth": {
+    "modes": {
+      "checkout": {
+        "schemes": ["CheckoutSessionIDHeader", "CheckoutSessionSecretHeader"],
+        "operations": [
+          "applyOrderDiscount",
+          "cancelOrderPayment",
+          "cancelOrderPaymentAttempt",
+          "confirmPaymentIntent",
+          "createCheckoutSessionDeliveryQuote",
+          "createCheckoutSessionDeliverySelection",
+          "createOrderPaymentIntent",
+          "deleteCheckoutSessionCurrentDeliverySelection",
+          "getCheckoutSession",
+          "getCheckoutSessionCurrentDeliverySelection",
+          "getCheckoutSessionDeliveryQuote",
+          "getOrder",
+          "getOrderPaymentAttempt",
+          "getPaymentIntent",
+          "getPaymentMethod",
+          "listOrderPaymentAttempts",
+          "listPaymentMethods",
+          "payOrder",
+          "previewOrderDiscounts",
+          "queryCheckoutSessionPickupAvailability",
+          "removeOrderDiscounts",
+          "repriceOrderDiscounts",
+          "resendOrderReceipt",
+          "updateOrder",
+          "updateOrderLineItem"
+        ]
+      }
+    }
+  },
+  "operations": {
+    "exchangePartnerInstallToken": {
+      "requestMediaType": "application/json"
+    }
+  }
+}

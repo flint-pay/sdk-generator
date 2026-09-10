@@ -1,6 +1,6 @@
 # Contributing
 
-Use Node.js 22+, PHP 8.2+ with curl/json/pdo_sqlite/zip, and Composer 2. The SQLite Node example tests require Node.js 22.16+.
+Use Node.js 22+, PHP 8.2+ with curl/json/pdo_sqlite/zip/pcntl (pcntl is used only by cancellation tests), and Composer 2. The SQLite Node example tests require Node.js 22.16+.
 
 ```sh
 npm ci

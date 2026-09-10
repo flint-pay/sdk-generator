@@ -1,10 +1,10 @@
 import type { Schema, Json } from './contract.js';
-import { valueInstruction, exactValue } from './codec-plan.js';
+import { valueInstruction, exactValue, discriminatorBindings } from './codec-plan.js';
 
 /** Resolved facts for the established input/wire/annotation release policy. */
 export interface SchemaPolicy {
   kinds: string[];
-  wire: { format?: string; exact: boolean; label: string };
+  wire: { format?: string; exact: boolean; label: string; numberInput?: 'explicit' };
   nullOnlyInput: boolean;
   reference?: string;
   requiredKeys: string[];
@@ -12,21 +12,35 @@ export interface SchemaPolicy {
   element?: SchemaPolicy;
   extra?: boolean | SchemaPolicy;
   members?: Json[];
+  literal?: string;
   checks: Pick<
     Schema,
     | 'minimum'
     | 'maximum'
     | 'exclusiveMinimum'
     | 'exclusiveMaximum'
+    | 'multipleOf'
     | 'minLength'
     | 'maxLength'
     | 'minItems'
     | 'maxItems'
+    | 'minProperties'
+    | 'maxProperties'
+    | 'uniqueItems'
     | 'pattern'
   >;
   variants?: SchemaPolicy[];
   tag?: string;
-  compositions: { allOf?: SchemaPolicy[]; anyOf?: SchemaPolicy[]; not?: SchemaPolicy };
+  bindings?: Record<string, number>;
+  compositions: {
+    allOf?: SchemaPolicy[];
+    anyOf?: SchemaPolicy[];
+    not?: SchemaPolicy;
+    contains?: SchemaPolicy;
+    if?: SchemaPolicy;
+    then?: SchemaPolicy;
+    else?: SchemaPolicy;
+  };
   annotations: {
     readOnly?: boolean;
     writeOnly?: boolean;
@@ -88,16 +102,21 @@ export function compileSchemaPolicy(
 ): SchemaPolicy {
   if (depth > 256) throw new Error('Schema policy exceeds nesting limit');
   const compile = (s: Schema) => compileSchemaPolicy(s, direction, depth + 1);
+  const bindings = discriminatorBindings(schema);
   const kinds = Array.isArray(schema.type) ? schema.type : [schema.type];
   const keys = [
     'minimum',
     'maximum',
     'exclusiveMinimum',
     'exclusiveMaximum',
+    'multipleOf',
     'minLength',
     'maxLength',
     'minItems',
     'maxItems',
+    'minProperties',
+    'maxProperties',
+    'uniqueItems',
     'pattern',
   ] as const;
   const known = new Set<string>([
@@ -109,10 +128,15 @@ export function compileSchemaPolicy(
     'items',
     'additionalProperties',
     'enum',
+    'const',
     'oneOf',
     'allOf',
     'anyOf',
     'not',
+    'contains',
+    'if',
+    'then',
+    'else',
     'discriminator',
     'readOnly',
     'writeOnly',
@@ -125,6 +149,7 @@ export function compileSchemaPolicy(
       ...(schema.format !== undefined ? { format: schema.format } : {}),
       exact: kinds.some((kind) => exactValue(valueInstruction(kind, schema.format))),
       label: String(schema.format ?? schema.type ?? 'unconstrained'),
+      ...(schema['x-sdk-number-input'] === 'explicit' ? { numberInput: 'explicit' as const } : {}),
     },
     nullOnlyInput: direction === 'input' && Boolean(schema.enum?.every((v) => v === null)),
     ...(schema['x-sdk-ref'] ? { reference: schema['x-sdk-ref'] } : {}),
@@ -142,12 +167,18 @@ export function compileSchemaPolicy(
         }
       : {}),
     ...(schema.enum ? { members: [...schema.enum] } : {}),
+    ...(Object.hasOwn(schema, 'const') ? { literal: JSON.stringify(schema.const) } : {}),
     checks: Object.fromEntries(
       keys.filter((key) => schema[key] !== undefined).map((key) => [key, schema[key]]),
     ),
     ...(schema.oneOf ? { variants: schema.oneOf.map(compile) } : {}),
     ...(schema.discriminator ? { tag: schema.discriminator.propertyName } : {}),
+    ...(bindings ? { bindings } : {}),
     compositions: {
+      ...(schema.if ? { if: compile(schema.if) } : {}),
+      ...(schema.then ? { then: compile(schema.then) } : {}),
+      ...(schema.else ? { else: compile(schema.else) } : {}),
+      ...(schema.contains ? { contains: compile(schema.contains) } : {}),
       ...(schema.allOf ? { allOf: schema.allOf.map(compile) } : {}),
       ...(schema.anyOf ? { anyOf: schema.anyOf.map(compile) } : {}),
       ...(schema.not ? { not: compile(schema.not) } : {}),

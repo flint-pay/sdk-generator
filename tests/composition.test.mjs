@@ -67,6 +67,25 @@ const union = {
   ],
 };
 const schemas = {
+  // Minimized getBundle/ModifierSetGroup failure: the enclosing type applies
+  // to both branches, which need not repeat type: object.
+  InheritedTaggedObject: {
+    type: 'object',
+    discriminator: { propertyName: 'kind' },
+    oneOf: [
+      {
+        properties: {
+          kind: { type: 'string', enum: ['fixed'] },
+          amount: { type: 'integer', format: 'int64' },
+        },
+        required: ['kind', 'amount'],
+      },
+      {
+        properties: { kind: { type: 'string', enum: ['choice'] }, label: { type: 'string' } },
+        required: ['kind', 'label'],
+      },
+    ],
+  },
   Choice: choice,
   Exclusive: exclusive,
   Intersection: intersection,
@@ -140,6 +159,29 @@ function rejected(name, operation, body) {
 
 test('OpenAPI 3.0 composition uses the same public-client wire scenarios in both targets', async () => {
   const cases = [
+    accepted(
+      'inherited tagged object fixed',
+      'sendInheritedTaggedObject',
+      { kind: 'fixed', amount: '9007199254740993' },
+      { kind: 'fixed', amount: '9007199254740993' },
+      '{"kind":"fixed","amount":9007199254740993}',
+    ),
+    accepted('inherited tagged object choice', 'sendInheritedTaggedObject', {
+      kind: 'choice',
+      label: 'A',
+    }),
+    rejected('inherited tagged object missing required field', 'sendInheritedTaggedObject', {
+      kind: 'fixed',
+    }),
+    rejected('inherited tagged object unknown input tag', 'sendInheritedTaggedObject', {
+      kind: 'future',
+    }),
+    accepted(
+      'inherited tagged object unknown response tag',
+      'sendInheritedTaggedObject',
+      { kind: 'choice', label: 'A' },
+      { kind: 'future', extra: true },
+    ),
     accepted('null through reference wrapper', 'sendWrapped', { value: null }),
     accepted(
       'directional required fields across intersection branches',

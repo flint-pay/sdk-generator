@@ -58,8 +58,10 @@ function assertPolicy(value: unknown, path: string, depth = 0): void {
   const wire = object(policy.wire, path + '.wire');
   fields(wire, ['exact'], 'boolean', path);
   fields(wire, ['label'], 'string', path);
-  for (const key of ['reference', 'tag'])
+  for (const key of ['reference', 'tag', 'literal'])
     if (policy[key] !== undefined) fields(policy, [key], 'string', path);
+  if (wire.numberInput !== undefined && wire.numberInput !== 'explicit')
+    throw new Error(path + ': invalid numeric input representation');
   if (wire.format !== undefined) fields(wire, ['format'], 'string', path + '.wire');
   for (const [name, child] of Object.entries(object(policy.fields, path + '.fields')))
     assertPolicy(child, path + '.' + name, depth + 1);
@@ -70,6 +72,17 @@ function assertPolicy(value: unknown, path: string, depth = 0): void {
     throw new Error(path + ': invalid members');
   const checks = object(policy.checks, path + '.checks');
   for (const [key, check] of Object.entries(checks)) {
+    if (key === 'uniqueItems') {
+      if (typeof check !== 'boolean') throw new Error(path + ': invalid uniqueness constraint');
+      continue;
+    }
+    if (key === 'multipleOf' && (typeof check !== 'number' || check <= 0))
+      throw new Error(path + ': invalid positive divisor');
+    if (
+      ['minProperties', 'maxProperties'].includes(key) &&
+      (typeof check !== 'number' || !Number.isSafeInteger(check) || check < 0)
+    )
+      throw new Error(path + ': invalid property bound');
     if (
       key === 'pattern'
         ? typeof check !== 'string'
@@ -78,10 +91,13 @@ function assertPolicy(value: unknown, path: string, depth = 0): void {
             'maximum',
             'exclusiveMinimum',
             'exclusiveMaximum',
+            'multipleOf',
             'minLength',
             'maxLength',
             'minItems',
             'maxItems',
+            'minProperties',
+            'maxProperties',
           ].includes(key) ||
           typeof check !== 'number' ||
           !Number.isFinite(check)
@@ -89,6 +105,16 @@ function assertPolicy(value: unknown, path: string, depth = 0): void {
       throw new Error(path + ': invalid check ' + key);
   }
   const compositions = object(policy.compositions, path + '.compositions');
+  if (policy.bindings !== undefined)
+    for (const index of Object.values(object(policy.bindings, path + '.bindings')))
+      if (
+        typeof index !== 'number' ||
+        !Number.isSafeInteger(index) ||
+        index < 0 ||
+        !Array.isArray(policy.variants) ||
+        index >= policy.variants.length
+      )
+        throw new Error(path + ': invalid discriminator binding');
   for (const [key, children] of [
     ['variants', policy.variants],
     ['allOf', compositions.allOf],
@@ -100,6 +126,11 @@ function assertPolicy(value: unknown, path: string, depth = 0): void {
       assertPolicy(child, path + '.' + key + '[' + index + ']', depth + 1),
     );
   }
+  for (const key of ['if', 'then', 'else'])
+    if (compositions[key] !== undefined)
+      assertPolicy(compositions[key], path + '.' + key, depth + 1);
+  if (compositions.contains !== undefined)
+    assertPolicy(compositions.contains, path + '.contains', depth + 1);
   if (compositions.not !== undefined) assertPolicy(compositions.not, path + '.not', depth + 1);
   const annotations = object(policy.annotations, path + '.annotations');
   object(annotations.metadata, path + '.annotations.metadata');

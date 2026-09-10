@@ -1,0 +1,41 @@
+{
+  "profiles": ["full-common-sdk.json"],
+  "include": [
+    "createDemoSession",
+    "createMeInvoiceCheckoutSession",
+    "exchangePartnerInstallToken",
+    "getMeCreditNote",
+    "getMeCreditNotePDF",
+    "getMeInvoice",
+    "getMeInvoicePDF",
+    "getOpenAPISpec",
+    "getPaymentLinkPublic",
+    "listMeCreditNotes",
+    "previewPartnerInstallAuthorization",
+    "refreshCustomerSession",
+    "resetDemoSession",
+    "resolvePaymentLink",
+    "startOnboarding",
+    "verifyOnboardingEmail"
+  ],
+  "auth": {
+    "modes": {
+      "invoice": {
+        "schemes": ["InvoiceAccessTokenBearer"],
+        "operations": [
+          "createMeInvoiceCheckoutSession",
+          "getMeCreditNote",
+          "getMeCreditNotePDF",
+          "getMeInvoice",
+          "getMeInvoicePDF",
+          "listMeCreditNotes"
+        ]
+      }
+    }
+  },
+  "operations": {
+    "exchangePartnerInstallToken": {
+      "requestMediaType": "application/json"
+    }
+  }
+}

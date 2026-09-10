@@ -1,0 +1,286 @@
+[
+  {
+    "name": "ReturnLineDecision contains refund",
+    "model": "ReturnLineDecision",
+    "value": {
+      "approved_quantity": "1",
+      "return_required_quantity": "0",
+      "decision_basis": "explicit",
+      "resolution_mode": "automatic",
+      "selected_resolution_type": "refund",
+      "is_inspection_required": false,
+      "return_line_item_id": "rtli_test",
+      "allowed_resolution_types": ["refund"]
+    },
+    "valid": true
+  },
+  {
+    "name": "ReturnLineDecision missing match refund",
+    "model": "ReturnLineDecision",
+    "value": {
+      "approved_quantity": "1",
+      "return_required_quantity": "0",
+      "decision_basis": "explicit",
+      "resolution_mode": "automatic",
+      "selected_resolution_type": "refund",
+      "is_inspection_required": false,
+      "return_line_item_id": "rtli_test",
+      "allowed_resolution_types": ["exchange"]
+    },
+    "valid": false
+  },
+  {
+    "name": "ReturnLineDecision contains exchange",
+    "model": "ReturnLineDecision",
+    "value": {
+      "approved_quantity": "1",
+      "return_required_quantity": "0",
+      "decision_basis": "explicit",
+      "resolution_mode": "automatic",
+      "selected_resolution_type": "exchange",
+      "is_inspection_required": false,
+      "return_line_item_id": "rtli_test",
+      "allowed_resolution_types": ["exchange"]
+    },
+    "valid": true
+  },
+  {
+    "name": "ReturnLineDecision missing match exchange",
+    "model": "ReturnLineDecision",
+    "value": {
+      "approved_quantity": "1",
+      "return_required_quantity": "0",
+      "decision_basis": "explicit",
+      "resolution_mode": "automatic",
+      "selected_resolution_type": "exchange",
+      "is_inspection_required": false,
+      "return_line_item_id": "rtli_test",
+      "allowed_resolution_types": ["refund"]
+    },
+    "valid": false
+  },
+  {
+    "name": "ReturnLineDecision contains replacement",
+    "model": "ReturnLineDecision",
+    "value": {
+      "approved_quantity": "1",
+      "return_required_quantity": "0",
+      "decision_basis": "explicit",
+      "resolution_mode": "automatic",
+      "selected_resolution_type": "replacement",
+      "is_inspection_required": false,
+      "return_line_item_id": "rtli_test",
+      "allowed_resolution_types": ["replacement"]
+    },
+    "valid": true
+  },
+  {
+    "name": "ReturnLineDecision missing match replacement",
+    "model": "ReturnLineDecision",
+    "value": {
+      "approved_quantity": "1",
+      "return_required_quantity": "0",
+      "decision_basis": "explicit",
+      "resolution_mode": "automatic",
+      "selected_resolution_type": "replacement",
+      "is_inspection_required": false,
+      "return_line_item_id": "rtli_test",
+      "allowed_resolution_types": ["refund"]
+    },
+    "valid": false
+  },
+  {
+    "name": "ReturnLineDecision contains no_monetary_action",
+    "model": "ReturnLineDecision",
+    "value": {
+      "approved_quantity": "1",
+      "return_required_quantity": "0",
+      "decision_basis": "explicit",
+      "resolution_mode": "automatic",
+      "selected_resolution_type": "no_monetary_action",
+      "is_inspection_required": false,
+      "return_line_item_id": "rtli_test",
+      "allowed_resolution_types": ["no_monetary_action"]
+    },
+    "valid": true
+  },
+  {
+    "name": "ReturnLineDecision missing match no_monetary_action",
+    "model": "ReturnLineDecision",
+    "value": {
+      "approved_quantity": "1",
+      "return_required_quantity": "0",
+      "decision_basis": "explicit",
+      "resolution_mode": "automatic",
+      "selected_resolution_type": "no_monetary_action",
+      "is_inspection_required": false,
+      "return_line_item_id": "rtli_test",
+      "allowed_resolution_types": ["refund"]
+    },
+    "valid": false
+  },
+  {
+    "name": "ReturnProcessDecision contains refund",
+    "model": "ReturnProcessDecision",
+    "value": {
+      "approved_quantity": "1",
+      "return_required_quantity": "0",
+      "decision_basis": "explicit",
+      "resolution_mode": "automatic",
+      "selected_resolution_type": "refund",
+      "is_inspection_required": false,
+      "allowed_resolution_types": ["refund"]
+    },
+    "valid": true
+  },
+  {
+    "name": "ReturnProcessDecision missing match refund",
+    "model": "ReturnProcessDecision",
+    "value": {
+      "approved_quantity": "1",
+      "return_required_quantity": "0",
+      "decision_basis": "explicit",
+      "resolution_mode": "automatic",
+      "selected_resolution_type": "refund",
+      "is_inspection_required": false,
+      "allowed_resolution_types": ["exchange"]
+    },
+    "valid": false
+  },
+  {
+    "name": "ReturnProcessDecision contains exchange",
+    "model": "ReturnProcessDecision",
+    "value": {
+      "approved_quantity": "1",
+      "return_required_quantity": "0",
+      "decision_basis": "explicit",
+      "resolution_mode": "automatic",
+      "selected_resolution_type": "exchange",
+      "is_inspection_required": false,
+      "allowed_resolution_types": ["exchange"]
+    },
+    "valid": true
+  },
+  {
+    "name": "ReturnProcessDecision missing match exchange",
+    "model": "ReturnProcessDecision",
+    "value": {
+      "approved_quantity": "1",
+      "return_required_quantity": "0",
+      "decision_basis": "explicit",
+      "resolution_mode": "automatic",
+      "selected_resolution_type": "exchange",
+      "is_inspection_required": false,
+      "allowed_resolution_types": ["refund"]
+    },
+    "valid": false
+  },
+  {
+    "name": "ReturnProcessDecision contains replacement",
+    "model": "ReturnProcessDecision",
+    "value": {
+      "approved_quantity": "1",
+      "return_required_quantity": "0",
+      "decision_basis": "explicit",
+      "resolution_mode": "automatic",
+      "selected_resolution_type": "replacement",
+      "is_inspection_required": false,
+      "allowed_resolution_types": ["replacement"]
+    },
+    "valid": true
+  },
+  {
+    "name": "ReturnProcessDecision missing match replacement",
+    "model": "ReturnProcessDecision",
+    "value": {
+      "approved_quantity": "1",
+      "return_required_quantity": "0",
+      "decision_basis": "explicit",
+      "resolution_mode": "automatic",
+      "selected_resolution_type": "replacement",
+      "is_inspection_required": false,
+      "allowed_resolution_types": ["refund"]
+    },
+    "valid": false
+  },
+  {
+    "name": "ReturnProcessDecision contains no_monetary_action",
+    "model": "ReturnProcessDecision",
+    "value": {
+      "approved_quantity": "1",
+      "return_required_quantity": "0",
+      "decision_basis": "explicit",
+      "resolution_mode": "automatic",
+      "selected_resolution_type": "no_monetary_action",
+      "is_inspection_required": false,
+      "allowed_resolution_types": ["no_monetary_action"]
+    },
+    "valid": true
+  },
+  {
+    "name": "ReturnProcessDecision missing match no_monetary_action",
+    "model": "ReturnProcessDecision",
+    "value": {
+      "approved_quantity": "1",
+      "return_required_quantity": "0",
+      "decision_basis": "explicit",
+      "resolution_mode": "automatic",
+      "selected_resolution_type": "no_monetary_action",
+      "is_inspection_required": false,
+      "allowed_resolution_types": ["refund"]
+    },
+    "valid": false
+  },
+  {
+    "name": "refund timing required",
+    "model": "ReturnPolicyRevisionRequest",
+    "value": {
+      "approval_mode": "manual",
+      "eligibility_result": "eligible",
+      "is_merchandise_return_required": false,
+      "priority": 1,
+      "scope": {
+        "match_type": "all"
+      },
+      "resolution_mode": "manual",
+      "completion_mode": "manual",
+      "allowed_resolution_types": ["refund"]
+    },
+    "valid": false
+  },
+  {
+    "name": "refund timing supplied",
+    "model": "ReturnPolicyRevisionRequest",
+    "value": {
+      "approval_mode": "manual",
+      "eligibility_result": "eligible",
+      "is_merchandise_return_required": false,
+      "priority": 1,
+      "scope": {
+        "match_type": "all"
+      },
+      "resolution_mode": "manual",
+      "completion_mode": "manual",
+      "allowed_resolution_types": ["refund"],
+      "refund_timing": "manual"
+    },
+    "valid": true
+  },
+  {
+    "name": "nonrefund timing optional",
+    "model": "ReturnPolicyRevisionRequest",
+    "value": {
+      "approval_mode": "manual",
+      "eligibility_result": "eligible",
+      "is_merchandise_return_required": false,
+      "priority": 1,
+      "scope": {
+        "match_type": "all"
+      },
+      "resolution_mode": "manual",
+      "completion_mode": "manual",
+      "allowed_resolution_types": ["exchange"]
+    },
+    "valid": true
+  }
+]

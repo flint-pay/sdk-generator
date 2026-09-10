@@ -1,6 +1,8 @@
+import { shareContractSchemas } from './schema-sharing.js';
 import { Diagnostic } from './diagnostic.js';
-import { valueInstruction, exactValue } from './codec-plan.js';
+import { valueInstruction, exactValue, discriminatorBindings } from './codec-plan.js';
 import { stable } from './canonical.js';
+import { successStatus } from './runtime-plan.js';
 import { visitIntersectedProperties } from './schema-intersections.js';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname, relative as relativePath } from 'node:path';
@@ -15,23 +17,33 @@ export type Schema = {
   required?: string[];
   items?: Schema;
   enum?: Json[];
+  const?: Json;
   oneOf?: Schema[];
   anyOf?: Schema[];
   allOf?: Schema[];
   not?: Schema;
+  contains?: Schema;
+  if?: Schema;
+  then?: Schema;
+  else?: Schema;
   readOnly?: boolean;
   writeOnly?: boolean;
-  discriminator?: { propertyName: string };
+  discriminator?: { propertyName: string; mapping?: Record<string, string> };
+  'x-sdk-discriminator-mapping'?: Record<string, number>;
   additionalProperties?: boolean | Schema;
   format?: string;
   minimum?: number;
   maximum?: number;
+  multipleOf?: number;
   exclusiveMinimum?: number;
   exclusiveMaximum?: number;
   minLength?: number;
   maxLength?: number;
   minItems?: number;
   maxItems?: number;
+  minProperties?: number;
+  maxProperties?: number;
+  uniqueItems?: boolean;
   pattern?: string;
   'x-sdk-pattern-php'?: string;
   description?: string;
@@ -55,6 +67,8 @@ export interface Retry {
   baseDelayMs: number;
 }
 export interface Capability {
+  stream?: { events?: Record<string, string>; idleTimeoutMs?: number; maxEventBytes?: number };
+  requestMediaType?: string;
   resource?: string;
   method?: string;
   audiences?: string[];
@@ -74,6 +88,7 @@ export interface Capability {
   deprecated?: string;
 }
 export interface Operation extends Capability {
+  streamEventSchemas?: Record<string, Schema>;
   id: string;
   resource: string;
   method: string;
@@ -83,14 +98,28 @@ export interface Operation extends Capability {
   body?: Schema;
   bodyRequired: boolean;
   mediaType?: string;
-  responses: Record<string, { schema?: Schema; mediaType?: string }>;
+  responses: Record<
+    string,
+    {
+      schema?: Schema;
+      mediaType?: string;
+      bodyKind?: 'empty' | 'json' | 'binary' | 'sse';
+      classification?: 'success' | 'error' | 'redirect';
+      locationRequired?: boolean;
+    }
+  >;
   authenticated: boolean;
+  authModes?: string[];
   optionalAuthentication?: boolean;
   description: string;
 }
 export interface Auth {
   type: 'bearer' | 'apiKey';
   header: string;
+}
+export interface AuthenticationMode {
+  schemes: (Auth & { name: string })[];
+  operations?: string[];
 }
 export interface Webhook {
   algorithm: 'hmac-sha256';
@@ -104,8 +133,13 @@ export interface Webhook {
   typeField: string;
 }
 export interface Config {
+  profiles?: string[];
+  numericUnions?: 'explicit';
+  schemaSharing?: 'named';
   validation?: 'encoding' | 'schema';
-  auth?: { scheme: string };
+  auth?:
+    | { scheme: string }
+    | { modes: Record<string, { schemes: string[]; operations?: string[] }> };
   targets?: ('node' | 'php')[];
   version: string;
   npm: { name: string; registry?: string; access?: 'public' | 'restricted' };
@@ -127,13 +161,23 @@ export interface Contract {
   title: string;
   apiVersion: string;
   operations: Operation[];
+  incoming?: IncomingWebhook[];
   models: Record<string, Schema>;
   definitions?: Record<string, Schema>;
   modelDependencies?: Record<string, string[]>;
   auth?: Auth;
+  authentication?: Record<string, AuthenticationMode>;
   config: Config;
   sources: Record<string, string>;
   hash: string;
+}
+export interface IncomingWebhook {
+  name: string;
+  method: string;
+  pointer: string;
+  model: string;
+  schema: Schema;
+  dependencies: string[];
 }
 export { Diagnostic } from './diagnostic.js';
 export { stable } from './canonical.js';
@@ -338,7 +382,7 @@ function portablePattern(source: string, p: string): string {
   }
   return '~' + result.replaceAll('~', '\\~') + '~u';
 }
-function schema(s: Schema, p: string, legacy = false): void {
+function schema(s: Schema, p: string, legacy = false, explicitNumbers = false): void {
   if (!s || typeof s !== 'object' || Array.isArray(s)) fail(p, 'expected a schema object');
   if (s['x-sdk-ref']) return;
   if (s.nullable !== undefined) {
@@ -387,10 +431,15 @@ function schema(s: Schema, p: string, legacy = false): void {
     'required',
     'items',
     'enum',
+    'const',
     'oneOf',
     'anyOf',
     'allOf',
     'not',
+    'contains',
+    'if',
+    'then',
+    'else',
     'discriminator',
     'additionalProperties',
     'format',
@@ -398,11 +447,15 @@ function schema(s: Schema, p: string, legacy = false): void {
     'maximum',
     'exclusiveMinimum',
     'exclusiveMaximum',
+    'multipleOf',
     'minLength',
     'maxLength',
     'minItems',
     'maxItems',
+    'minProperties',
+    'maxProperties',
     'pattern',
+    'uniqueItems',
     ...annotations,
   ];
   keys(
@@ -433,12 +486,28 @@ function schema(s: Schema, p: string, legacy = false): void {
         p + '/' + keyword,
         'expected a finite numeric bound; integer literals must be safe integers',
       );
-  for (const keyword of ['minLength', 'maxLength', 'minItems', 'maxItems'] as const)
+  if (
+    s.multipleOf !== undefined &&
+    (typeof s.multipleOf !== 'number' ||
+      !Number.isFinite(s.multipleOf) ||
+      s.multipleOf <= 0 ||
+      (Number.isInteger(s.multipleOf) && !Number.isSafeInteger(s.multipleOf)))
+  )
+    fail(p + '/multipleOf', 'expected a positive finite divisor with a safe integer literal');
+  for (const keyword of [
+    'minLength',
+    'maxLength',
+    'minItems',
+    'maxItems',
+    'minProperties',
+    'maxProperties',
+  ] as const)
     if (s[keyword] !== undefined && (!Number.isSafeInteger(s[keyword]) || s[keyword]! < 0))
       fail(p + '/' + keyword, 'expected a nonnegative safe integer');
   for (const [min, max] of [
     ['minLength', 'maxLength'],
     ['minItems', 'maxItems'],
+    ['minProperties', 'maxProperties'],
     ['minimum', 'maximum'],
   ] as const)
     if (s[min] !== undefined && s[max] !== undefined && s[min]! > s[max]!)
@@ -447,7 +516,7 @@ function schema(s: Schema, p: string, legacy = false): void {
     if (typeof s.pattern !== 'string') fail(p + '/pattern', 'expected a string');
     s['x-sdk-pattern-php'] = portablePattern(s.pattern, p + '/pattern');
   }
-  for (const key of ['readOnly', 'writeOnly', 'deprecated', 'x-sensitive'])
+  for (const key of ['readOnly', 'writeOnly', 'deprecated', 'x-sensitive', 'uniqueItems'])
     if (s[key] !== undefined && typeof s[key] !== 'boolean')
       fail(p + '/' + key, 'expected a boolean');
   if (s.readOnly && s.writeOnly) fail(p, 'a field cannot be both readOnly and writeOnly');
@@ -465,6 +534,30 @@ function schema(s: Schema, p: string, legacy = false): void {
       Array.isArray(s.additionalProperties))
   )
     fail(p + '/additionalProperties', 'expected a boolean or schema');
+  if (Object.hasOwn(s, 'const')) {
+    const literal = (value: unknown, location: string, depth = 0): void => {
+      if (depth > 256) fail(location, 'constant exceeds the supported nesting depth');
+      if (
+        typeof value === 'number' &&
+        (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value)))
+      )
+        fail(
+          location,
+          'numeric constant literals must be finite; integer literals must be safe integers',
+        );
+      if (value && typeof value === 'object')
+        for (const [key, child] of Object.entries(value))
+          literal(child, location + '/' + key, depth + 1);
+    };
+    literal(s.const, p + '/const');
+  }
+  if (
+    Object.hasOwn(s, 'const') &&
+    (s.const === null || typeof s.const !== 'object') &&
+    (typeof s.const !== 'number' || Number.isSafeInteger(s.const)) &&
+    s.enum === undefined
+  )
+    s.enum = [s.const!];
   if (
     s.enum !== undefined &&
     (!Array.isArray(s.enum) ||
@@ -477,34 +570,32 @@ function schema(s: Schema, p: string, legacy = false): void {
     if (branches !== undefined) {
       if (!Array.isArray(branches) || !branches.length)
         fail(p + '/' + keyword, 'expected a nonempty schema array');
-      branches.forEach((branch, i) => schema(branch, p + '/' + keyword + '/' + i, legacy));
+      branches.forEach((branch, i) =>
+        schema(branch, p + '/' + keyword + '/' + i, legacy, explicitNumbers),
+      );
     }
   }
-  if (s.not !== undefined) schema(s.not, p + '/not', legacy);
+  if (s.not !== undefined) schema(s.not, p + '/not', legacy, explicitNumbers);
+  if (s.contains !== undefined) schema(s.contains, p + '/contains', legacy, explicitNumbers);
+  for (const keyword of ['if', 'then', 'else'] as const)
+    if (s[keyword] !== undefined) schema(s[keyword], p + '/' + keyword, legacy, explicitNumbers);
   if (s.discriminator !== undefined) {
-    keys(s.discriminator, ['propertyName'], p + '/discriminator');
+    keys(s.discriminator, ['propertyName', 'mapping'], p + '/discriminator');
     if (
       typeof s.discriminator.propertyName !== 'string' ||
       !s.discriminator.propertyName ||
       !s.oneOf
     )
       fail(p, 'discriminator requires propertyName and oneOf alternatives');
-    const tags = new Set<string>();
-    for (const branch of s.oneOf!) {
-      const values = branch.properties?.[s.discriminator.propertyName]?.enum;
-      if (
-        branch.type !== 'object' ||
-        !branch.required?.includes(s.discriminator.propertyName) ||
-        !values?.length
-      )
-        fail(p, 'each tagged branch must require its discriminator and declare an enum');
-      for (const tag of values!) {
-        if (typeof tag !== 'string' || tags.has(tag))
-          fail(p, 'discriminator values must be unique strings');
-        tags.add(tag as string);
-      }
-    }
+    const bindings = discriminatorBindings(s);
+    for (const [tag, index] of Object.entries(s['x-sdk-discriminator-mapping'] ?? {}))
+      if (bindings && bindings[tag] !== index)
+        fail(
+          p + '/discriminator/mapping/' + tag,
+          'mapping conflicts with branch literal constraints',
+        );
   }
+
   const types = s.type === undefined ? [] : Array.isArray(s.type) ? s.type : [s.type];
   if (
     s.type !== undefined &&
@@ -556,19 +647,16 @@ function schema(s: Schema, p: string, legacy = false): void {
   )
     fail(p + '/format', 'unsupported format ' + s.format);
   if (types.includes('array') && !s.items) {
-    const declaresItems = (shape: Schema): boolean =>
-      shape.items !== undefined || (shape.allOf ?? []).some(declaresItems);
-    if (!(s.allOf ?? []).some(declaresItems)) fail(p, 'arrays require items');
-    // The item constraint stays in its original conjunct. This neutral local
-    // declaration preserves the explicit array shape expected by target types.
+    // Absent items imposes no element constraint. Sibling item constraints
+    // retain their scope; the neutral local shape supplies target array types.
     s.items = {};
   }
-  if (s.items) schema(s.items, p + '/items', legacy);
+  if (s.items) schema(s.items, p + '/items', legacy, explicitNumbers);
   for (const [key, child] of Object.entries(s.properties ?? {}))
-    schema(child, p + '/properties/' + key, legacy);
+    schema(child, p + '/properties/' + key, legacy, explicitNumbers);
   if (s.additionalProperties && typeof s.additionalProperties === 'object')
-    schema(s.additionalProperties, p + '/additionalProperties', legacy);
-  checkRepresentations(s, p);
+    schema(s.additionalProperties, p + '/additionalProperties', legacy, explicitNumbers);
+  checkRepresentations(s, p, explicitNumbers);
   // Annotation-only wrappers are equivalent to their branch; semantic siblings stay composed.
   if (
     s.allOf?.length === 1 &&
@@ -582,10 +670,11 @@ function schema(s: Schema, p: string, legacy = false): void {
     Object.assign(s, branch, { ...s });
   }
 }
-function checkRepresentations(s: Schema, p: string): void {
+function checkRepresentations(s: Schema, p: string, explicitNumbers = false): void {
   const conjuncts = (shape: Schema): Schema[] => [shape, ...(shape.allOf ?? []).flatMap(conjuncts)];
   const scalar = (shape: Schema): string | undefined => {
     const type = Array.isArray(shape.type) ? shape.type.find((t) => t !== 'null') : shape.type;
+    if (shape['x-sdk-number-input'] === 'explicit') return 'wrapped-number';
     if (type === 'number') return 'exact-number';
     if (type === 'integer')
       return exactValue(valueInstruction('integer', shape.format))
@@ -643,7 +732,9 @@ function checkRepresentations(s: Schema, p: string): void {
       return types.includes('number') ? [...types, 'integer'] : types;
     return types.map((type) =>
       type === 'number' || (type === 'integer' && scalar(shape) === 'exact-number')
-        ? 'string'
+        ? shape['x-sdk-number-input'] === 'explicit'
+          ? 'wrapped-number'
+          : 'string'
         : type,
     );
   };
@@ -690,8 +781,14 @@ function checkRepresentations(s: Schema, p: string): void {
     relation: Relation = 'alternatives',
   ): void => {
     if (!left.length || !right.length) return;
-    left = left.flatMap(conjuncts).map(({ allOf, ...shape }) => shape);
-    right = right.flatMap(conjuncts).map(({ allOf, ...shape }) => shape);
+    const originals = new Map<Schema, Schema>();
+    const shallow = (shape: Schema): Schema => {
+      const { allOf, ...copy } = shape;
+      originals.set(copy, shape);
+      return copy;
+    };
+    left = left.flatMap(conjuncts).map(shallow);
+    right = right.flatMap(conjuncts).map(shallow);
     if (disjoint(left, right, relation)) return;
     // Keep branch constraints together so disjoint tags are not lost while
     // looking through nested alternatives and intersections.
@@ -725,11 +822,20 @@ function checkRepresentations(s: Schema, p: string): void {
     } else if (
       (a.has('string') && b.has('exact-number')) ||
       (b.has('string') && a.has('exact-number'))
-    )
-      fail(
-        path,
-        'string and exact-number alternatives have ambiguous SDK string inputs; provide an unambiguous provider representation before generating this operation',
-      );
+    ) {
+      if (!explicitNumbers)
+        fail(
+          path,
+          'string and exact-number alternatives have ambiguous SDK string inputs; provide an unambiguous provider representation before generating this operation',
+        );
+      for (const shape of [...left, ...right]) {
+        if (scalar(shape) === 'exact-number') {
+          shape['x-sdk-number-input'] = 'explicit';
+          const original = originals.get(shape);
+          if (original) original['x-sdk-number-input'] = 'explicit';
+        }
+      }
+    }
     const keys = new Set(
       [...left, ...right].flatMap((shape) => Object.keys(shape.properties ?? {})),
     );
@@ -774,18 +880,19 @@ function checkRepresentations(s: Schema, p: string): void {
       for (const right of peers.slice(index + 1))
         checkOverlap([left], [right], p + '/allOf', 'intersection');
     visitIntersectedProperties(shapes, (children, name) => {
-      if (children.length > 1) checkRepresentations({ allOf: children }, p + '/properties/' + name);
+      if (children.length > 1)
+        checkRepresentations({ allOf: children }, p + '/properties/' + name, explicitNumbers);
     });
     // These conjuncts describe the same elements/values, just as matching
     // properties describe the same field. Constraint-only schemas must see the
     // numeric JSON kind rather than the caller's exact-number string.
     const items = shapes.flatMap((shape) => (shape.items ? [shape.items] : []));
-    if (items.length > 1) checkRepresentations({ allOf: items }, p + '/items');
+    if (items.length > 1) checkRepresentations({ allOf: items }, p + '/items', explicitNumbers);
     const additional = shapes.flatMap((shape) =>
       typeof shape.additionalProperties === 'object' ? [shape.additionalProperties] : [],
     );
     if (additional.length > 1)
-      checkRepresentations({ allOf: additional }, p + '/additionalProperties');
+      checkRepresentations({ allOf: additional }, p + '/additionalProperties', explicitNumbers);
   }
 }
 function pointer(root: unknown, pointer: string, p: string): any {
@@ -813,7 +920,20 @@ export function loadContract(definitionPath: string, configPath: string): Contra
     if (context.startsWith('map:')) return context.slice(4);
     if (context === 'schema') {
       if (key === 'properties') return 'map:schema';
-      if (['items', 'additionalProperties', 'allOf', 'anyOf', 'oneOf', 'not'].includes(key))
+      if (
+        [
+          'items',
+          'additionalProperties',
+          'allOf',
+          'anyOf',
+          'oneOf',
+          'not',
+          'contains',
+          'if',
+          'then',
+          'else',
+        ].includes(key)
+      )
         return 'schema';
       return 'literal';
     }
@@ -992,22 +1112,121 @@ export function loadContract(definitionPath: string, configPath: string): Contra
       });
       return applySiblings(structuredClone(result));
     }
-    return Object.fromEntries(
+    const result = Object.fromEntries(
       Object.entries(value).map(([k, v]) => [
         k,
         deref(v, file, `${path}/${k}`, stack, childContext(context, k)),
       ]),
     );
+    if (context === 'schema' && value.discriminator?.mapping !== undefined) {
+      const mapping = value.discriminator.mapping;
+      record(mapping, path + '/discriminator/mapping');
+      if (!Array.isArray(result.oneOf))
+        fail(path + '/discriminator', 'mapping requires oneOf branches');
+      const bindings: Record<string, number> = Object.create(null);
+      for (const [tag, target] of Object.entries(mapping)) {
+        const location = path + '/discriminator/mapping/' + tag;
+        if (typeof target !== 'string') fail(location, 'expected a local schema reference');
+        const ref = Object.hasOwn(load(file).components?.schemas ?? {}, target)
+          ? '#/components/schemas/' + target.replaceAll('~', '~0').replaceAll('/', '~1')
+          : target;
+        const resolvedTarget = deref({ $ref: ref }, file, location, stack, 'schema');
+        const referenceKeys = (
+          shape: Schema,
+          source: string,
+          seen = new Set<string>(),
+        ): Set<string> => {
+          const keys = new Set<string>();
+          if (typeof shape.$ref === 'string') {
+            const [relative, fragment = ''] = shape.$ref.split('#');
+            const targetFile = resolve(dirname(source), relative || source);
+            const key = targetFile + '#' + fragment;
+            keys.add(key);
+            if (!seen.has(key))
+              for (const child of referenceKeys(
+                pointer(load(targetFile), fragment, location),
+                targetFile,
+                new Set([...seen, key]),
+              ))
+                keys.add(child);
+          }
+          for (const branch of shape.allOf ?? [])
+            for (const key of referenceKeys(branch, source, seen)) keys.add(key);
+          return keys;
+        };
+        const targetKeys = referenceKeys({ $ref: ref }, file);
+        const declared = (value.oneOf as Schema[]).flatMap((branch, index) =>
+          [...referenceKeys(branch, file)].some((key) => targetKeys.has(key)) ? [index] : [],
+        );
+        const matches = (branch: Schema): boolean =>
+          stable(branch) === stable(resolvedTarget) || Boolean(branch.allOf?.some(matches));
+        const indices = declared.length
+          ? declared
+          : (result.oneOf as Schema[]).flatMap((branch, index) => (matches(branch) ? [index] : []));
+        if (indices.length !== 1)
+          fail(location, 'mapping target must identify exactly one declared branch');
+        bindings[tag] = indices[0]!;
+      }
+      result['x-sdk-discriminator-mapping'] = bindings;
+    }
+    return result;
   }
   const raw = load(resolve(definitionPath));
   if (!raw || typeof raw !== 'object' || Array.isArray(raw))
     fail('/', 'expected an OpenAPI object');
-  const config = load(resolve(configPath)) as Config;
+  const mergeProfiles = (left: unknown, right: unknown, path: string): unknown => {
+    if (left === undefined) return structuredClone(right);
+    if (stable(left) === stable(right)) return structuredClone(left);
+    if (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      (['config/include', 'config/targets'].includes(path) ||
+        /^config\/auth\/modes\/[^/]+\/operations$/.test(path))
+    )
+      return [...new Set([...left, ...right])].sort();
+    if (
+      left &&
+      right &&
+      typeof left === 'object' &&
+      typeof right === 'object' &&
+      !Array.isArray(left) &&
+      !Array.isArray(right)
+    ) {
+      const result: Record<string, unknown> = { ...left };
+      for (const [key, value] of Object.entries(right))
+        result[key] = mergeProfiles(result[key], value, path + '/' + key);
+      return result;
+    }
+    return fail(path, 'conflicting SDK profile settings');
+  };
+  const loadProfile = (file: string, stack = new Set<string>()): unknown => {
+    if (stack.has(file)) fail('config/profiles', 'profile reference cycle');
+    const input = structuredClone(load(file));
+    record(input, 'config');
+    const { profiles, ...local } = input;
+    let combined: unknown = {};
+    if (profiles !== undefined) {
+      strings(profiles, 'config/profiles');
+      let unbounded = false;
+      for (const profile of profiles) {
+        const loaded = loadProfile(resolve(dirname(file), profile), new Set([...stack, file]));
+        if (loaded && typeof loaded === 'object' && !Object.hasOwn(loaded, 'include'))
+          unbounded = true;
+        combined = mergeProfiles(combined, loaded, 'config');
+      }
+      if (unbounded && combined && typeof combined === 'object')
+        Reflect.deleteProperty(combined, 'include');
+    }
+    return mergeProfiles(combined, local, 'config');
+  };
+  const config = loadProfile(resolve(configPath)) as Config;
   keys(
     config,
     [
       'targets',
       'validation',
+      'numericUnions',
+      'schemaSharing',
       'auth',
       'version',
       'npm',
@@ -1027,6 +1246,10 @@ export function loadContract(definitionPath: string, configPath: string): Contra
     ],
     'config',
   );
+  if (config.schemaSharing !== undefined && config.schemaSharing !== 'named')
+    fail('config/schemaSharing', 'expected named');
+  if (config.numericUnions !== undefined && config.numericUnions !== 'explicit')
+    fail('config/numericUnions', 'expected explicit');
   if (config.validation !== undefined && !['encoding', 'schema'].includes(config.validation))
     fail('config/validation', 'expected encoding or schema');
   if (config.targets !== undefined) strings(config.targets, 'config/targets');
@@ -1252,6 +1475,7 @@ export function loadContract(definitionPath: string, configPath: string): Contra
     }
     return fields;
   }
+  const streamSchemas = new Map<string, Record<string, Schema>>();
   const selectedPaths = Object.fromEntries(
     Object.entries(raw.paths ?? {}).map(([path, item]) => {
       const fields = pathFields(item, resolve(definitionPath), '/paths/' + path);
@@ -1272,6 +1496,26 @@ export function loadContract(definitionPath: string, configPath: string): Contra
           if (!included) return [verb, { operationId: op.operationId }];
           selectedAny = true;
           collect(op, file, 'operation');
+          if (c?.stream?.events) {
+            record(c.stream.events, 'config/operations/' + op.operationId + '/stream/events');
+            const events: Record<string, Schema> = Object.create(null);
+            for (const [event, ref] of Object.entries(c.stream.events)) {
+              if (typeof ref !== 'string')
+                fail(
+                  'config/operations/' + op.operationId + '/stream/events/' + event,
+                  'expected a local schema reference',
+                );
+              collect({ $ref: ref }, resolve(definitionPath), 'schema');
+              events[event] = deref(
+                { $ref: ref },
+                resolve(definitionPath),
+                p + '/stream/events/' + event,
+                [],
+                'schema',
+              );
+            }
+            streamSchemas.set(op.operationId, events);
+          }
           return [verb, deref(op, file, p, [], 'operation')];
         });
       const parameters = own(fields, 'parameters');
@@ -1291,6 +1535,53 @@ export function loadContract(definitionPath: string, configPath: string): Contra
       return [path, Object.fromEntries(entries)];
     }),
   );
+  const incoming: IncomingWebhook[] = [];
+  if (raw.webhooks !== undefined) {
+    if (raw.openapi.startsWith('3.0.')) fail('/webhooks', 'webhooks require OpenAPI 3.1');
+    record(raw.webhooks, '/webhooks');
+    for (const [key, item] of Object.entries(raw.webhooks).sort()) {
+      const base = '/webhooks/' + key.replaceAll('~', '~0').replaceAll('/', '~1');
+      const fields = pathFields(item, resolve(definitionPath), base);
+      for (const [method, field] of Object.entries(fields)) {
+        if (
+          ['parameters', 'summary', 'description', 'servers'].includes(method) ||
+          method.startsWith('x-')
+        )
+          continue;
+        if (!['get', 'post', 'put', 'patch', 'delete', 'head', 'options'].includes(method))
+          fail(base + '/' + method, 'unsupported incoming method');
+        collect(field.value, field.file, 'operation');
+        const location = base + '/' + method;
+        const op = deref(field.value, field.file, location, [], 'operation');
+        record(op, location);
+        record(op.requestBody, location + '/requestBody');
+        record(op.requestBody.content, location + '/requestBody/content');
+        const content = op.requestBody.content['application/json'];
+        record(content, location + '/requestBody/content/application~1json');
+        schema(
+          content.schema,
+          location + '/requestBody/content/application~1json/schema',
+          false,
+          config.numericUnions === 'explicit',
+        );
+        const model = 'IncomingWebhook' + hash(key + '/' + method).slice(0, 12) + 'Payload';
+        incoming.push({
+          name: key,
+          method: method.toUpperCase(),
+          pointer: location,
+          model,
+          schema: content.schema,
+          dependencies: [
+            ...new Set(
+              references
+                .filter((ref) => ref.path.startsWith(location + '/'))
+                .map((ref) => own(config.models, ref.model) ?? ref.model),
+            ),
+          ].sort(),
+        });
+      }
+    }
+  }
   const selected = {
     ...raw,
     paths: {},
@@ -1334,7 +1625,7 @@ export function loadContract(definitionPath: string, configPath: string): Contra
   annotate(doc, 'root');
   for (const [key, entry] of resolved)
     if (key.startsWith('schema:')) annotate(entry.value, 'schema');
-  for (const forbidden of ['webhooks', 'callbacks'])
+  for (const forbidden of ['callbacks'])
     if (doc[forbidden])
       fail(`/${forbidden}`, 'declare supported HMAC webhooks in the SDK configuration');
   const models: Record<string, Schema> = {};
@@ -1346,7 +1637,12 @@ export function loadContract(definitionPath: string, configPath: string): Contra
     modelName(mapped, `models/${original}`, config.targets);
     if (Object.keys(models).some((k) => k.toLowerCase() === mapped.toLowerCase()))
       fail(`models/${original}`, 'model name collision');
-    schema(value, `/components/schemas/${original}`, raw.openapi.startsWith('3.0.'));
+    schema(
+      value,
+      `/components/schemas/${original}`,
+      raw.openapi.startsWith('3.0.'),
+      config.numericUnions === 'explicit',
+    );
     models[mapped] = value;
   }
   for (const k of Object.keys(config.models ?? {}))
@@ -1365,37 +1661,81 @@ export function loadContract(definitionPath: string, configPath: string): Contra
       );
     const value = models[mapped] ?? resolved.get('schema:' + key)?.value;
     if (!value) fail('definitions/' + mapped, 'unresolved recursive model');
-    schema(value, 'definitions/' + mapped, raw.openapi.startsWith('3.0.'));
+    schema(
+      value,
+      'definitions/' + mapped,
+      raw.openapi.startsWith('3.0.'),
+      config.numericUnions === 'explicit',
+    );
     definitions[mapped] = value;
     models[mapped] ??= value;
   }
-  let auth: Auth | undefined;
-  const schemes = doc.components?.securitySchemes ?? {};
-  if (config.auth !== undefined) {
-    keys(config.auth, ['scheme'], 'config/auth');
-    if (typeof config.auth.scheme !== 'string' || !Object.hasOwn(schemes, config.auth.scheme))
-      fail('config/auth/scheme', 'select an existing security scheme');
+  for (const declaration of incoming) {
+    if (Object.hasOwn(models, declaration.model))
+      fail(declaration.pointer, 'incoming model name collision');
+    models[declaration.model] = declaration.schema;
   }
-  if (Object.keys(schemes).length > 1 && !config.auth)
-    fail(
-      '/components/securitySchemes',
-      'multiple authentication schemes require config.auth.scheme to select a declared alternative',
+  let auth: Auth | undefined;
+  let authentication: Record<string, AuthenticationMode> | undefined;
+  const schemes = doc.components?.securitySchemes ?? {};
+  const compileScheme = (key: string): Auth & { name: string } => {
+    if (!Object.hasOwn(schemes, key)) fail('config/auth', 'select an existing security scheme');
+    const declaration = schemes[key];
+    if (declaration.type === 'http' && declaration.scheme === 'bearer')
+      return { name: key, type: 'bearer', header: 'Authorization' };
+    if (declaration.type === 'apiKey' && declaration.in === 'header') {
+      header(declaration.name, 'securitySchemes/' + key + '/name');
+      return { name: key, type: 'apiKey', header: declaration.name };
+    }
+    return fail(
+      'securitySchemes/' + key,
+      'supported authentication: bearer or header API key; refresh/OAuth must be supplied by an explicit caller-owned transport',
     );
-  const selectedScheme = config.auth?.scheme ?? Object.keys(schemes)[0];
-  for (const [k, s] of Object.entries(schemes).filter(([key]) => key === selectedScheme) as [
-    string,
-    any,
-  ][]) {
-    if (s.type === 'http' && s.scheme === 'bearer')
-      auth = { type: 'bearer', header: 'Authorization' };
-    else if (s.type === 'apiKey' && s.in === 'header') {
-      header(s.name, `securitySchemes/${k}/name`);
-      auth = { type: 'apiKey', header: s.name };
-    } else
+  };
+  const namedAuth = config.auth && 'modes' in config.auth ? config.auth : undefined;
+  const selectedScheme =
+    config.auth && 'scheme' in config.auth
+      ? config.auth.scheme
+      : namedAuth
+        ? undefined
+        : Object.keys(schemes)[0];
+  if (namedAuth) {
+    keys(namedAuth, ['modes'], 'config/auth');
+    record(namedAuth.modes, 'config/auth/modes');
+    if (!Object.keys(namedAuth.modes).length)
+      fail('config/auth/modes', 'declare at least one authentication mode');
+    authentication = Object.create(null);
+    for (const [mode, settings] of Object.entries(namedAuth.modes)) {
+      name(mode, 'config/auth/modes/' + mode);
+      keys(settings, ['schemes', 'operations'], 'config/auth/modes/' + mode);
+      strings(settings.schemes, 'config/auth/modes/' + mode + '/schemes');
+      if (!settings.schemes.length)
+        fail('config/auth/modes/' + mode, 'a mode requires a complete scheme set');
+      if (settings.operations !== undefined)
+        strings(settings.operations, 'config/auth/modes/' + mode + '/operations');
+      const compiled = settings.schemes.map(compileScheme);
+      if (new Set(compiled.map((scheme) => scheme.header.toLowerCase())).size !== compiled.length)
+        fail('config/auth/modes/' + mode, 'combined schemes have conflicting header destinations');
+      authentication![mode] = {
+        schemes: compiled,
+        ...(settings.operations ? { operations: settings.operations } : {}),
+      };
+    }
+  } else {
+    if (config.auth) {
+      keys(config.auth, ['scheme'], 'config/auth');
+      if (typeof selectedScheme !== 'string' || !Object.hasOwn(schemes, selectedScheme))
+        fail('config/auth/scheme', 'select an existing security scheme');
+    }
+    if (Object.keys(schemes).length > 1 && !config.auth)
       fail(
-        `securitySchemes/${k}`,
-        'supported authentication: bearer or header API key; refresh/OAuth must be supplied by an explicit caller-owned transport',
+        '/components/securitySchemes',
+        'multiple authentication schemes require config.auth.scheme to select a declared alternative',
       );
+    if (selectedScheme) {
+      const { name, ...compiled } = compileScheme(selectedScheme);
+      auth = compiled;
+    }
   }
   const resourceSpellings = new Map<string, string>();
   const operations: Operation[] = [];
@@ -1430,6 +1770,8 @@ export function loadContract(definitionPath: string, configPath: string): Contra
           'conditional',
           'example',
           'deprecated',
+          'requestMediaType',
+          'stream',
         ],
         `config/operations/${id}`,
       );
@@ -1437,6 +1779,23 @@ export function loadContract(definitionPath: string, configPath: string): Contra
         if (c[key] !== undefined) strings(c[key], `config/operations/${id}/${key}`);
       if (c.hidden !== undefined && typeof c.hidden !== 'boolean')
         fail(p, 'hidden must be boolean');
+      if (c.requestMediaType !== undefined && typeof c.requestMediaType !== 'string')
+        fail(`config/operations/${id}/requestMediaType`, 'expected a media type string');
+      if (c.requestMediaType !== undefined && op.requestBody === undefined)
+        fail(`config/operations/${id}/requestMediaType`, 'operation has no request body');
+      if (c.stream) {
+        keys(
+          c.stream,
+          ['events', 'idleTimeoutMs', 'maxEventBytes'],
+          `config/operations/${id}/stream`,
+        );
+        for (const key of ['idleTimeoutMs', 'maxEventBytes'] as const)
+          if (
+            c.stream[key] !== undefined &&
+            (!Number.isSafeInteger(c.stream[key]) || c.stream[key]! <= 0)
+          )
+            fail(`config/operations/${id}/stream/${key}`, 'expected a positive safe integer');
+      }
       if (c.deprecated !== undefined && (typeof c.deprecated !== 'string' || !c.deprecated.trim()))
         fail(p, 'deprecated must be a nonempty migration message');
       if (op.deprecated !== undefined && typeof op.deprecated !== 'boolean')
@@ -1486,7 +1845,12 @@ export function loadContract(definitionPath: string, configPath: string): Contra
           fail(p, `path parameter ${param.name} must be required`);
         if (['body', '__proto__', 'constructor', 'prototype'].includes(param.name))
           fail(p, `parameter name ${param.name} conflicts with SDK input`);
-        schema(param.schema, `${p}/parameters/${param.name}`, raw.openapi.startsWith('3.0.'));
+        schema(
+          param.schema,
+          `${p}/parameters/${param.name}`,
+          raw.openapi.startsWith('3.0.'),
+          config.numericUnions === 'explicit',
+        );
         parameterType(param.schema, `${p}/parameters/${param.name}`);
         const style = param.style ?? (param.in === 'query' ? 'form' : 'simple');
         if (style !== (param.in === 'query' ? 'form' : 'simple'))
@@ -1524,12 +1888,31 @@ export function loadContract(definitionPath: string, configPath: string): Contra
       const anonymous =
         !security.length ||
         security.some((requirement: object) => !Object.keys(requirement).length);
-      const selectedAuthentication = security.some(
-        (requirement: Record<string, string[]>) =>
-          Object.keys(requirement).length === 1 &&
-          Object.hasOwn(requirement, selectedScheme!) &&
-          requirement[selectedScheme!]!.length === 0,
-      );
+      const authModes = authentication
+        ? Object.entries(authentication)
+            .filter(
+              ([, mode]) =>
+                (!mode.operations || mode.operations.includes(id)) &&
+                security.some(
+                  (requirement: Record<string, string[]>) =>
+                    Object.keys(requirement).length === mode.schemes.length &&
+                    mode.schemes.every(
+                      (scheme) =>
+                        Object.hasOwn(requirement, scheme.name) &&
+                        requirement[scheme.name]?.length === 0,
+                    ),
+                ),
+            )
+            .map(([name]) => name)
+        : undefined;
+      const selectedAuthentication = authModes
+        ? authModes.length > 0
+        : security.some(
+            (requirement: Record<string, string[]>) =>
+              Object.keys(requirement).length === 1 &&
+              Object.hasOwn(requirement, selectedScheme!) &&
+              requirement[selectedScheme!]!.length === 0,
+          );
       if (!anonymous && !selectedAuthentication)
         fail(
           p,
@@ -1544,8 +1927,24 @@ export function loadContract(definitionPath: string, configPath: string): Contra
         if (op.requestBody.required !== undefined && typeof op.requestBody.required !== 'boolean')
           fail(p, 'requestBody.required must be boolean');
         record(op.requestBody.content, p + '/requestBody/content');
-        const contents = Object.entries(op.requestBody.content);
-        if (contents.length !== 1) fail(p, 'requestBody must select one supported media type');
+        const supported = ['application/json', 'application/merge-patch+json'];
+        if (
+          c.requestMediaType !== undefined &&
+          !Object.hasOwn(op.requestBody.content, c.requestMediaType)
+        )
+          fail(`config/operations/${id}/requestMediaType`, 'selected media type is not declared');
+        const contents = Object.entries(op.requestBody.content).filter(([media]) =>
+          c.requestMediaType === undefined
+            ? supported.includes(media)
+            : media === c.requestMediaType,
+        );
+        if (contents.length !== 1)
+          fail(
+            p,
+            'requestBody must select one supported media type; configure operations.' +
+              id +
+              '.requestMediaType',
+          );
         const [media, content] = contents[0]! as [string, any];
         record(content, p + '/requestBody/content/' + media);
         if (!['application/json', 'application/merge-patch+json'].includes(media))
@@ -1553,7 +1952,12 @@ export function loadContract(definitionPath: string, configPath: string): Contra
             p,
             `unsupported request media type ${media}; file transfer is not in the initial reference contracts`,
           );
-        schema(content.schema, `${p}/requestBody`, raw.openapi.startsWith('3.0.'));
+        schema(
+          content.schema,
+          `${p}/requestBody`,
+          raw.openapi.startsWith('3.0.'),
+          config.numericUnions === 'explicit',
+        );
         body = content.schema;
         mediaType = media;
       }
@@ -1567,18 +1971,53 @@ export function loadContract(definitionPath: string, configPath: string): Contra
           record(response.content, p + '/responses/' + status + '/content');
         const contents = Object.entries(response.content ?? {});
         if (contents.length > 1) fail(p, 'each response must select one media type');
-        const r: Operation['responses'][string] = {};
+        const r: Operation['responses'][string] = {
+          bodyKind: 'empty',
+          classification: ['302', '307'].includes(status)
+            ? 'redirect'
+            : successStatus(status)
+              ? 'success'
+              : 'error',
+        };
+        if (r.classification === 'redirect') {
+          const location = Object.entries(response.headers ?? {}).find(
+            ([name]) => name.toLowerCase() === 'location',
+          )?.[1];
+          if (location !== undefined) {
+            record(location, p + '/responses/' + status + '/headers/Location');
+            r.locationRequired = location.required === true;
+          }
+        }
         if (contents.length) {
           const [media, value] = contents[0]! as [string, any];
           record(value, p + '/responses/' + status + '/content/' + media);
-          if (media !== 'application/json') fail(p, `unsupported response media type ${media}`);
-          schema(value.schema, `${p}/responses/${status}`, raw.openapi.startsWith('3.0.'));
-          r.schema = value.schema;
+          if (['application/pdf', 'text/event-stream'].includes(media) && successStatus(status)) {
+            r.bodyKind = media === 'application/pdf' ? 'binary' : 'sse';
+          } else {
+            if (media !== 'application/json') fail(p, `unsupported response media type ${media}`);
+            schema(
+              value.schema,
+              `${p}/responses/${status}`,
+              raw.openapi.startsWith('3.0.'),
+              config.numericUnions === 'explicit',
+            );
+            r.schema = value.schema;
+            r.bodyKind = 'json';
+          }
           r.mediaType = media;
         }
         responses[status] = r;
       }
-      if (!Object.keys(responses).some((k) => /^2\d\d$/.test(k)))
+      for (const [event, eventSchema] of Object.entries(streamSchemas.get(id) ?? {}))
+        schema(
+          eventSchema,
+          `${p}/stream/events/${event}`,
+          false,
+          config.numericUnions === 'explicit',
+        );
+      if (c.stream && !Object.values(responses).some((response) => response.bodyKind === 'sse'))
+        fail(`config/operations/${id}/stream`, 'operation has no SSE response');
+      if (!Object.keys(responses).some((k) => successStatus(k) && k !== '304'))
         fail(p, 'declare at least one explicit success response');
       if (c.idempotency) {
         keys(c.idempotency, ['header', 'retention', 'scope', 'auto'], p);
@@ -1728,7 +2167,9 @@ export function loadContract(definitionPath: string, configPath: string): Contra
         ...(mediaType ? { mediaType } : {}),
         bodyRequired: op.requestBody?.required ?? false,
         responses,
+        ...(streamSchemas.has(id) ? { streamEventSchemas: streamSchemas.get(id)! } : {}),
         authenticated: !anonymous,
+        ...(authModes ? { authModes } : {}),
         ...(anonymous && selectedAuthentication ? { optionalAuthentication: true } : {}),
         description: op.description ?? op.summary ?? '',
         ...(c.deprecated
@@ -1743,6 +2184,10 @@ export function loadContract(definitionPath: string, configPath: string): Contra
   for (const id of [...Object.keys(config.operations ?? {}), ...(config.include ?? [])])
     if (!ids.has(id)) fail(`config/operations/${id}`, 'stale operation customization or selection');
   if (!operations.length) fail('/paths', 'selection contains no operations');
+  for (const [mode, settings] of Object.entries(authentication ?? {}))
+    for (const id of settings.operations ?? [])
+      if (!ids.has(id))
+        fail('config/auth/modes/' + mode + '/operations', 'unknown operation binding ' + id);
   if (config.webhook) {
     const w = config.webhook;
     keys(
@@ -1791,7 +2236,48 @@ export function loadContract(definitionPath: string, configPath: string): Contra
       fail('config/webhook/separator', 'this signature format requires a dot separator');
     if (!w.events || typeof w.events !== 'object' || Array.isArray(w.events))
       fail('config/webhook/events', 'expected an event schema map');
-    for (const [k, v] of Object.entries(w.events)) schema(v, `config/webhook/events/${k}`);
+    const eventTypes = (
+      value: Schema,
+      field = false,
+      seen = new Set<string>(),
+    ): string[] | undefined => {
+      const constraints: string[][] = [];
+      const ref = value['x-sdk-ref'];
+      if (ref && !seen.has(ref) && definitions[ref]) {
+        const tags = eventTypes(definitions[ref], field, new Set([...seen, ref]));
+        if (tags) constraints.push(tags);
+      }
+      const property = value.properties?.[w.typeField];
+      if (field) {
+        if (typeof value.const === 'string') constraints.push([value.const]);
+        if (value.enum)
+          constraints.push(value.enum.filter((tag): tag is string => typeof tag === 'string'));
+      } else if (property) {
+        const tags = eventTypes(property, true, seen);
+        if (tags) constraints.push(tags);
+      }
+      for (const branch of value.allOf ?? []) {
+        const tags = eventTypes(branch, field, seen);
+        if (tags) constraints.push(tags);
+      }
+      for (const alternatives of [value.oneOf, value.anyOf])
+        if (alternatives) {
+          const tags = alternatives.map((branch) => eventTypes(branch, field, seen));
+          if (tags.every((value): value is string[] => value !== undefined))
+            constraints.push([...new Set(tags.flat())]);
+        }
+      return constraints.length
+        ? constraints.reduce((left, right) => left.filter((tag) => right.includes(tag)))
+        : undefined;
+    };
+    for (const declaration of incoming)
+      for (const type of new Set(eventTypes(declaration.schema) ?? [])) {
+        if (Object.hasOwn(w.events, type) && stable(w.events[type]) !== stable(declaration.schema))
+          fail(declaration.pointer, 'incoming event conflicts with configured binding for ' + type);
+        w.events[type] = declaration.schema;
+      }
+    for (const [k, v] of Object.entries(w.events))
+      schema(v, `config/webhook/events/${k}`, false, config.numericUnions === 'explicit');
   }
   if (config.money) {
     keys(config.money, ['currencies'], 'config/money');
@@ -1819,6 +2305,7 @@ export function loadContract(definitionPath: string, configPath: string): Contra
     title: String(doc.info?.title ?? 'API'),
     apiVersion: config.apiVersion?.value ?? String(doc.info?.version ?? ''),
     operations,
+    ...(incoming.length ? { incoming } : {}),
     models,
     ...(cycles.size ? { definitions } : {}),
     modelDependencies: Object.fromEntries(
@@ -1840,11 +2327,16 @@ export function loadContract(definitionPath: string, configPath: string): Contra
         ];
       }),
     ),
+    ...(authentication ? { authentication } : {}),
     config,
     sources,
     hash: '',
   };
   if (auth) contract.auth = auth;
+  // Resolution is finished. Do not retain expanded cached copies while the
+  // owned contract is compacted and compiled.
+  resolved.clear();
+  if (config.schemaSharing === 'named') shareContractSchemas(contract);
   contract.hash = hash(stable(contract));
   return contract;
 }

@@ -72,7 +72,19 @@ final class RequestOptions
         public readonly ?Cancellation $cancellation = null,
         public readonly ?int $maxPages = null,
         public readonly ?int $maxItems = null,
+        public readonly ?string $authMode = null,
+        public readonly ?array $credentials = null,
+        public readonly ?int $streamIdleTimeoutMs = null,
+        public readonly ?int $streamLifetimeMs = null,
     ) {}
+    public function __debugInfo(): array
+    {
+        return [
+            'authMode' => $this->authMode,
+            'credentials' => '[REDACTED]',
+            'headers' => '[REDACTED]',
+        ];
+    }
     public function withDeadline(int $remaining): self
     {
         return new self(
@@ -85,6 +97,10 @@ final class RequestOptions
             $this->cancellation,
             $this->maxPages,
             $this->maxItems,
+            $this->authMode,
+            $this->credentials,
+            $this->streamIdleTimeoutMs,
+            $this->streamLifetimeMs,
         );
     }
 }
@@ -101,15 +117,427 @@ final class ClientOptions
         public readonly ?\Closure $transport = null,
         public readonly ?\Closure $diagnostics = null,
         public readonly array $redactFields = [],
+        public readonly ?string $authMode = null,
+        public readonly array $credentials = [],
     ) {}
     public function __debugInfo(): array
     {
         return ['baseUrl' => $this->baseUrl, 'token' => '[REDACTED]'];
     }
 }
+/** Injected streaming transports return this interface in the response's stream field. */
+interface ByteStream
+{
+    /** Return the next bounded byte chunk, or null at EOF. Honor cancellation while waiting. */
+    public function read(): ?string;
+    public function close(): void;
+}
+
+/** Owns one incremental connection; at most one cURL write chunk is queued. */
+final class CurlByteStream implements ByteStream
+{
+    private ?\CurlHandle $handle = null;
+    private ?\CurlMultiHandle $multi = null;
+    private ?string $pending = null;
+    private bool $paused = false;
+    private bool $done = false;
+    private bool $headersDone = false;
+    private ?int $failure = null;
+    public int $status = 0;
+    public array $headers = [];
+    private float $started;
+    public function __construct(private readonly array $request)
+    {
+        $this->started = self::now();
+        $this->handle = curl_init();
+        $this->multi = curl_multi_init();
+        curl_setopt_array($this->handle, [
+            CURLOPT_URL => $request['url'],
+            CURLOPT_CUSTOMREQUEST => $request['method'],
+            CURLOPT_HTTPHEADER => array_map(
+                fn($key, $value) => "$key: $value",
+                array_keys($request['headers']),
+                $request['headers'],
+            ),
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_CONNECTTIMEOUT_MS => (int) $request['timeoutMs'],
+            CURLOPT_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS,
+            CURLOPT_HEADERFUNCTION => function ($handle, string $line): int {
+                if (preg_match('/^HTTP\/\S+\s+(\d+)/', $line, $matches)) {
+                    $this->status = (int) $matches[1];
+                    $this->headers = [];
+                } elseif (trim($line) === '' && $this->status >= 200) {
+                    $this->headersDone = true;
+                } elseif (str_contains($line, ':')) {
+                    [$key, $value] = explode(':', $line, 2);
+                    $this->headers[strtolower(trim($key))] = trim($value);
+                }
+                return strlen($line);
+            },
+            CURLOPT_WRITEFUNCTION => function ($handle, string $chunk): int {
+                if ($this->pending !== null) {
+                    $this->paused = true;
+                    return CURL_WRITEFUNC_PAUSE;
+                }
+                $this->pending = $chunk;
+                return strlen($chunk);
+            },
+        ]);
+        if ($request['body'] !== null) {
+            curl_setopt($this->handle, CURLOPT_POSTFIELDS, $request['body']);
+        }
+        curl_multi_add_handle($this->multi, $this->handle);
+        try {
+            while (!$this->headersDone && !$this->done) {
+                $this->pump($this->started, (int) $request['timeoutMs']);
+            }
+            $this->checkFailure();
+        } catch (\Throwable $error) {
+            $this->close();
+            throw $error;
+        }
+    }
+    private static function now(): float
+    {
+        return hrtime(true) / 1000000;
+    }
+    private function checkFailure(): void
+    {
+        if ($this->failure !== null && $this->failure !== CURLE_OK) {
+            throw new SdkError('transport', 'Streaming transport failed', 'unknown');
+        }
+    }
+    private function pump(float $waitStart, int $timeout): void
+    {
+        if (($this->request['cancellation'] ?? null)?->isCancelled()) {
+            throw new SdkError('cancelled', 'Stream cancelled', 'response');
+        }
+        if (self::now() - $waitStart >= $timeout) {
+            throw new SdkError(
+                'deadline',
+                'Stream idle or connection timeout exceeded',
+                'response',
+            );
+        }
+        if (
+            isset($this->request['streamLifetimeMs']) &&
+            self::now() - $this->started >= $this->request['streamLifetimeMs']
+        ) {
+            throw new SdkError('deadline', 'Stream lifetime exceeded', 'response');
+        }
+        if ($this->multi === null) {
+            return;
+        }
+        $code = curl_multi_exec($this->multi, $running);
+        if ($code !== CURLM_OK) {
+            throw new SdkError('transport', 'Streaming transport failed', 'unknown');
+        }
+        while ($info = curl_multi_info_read($this->multi)) {
+            $this->done = true;
+            $this->failure = $info['result'];
+        }
+        if (!$this->done && $this->pending === null) {
+            if (curl_multi_select($this->multi, 0.05) === -1) {
+                usleep(1000);
+            }
+        }
+    }
+    public function read(): ?string
+    {
+        try {
+            $waitStart = self::now();
+            while ($this->handle !== null) {
+                if (($this->request['cancellation'] ?? null)?->isCancelled()) {
+                    throw new SdkError('cancelled', 'Stream cancelled', 'response');
+                }
+                if ($this->pending !== null) {
+                    $chunk = $this->pending;
+                    $this->pending = null;
+                    return $chunk;
+                }
+                if ($this->done) {
+                    $this->checkFailure();
+                    $this->close();
+                    return null;
+                }
+                if ($this->paused) {
+                    $this->paused = false;
+                    curl_pause($this->handle, CURLPAUSE_CONT);
+                }
+                $this->pump($waitStart, $this->request['streamIdleTimeoutMs'] ?? 30000);
+            }
+            return null;
+        } catch (\Throwable $error) {
+            $this->close();
+            throw $error;
+        }
+    }
+    public function close(): void
+    {
+        if ($this->handle !== null && $this->multi !== null) {
+            curl_multi_remove_handle($this->multi, $this->handle);
+        }
+        $this->handle = null;
+        $this->multi = null;
+        $this->pending = null;
+    }
+    public function __destruct()
+    {
+        $this->close();
+    }
+    public function __debugInfo(): array
+    {
+        return ['status' => $this->status];
+    }
+}
+
+final class ServerSentEvent
+{
+    public function __construct(
+        public readonly string $event,
+        public readonly string $id,
+        public readonly mixed $data,
+        public readonly string $rawData,
+        public readonly ?int $retry = null,
+    ) {}
+    public function __debugInfo(): array
+    {
+        return ['event' => $this->event];
+    }
+}
+
+/** @implements \IteratorAggregate<int, ServerSentEvent> */
+final class EventStream implements \IteratorAggregate
+{
+    private bool $closed = false;
+    private bool $started = false;
+    private float $created;
+    public function __construct(
+        private readonly ByteStream $source,
+        public readonly array $meta,
+        private readonly array $settings,
+        private readonly \Closure $decode,
+        private readonly \Closure $released,
+    ) {
+        $this->created = hrtime(true) / 1000000;
+    }
+    public function close(): void
+    {
+        if ($this->closed) {
+            return;
+        }
+        $this->closed = true;
+        $this->source->close();
+        ($this->released)();
+    }
+    public function __debugInfo(): array
+    {
+        return ['meta' => $this->meta, 'closed' => $this->closed];
+    }
+    public function getIterator(): \Traversable
+    {
+        if ($this->started) {
+            throw new SdkError('validation', 'A stream can only be consumed once');
+        }
+        $this->started = true;
+        $line = '';
+        $data = '';
+        $event = '';
+        $id = '';
+        $retry = null;
+        $skipLF = false;
+        $bytes = 0;
+        $first = true;
+        try {
+            while (!$this->closed) {
+                if (($this->settings['cancellation'] ?? null)?->isCancelled()) {
+                    throw new SdkError(
+                        'cancelled',
+                        'Stream cancelled',
+                        'response',
+                        false,
+                        $this->meta,
+                    );
+                }
+                if (
+                    isset($this->settings['lifetimeMs']) &&
+                    hrtime(true) / 1000000 - $this->created >= $this->settings['lifetimeMs']
+                ) {
+                    throw new SdkError(
+                        'deadline',
+                        'Stream lifetime exceeded',
+                        'response',
+                        false,
+                        $this->meta,
+                    );
+                }
+                $wait = hrtime(true) / 1000000;
+                $chunk = $this->source->read();
+                if (($this->settings['cancellation'] ?? null)?->isCancelled()) {
+                    throw new SdkError(
+                        'cancelled',
+                        'Stream cancelled',
+                        'response',
+                        false,
+                        $this->meta,
+                    );
+                }
+                if (hrtime(true) / 1000000 - $wait >= $this->settings['idleTimeoutMs']) {
+                    throw new SdkError(
+                        'deadline',
+                        'Stream idle timeout exceeded',
+                        'response',
+                        false,
+                        $this->meta,
+                    );
+                }
+                if ($chunk === null) {
+                    if (preg_match('//u', $line) !== 1) {
+                        throw new SdkError(
+                            'protocol',
+                            'Invalid UTF-8 stream',
+                            'response',
+                            false,
+                            $this->meta,
+                        );
+                    }
+                    break;
+                }
+                for (
+                    $index = 0, $length = strlen($chunk);
+                    $index < $length && !$this->closed;
+                    $index++
+                ) {
+                    if (($this->settings['cancellation'] ?? null)?->isCancelled()) {
+                        throw new SdkError(
+                            'cancelled',
+                            'Stream cancelled',
+                            'response',
+                            false,
+                            $this->meta,
+                        );
+                    }
+                    if (
+                        isset($this->settings['lifetimeMs']) &&
+                        hrtime(true) / 1000000 - $this->created >= $this->settings['lifetimeMs']
+                    ) {
+                        throw new SdkError(
+                            'deadline',
+                            'Stream lifetime exceeded',
+                            'response',
+                            false,
+                            $this->meta,
+                        );
+                    }
+                    $character = $chunk[$index];
+                    if ($skipLF) {
+                        $skipLF = false;
+                        if ($character === "\n") {
+                            continue;
+                        }
+                    }
+                    if (++$bytes > $this->settings['maxEventBytes']) {
+                        throw new SdkError(
+                            'protocol',
+                            'SSE event exceeds configured size limit',
+                            'response',
+                            false,
+                            $this->meta,
+                        );
+                    }
+                    if ($character !== "\r" && $character !== "\n") {
+                        $line .= $character;
+                        continue;
+                    }
+                    $skipLF = $character === "\r";
+                    if ($first) {
+                        $first = false;
+                        if (str_starts_with($line, "\xef\xbb\xbf")) {
+                            $line = substr($line, 3);
+                        }
+                    }
+                    if (preg_match('//u', $line) !== 1) {
+                        throw new SdkError(
+                            'protocol',
+                            'Invalid UTF-8 stream',
+                            'response',
+                            false,
+                            $this->meta,
+                        );
+                    }
+                    if ($line === '') {
+                        if ($data !== '') {
+                            $raw = substr($data, 0, -1);
+                            yield new ServerSentEvent(
+                                $event ?: 'message',
+                                $id,
+                                ($this->decode)($event ?: 'message', $raw),
+                                $raw,
+                                $retry,
+                            );
+                        }
+                        $data = '';
+                        $event = '';
+                        $bytes = 0;
+                    } elseif ($line[0] !== ':') {
+                        $parts = explode(':', $line, 2);
+                        $field = $parts[0];
+                        $value = $parts[1] ?? '';
+                        if (str_starts_with($value, ' ')) {
+                            $value = substr($value, 1);
+                        }
+                        if ($field === 'data') {
+                            $data .= $value . "\n";
+                        } elseif ($field === 'event') {
+                            $event = $value;
+                        } elseif ($field === 'id' && !str_contains($value, "\0")) {
+                            $id = $value;
+                        } elseif (
+                            $field === 'retry' &&
+                            preg_match('/^\d+$/D', $value) &&
+                            (float) $value <= 9007199254740991
+                        ) {
+                            $retry = (int) $value;
+                        }
+                    }
+                    $line = '';
+                }
+            }
+        } catch (SdkError $error) {
+            if ($error->kind !== 'validation') {
+                throw $error;
+            }
+            throw new SdkError(
+                'protocol',
+                'Invalid SSE event payload',
+                'response',
+                false,
+                $this->meta,
+                previous: $error,
+            );
+        } catch (\Throwable $error) {
+            throw new SdkError(
+                'protocol',
+                'Invalid or interrupted SSE stream',
+                'response',
+                false,
+                $this->meta,
+                previous: $error,
+            );
+        } finally {
+            $this->close();
+        }
+    }
+    public function __destruct()
+    {
+        $this->close();
+    }
+}
+
 class Model implements \JsonSerializable
 {
     protected readonly mixed $values;
+    private readonly mixed $inputValues;
     private readonly array $codec;
     protected readonly array $schema;
     protected readonly array $redactFields;
@@ -157,6 +585,26 @@ class Model implements \JsonSerializable
             }
             return $value;
         };
+        $preserveNumbers = function (mixed $value, int $depth = 0) use (&$preserveNumbers): mixed {
+            if ($depth > 256) {
+                Codec::fail('value', 'value exceeds supported nesting depth or contains a cycle');
+            }
+            if ($value instanceof RawNumber) {
+                return new ExactNumber($value->value);
+            }
+            if (is_array($value)) {
+                return array_map(fn($child) => $preserveNumbers($child, $depth + 1), $value);
+            }
+            if (is_object($value)) {
+                $out = new \stdClass();
+                foreach ((array) $value as $key => $child) {
+                    $out->{$key} = $preserveNumbers($child, $depth + 1);
+                }
+                return $out;
+            }
+            return $value;
+        };
+        $this->inputValues = $preserveNumbers($normalized);
         $this->values = $unwrap($normalized);
     }
     public function has(string $field): bool
@@ -179,6 +627,15 @@ class Model implements \JsonSerializable
     public function __isset(string $field): bool
     {
         return $this->has($field) && $this->get($field) !== null;
+    }
+    /** Preserve the interpreted numeric kind when generated inputs are encoded again. */
+    public function toInputArray(): array
+    {
+        return (array) $this->inputValues;
+    }
+    public function toInputValue(): mixed
+    {
+        return $this->inputValues;
     }
     public function toArray(): array
     {
@@ -207,10 +664,21 @@ final class RawNumber
     public function __construct(public readonly string $value) {}
 }
 /** JSON numeric meaning, established by the parser or a positive codec declaration. */
-final class ParsedNumber
+class ParsedNumber
 {
     public function __construct(public readonly string $value) {}
 }
+final class ExactNumber extends ParsedNumber
+{
+    public function __construct(string $value)
+    {
+        if (!preg_match('/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/D', $value)) {
+            Codec::fail('ExactNumber', 'expected a JSON number token');
+        }
+        parent::__construct($value);
+    }
+}
+
 final class Codec
 {
     private const ANY_CODEC = [
@@ -231,6 +699,15 @@ final class Codec
         );
         if ($depth > 256 || !is_array($value)) {
             $invalid('shape or nesting limit');
+        }
+        if (isset($value['numberInput']) && $value['numberInput'] !== 'explicit') {
+            $invalid('number input representation');
+        }
+        if (
+            isset($value['numberInput']) &&
+            !in_array($value['value']['kind'] ?? null, ['decimal', 'exact-integer'], true)
+        ) {
+            $invalid('number input requires an exact numeric instruction');
         }
         if (!is_array($value['value'] ?? null)) {
             $invalid('missing value instruction');
@@ -264,6 +741,21 @@ final class Codec
             $invalid('missing checks');
         }
         foreach ($value['checks'] as $key => $item) {
+            if ($key === 'uniqueItems') {
+                if (!is_bool($item)) {
+                    $invalid('invalid uniqueness constraint');
+                }
+                continue;
+            }
+            if ($key === 'multipleOf' && ((!is_int($item) && !is_float($item)) || $item <= 0)) {
+                $invalid('invalid positive divisor');
+            }
+            if (
+                in_array($key, ['minProperties', 'maxProperties'], true) &&
+                (!is_int($item) || $item < 0 || $item > 9007199254740991)
+            ) {
+                $invalid('invalid property bound');
+            }
             if (
                 $key === 'pattern'
                     ? !is_string($item)
@@ -274,10 +766,13 @@ final class Codec
                                 'maximum',
                                 'exclusiveMinimum',
                                 'exclusiveMaximum',
+                                'multipleOf',
                                 'minLength',
                                 'maxLength',
                                 'minItems',
                                 'maxItems',
+                                'minProperties',
+                                'maxProperties',
                             ],
                             true,
                         ) ||
@@ -290,6 +785,16 @@ final class Codec
         foreach (['reference', 'tag', 'phpPattern'] as $key) {
             if (isset($value[$key]) && !is_string($value[$key])) {
                 $invalid('invalid ' . $key);
+            }
+        }
+        if (isset($value['literal'])) {
+            if (!is_string($value['literal'])) {
+                $invalid('invalid literal');
+            }
+            try {
+                json_decode($value['literal'], false, 512, JSON_THROW_ON_ERROR);
+            } catch (\JsonException) {
+                $invalid('invalid literal JSON');
             }
         }
         if (isset($value['constraints']) && !is_bool($value['constraints'])) {
@@ -311,6 +816,13 @@ final class Codec
         if (isset($value['members']) && !is_array($value['members'])) {
             $invalid('invalid members');
         }
+        if (
+            isset($value['tagValues']) &&
+            (!is_array($value['tagValues']) ||
+                array_filter($value['tagValues'], fn($tag) => !is_string($tag)))
+        ) {
+            $invalid('invalid discriminator values');
+        }
         foreach (['fields', 'definitions', 'every', 'some', 'exactlyOne'] as $key) {
             if (!isset($value[$key])) {
                 continue;
@@ -322,9 +834,20 @@ final class Codec
                 self::assertPlan($child, "$path.$key.$name", $depth + 1);
             }
         }
-        foreach (['element', 'exclude'] as $key) {
+        foreach (['element', 'exclude', 'includes'] as $key) {
             if (isset($value[$key])) {
                 self::assertPlan($value[$key], "$path.$key", $depth + 1);
+            }
+        }
+        if (isset($value['when'])) {
+            if (!is_array($value['when'])) {
+                $invalid('invalid conditional');
+            }
+            self::assertPlan($value['when']['test'] ?? null, "$path.when.test", $depth + 1);
+            foreach (['then', 'else'] as $key) {
+                if (isset($value['when'][$key])) {
+                    self::assertPlan($value['when'][$key], "$path.when.$key", $depth + 1);
+                }
             }
         }
         if (isset($value['extra']) && !is_bool($value['extra'])) {
@@ -553,6 +1076,125 @@ final class Codec
         $size = max(strlen($ad), strlen($bd));
         return $as * (strcmp(str_pad($ad, $size, '0'), str_pad($bd, $size, '0')) <=> 0);
     }
+    private static function shiftedExponent(string $exponent, int $offset): string
+    {
+        $negative = str_starts_with($exponent, '-');
+        $digits = ltrim($exponent, '+-0');
+        if (strlen($digits) < 15) {
+            return (string) ((int) $exponent + $offset);
+        }
+        $carry = $negative ? -$offset : $offset;
+        for ($i = strlen($digits) - 1; $i >= 0 && $carry !== 0; $i--) {
+            $sum = (int) $digits[$i] + $carry;
+            $digit = (($sum % 10) + 10) % 10;
+            $digits[$i] = (string) $digit;
+            $carry = intdiv($sum - $digit, 10);
+        }
+        if ($carry > 0) {
+            $digits = (string) $carry . $digits;
+        }
+        return ($negative ? '-' : '') . ltrim($digits, '0');
+    }
+    private static function jsonIdentity(mixed $value, int $depth = 0): string
+    {
+        if ($depth > 256) {
+            self::fail('value', 'JSON equality exceeds nesting limit or contains a cycle');
+        }
+        if (
+            $value instanceof ParsedNumber ||
+            $value instanceof RawNumber ||
+            is_int($value) ||
+            is_float($value)
+        ) {
+            $text = is_object($value) ? $value->value : json_encode($value, JSON_THROW_ON_ERROR);
+            $parts = explode('e', strtolower($text));
+            $coefficient = $parts[0];
+            $fraction = strlen(explode('.', $coefficient)[1] ?? '');
+            $digits = ltrim(str_replace(['-', '.'], '', $coefficient), '0');
+            $trimmed = rtrim($digits, '0');
+            if ($trimmed === '') {
+                return '["number","0"]';
+            }
+            return json_encode(
+                [
+                    'number',
+                    (str_starts_with($coefficient, '-') ? '-' : '') . $trimmed,
+                    self::shiftedExponent(
+                        $parts[1] ?? '0',
+                        -$fraction + strlen($digits) - strlen($trimmed),
+                    ),
+                ],
+                JSON_THROW_ON_ERROR,
+            );
+        }
+        if (is_array($value) && array_is_list($value)) {
+            return json_encode(
+                ['array', array_map(fn($child) => self::jsonIdentity($child, $depth + 1), $value)],
+                JSON_THROW_ON_ERROR,
+            );
+        }
+        if (is_object($value) || is_array($value)) {
+            $fields = (array) $value;
+            ksort($fields, SORT_STRING);
+            $entries = [];
+            foreach ($fields as $key => $child) {
+                $entries[] = [(string) $key, self::jsonIdentity($child, $depth + 1)];
+            }
+            return json_encode(['object', $entries], JSON_THROW_ON_ERROR);
+        }
+        return json_encode([gettype($value), $value], JSON_THROW_ON_ERROR);
+    }
+    private static function decimalMultiple(string $token, string $divisor, string $path): bool
+    {
+        $parts = static function (string $text): array {
+            $pieces = explode('e', strtolower($text));
+            $coefficient = $pieces[0];
+            $fraction = strlen(explode('.', $coefficient)[1] ?? '');
+            $digits = ltrim(str_replace(['-', '.'], '', $coefficient), '0');
+            $trimmed = rtrim($digits, '0');
+            $power = max(-1000000000, min(1000000000, (float) ($pieces[1] ?? '0')));
+            return [$trimmed, (int) $power - $fraction + strlen($digits) - strlen($trimmed)];
+        };
+        [$a, $ap] = $parts($token);
+        [$b, $bp] = $parts($divisor);
+        if ($a === '') {
+            return true;
+        }
+        $shift = $ap - $bp;
+        if ($shift < 0) {
+            return false;
+        }
+        if ($b === '1') {
+            return true;
+        }
+        if ($shift > 10000) {
+            self::fail($path, 'multipleOf exponent expansion exceeds 10000 digits');
+        }
+        // Decimal long division avoids float, platform integer limits and extensions.
+        $remainder = '';
+        $input = $a . str_repeat('0', $shift);
+        for ($i = 0; $i < strlen($input); $i++) {
+            $remainder = ltrim($remainder . $input[$i], '0');
+            while (
+                strlen($remainder) > strlen($b) ||
+                (strlen($remainder) === strlen($b) && strcmp($remainder, $b) >= 0)
+            ) {
+                $borrow = 0;
+                $result = '';
+                $offset = strlen($remainder) - strlen($b);
+                for ($j = strlen($remainder) - 1; $j >= 0; $j--) {
+                    $digit =
+                        (int) $remainder[$j] -
+                        ($j >= $offset ? (int) $b[$j - $offset] : 0) -
+                        $borrow;
+                    $borrow = $digit < 0 ? 1 : 0;
+                    $result = (string) ($digit + 10 * $borrow) . $result;
+                }
+                $remainder = ltrim($result, '0');
+            }
+        }
+        return $remainder === '';
+    }
     private static function numericConstraints(
         string $token,
         array $s,
@@ -569,6 +1211,16 @@ final class Codec
         }
         if (!$full) {
             return;
+        }
+        if (
+            isset($s['checks']['multipleOf']) &&
+            !self::decimalMultiple(
+                $token,
+                json_encode($s['checks']['multipleOf'], JSON_THROW_ON_ERROR),
+                $path,
+            )
+        ) {
+            self::fail($path, 'value violates multipleOf');
         }
         foreach (['minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum'] as $keyword) {
             if (!isset($s['checks'][$keyword])) {
@@ -674,7 +1326,7 @@ final class Codec
                 $s[$keyword],
                 fn($branch) => in_array(
                     $data[$tag],
-                    $branch['fields'][$tag]['members'] ?? [],
+                    $branch['tagValues'] ?? ($branch['fields'][$tag]['members'] ?? []),
                     true,
                 ),
             );
@@ -742,6 +1394,31 @@ final class Codec
         \stdClass $budget,
     ): ?array {
         if (count($unions) < 2) {
+            return null;
+        }
+        $convertible = function (mixed $child, int $level = 0) use (&$convertible, $path): bool {
+            if ($level > 256) {
+                self::fail($path, 'value exceeds supported nesting depth or contains a cycle');
+            }
+            if (is_string($child)) {
+                return preg_match('/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/D', $child) === 1;
+            }
+            if ($child instanceof ParsedNumber || $child instanceof RawNumber) {
+                return false;
+            }
+            if ($child instanceof Model) {
+                $child = $child->toInputValue();
+            }
+            if (is_array($child) || is_object($child)) {
+                foreach ((array) $child as $value) {
+                    if ($convertible($value, $level + 1)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        };
+        if (!$convertible($value)) {
             return null;
         }
         // String-valued fields cannot change under a numeric hypothesis.
@@ -1029,7 +1706,15 @@ final class Codec
             array $codec,
             array $definitions,
         ) use ($value, $path, $response, $matching, $depth, $allowUnknownResponseFields): array {
-            $active = [];
+            $branch = self::conditionalBranch(
+                $value,
+                $codec,
+                $definitions,
+                $path,
+                $response,
+                $depth,
+            );
+            $active = $branch === null ? [] : [$branch];
             foreach (['exactlyOne', 'some'] as $keyword) {
                 if (!isset($codec[$keyword])) {
                     continue;
@@ -1147,7 +1832,7 @@ final class Codec
             );
         }
         if ($value instanceof Model) {
-            $value = $value->jsonSerialize();
+            $value = $value->toInputValue();
         }
         $shapes = self::codecShapes($scopes, $path, $depth);
         if (is_string($value)) {
@@ -1156,7 +1841,11 @@ final class Codec
                     $codec['value']['kind'] === 'exact-integer'
                         ? '/^-?(?:0|[1-9]\d*)$/'
                         : '/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/';
-                if (self::exactValue($codec['value']) && preg_match($pattern, $value)) {
+                if (
+                    self::exactValue($codec['value']) &&
+                    ($codec['numberInput'] ?? null) !== 'explicit' &&
+                    preg_match($pattern, $value)
+                ) {
                     $value = new ParsedNumber($value);
                     break;
                 }
@@ -1370,7 +2059,60 @@ final class Codec
         if ($budget->exhausted) {
             self::fail($path, 'numeric interpretation exceeds 256 alternative combinations');
         }
+        foreach ($shapes as [$codec, $definitions]) {
+            $branch = self::conditionalBranch(
+                $value,
+                $codec,
+                $definitions,
+                $path,
+                $response,
+                $depth,
+            );
+            if ($branch !== null) {
+                $value = self::numericView(
+                    $value,
+                    [[$branch, $definitions]],
+                    $path,
+                    $response,
+                    $matching,
+                    $depth + 1,
+                    $allowUnknownResponseFields,
+                    $budget,
+                );
+            }
+        }
         return $value;
+    }
+    private static function conditionalBranch(
+        mixed $value,
+        array $codec,
+        array $definitions,
+        string $path,
+        bool $response,
+        int $depth,
+    ): ?array {
+        if (!isset($codec['when'])) {
+            return null;
+        }
+        try {
+            self::executeNode(
+                $value,
+                $codec['when']['test'],
+                $path,
+                $response,
+                true,
+                $definitions,
+                $depth + 1,
+                true,
+                false,
+            );
+            return $codec['when']['then'] ?? null;
+        } catch (SdkError $error) {
+            if ($error->kind !== 'validation') {
+                throw $error;
+            }
+            return $codec['when']['else'] ?? null;
+        }
     }
     private static function executeValue(
         mixed $value,
@@ -1434,6 +2176,13 @@ final class Codec
             );
         }
         $validateConstraints = isset($s['constraints']) ? $s['constraints'] : $validateConstraints;
+        if (
+            (!$response || $matching) &&
+            isset($s['literal']) &&
+            self::jsonIdentity($value) !== self::jsonIdentity(self::parse($s['literal'], true))
+        ) {
+            self::fail($path, 'value is outside the declared const');
+        }
         $definitions = $s['definitions'] ?? $definitions;
         if (isset($s['reference'])) {
             $target = $definitions[$s['reference']] ?? null;
@@ -1453,18 +2202,19 @@ final class Codec
             );
         }
         if ($value instanceof Model) {
-            $value = $value->jsonSerialize();
+            $value = $value->toInputValue();
         }
         self::wireKind($s['value']);
         if (
             isset($s['every']) ||
             isset($s['some']) ||
             isset($s['exactlyOne']) ||
-            isset($s['exclude'])
+            isset($s['exclude']) ||
+            isset($s['when'])
         ) {
             $base = array_diff_key(
                 $s,
-                array_flip(['every', 'some', 'exactlyOne', 'exclude', 'tag']),
+                array_flip(['every', 'some', 'exactlyOne', 'exclude', 'tag', 'when']),
             );
             $result = self::executeNode(
                 $value,
@@ -1513,7 +2263,18 @@ final class Codec
             if (isset($s['exclude']) && $matches($s['exclude'], false)) {
                 self::fail($path, 'value matches a forbidden combination');
             }
-            foreach ($s['every'] ?? [] as $branch) {
+            $conditional = self::conditionalBranch(
+                $value,
+                $s,
+                $definitions,
+                $path,
+                $response,
+                $depth,
+            );
+            foreach (
+                array_merge($s['every'] ?? [], $conditional === null ? [] : [$conditional])
+                as $branch
+            ) {
                 $result = self::combine(
                     $result,
                     self::executeNode(
@@ -1593,7 +2354,11 @@ final class Codec
         }
         // Positive declarations establish numeric meaning before matching.
         // A negative branch must not reinterpret remaining JSON strings.
-        if ($matching && self::exactValue($s['value']) && is_string($value)) {
+        if (
+            ($matching || (!$response && ($s['numberInput'] ?? null) === 'explicit')) &&
+            self::exactValue($s['value']) &&
+            is_string($value)
+        ) {
             self::fail($path, "expected $type; received a JSON string");
         }
         if ($value instanceof ParsedNumber) {
@@ -1737,6 +2502,21 @@ final class Codec
                     $out->{$key} = $v;
                 }
             }
+            if ((!$response || $matching) && ($validateConstraints || $matching)) {
+                $count = count((array) $out);
+                if (
+                    isset($s['checks']['minProperties']) &&
+                    $count < $s['checks']['minProperties']
+                ) {
+                    self::fail($path, 'object violates minProperties');
+                }
+                if (
+                    isset($s['checks']['maxProperties']) &&
+                    $count > $s['checks']['maxProperties']
+                ) {
+                    self::fail($path, 'object violates maxProperties');
+                }
+            }
             return $out;
         }
         if ($type === 'array' || ($type === null && is_array($value) && array_is_list($value))) {
@@ -1749,6 +2529,43 @@ final class Codec
                 }
                 if (isset($s['checks']['maxItems']) && count($value) > $s['checks']['maxItems']) {
                     self::fail($path, 'array violates maxItems');
+                }
+                if ($s['checks']['uniqueItems'] ?? false) {
+                    $seen = [];
+                    foreach ($value as $item) {
+                        $key = self::jsonIdentity($item);
+                        if (isset($seen[$key])) {
+                            self::fail($path, 'array violates uniqueItems');
+                        }
+                        $seen[$key] = true;
+                    }
+                }
+                if (isset($s['includes'])) {
+                    $found = false;
+                    foreach ($value as $index => $child) {
+                        try {
+                            self::executeNode(
+                                $child,
+                                $s['includes'],
+                                "$path.$index",
+                                $response,
+                                true,
+                                $definitions,
+                                $depth + 1,
+                                true,
+                                false,
+                            );
+                            $found = true;
+                            break;
+                        } catch (SdkError $error) {
+                            if ($error->kind !== 'validation') {
+                                throw $error;
+                            }
+                        }
+                    }
+                    if (!$found) {
+                        self::fail($path, 'array violates contains');
+                    }
                 }
             }
             return array_map(
@@ -1806,7 +2623,7 @@ final class Codec
             return $value->value;
         }
         if ($value instanceof Model) {
-            $value = $value->jsonSerialize();
+            $value = $value->toInputValue();
         }
         if (is_float($value) || (is_int($value) && abs($value) > 9007199254740991)) {
             self::fail('value', 'use exact numeric strings with a declared schema');
@@ -1870,6 +2687,11 @@ final class Codec
                     : [];
             }
             $out = [$s];
+            foreach (['then', 'else'] as $key) {
+                if (isset($s['when'][$key])) {
+                    $out = array_merge($out, $shapes($s['when'][$key]));
+                }
+            }
             foreach (['every', 'exactlyOne', 'some'] as $key) {
                 foreach ($s[$key] ?? [] as $branch) {
                     $out = array_merge($out, $shapes($branch));
@@ -1939,6 +2761,7 @@ class Runtime
     private array $allowed;
     protected readonly array $contract;
     private mixed $curl = null;
+    private array $streams = [];
     public function __construct(
         array $contract,
         private readonly ClientOptions $options,
@@ -1962,7 +2785,62 @@ class Runtime
         if (!is_array($this->contract['operations'] ?? null)) {
             throw new \InvalidArgumentException('Missing compiled operations');
         }
+        if (isset($this->contract['authentication'])) {
+            if (!is_array($this->contract['authentication'])) {
+                throw new \InvalidArgumentException('Invalid authentication modes');
+            }
+            foreach ($this->contract['authentication'] as $mode) {
+                if (!is_array($mode['schemes'] ?? null) || !$mode['schemes']) {
+                    throw new \InvalidArgumentException('Invalid authentication mode');
+                }
+                $destinations = [];
+                foreach ($mode['schemes'] as $scheme) {
+                    if (
+                        !is_string($scheme['name'] ?? null) ||
+                        !is_string($scheme['header'] ?? null) ||
+                        !in_array($scheme['type'] ?? null, ['bearer', 'apiKey'], true)
+                    ) {
+                        throw new \InvalidArgumentException('Invalid authentication scheme');
+                    }
+                    $header = strtolower($scheme['header']);
+                    if (isset($destinations[$header])) {
+                        throw new \InvalidArgumentException(
+                            'Conflicting authentication destinations',
+                        );
+                    }
+                    $destinations[$header] = true;
+                }
+            }
+        }
+        if (isset($this->contract['incoming'])) {
+            if (!is_array($this->contract['incoming'])) {
+                throw new \InvalidArgumentException('Invalid incoming contracts');
+            }
+            foreach ($this->contract['incoming'] as $entry) {
+                foreach (['name', 'method', 'pointer', 'model'] as $key) {
+                    if (!is_string($entry[$key] ?? null)) {
+                        throw new \InvalidArgumentException('Invalid incoming ' . $key);
+                    }
+                }
+                if (isset($entry['schema'])) {
+                    throw new \InvalidArgumentException('Raw schema in incoming contract');
+                }
+                Codec::assertPlan($entry['codec'] ?? null, 'incoming.' . $entry['name']);
+            }
+        }
         foreach ($this->contract['operations'] as $op) {
+            if (isset($op['authModes'])) {
+                if (!is_array($op['authModes'])) {
+                    throw new \InvalidArgumentException('Invalid operation authentication modes');
+                }
+                foreach ($op['authModes'] as $name) {
+                    if (!is_string($name) || !isset($this->contract['authentication'][$name])) {
+                        throw new \InvalidArgumentException(
+                            'Invalid operation authentication mode',
+                        );
+                    }
+                }
+            }
             if (
                 !is_array($op) ||
                 !is_string($op['id'] ?? null) ||
@@ -1979,7 +2857,62 @@ class Runtime
             if (isset($op['body'])) {
                 Codec::assertPlan($op['body'], $op['id'] . '.body');
             }
+            if (isset($op['streamEventSchemas'])) {
+                throw new \InvalidArgumentException('Raw stream schemas');
+            }
+            foreach ($op['streamEventCodecs'] ?? [] as $event => $codec) {
+                Codec::assertPlan($codec, 'stream.' . $event);
+            }
+            foreach (['idleTimeoutMs', 'maxEventBytes'] as $key) {
+                if (
+                    isset($op['stream'][$key]) &&
+                    (!is_int($op['stream'][$key]) || $op['stream'][$key] <= 0)
+                ) {
+                    throw new \InvalidArgumentException('Invalid stream limits');
+                }
+            }
             foreach ($op['responses'] as $status => $response) {
+                if (
+                    ($response['bodyKind'] ?? null) === 'sse' &&
+                    (isset($response['codec']) ||
+                        ($response['mediaType'] ?? null) !== 'text/event-stream')
+                ) {
+                    throw new \InvalidArgumentException('Invalid SSE descriptor');
+                }
+                if (
+                    isset($response['bodyKind']) &&
+                    !in_array($response['bodyKind'], ['empty', 'json', 'binary', 'sse'], true)
+                ) {
+                    throw new \InvalidArgumentException('Unsupported response body kind');
+                }
+                if (
+                    isset($response['classification']) &&
+                    !in_array($response['classification'], ['success', 'error', 'redirect'], true)
+                ) {
+                    throw new \InvalidArgumentException('Unsupported response classification');
+                }
+                if (
+                    ($response['classification'] ?? null) === 'redirect' &&
+                    !in_array((string) $status, ['302', '307'], true)
+                ) {
+                    throw new \InvalidArgumentException('Invalid redirect status');
+                }
+                if (
+                    isset($response['locationRequired']) &&
+                    !is_bool($response['locationRequired'])
+                ) {
+                    throw new \InvalidArgumentException('Invalid Location requirement');
+                }
+                if (($response['bodyKind'] ?? null) === 'json' && !isset($response['codec'])) {
+                    throw new \InvalidArgumentException('Missing JSON response codec');
+                }
+                if (
+                    ($response['bodyKind'] ?? null) === 'binary' &&
+                    (isset($response['codec']) ||
+                        ($response['mediaType'] ?? null) !== 'application/pdf')
+                ) {
+                    throw new \InvalidArgumentException('Invalid binary response descriptor');
+                }
                 if (isset($response['schema'])) {
                     throw new \InvalidArgumentException('Raw schema in compiled response');
                 }
@@ -2084,6 +3017,11 @@ class Runtime
     ): Result {
         $o = $options ?? new RequestOptions();
         $op = $this->operation($id);
+        foreach (['streamIdleTimeoutMs', 'streamLifetimeMs'] as $key) {
+            if ($o->{$key} !== null && $o->{$key} <= 0) {
+                Codec::fail($key, 'must be positive');
+            }
+        }
         $start = self::now();
         $timeout = $o->timeoutMs ?? $this->options->timeoutMs;
         $duration = $o->deadlineMs ?? $this->options->deadlineMs;
@@ -2102,7 +3040,21 @@ class Runtime
             Codec::fail('maxAttempts', 'must be within the provider-declared retry limit');
         }
         $headers = [
-            'accept' => 'application/json',
+            'accept' =>
+                implode(
+                    ', ',
+                    array_unique(
+                        array_filter(
+                            array_map(
+                                fn($response) => ($response['classification'] ?? null) === 'success'
+                                    ? $response['mediaType'] ?? null
+                                    : null,
+                                $op['responses'],
+                            ),
+                        ),
+                    ),
+                ) ?:
+                'application/json',
             'user-agent' => $this->contract['userAgent'] ?? 'PublicSDK (PHP)',
         ];
         $set = function (string $name, string $value) use (&$headers, $op): void {
@@ -2191,7 +3143,60 @@ class Runtime
         foreach ($o->headers as $k => $v) {
             $set($k, $v);
         }
-        if (
+        if (isset($this->contract['authentication'])) {
+            $permitted = $op['authModes'] ?? [];
+            $modeName = $o->authMode ?? ($permitted ? $this->options->authMode : null);
+            if ($modeName === null && $op['authenticated'] && count($permitted) === 1) {
+                $modeName = $permitted[0];
+            }
+            if ($modeName === null && $op['authenticated']) {
+                throw new SdkError('authentication', 'Select an explicit authentication mode');
+            }
+            $selected =
+                $modeName === null ? null : $this->contract['authentication'][$modeName] ?? null;
+            if (
+                $modeName !== null &&
+                ($selected === null || !in_array($modeName, $permitted, true))
+            ) {
+                throw new SdkError(
+                    'authentication',
+                    'Authentication mode is not permitted for this operation',
+                );
+            }
+            $expected = [];
+            if ($selected !== null) {
+                $credentials = $o->credentials ?? ($this->options->credentials[$modeName] ?? []);
+                foreach ($selected['schemes'] as $scheme) {
+                    $credential = $credentials[$scheme['name']] ?? null;
+                    if (
+                        !is_string($credential) ||
+                        $credential === '' ||
+                        preg_match('/[\r\n]/', $credential)
+                    ) {
+                        throw new SdkError(
+                            'authentication',
+                            'A complete credential set is required for the selected mode',
+                        );
+                    }
+                    $expected[strtolower($scheme['header'])] =
+                        $scheme['type'] === 'bearer' ? 'Bearer ' . $credential : $credential;
+                }
+            }
+            foreach ($this->contract['authentication'] as $mode) {
+                foreach ($mode['schemes'] as $scheme) {
+                    $name = strtolower($scheme['header']);
+                    if (isset($headers[$name]) && $headers[$name] !== ($expected[$name] ?? null)) {
+                        throw new SdkError(
+                            'authentication',
+                            'Request headers conflict with the selected authentication mode',
+                        );
+                    }
+                }
+            }
+            foreach ($expected as $name => $value) {
+                $set($name, $value);
+            }
+        } elseif (
             $op['authenticated'] ||
             (($op['optionalAuthentication'] ?? false) && $this->options->token)
         ) {
@@ -2279,13 +3284,31 @@ class Runtime
                     'body' => $body,
                     'timeoutMs' => min($timeout, $remaining),
                     'cancellation' => $o->cancellation,
+                    'stream' =>
+                        count(
+                            array_filter(
+                                $op['responses'],
+                                fn($response) => ($response['bodyKind'] ?? null) === 'sse',
+                            ),
+                        ) > 0,
+                    'streamIdleTimeoutMs' =>
+                        $o->streamIdleTimeoutMs ?? ($op['stream']['idleTimeoutMs'] ?? 30000),
+                    'streamLifetimeMs' => $o->streamLifetimeMs,
                 ];
                 $response = $this->options->transport
                     ? ($this->options->transport)($request)
                     : $this->send($request);
                 $status = $response['status'];
                 $rh = array_change_key_case($response['headers'], CASE_LOWER);
-                $raw = $response['body'];
+                $raw = $response['body'] ?? '';
+                $declaredResponse =
+                    $op['responses'][(string) $status] ?? ($op['responses']['default'] ?? null);
+                $redirect =
+                    ($op['responses'][(string) $status]['classification'] ?? null) === 'redirect';
+                $binary =
+                    $status >= 200 &&
+                    $status < 300 &&
+                    ($declaredResponse['bodyKind'] ?? null) === 'binary';
                 $meta = [
                     'status' => $status,
                     'headers' => $rh,
@@ -2304,9 +3327,67 @@ class Runtime
                         'HTTP transport failed with code ' . $response['failureCode'],
                     );
                 }
+                if (
+                    $status >= 200 &&
+                    $status < 300 &&
+                    ($declaredResponse['bodyKind'] ?? null) === 'sse'
+                ) {
+                    $source = $response['stream'] ?? null;
+                    if (
+                        !($source instanceof ByteStream) ||
+                        strtolower(trim(explode(';', $rh['content-type'] ?? '')[0])) !==
+                            'text/event-stream'
+                    ) {
+                        if ($source instanceof ByteStream) {
+                            $source->close();
+                        }
+                        throw new SdkError(
+                            'protocol',
+                            'Expected an SSE response stream',
+                            'response',
+                            false,
+                            $meta,
+                        );
+                    }
+                    $key = spl_object_id($source);
+                    $stream = new EventStream(
+                        $source,
+                        $meta,
+                        [
+                            'idleTimeoutMs' => $request['streamIdleTimeoutMs'],
+                            'maxEventBytes' => $op['stream']['maxEventBytes'] ?? 1048576,
+                            'lifetimeMs' => $o->streamLifetimeMs,
+                            'cancellation' => $o->cancellation,
+                        ],
+                        function (string $event, string $raw) use ($op): mixed {
+                            $codec = $op['streamEventCodecs'][$event] ?? null;
+                            return $codec
+                                ? Codec::plainNumbers(
+                                    $this->decode(Codec::parse($raw, true), $codec, [
+                                        'mode' => 'response',
+                                    ]),
+                                )
+                                : $raw;
+                        },
+                        function () use ($key): void {
+                            unset($this->streams[$key]);
+                        },
+                    );
+                    $this->streams[$key] = $stream;
+                    return new Result($stream, $meta, '');
+                }
+                if (($response['stream'] ?? null) instanceof ByteStream) {
+                    try {
+                        while (($chunk = $response['stream']->read()) !== null) {
+                            $raw .= $chunk;
+                        }
+                    } finally {
+                        $response['stream']->close();
+                    }
+                }
                 $data = null;
                 try {
-                    if ($raw !== '') {
+                    if ($raw !== '' && !$binary && !$redirect) {
                         $data = Codec::parse(
                             $raw,
                             ($status >= 200 && $status < 300) || $status === 304,
@@ -2325,7 +3406,7 @@ class Runtime
                         );
                     }
                 }
-                if ($status >= 300 && $status < 400 && $status !== 304) {
+                if ($status >= 300 && $status < 400 && $status !== 304 && !$redirect) {
                     throw new SdkError(
                         'destination',
                         'Redirects are not followed; explicitly configure an approved endpoint',
@@ -2334,7 +3415,7 @@ class Runtime
                         $meta,
                     );
                 }
-                if (($status >= 200 && $status < 300) || $status === 304) {
+                if (($status >= 200 && $status < 300) || $status === 304 || $redirect) {
                     $declared =
                         $op['responses'][(string) $status] ?? ($op['responses']['default'] ?? null);
                     if ($declared === null) {
@@ -2347,7 +3428,32 @@ class Runtime
                         );
                     }
                     try {
-                        if (isset($declared['codec'])) {
+                        if ($binary) {
+                            $contentType = strtolower(
+                                trim(explode(';', $rh['content-type'] ?? '')[0]),
+                            );
+                            if ($contentType !== $declared['mediaType']) {
+                                throw new \RuntimeException(
+                                    'Unexpected binary response media type',
+                                );
+                            }
+                            $data = $raw;
+                        } elseif ($redirect) {
+                            $location = $rh['location'] ?? null;
+                            if (($declared['locationRequired'] ?? false) && !$location) {
+                                throw new \RuntimeException('Missing Location header');
+                            }
+                            if (
+                                $location !== null &&
+                                preg_match('/[\\x00-\\x1f\\x7f]/', $location)
+                            ) {
+                                throw new \RuntimeException('Invalid Location header');
+                            }
+                            $data =
+                                $location === null
+                                    ? new \stdClass()
+                                    : (object) ['location' => $location];
+                        } elseif (isset($declared['codec'])) {
                             if ($raw === '') {
                                 throw new \RuntimeException('Missing body');
                             }
@@ -2499,6 +3605,14 @@ class Runtime
     }
     private function send(array $r): array
     {
+        if ($r['stream'] ?? false) {
+            $stream = new CurlByteStream($r);
+            return [
+                'status' => $stream->status,
+                'headers' => $stream->headers,
+                'stream' => $stream,
+            ];
+        }
         if (!extension_loaded('curl')) {
             throw new \RuntimeException('ext-curl is required for the default transport');
         }
@@ -2550,6 +3664,9 @@ class Runtime
     }
     public function close(): void
     {
+        foreach ($this->streams as $stream) {
+            $stream->close();
+        }
         $this->curl = null;
     }
     public function __destruct()
@@ -2631,6 +3748,9 @@ class Runtime
             );
             yield $result;
             $previous = $p['kind'] === 'link' ? $next : $input[$p['parameter']] ?? null;
+            if ($previous instanceof ParsedNumber) {
+                $previous = $previous->value;
+            }
             $next = self::field($result->data, $p['next']);
             if ($next === null || $next === '') {
                 return;

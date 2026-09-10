@@ -1,0 +1,135 @@
+{
+  "profiles": [
+    "full-merchant-sdk.json",
+    "full-merchantKey-sdk.json",
+    "full-customer-sdk.json",
+    "full-onboarding-sdk.json",
+    "full-checkout-sdk.json",
+    "full-invoice-sdk.json"
+  ],
+  "operations": {
+    "streamWebhookEvents": {
+      "stream": {
+        "events": {
+          "disconnect": "#/components/schemas/WebhookStreamDisconnect",
+          "gap": "#/components/schemas/WebhookStreamGap",
+          "ready": "#/components/schemas/WebhookStreamReady",
+          "webhook.event": "#/components/schemas/WebhookEvent",
+          "withheld": "#/components/schemas/WebhookStreamWithheld"
+        }
+      }
+    },
+    "exchangePartnerInstallToken": {
+      "requestMediaType": "application/json"
+    },
+    "addRiskListItems": {
+      "example": {
+        "risk_list_id": "example",
+        "body": {
+          "values": ["sdk-example"]
+        }
+      }
+    },
+    "createPaymentMethodDomain": {
+      "example": {
+        "body": {
+          "domain_name": "payments.example.invalid"
+        }
+      }
+    },
+    "createReturnResolution": {
+      "example": {
+        "return_id": "example",
+        "body": {
+          "resolution_type": "refund",
+          "line_items": [
+            {
+              "return_line_item_id": "rtli_example",
+              "quantity": "1"
+            }
+          ]
+        }
+      }
+    },
+    "createRiskPreview": {
+      "example": {
+        "body": {
+          "risk_rule_id": "rr_example"
+        }
+      }
+    },
+    "createRiskRule": {
+      "example": {
+        "body": {
+          "action": "review",
+          "description": "Synthetic SDK example",
+          "predicate": {
+            "attribute": "payment_method_type",
+            "operator": "eq",
+            "value": "card"
+          }
+        }
+      }
+    },
+    "createDeliveryMethod": {
+      "example": {
+        "body": {
+          "configuration": {
+            "origin": {
+              "location_id": "loc_01K1P6G4M7H2N8Q9R3S5T6V7WX",
+              "type": "fixed_location"
+            },
+            "pricing": {
+              "calculated": {},
+              "type": "calculated"
+            },
+            "minimum_option_lifetime_seconds": "120"
+          },
+          "type": "shipment",
+          "name": "Standard shipping"
+        }
+      }
+    },
+    "createDeliveryZone": {
+      "example": {
+        "body": {
+          "configuration": {
+            "country": {
+              "values": ["example"]
+            }
+          },
+          "name": "Standard delivery"
+        }
+      }
+    },
+    "updateDeliveryMethod": {
+      "example": {
+        "delivery_method_id": "example",
+        "body": {
+          "status": "active"
+        }
+      }
+    },
+    "updateInventoryCount": {
+      "example": {
+        "Idempotency-Key": "example",
+        "inventory_count_id": "example",
+        "body": {
+          "expected_version": "2",
+          "observations": [
+            {
+              "counted_damaged_quantity": "0",
+              "counted_on_hand_quantity": "12",
+              "counted_quality_control_quantity": "0",
+              "counted_quarantined_quantity": "0",
+              "inventory_item_id": "invi_01K0P7W6A4N9F3J2T8Q5R1C6XM"
+            }
+          ],
+          "source_system": {
+            "type": "manual"
+          }
+        }
+      }
+    }
+  }
+}

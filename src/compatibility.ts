@@ -53,7 +53,8 @@ export function comparePolicies(
   // Track exact numeric encoding separately from accepted kinds and nullability.
   if (
     before.wire.format !== after.wire.format ||
-    (!before.nullOnlyInput && before.wire.exact !== after.wire.exact)
+    (!before.nullOnlyInput && before.wire.exact !== after.wire.exact) ||
+    before.wire.numberInput !== after.wire.numberInput
   )
     add(
       'breaking',
@@ -68,11 +69,19 @@ export function comparePolicies(
     'maxLength',
     'minItems',
     'maxItems',
+    'minProperties',
+    'maxProperties',
   ] as const) {
     const old = before.checks[keyword],
       next = after.checks[keyword];
     if (old === next) continue;
-    const lower = ['minimum', 'exclusiveMinimum', 'minLength', 'minItems'].includes(keyword);
+    const lower = [
+      'minimum',
+      'exclusiveMinimum',
+      'minLength',
+      'minItems',
+      'minProperties',
+    ].includes(keyword);
     const narrowed = next !== undefined && (old === undefined || (lower ? next > old : next < old));
     add(
       direction === 'input' && narrowed
@@ -88,6 +97,15 @@ export function comparePolicies(
       direction === 'input' && after.checks.pattern !== undefined ? 'breaking' : 'review',
       `${direction} pattern changed; review accepted strings and provider examples.`,
     );
+  if (before.checks.multipleOf !== after.checks.multipleOf)
+    add('review', `${direction} multipleOf changed; review exact divisibility of accepted values.`);
+  if (Boolean(before.checks.uniqueItems) !== Boolean(after.checks.uniqueItems))
+    add(
+      direction === 'input' ? (after.checks.uniqueItems ? 'breaking' : 'additive') : 'review',
+      `${direction} uniqueItems changed; review duplicate collection values.`,
+    );
+  if (before.literal !== after.literal)
+    add('review', `${direction} const changed; review literal value membership.`);
   if (stable(before.members) !== stable(after.members)) {
     const removed =
       before.members?.filter((v) => !after.members?.some((n) => stable(n) === stable(v))) ?? [];
@@ -164,9 +182,13 @@ export function comparePolicies(
     else {
       const branches = (s: SchemaPolicy) =>
         new Map(
-          s.variants!.flatMap((v) =>
-            (v.fields?.[tag]?.members ?? []).map((k) => [stable(k), v] as const),
-          ),
+          s.bindings
+            ? Object.entries(s.bindings).flatMap(([tag, index]) =>
+                s.variants?.[index] ? [[stable(tag), s.variants[index]] as const] : [],
+              )
+            : s.variants!.flatMap((v) =>
+                (v.fields?.[tag]?.members ?? []).map((k) => [stable(k), v] as const),
+              ),
         );
       const old = branches(before),
         next = branches(after);
@@ -189,7 +211,7 @@ export function comparePolicies(
   }
   if (before.annotations.sensitive !== after.annotations.sensitive)
     add('review', 'Sensitive-field policy changed; review logging and redaction before release.');
-  for (const keyword of ['allOf', 'anyOf', 'not'] as const)
+  for (const keyword of ['allOf', 'anyOf', 'not', 'contains', 'if', 'then', 'else'] as const)
     if (stable(before.compositions[keyword]) !== stable(after.compositions[keyword]))
       add(
         'review',
