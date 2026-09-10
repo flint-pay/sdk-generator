@@ -1135,6 +1135,7 @@ export function loadContract(definitionPath: string, configPath: string): Contra
           shape: Schema,
           source: string,
           seen = new Set<string>(),
+          includeConjuncts = true,
         ): Set<string> => {
           const keys = new Set<string>();
           if (typeof shape.$ref === 'string') {
@@ -1147,17 +1148,24 @@ export function loadContract(definitionPath: string, configPath: string): Contra
                 pointer(load(targetFile), fragment, location),
                 targetFile,
                 new Set([...seen, key]),
+                includeConjuncts,
               ))
                 keys.add(child);
           }
-          for (const branch of shape.allOf ?? [])
+          for (const branch of includeConjuncts ? (shape.allOf ?? []) : [])
             for (const key of referenceKeys(branch, source, seen)) keys.add(key);
           return keys;
         };
-        const targetKeys = referenceKeys({ $ref: ref }, file);
-        const declared = (value.oneOf as Schema[]).flatMap((branch, index) =>
-          [...referenceKeys(branch, file)].some((key) => targetKeys.has(key)) ? [index] : [],
-        );
+        // Target aliases identify the same schema; an inherited allOf base does
+        // not. Sibling variants may legitimately reference that same base.
+        const targetKeys = referenceKeys({ $ref: ref }, file, new Set(), false);
+        const branchKeys = (value.oneOf as Schema[]).map((branch) => referenceKeys(branch, file));
+        // Prefer the named target before following its aliases. A referenced
+        // schema can also add sibling assertions to a shared base reference.
+        const declared =
+          [...targetKeys]
+            .map((key) => branchKeys.flatMap((keys, index) => (keys.has(key) ? [index] : [])))
+            .find((indices) => indices.length) ?? [];
         const matches = (branch: Schema): boolean =>
           stable(branch) === stable(resolvedTarget) || Boolean(branch.allOf?.some(matches));
         const indices = declared.length

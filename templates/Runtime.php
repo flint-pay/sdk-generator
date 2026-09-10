@@ -142,6 +142,7 @@ final class CurlByteStream implements ByteStream
     private bool $paused = false;
     private bool $done = false;
     private bool $headersDone = false;
+    private bool $streaming = false;
     private ?int $failure = null;
     public int $status = 0;
     public array $headers = [];
@@ -207,12 +208,32 @@ final class CurlByteStream implements ByteStream
             throw new SdkError('transport', 'Streaming transport failed', 'unknown');
         }
     }
+    private function checkRequestTimeout(): void
+    {
+        if (!$this->streaming && self::now() - $this->started >= $this->request['timeoutMs']) {
+            // Let Runtime classify the exhausted overall/per-attempt budget and
+            // retain its normal transport retry policy for buffered responses.
+            throw new \RuntimeException('Response exceeded the request timeout');
+        }
+    }
+    /** Transfer connection ownership only after Runtime accepts an SSE response. */
+    public function startStream(): void
+    {
+        try {
+            $this->checkRequestTimeout();
+            $this->streaming = true;
+        } catch (\Throwable $error) {
+            $this->close();
+            throw $error;
+        }
+    }
     private function pump(float $waitStart, int $timeout): void
     {
+        $this->checkRequestTimeout();
         if (($this->request['cancellation'] ?? null)?->isCancelled()) {
             throw new SdkError('cancelled', 'Stream cancelled', 'response');
         }
-        if (self::now() - $waitStart >= $timeout) {
+        if ($this->streaming && self::now() - $waitStart >= $timeout) {
             throw new SdkError(
                 'deadline',
                 'Stream idle or connection timeout exceeded',
@@ -220,6 +241,7 @@ final class CurlByteStream implements ByteStream
             );
         }
         if (
+            $this->streaming &&
             isset($this->request['streamLifetimeMs']) &&
             self::now() - $this->started >= $this->request['streamLifetimeMs']
         ) {
@@ -237,7 +259,13 @@ final class CurlByteStream implements ByteStream
             $this->failure = $info['result'];
         }
         if (!$this->done && $this->pending === null) {
-            if (curl_multi_select($this->multi, 0.05) === -1) {
+            $wait = $this->streaming
+                ? 0.05
+                : min(
+                    0.05,
+                    max(0, ($this->request['timeoutMs'] - (self::now() - $this->started)) / 1000),
+                );
+            if (curl_multi_select($this->multi, $wait) === -1) {
                 usleep(1000);
             }
         }
@@ -247,6 +275,7 @@ final class CurlByteStream implements ByteStream
         try {
             $waitStart = self::now();
             while ($this->handle !== null) {
+                $this->checkRequestTimeout();
                 if (($this->request['cancellation'] ?? null)?->isCancelled()) {
                     throw new SdkError('cancelled', 'Stream cancelled', 'response');
                 }
@@ -3349,6 +3378,9 @@ class Runtime
                             $meta,
                         );
                     }
+                    if ($source instanceof CurlByteStream) {
+                        $source->startStream();
+                    }
                     $key = spl_object_id($source);
                     $stream = new EventStream(
                         $source,
@@ -3479,8 +3511,22 @@ class Runtime
                     }
                     $model = $declared['model'] ?? null;
                     if (isset($declared['variants']) && is_object($data)) {
-                        $tag = $declared['codec']['tag'];
-                        $model = $declared['variants'][$data->{$tag} ?? ''] ?? null;
+                        $codec = $declared['codec'];
+                        $definitions = $this->contract['definitions'] ?? [];
+                        for ($depth = 0; isset($codec['reference']); $depth++) {
+                            if ($depth > 256) {
+                                Codec::fail('response', 'codec reference exceeds nesting limit');
+                            }
+                            $definitions = $codec['definitions'] ?? $definitions;
+                            $codec =
+                                $definitions[$codec['reference']] ??
+                                throw new \LogicException('Unresolved response codec');
+                        }
+                        $tag = $codec['tag'] ?? null;
+                        $model =
+                            $tag === null
+                                ? null
+                                : $declared['variants'][$data->{$tag} ?? ''] ?? null;
                     }
                     if ($model !== null && is_object($data)) {
                         $class = __NAMESPACE__ . '\\' . $model;

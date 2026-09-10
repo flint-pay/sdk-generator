@@ -111,7 +111,9 @@ export function typescriptType(
         ? shape.type.find((type) => type !== 'null')
         : shape.type;
       return typeof value === 'number' && exactValue(valueInstruction(type, shape.format))
-        ? 'string'
+        ? shape['x-sdk-number-input'] === 'explicit'
+          ? 'ExactNumber'
+          : 'string'
         : JSON.stringify(value);
     };
     const { const: value, ...rest } = s;

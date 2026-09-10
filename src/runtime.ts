@@ -1514,26 +1514,37 @@ export function isKnownVariant(value: unknown, schema: Schema): boolean {
   return isKnownCodec(value, compileCodec(schema));
 }
 export function isKnownCodec(value: unknown, codec: CodecPlan): boolean {
-  if (!codec.exactlyOne && !codec.some) return false;
-  const tag = codec.tag;
-  if (
-    tag &&
-    (!value ||
-      typeof value !== 'object' ||
-      !Object.hasOwn(value, tag) ||
-      !codec.exactlyOne?.some((branch) =>
-        (branch.tagValues ?? branch.fields?.[tag]?.members)?.some(
-          (member) => member === (value as Record<string, unknown>)[tag],
-        ),
-      ))
-  )
-    return false;
   try {
+    let definitions = codec.definitions ?? {};
+    for (let depth = 0; codec.reference; depth++) {
+      if (depth > 256) bad('response', 'codec reference exceeds nesting limit');
+      const target = Object.hasOwn(definitions, codec.reference)
+        ? definitions[codec.reference]
+        : undefined;
+      if (!target) return false;
+      codec = target;
+      definitions = codec.definitions ?? definitions;
+    }
+    if (!codec.exactlyOne && !codec.some) return false;
+    const tag = codec.tag;
+    if (
+      tag &&
+      (!value ||
+        typeof value !== 'object' ||
+        !Object.hasOwn(value, tag) ||
+        !codec.exactlyOne?.some((branch) =>
+          (branch.tagValues ?? branch.fields?.[tag]?.members)?.some(
+            (member) => member === (value as Record<string, unknown>)[tag],
+          ),
+        ))
+    )
+      return false;
     executeCodec(value, codec, {
       mode: 'match',
       direction: 'response',
       path: 'response',
       allowUnknownResponseFields: true,
+      definitions,
     });
     return true;
   } catch (error) {
