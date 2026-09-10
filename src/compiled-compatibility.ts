@@ -1,11 +1,35 @@
 import type { CompiledSdkContract } from './target-plan.js';
 import type { Compatibility } from './compatibility.js';
-import { valuesFit, combineInclusion } from './value-guarantee.js';
-import { addedResultFits } from './response-compatibility.js';
+import { addedResultFits, addsPhpResultClass, responseFits } from './response-compatibility.js';
+import type { ResponsePlan } from './response-plan.js';
+import { successStatus } from './runtime-plan.js';
 import { stable } from './canonical.js';
 
-const resultStatus = (status: string) =>
-  /^2\d\d$/.test(status) || status === '304' || status === 'default';
+const resultStatus = (status: string) => successStatus(status) || status === 'default';
+
+function recordedBody(
+  contract: CompiledSdkContract,
+  id: string,
+  status: string,
+): ResponsePlan | undefined {
+  const body = contract.responses[id]?.[status]?.body;
+  if (body) return body;
+  const response = contract.runtime.operations.find((op) => op.id === id)?.responses[status];
+  if (
+    response?.bodyKind === 'binary' ||
+    response?.bodyKind === 'sse' ||
+    response?.classification === 'redirect'
+  ) {
+    // Older records omitted these guarantees. Preserve that uncertainty instead of
+    // treating a historical non-JSON result as an absent body or recompiling it.
+    const unknown = {
+      kind: 'unresolved' as const,
+      reason: 'Historical non-JSON response guarantees were not recorded.',
+    };
+    return { publicType: unknown, runtime: unknown };
+  }
+  return undefined;
+}
 
 /** Compare persisted emitted-contract decisions, including generator-only changes. */
 export function compareCompiledContracts(
@@ -22,24 +46,21 @@ export function compareCompiledContracts(
     if (!responses) continue;
     const oldResults = Object.entries(oldResponses)
       .filter(([status]) => resultStatus(status))
-      .map(([, value]) => value.body);
+      .map(([status]) => recordedBody(previous, id, status));
     for (const [status, response] of Object.entries(responses)) {
       if (!resultStatus(status)) continue;
       const subject = `${id}.response.${status}`;
       const old = oldResponses[status];
+      const oldBody = recordedBody(previous, id, status);
+      const body = recordedBody(next, id, status);
       const comparison =
         old && stable(old) === stable(response)
           ? { result: 'compatible' as const }
           : !old
-            ? addedResultFits(oldResults, response.body, subject, node)
-            : old.body && response.body
-              ? combineInclusion(
-                  node
-                    ? valuesFit(old.body.publicType, response.body.publicType, subject)
-                    : { result: 'compatible' },
-                  valuesFit(old.body.runtime, response.body.runtime, subject),
-                )
-              : Boolean(old.body) !== Boolean(response.body)
+            ? addedResultFits(oldResults, body, subject, node, php)
+            : oldBody && body
+              ? responseFits(oldBody, body, subject, node, php)
+              : Boolean(oldBody) !== Boolean(body)
                 ? {
                     result: 'incompatible' as const,
                     path: subject,
@@ -70,17 +91,12 @@ export function compareCompiledContracts(
               subject,
               message: `PHP class identity for response tag ${tag} changed.`,
             });
-        if (!old && (after?.model || after?.variants)) {
-          const broad = previous.php.operations[id]?.output
-            .split('|')
-            .some((type) => type === 'mixed' || type === 'object');
-          if (!broad)
-            findings.push({
-              severity: 'breaking',
-              subject,
-              message:
-                'Added result introduces PHP classes outside the previous public return type.',
-            });
+        if (!old && addsPhpResultClass(previous.php.operations[id]?.output, after)) {
+          findings.push({
+            severity: 'breaking',
+            subject,
+            message: 'Added result introduces PHP classes outside the previous public return type.',
+          });
         }
       }
     }

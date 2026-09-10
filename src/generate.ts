@@ -29,7 +29,7 @@ import {
   type CompiledSdkContract,
   type PhpModelPlan,
 } from './target-plan.js';
-import { addedResultFits } from './response-compatibility.js';
+import { addedResultFits, addsPhpResultClass } from './response-compatibility.js';
 import { compareCompiledContracts } from './compiled-compatibility.js';
 import {
   restoreCompiledSnapshot,
@@ -437,12 +437,11 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         mode && authentication
           ? `authMode: ${js(mode)}, credentials: { [${js(mode)}]: { ${authentication.schemes.map((scheme) => `[${js(scheme.name)}]: process.env.${('API_' + mode + '_' + scheme.name).replace(/[^A-Za-z0-9_]/g, '_').toUpperCase()} ?? ''`).join(', ')} } }`
           : `...(process.env.API_TOKEN ? { token: process.env.API_TOKEN } : {})`;
-      const streamExample = Object.values(op.responses).some(
-        (response) => response.bodyKind === 'sse',
-      )
-        ? `for await (const event of result.data) { console.log(event.event, event.id, event.data); break; }\nawait client.close();\n`
+      const hasStream = Object.values(op.responses).some((response) => response.bodyKind === 'sse');
+      const streamExample = hasStream
+        ? `if (result.data instanceof EventStream) {\n  for await (const event of result.data) { console.log(event.event, event.id, event.data); break; }\n}\nawait client.close();\n`
         : '';
-      const example = `import { Client${hasExactNumber(input) ? ', ExactNumber' : ''} } from '${c.config.npm.name}';\nconst client = new Client({ baseUrl: process.env.API_BASE_URL ?? 'https://sandbox.example.invalid', allowInsecureHttp: process.env.API_ALLOW_INSECURE_HTTP === '1', ${authOptions} });\nconst result = await client.${op.resource}.${op.method}(${exampleSource(input, 'node')}, { maxAttempts: 1 });\nconsole.log(result.meta.requestId);\n${streamExample}`;
+      const example = `import { Client${hasExactNumber(input) ? ', ExactNumber' : ''}${hasStream ? ', EventStream' : ''} } from '${c.config.npm.name}';\nconst client = new Client({ baseUrl: process.env.API_BASE_URL ?? 'https://sandbox.example.invalid', allowInsecureHttp: process.env.API_ALLOW_INSECURE_HTTP === '1', ${authOptions} });\nconst result = await client.${op.resource}.${op.method}(${exampleSource(input, 'node')}, { maxAttempts: 1 });\nconsole.log(result.meta.requestId);\n${streamExample}`;
       put(`examples/${op.resource}-${op.method}.mjs`, example);
       put(`examples/${op.resource}-${op.method}.ts`, example);
     }
@@ -546,14 +545,13 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         mode && authentication
           ? `authMode: ${php(mode)}, credentials: [${php(mode)} => [${authentication.schemes.map((scheme) => `${php(scheme.name)} => getenv(${php(('API_' + mode + '_' + scheme.name).replace(/[^A-Za-z0-9_]/g, '_').toUpperCase())}) ?: ''`).join(', ')}]]`
           : "token: getenv('API_TOKEN') ?: null";
-      const streamExample = Object.values(op.responses).some(
-        (response) => response.bodyKind === 'sse',
-      )
-        ? `foreach ($result->data as $event) { echo $event->event; break; }\n$result->data->close();\n`
+      const hasStream = Object.values(op.responses).some((response) => response.bodyKind === 'sse');
+      const streamExample = hasStream
+        ? `if ($result->data instanceof EventStream) {\n  foreach ($result->data as $event) { echo $event->event; break; }\n  $result->data->close();\n}\n`
         : '';
       put(
         `examples/${op.resource}-${op.method}.php`,
-        `<?php\ndeclare(strict_types=1);\nrequire __DIR__ . '/../vendor/autoload.php';\nuse ${ns}\\{Client, ClientOptions, RequestOptions, ${pascal(op.resource)}${pascal(op.method)}Input${hasExactNumber(input) ? ', ExactNumber' : ''}};\n$client = new Client(new ClientOptions(baseUrl: getenv('API_BASE_URL') ?: 'https://sandbox.example.invalid', ${authOptions}, allowInsecureHttp: getenv('API_ALLOW_INSECURE_HTTP') === '1'));\n$input = new ${pascal(op.resource)}${pascal(op.method)}Input(${exampleSource(input, 'php')});\n$result = $client->${op.resource}->${op.method}($input, new RequestOptions(maxAttempts: 1));\necho $result->meta['requestId'] ?? '';\n${streamExample}$client->close();\n`,
+        `<?php\ndeclare(strict_types=1);\nrequire __DIR__ . '/../vendor/autoload.php';\nuse ${ns}\\{Client, ClientOptions, RequestOptions, ${pascal(op.resource)}${pascal(op.method)}Input${hasExactNumber(input) ? ', ExactNumber' : ''}${hasStream ? ', EventStream' : ''}};\n$client = new Client(new ClientOptions(baseUrl: getenv('API_BASE_URL') ?: 'https://sandbox.example.invalid', ${authOptions}, allowInsecureHttp: getenv('API_ALLOW_INSECURE_HTTP') === '1'));\n$input = new ${pascal(op.resource)}${pascal(op.method)}Input(${exampleSource(input, 'php')});\n$result = $client->${op.resource}->${op.method}($input, new RequestOptions(maxAttempts: 1));\necho $result->meta['requestId'] ?? '';\n${streamExample}$client->close();\n`,
       );
     }
   }
@@ -713,6 +711,7 @@ function compareWithCompiled(
                 newPlan.responses[old.id]?.[status]?.body,
                 `${old.id}.response.${status}`,
                 compareNode,
+                comparePhp,
               )
             : undefined;
         const widened = shape?.result === 'incompatible';
@@ -723,10 +722,7 @@ function compareWithCompiled(
           after &&
           comparePhp &&
           resultStatus(status) &&
-          (binding?.model || binding?.variants) &&
-          !oldPlan.php.operations[old.id]?.output
-            .split('|')
-            .some((type) => type === 'mixed' || type === 'object');
+          addsPhpResultClass(oldPlan.php.operations[old.id]?.output, binding);
         add(
           !after || widened || newPhpClass ? 'breaking' : 'review',
           `${old.id}.response.${status}`,

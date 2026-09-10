@@ -20,7 +20,7 @@ import {
   type CodecPlan,
 } from './codec-plan.js';
 import { compileRuntimePlan, successStatus, type CompiledRuntimePlan } from './runtime-plan.js';
-import { compileResponsePlan, type ResponsePlan } from './response-plan.js';
+import { compileResultPlan, type ResponsePlan } from './response-plan.js';
 import { compileSchemaPolicy, type SchemaPolicy } from './schema-policy.js';
 export { successStatus };
 const pascal = (s: string) => s[0]!.toUpperCase() + s.slice(1);
@@ -397,7 +397,7 @@ export function compileSdkContract(source: Contract): {
   if (phpRuntime.webhook) phpRuntime.webhook.eventModels = eventModels;
   const plan: CompiledSdkContract = {
     format: 1,
-    semantics: runtime.semantics,
+    semantics: runtime.semantics + '/results-1',
     targets: [...(c.config.targets ?? ['node', 'php'])],
     runtime,
     node: {
@@ -543,10 +543,10 @@ export function compileSdkContract(source: Contract): {
       source.operations.map((op) => [
         op.id,
         Object.fromEntries(
-          Object.entries(op.responses).map(([status, response]) => [
-            status,
-            response.schema ? { body: compileResponsePlan(response.schema) } : {},
-          ]),
+          Object.entries(op.responses).map(([status, response]) => {
+            const body = compileResultPlan(status, response);
+            return [status, body ? { body } : {}];
+          }),
         ),
       ]),
     ),

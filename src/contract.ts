@@ -1632,6 +1632,8 @@ export function loadContract(definitionPath: string, configPath: string): Contra
   }
   annotate(doc, 'root');
   for (const item of incoming) annotate(item.schema, 'schema');
+  for (const events of streamSchemas.values())
+    for (const schema of Object.values(events)) annotate(schema, 'schema');
   for (const [key, entry] of resolved)
     if (key.startsWith('schema:')) annotate(entry.value, 'schema');
   for (const forbidden of ['callbacks'])

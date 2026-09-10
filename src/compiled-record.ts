@@ -23,6 +23,8 @@ function assertGuarantee(value: unknown, depth = 0): asserts value is ValueGuara
     case 'string':
     case 'number':
     case 'boolean':
+    case 'binary':
+    case 'stream':
       return;
     case 'unresolved':
       if (typeof shape.reason === 'string') return;
@@ -216,6 +218,7 @@ export function assertCompiledSnapshot(value: unknown): asserts value is Compile
         const body = object(result.body, 'response.body');
         assertGuarantee(body.publicType);
         assertGuarantee(body.runtime);
+        if (body.phpRuntime !== undefined) assertGuarantee(body.phpRuntime);
       }
     }
   }

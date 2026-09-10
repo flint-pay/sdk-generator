@@ -2,7 +2,7 @@
 export type ValueGuarantee =
   | { kind: 'unknown' }
   | { kind: 'unresolved'; reason: string }
-  | { kind: 'null' | 'string' | 'number' | 'boolean' }
+  | { kind: 'null' | 'string' | 'number' | 'boolean' | 'binary' | 'stream' }
   | { kind: 'array'; element: ValueGuarantee }
   | {
       kind: 'object';
@@ -40,6 +40,8 @@ export function valuesFit(previous: ValueGuarantee, next: ValueGuarantee, path: 
       case 'string':
       case 'number':
       case 'boolean':
+      case 'binary':
+      case 'stream':
         return { result: 'compatible' };
       default:
         return invalidGuarantee(previous);
