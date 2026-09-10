@@ -148,6 +148,9 @@ export function directionalSchema(schema: Schema, response: boolean): Schema {
     ...(s.allOf ? { allOf: s.allOf.map(project) } : {}),
     ...(s.anyOf ? { anyOf: s.anyOf.map(project) } : {}),
     ...(s.oneOf ? { oneOf: s.oneOf.map(project) } : {}),
+    ...(s.if ? { if: project(s.if) } : {}),
+    ...(s.then ? { then: project(s.then) } : {}),
+    ...(s.else ? { else: project(s.else) } : {}),
   });
   return project(schema);
 }
@@ -267,9 +270,13 @@ function compileNode(input: Schema, output: Schema, depth: number): CodecPlan {
     ...(input.if
       ? {
           when: {
-            test: compileNode(input.if, input.if, depth + 1),
-            ...(input.then ? { then: compileNode(input.then, input.then, depth + 1) } : {}),
-            ...(input.else ? { else: compileNode(input.else, input.else, depth + 1) } : {}),
+            test: compileNode(request.if ?? input.if, response.if ?? input.if, depth + 1),
+            ...(request.then
+              ? { then: compileNode(request.then, response.then ?? request.then, depth + 1) }
+              : {}),
+            ...(request.else
+              ? { else: compileNode(request.else, response.else ?? request.else, depth + 1) }
+              : {}),
           },
         }
       : {}),

@@ -91,10 +91,36 @@ export function typescriptType(
     array?: ArrayContext,
   ): string => typescriptType(schema, output, tag, knownVariant, object, array, definitions);
   if (!response && Object.hasOwn(s, 'const')) {
-    const literal = (value: Json, shape: Schema): string => {
+    // A constant can wrap a reference or composition that supplies its numeric
+    // representation. Follow positive declarations at each value path before
+    // rendering the literal, just as the surrounding input declaration does.
+    const scopes = (shape: Schema, seen = new Set<string>()): Schema[] => {
+      const reference = shape['x-sdk-ref'];
+      if (reference) {
+        const target = Object.hasOwn(definitions, reference) ? definitions[reference] : undefined;
+        return target && !seen.has(reference) ? scopes(target, new Set([...seen, reference])) : [];
+      }
+      return [
+        shape,
+        ...[...(shape.allOf ?? []), ...(shape.oneOf ?? []), ...(shape.anyOf ?? [])].flatMap(
+          (branch) => scopes(branch, seen),
+        ),
+      ];
+    };
+    const literal = (value: Json, declarations: readonly Schema[]): string => {
+      const shapes = declarations.flatMap((shape) => scopes(shape));
       if (Array.isArray(value))
         return (
-          'readonly [' + value.map((child) => literal(child, shape.items ?? {})).join(', ') + ']'
+          'readonly [' +
+          value
+            .map((child) =>
+              literal(
+                child,
+                shapes.flatMap((shape) => (shape.items ? [shape.items] : [])),
+              ),
+            )
+            .join(', ') +
+          ']'
         );
       if (value && typeof value === 'object')
         return (
@@ -102,26 +128,47 @@ export function typescriptType(
           Object.entries(value)
             .map(
               ([key, child]) =>
-                JSON.stringify(key) + ': ' + literal(child, shape.properties?.[key] ?? {}) + ';',
+                JSON.stringify(key) +
+                ': ' +
+                literal(
+                  child,
+                  shapes.flatMap((shape) => {
+                    const field = Object.hasOwn(shape.properties ?? {}, key)
+                      ? shape.properties?.[key]
+                      : undefined;
+                    return field
+                      ? [field]
+                      : typeof shape.additionalProperties === 'object'
+                        ? [shape.additionalProperties]
+                        : [];
+                  }),
+                ) +
+                ';',
             )
             .join(' ') +
           ' }'
         );
-      const type = Array.isArray(shape.type)
-        ? shape.type.find((type) => type !== 'null')
-        : shape.type;
-      return typeof value === 'number' && exactValue(valueInstruction(type, shape.format))
-        ? shape['x-sdk-number-input'] === 'explicit'
-          ? 'ExactNumber'
-          : 'string'
-        : JSON.stringify(value);
+      if (typeof value === 'number') {
+        const representations = shapes.flatMap((shape) => {
+          const types = Array.isArray(shape.type) ? shape.type : [shape.type];
+          return types.flatMap((type) =>
+            exactValue(valueInstruction(type, shape.format))
+              ? [shape['x-sdk-number-input'] === 'explicit' ? 'ExactNumber' : 'string']
+              : type === 'integer'
+                ? [JSON.stringify(value)]
+                : [],
+          );
+        });
+        if (representations.length) return '(' + [...new Set(representations)].join(' | ') + ')';
+      }
+      return JSON.stringify(value);
     };
     const { const: value, ...rest } = s;
     return (
       '(' +
       render(rest, response, discriminator, known, objectContext, arrayContext) +
       ') & (' +
-      literal(value!, s) +
+      literal(value!, [s]) +
       ')'
     );
   }

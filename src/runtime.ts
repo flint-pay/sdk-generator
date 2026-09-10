@@ -2035,7 +2035,10 @@ export class Runtime {
               ...(options.signal ? { signal: options.signal } : {}),
             },
             (event, raw) => {
-              const codec = op.streamEventCodecs?.[event];
+              const codec =
+                op.streamEventCodecs && Object.hasOwn(op.streamEventCodecs, event)
+                  ? op.streamEventCodecs[event]
+                  : undefined;
               return codec
                 ? plainNumbers(
                     this.decode(parseJson(raw, true), codec, {

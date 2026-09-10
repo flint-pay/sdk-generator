@@ -32,6 +32,7 @@ export function codecSharing(original: Record<string, CodecPlan>) {
         ...ANY_CODEC,
         reference: name,
         modelObjectInput: codec.modelObjectInput,
+        ...(codec.objectOnlyAlternative ? { objectOnlyAlternative: true } : {}),
         rejectInput: codec.rejectInput,
         hiddenOutput: codec.hiddenOutput,
         sensitive: codec.sensitive,

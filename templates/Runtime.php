@@ -498,9 +498,9 @@ final class EventStream implements \IteratorAggregate
                         if ($data !== '') {
                             $raw = substr($data, 0, -1);
                             yield new ServerSentEvent(
-                                $event ?: 'message',
+                                $event === '' ? 'message' : $event,
                                 $id,
-                                ($this->decode)($event ?: 'message', $raw),
+                                ($this->decode)($event === '' ? 'message' : $event, $raw),
                                 $raw,
                                 $retry,
                             );

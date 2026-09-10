@@ -142,6 +142,11 @@ final class SchemaAdapter
                     $s[$key] = array_map($project, $s[$key]);
                 }
             }
+            foreach (['if', 'then', 'else'] as $key) {
+                if (isset($s[$key])) {
+                    $s[$key] = $project($s[$key]);
+                }
+            }
             return $s;
         };
         return $project($schema);
@@ -285,10 +290,14 @@ final class SchemaAdapter
             $plan['includes'] = self::node($input['contains'], $input['contains'], $depth + 1);
         }
         if (isset($input['if'])) {
-            $plan['when'] = ['test' => self::node($input['if'], $input['if'], $depth + 1)];
+            $plan['when'] = ['test' => self::node($request['if'], $response['if'], $depth + 1)];
             foreach (['then', 'else'] as $key) {
-                if (isset($input[$key])) {
-                    $plan['when'][$key] = self::node($input[$key], $input[$key], $depth + 1);
+                if (isset($request[$key])) {
+                    $plan['when'][$key] = self::node(
+                        $request[$key],
+                        $response[$key] ?? $request[$key],
+                        $depth + 1,
+                    );
                 }
             }
         }

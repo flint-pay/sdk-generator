@@ -329,3 +329,273 @@ $c->api->save(new Example\\Regressions\\ApiSaveInput(['body'=>['scalar'=>new Exa
   );
   assert.equal((await exec('php', [join(dir, 'test.php')])).stdout, 'ok');
 });
+
+test('shared object alternatives retain response shape checks and future objects', async () => {
+  for (const keyword of ['oneOf', 'anyOf']) {
+    const schema = {
+      [keyword]: ['a', 'b'].map((name) => ({
+        type: 'object',
+        required: [name],
+        properties: {
+          [name]: { type: 'string' },
+          extra: { type: 'string' },
+          third: { type: 'string' },
+        },
+      })),
+    };
+    for (const sharing of [false, true]) {
+      const { dir } = await build(
+        'object-alternatives-',
+        responseDocument(schema),
+        sharing ? { schemaSharing: 'named' } : {},
+      );
+      const cases = ['{"a":"known"}', '{"future":true}', '"scalar"', '[]', 'null'].map((body) => ({
+        name: body,
+        operation: 'getValue',
+        input: {},
+        expected: { method: 'GET', path: '/v1/value' },
+        responses: [{ status: 200, body }],
+        ...(body.startsWith('{') ? { data: JSON.parse(body) } : { error: { kind: 'protocol' } }),
+      }));
+      writeFileSync(join(dir, 'cases.json'), JSON.stringify(cases));
+      assert.deepEqual(
+        (await validateFixtures(join(dir, 'out'), join(dir, 'cases.json'))).map((r) => r.scenarios),
+        [5, 5],
+      );
+    }
+  }
+});
+
+test('conditional direction policy preserves readOnly and writeOnly requiredness', async () => {
+  const schema = {
+    type: 'object',
+    properties: {
+      active: { type: 'boolean' },
+      id: { type: 'string', readOnly: true },
+      secret: { type: 'string', writeOnly: true },
+      label: { type: 'string' },
+    },
+    if: { required: ['active'], properties: { active: { const: true } } },
+    then: { required: ['id', 'secret', 'label'] },
+    else: { if: {}, then: { required: ['id', 'secret'] } },
+  };
+  const document = inputDocument(schema);
+  document.paths['/value'].post.responses = responseDocument(schema).paths['/value'].get.responses;
+  const { dir, sdk } = await build('conditional-direction-', document, {
+    operations: { save: { example: { body: { active: false, secret: 'private' } } } },
+  });
+  const cases = [false, true].flatMap((active) => {
+    const body = { active, secret: 'private', ...(active ? { label: 'present' } : {}) };
+    const data = { active, id: 'server-id', ...(active ? { label: 'present' } : {}) };
+    const accepted = {
+      name: `condition ${active}`,
+      operation: 'save',
+      input: { body },
+      expected: { method: 'POST', path: '/v1/value', body: JSON.stringify(body) },
+      responses: [{ status: 200, body: JSON.stringify(data) }],
+      data,
+    };
+    const { secret, ...withoutSecret } = body;
+    const { id, ...withoutId } = data;
+    return [
+      accepted,
+      {
+        name: `readonly ${active}`,
+        operation: 'save',
+        input: { body: { ...body, id: 'forbidden' } },
+        responses: [],
+        error: { kind: 'validation' },
+        attempts: 0,
+      },
+      {
+        name: `missing secret ${active}`,
+        operation: 'save',
+        input: { body: withoutSecret },
+        responses: [],
+        error: { kind: 'validation' },
+        attempts: 0,
+      },
+      {
+        ...accepted,
+        name: `missing response id ${active}`,
+        responses: [{ status: 200, body: JSON.stringify(withoutId) }],
+        data: undefined,
+        error: { kind: 'protocol' },
+      },
+    ];
+  });
+  cases.push({
+    name: 'missing conditional label',
+    operation: 'save',
+    input: { body: { active: true, secret: 'private' } },
+    responses: [],
+    error: { kind: 'validation' },
+    attempts: 0,
+  });
+  writeFileSync(join(dir, 'cases.json'), JSON.stringify(cases));
+  assert.deepEqual(
+    (await validateFixtures(join(dir, 'out'), join(dir, 'cases.json'))).map((r) => r.scenarios),
+    [9, 9],
+  );
+  // Public dynamic adapters must preserve the same directional policy.
+  assert.equal(
+    sdk.serialize({ active: false, secret: 'private' }, schema),
+    '{"active":false,"secret":"private"}',
+  );
+  assert.throws(
+    () => sdk.serialize({ active: true, secret: 'private' }, schema),
+    /label.*required/,
+  );
+  writeFileSync(
+    join(dir, 'dynamic.php'),
+    phpHeader(dir) +
+      `
+$schema=json_decode('${JSON.stringify(schema)}',true);
+$value=Example\\Regressions\\Codec::normalize((object)['active'=>false,'secret'=>'private'],$schema);
+if(Example\\Regressions\\Codec::encode($value)!=='{"active":false,"secret":"private"}')throw new Exception('dynamic request');
+$value=Example\\Regressions\\Codec::normalize((object)['active'=>false,'id'=>'server-id'],$schema,response:true);
+if(Example\\Regressions\\Codec::encode($value)!=='{"active":false,"id":"server-id"}')throw new Exception('dynamic response');
+echo 'ok';`,
+  );
+  assert.equal((await exec('php', [join(dir, 'dynamic.php')])).stdout, 'ok');
+});
+
+test('parent constants retain numeric representations through composed children', async () => {
+  const choice = { oneOf: [{ type: 'string' }, { type: 'number' }] };
+  const schema = {
+    type: 'object',
+    const: { scalar: 1, items: [1], mapped: { value: 1 }, legacy: 1 },
+    required: ['scalar', 'items', 'mapped', 'legacy'],
+    properties: {
+      scalar: { $ref: '#/components/schemas/Choice' },
+      items: { type: 'array', items: choice },
+      mapped: { type: 'object', additionalProperties: choice },
+      legacy: { allOf: [{ type: 'number' }] },
+    },
+  };
+  for (const sharing of [false, true]) {
+    const { dir, sdk, op } = await build(
+      'parent-constant-',
+      inputDocument(schema, { Choice: choice }),
+      {
+        numericUnions: 'explicit',
+        ...(sharing ? { schemaSharing: 'named' } : {}),
+        operations: {
+          save: { example: { body: { scalar: 1, items: [1], mapped: { value: 1 }, legacy: '1' } } },
+        },
+      },
+    );
+    const bodies = [];
+    const client = new sdk.Client({
+      baseUrl: 'https://example.invalid',
+      transport: async (_url, request) => {
+        bodies.push(request.body);
+        return new Response(null, { status: 204 });
+      },
+    });
+    const body = {
+      scalar: new sdk.ExactNumber('1'),
+      items: [new sdk.ExactNumber('1')],
+      mapped: { value: new sdk.ExactNumber('1') },
+      legacy: '1',
+    };
+    await client[op.resource][op.method]({ body });
+    assert.deepEqual(bodies, ['{"scalar":1,"items":[1],"mapped":{"value":1},"legacy":1}']);
+    await assert.rejects(
+      client[op.resource][op.method]({ body: { ...body, scalar: new sdk.ExactNumber('2') } }),
+      { kind: 'validation' },
+    );
+    await assert.rejects(client[op.resource][op.method]({ body: { ...body, scalar: '1' } }), {
+      kind: 'validation',
+    });
+    writeFileSync(
+      join(dir, 'consumer.ts'),
+      `import {Client,ExactNumber} from './out/node/index.js';
+new Client({baseUrl:'https://example.invalid'}).api.save({body:{scalar:new ExactNumber('1'),items:[new ExactNumber('1')],mapped:{value:new ExactNumber('1')},legacy:'1'}});`,
+    );
+    await exec(process.execPath, [
+      resolve('node_modules/typescript/bin/tsc'),
+      '--noEmit',
+      '--strict',
+      '--target',
+      'es2022',
+      '--module',
+      'nodenext',
+      '--typeRoots',
+      resolve('node_modules/@types'),
+      join(dir, 'consumer.ts'),
+    ]);
+    writeFileSync(
+      join(dir, 'test.php'),
+      phpHeader(dir) +
+        `
+$calls=[];$c=new Example\\Regressions\\Client(new Example\\Regressions\\ClientOptions(baseUrl:'https://example.invalid',transport:function($r)use(&$calls){$calls[]=$r['body'];return ['status'=>204,'headers'=>[],'body'=>''];}));
+$body=['scalar'=>new Example\\Regressions\\ExactNumber('1'),'items'=>[new Example\\Regressions\\ExactNumber('1')],'mapped'=>(object)['value'=>new Example\\Regressions\\ExactNumber('1')],'legacy'=>'1'];
+$c->api->save(new Example\\Regressions\\ApiSaveInput(['body'=>$body]));
+foreach([new Example\\Regressions\\ExactNumber('2'),'1'] as $invalid){$body['scalar']=$invalid;try{$c->api->save(new Example\\Regressions\\ApiSaveInput(['body'=>$body]));throw new Exception('invalid constant accepted');}catch(Example\\Regressions\\SdkError $e){if($e->kind!=='validation')throw $e;}}
+echo json_encode($calls);`,
+    );
+    assert.deepEqual(JSON.parse((await exec('php', [join(dir, 'test.php')])).stdout), bodies);
+  }
+});
+
+test('SSE event routing preserves unknown prototype names and configured zero names', async () => {
+  const document = responseDocument({});
+  document.paths['/value'].get.responses[200].content = {
+    'text/event-stream': { schema: { type: 'string' } },
+  };
+  document.components = {
+    schemas: {
+      Ready: { type: 'object', required: ['value'], properties: { value: { type: 'string' } } },
+    },
+  };
+  const { dir, sdk } = await build('event-names-', document, {
+    operations: {
+      getValue: {
+        stream: {
+          events: { ready: '#/components/schemas/Ready', 0: '#/components/schemas/Ready' },
+        },
+      },
+    },
+  });
+  const frames = [
+    ...['future', 'constructor', 'toString', '__proto__'].map((event) => ({
+      event,
+      data: 'raw payload',
+    })),
+    { event: '0', data: { value: 'zero' } },
+    { event: 'ready', data: { value: 'known' } },
+    { event: '', data: 'default event' },
+  ];
+  const payload = frames
+    .map(
+      ({ event, data }) =>
+        `event: ${event}\ndata: ${typeof data === 'string' ? data : JSON.stringify(data)}\n\n`,
+    )
+    .join('');
+  const expected = frames.map(({ event, data }) => ({ event: event || 'message', data }));
+  const client = new sdk.Client({
+    baseUrl: 'https://example.invalid',
+    transport: async () =>
+      new Response(payload, { headers: { 'content-type': 'text/event-stream' } }),
+  });
+  const result = await client.api.getValue();
+  assert.deepEqual(
+    JSON.parse(
+      JSON.stringify(
+        (await Array.fromAsync(result.data)).map(({ event, data }) => ({ event, data })),
+      ),
+    ),
+    expected,
+  );
+  writeFileSync(
+    join(dir, 'test.php'),
+    phpHeader(dir) +
+      `
+$c=new Example\\Regressions\\Client(new Example\\Regressions\\ClientOptions(baseUrl:'https://example.invalid',transport:function($r){
+$s=new class implements Example\\Regressions\\ByteStream {private bool $done=false;public function read():?string{if($this->done)return null;$this->done=true;return base64_decode('${Buffer.from(payload).toString('base64')}');}public function close():void{}};
+return ['status'=>200,'headers'=>['content-type'=>'text/event-stream'],'stream'=>$s];}));
+$frames=[];foreach($c->api->getValue()->data as $event)$frames[]=['event'=>$event->event,'data'=>$event->data];echo json_encode($frames);`,
+  );
+  assert.deepEqual(JSON.parse((await exec('php', [join(dir, 'test.php')])).stdout), expected);
+});
