@@ -816,13 +816,22 @@ test('exact fractional union samples produce executable and typechecked examples
   const choice = { oneOf: [{ type: 'string' }, { type: 'number' }] };
   const nested = {
     type: 'object',
-    const: { scalar: 0.25, items: [0.25], mapped: { value: 0.25 }, legacy: 0.25 },
+    const: {
+      scalar: 0.25,
+      items: [0.25],
+      mapped: { value: 0.25 },
+      legacy: 0.25,
+      empty: {},
+      numericKeys: { 0: 0.25 },
+    },
     required: ['scalar', 'items', 'mapped', 'legacy'],
     properties: {
       scalar: { $ref: '#/components/schemas/Choice' },
       items: { type: 'array', items: choice },
       mapped: { type: 'object', additionalProperties: choice },
       legacy: { allOf: [{ type: 'number' }] },
+      empty: { anyOf: [{ type: 'object' }, { type: 'array' }] },
+      numericKeys: { type: 'object', additionalProperties: choice },
     },
   };
   const seen = [];
@@ -841,9 +850,20 @@ test('exact fractional union samples produce executable and typechecked examples
   };
   try {
     for (const [schema, sharing, wire] of [
+      [{ const: {}, anyOf: [{ type: 'object' }, { type: 'array' }] }, false, '{}'],
+      [{ const: [], anyOf: [{ type: 'object' }, { type: 'array' }] }, false, '[]'],
+      [{ const: { 0: 'value' }, type: 'object' }, false, '{"0":"value"}'],
       [{ const: 0.25, ...choice }, false, '0.25'],
-      [nested, false, '{"scalar":0.25,"items":[0.25],"mapped":{"value":0.25},"legacy":0.25}'],
-      [nested, true, '{"scalar":0.25,"items":[0.25],"mapped":{"value":0.25},"legacy":0.25}'],
+      [
+        nested,
+        false,
+        '{"scalar":0.25,"items":[0.25],"mapped":{"value":0.25},"legacy":0.25,"empty":{},"numericKeys":{"0":0.25}}',
+      ],
+      [
+        nested,
+        true,
+        '{"scalar":0.25,"items":[0.25],"mapped":{"value":0.25},"legacy":0.25,"empty":{},"numericKeys":{"0":0.25}}',
+      ],
       [{ oneOf: [{ type: 'number', enum: [1] }, { type: 'string' }] }, false, '1'],
       [{ oneOf: [{ type: 'number', minimum: 0.25 }, { type: 'string' }] }, false, '0.25'],
     ]) {
@@ -875,7 +895,7 @@ test('exact fractional union samples produce executable and typechecked examples
         assert.deepEqual(JSON.parse(seen.at(-1)), JSON.parse(wire));
       }
     }
-    assert.equal(seen.length, 15);
+    assert.equal(seen.length, 24);
   } finally {
     server.closeAllConnections();
     await new Promise((r) => server.close(r));

@@ -156,7 +156,7 @@ final class CurlByteStream implements ByteStream
             CURLOPT_URL => $request['url'],
             CURLOPT_CUSTOMREQUEST => $request['method'],
             CURLOPT_HTTPHEADER => array_map(
-                fn($key, $value) => "$key: $value",
+                fn($key, $value) => $value === '' ? "$key;" : "$key: $value",
                 array_keys($request['headers']),
                 $request['headers'],
             ),
@@ -164,6 +164,7 @@ final class CurlByteStream implements ByteStream
             CURLOPT_ENCODING => '',
             CURLOPT_CONNECTTIMEOUT_MS => (int) $request['timeoutMs'],
             CURLOPT_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS,
+            CURLOPT_SUPPRESS_CONNECT_HEADERS => true,
             CURLOPT_HEADERFUNCTION => function ($handle, string $line): int {
                 if (preg_match('/^HTTP\/\S+\s+(\d+)/', $line, $matches)) {
                     $this->status = (int) $matches[1];
@@ -206,6 +207,10 @@ final class CurlByteStream implements ByteStream
     private function checkFailure(): void
     {
         if ($this->failure !== null && $this->failure !== CURLE_OK) {
+            if (!$this->streaming) {
+                // Before delivery, Runtime owns retry classification.
+                throw new \RuntimeException('Streaming connection failed');
+            }
             throw new SdkError('transport', 'Streaming transport failed', 'unknown');
         }
     }
@@ -254,6 +259,10 @@ final class CurlByteStream implements ByteStream
         }
         $code = curl_multi_exec($this->multi, $running);
         if ($code !== CURLM_OK) {
+            if (!$this->streaming) {
+                // Before delivery, Runtime owns retry classification.
+                throw new \RuntimeException('Streaming connection failed');
+            }
             throw new SdkError('transport', 'Streaming transport failed', 'unknown');
         }
         while ($info = curl_multi_info_read($this->multi)) {
@@ -363,7 +372,13 @@ final class EventStream implements \IteratorAggregate
     }
     public function __debugInfo(): array
     {
-        return ['meta' => $this->meta, 'closed' => $this->closed];
+        return [
+            'meta' => array_intersect_key(
+                $this->meta,
+                array_flip(['status', 'requestId', 'attempts', 'durationMs']),
+            ),
+            'closed' => $this->closed,
+        ];
     }
     public function getIterator(): \Traversable
     {
@@ -638,6 +653,21 @@ class Model implements \JsonSerializable
         $this->inputValues = $preserveNumbers($normalized);
         $this->values = $unwrap($normalized);
     }
+    /** Copy normalized trees without losing immutable exact-number tokens. */
+    private static function copyValue(mixed $value): mixed
+    {
+        if (is_array($value)) {
+            return array_map(self::copyValue(...), $value);
+        }
+        if ($value instanceof \stdClass) {
+            $out = new \stdClass();
+            foreach ((array) $value as $key => $child) {
+                $out->{$key} = self::copyValue($child);
+            }
+            return $out;
+        }
+        return $value;
+    }
     public function has(string $field): bool
     {
         return is_object($this->values)
@@ -649,7 +679,9 @@ class Model implements \JsonSerializable
         if (!$this->has($field)) {
             throw new SdkError('validation', 'Field was omitted');
         }
-        return is_object($this->values) ? $this->values->{$field} : $this->values[$field];
+        return self::copyValue(
+            is_object($this->values) ? $this->values->{$field} : $this->values[$field],
+        );
     }
     public function __get(string $field): mixed
     {
@@ -662,11 +694,11 @@ class Model implements \JsonSerializable
     /** Preserve the interpreted numeric kind when generated inputs are encoded again. */
     public function toInputArray(): array
     {
-        return (array) $this->inputValues;
+        return (array) self::copyValue($this->inputValues);
     }
     public function toInputValue(): mixed
     {
-        return $this->inputValues;
+        return self::copyValue($this->inputValues);
     }
     public function toArray(): array
     {
@@ -676,11 +708,11 @@ class Model implements \JsonSerializable
                 'This model contains a scalar; use jsonSerialize() to access its value',
             );
         }
-        return (array) $this->values;
+        return (array) self::copyValue($this->values);
     }
     public function jsonSerialize(): mixed
     {
-        return $this->values;
+        return self::copyValue($this->values);
     }
     public function __debugInfo(): array
     {

@@ -83,6 +83,10 @@ const model = new Model({ value: 'private value' }, schema);
 console.log(redact(model.toJSON(), schema)); // { value: '[REDACTED]' }
 ```
 
+Node `Model.toJSON()` returns a defensive copy. Editing it does not modify the model; construct a new model from the edited copy. This keeps inspection and transmitted values consistent while preserving exact numeric kinds.
+
+PHP model accessors (`get()`, magic and typed getters, `toArray()`, `jsonSerialize()`, `toInputArray()`, and `toInputValue()`) also return defensive copies. Editing a returned object or nested value does not modify the model. To change an input, edit a `toInputArray()` or `toInputValue()` copy and construct a new model from it; these input exports preserve exact numeric kinds in ambiguous unions.
+
 These helpers run locally and use the package's value execution rules. PHP retains the schema-taking base `Model` constructor, `Codec::normalize` and `Codec::redact`. `Codec::encode` writes normalized values as JSON. No generator installation or schema registry service is required by either package.
 
 For a null-only schema, use `type: 'null'`. The existing Node behavior for `type: ['null']` also permits non-null values; PHP rejects them. Nullable forms such as `type: ['string', 'null']` retain their declared non-null type in both targets.
@@ -191,6 +195,10 @@ try {
 $client->close();
 ```
 
+Debug inspection of binary/stream results omits headers and URLs; event inspection omits payloads. Raw fields remain available through explicit property access.
+
 Events expose `event`, `id`, `data`, `rawData`, and optional `retry` milliseconds. The parser handles comments, multiline data, split UTF-8 and CR/LF/CRLF. Incomplete final events are discarded. Invalid UTF-8, malformed configured JSON payloads, and oversized events close the stream with a protocol error. Breaking iteration closes the iterator's connection. Explicit close also handles streams that were never iterated. Client close releases owned streams.
+
+Node schedules long timeouts and stream lifetimes in bounded timer chunks, preserving the requested duration beyond the native timer limit.
 
 Iteration provides backpressure. PHP's default cURL multi transport queues at most one write chunk and pauses further writes until consumed. PHP cancellation and lifetime checks are cooperative while reading/iterating; synchronous injected transports must honor cancellation while blocked. Node uses AbortSignal, including during an idle read. A PHP injected transport returns a `ByteStream` in `response['stream']`; `read(): ?string` returns bounded chunks or null at EOF and `close(): void` releases resources. The injected request includes stream limits and cancellation. Connection retries can occur only before a stream result is returned, under the operation's declared retry policy. There is no automatic reconnect or delivery guarantee.
