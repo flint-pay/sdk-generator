@@ -108,12 +108,37 @@ export interface ServerSentEvent {
   retry?: number;
 }
 
+type ScheduledTimer = { cancel(): void };
+
+// Node truncates delays above 2^31-1 to one millisecond. Keep the actual
+// monotonic deadline and schedule bounded chunks, including for retry waits.
+function schedule(callback: () => void, duration: number): ScheduledTimer {
+  const deadline = performance.now() + duration;
+  let timer: ReturnType<typeof setTimeout>;
+  const tick = () => {
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) callback();
+    else timer = setTimeout(tick, Math.min(2147483647, Math.ceil(remaining)));
+  };
+  timer = setTimeout(tick, Math.min(2147483647, Math.max(0, Math.ceil(duration))));
+  return { cancel: () => clearTimeout(timer) };
+}
+
+function inspectedMetadata(meta: Metadata) {
+  return {
+    status: meta.status,
+    requestId: meta.requestId,
+    attempts: meta.attempts,
+    durationMs: meta.durationMs,
+  };
+}
+
 /** A single-consumer stream. Breaking iteration releases the response connection. */
 export class EventStream implements AsyncIterable<ServerSentEvent> {
   private closed = false;
   private started = false;
   private failure: SdkError | undefined;
-  private lifetime: ReturnType<typeof setTimeout> | undefined;
+  private lifetime: ScheduledTimer | undefined;
   private readonly abort = () => {
     this.failure = new SdkError('cancelled', 'Stream cancelled', 'response', false, this.meta);
     void this.close();
@@ -133,7 +158,7 @@ export class EventStream implements AsyncIterable<ServerSentEvent> {
     settings.signal?.addEventListener('abort', this.abort, { once: true });
     if (settings.signal?.aborted) this.abort();
     if (settings.lifetimeMs)
-      this.lifetime = setTimeout(() => {
+      this.lifetime = schedule(() => {
         this.failure = new SdkError(
           'deadline',
           'Stream lifetime exceeded',
@@ -147,13 +172,13 @@ export class EventStream implements AsyncIterable<ServerSentEvent> {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    clearTimeout(this.lifetime);
+    this.lifetime?.cancel();
     this.settings.signal?.removeEventListener('abort', this.abort);
     this.released();
     await this.reader.cancel().catch(() => {});
   }
   [inspect.custom]() {
-    return { meta: this.meta, closed: this.closed };
+    return { meta: inspectedMetadata(this.meta), closed: this.closed };
   }
   async *[Symbol.asyncIterator](): AsyncGenerator<ServerSentEvent> {
     if (this.started) throw new SdkError('validation', 'A stream can only be consumed once');
@@ -179,6 +204,10 @@ export class EventStream implements AsyncIterable<ServerSentEvent> {
                 data: this.decodeEvent(event || 'message', data.slice(0, -1)),
                 ...(retry !== undefined ? { retry } : {}),
               };
+        if (frame)
+          Object.defineProperty(frame, inspect.custom, {
+            value: () => ({ event: frame.event }),
+          });
         data = '';
         event = '';
         bytes = 0;
@@ -200,11 +229,11 @@ export class EventStream implements AsyncIterable<ServerSentEvent> {
     };
     try {
       while (!this.closed) {
-        let timer: ReturnType<typeof setTimeout> | undefined;
+        let timer: ScheduledTimer | undefined;
         const next = await Promise.race([
           this.reader.read(),
           new Promise<never>((_resolve, reject) => {
-            timer = setTimeout(
+            timer = schedule(
               () =>
                 reject(
                   new SdkError(
@@ -218,7 +247,7 @@ export class EventStream implements AsyncIterable<ServerSentEvent> {
               this.settings.idleTimeoutMs,
             );
           }),
-        ]).finally(() => clearTimeout(timer));
+        ]).finally(() => timer?.cancel());
         if (this.failure) throw this.failure;
         if (next.done) {
           decoder.decode();
@@ -1674,7 +1703,7 @@ export class Model<T = unknown> {
     this.value = unwrap(normalized) as T;
   }
   toJSON() {
-    return this.value;
+    return structuredClone(this.value);
   }
   [inspect.custom]() {
     return redactCodec(
@@ -1735,12 +1764,12 @@ function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
 async function delay(ms: number, signal?: AbortSignal) {
   stopped(signal);
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => {
+    const timer = schedule(() => {
       signal?.removeEventListener('abort', cancel);
       resolve();
     }, ms);
     const cancel = () => {
-      clearTimeout(timer);
+      timer?.cancel();
       reject(new SdkError('cancelled', 'Local waiting cancelled', 'unknown'));
     };
     signal?.addEventListener('abort', cancel, { once: true });
@@ -1971,7 +2000,7 @@ export class Runtime {
       options.signal?.addEventListener('abort', abort, { once: true });
       // Timers truncate fractional durations; rounding up prevents an overall
       // deadline from being reported as an earlier per-attempt transport error.
-      const timer = setTimeout(abort, Math.ceil(Math.min(timeout, remaining)));
+      const timer = schedule(abort, Math.ceil(Math.min(timeout, remaining)));
       let retryAfter = 0;
       let error: SdkError | undefined;
       let diagnosticMeta: Metadata | undefined;
@@ -2052,7 +2081,11 @@ export class Runtime {
             () => this.streams.delete(stream),
           );
           this.streams.add(stream);
-          return { data: stream, meta, raw: '' } as Result<T>;
+          const result = { data: stream, meta, raw: '' };
+          Object.defineProperty(result, inspect.custom, {
+            value: () => ({ data: '[Event stream]', meta: inspectedMetadata(meta) }),
+          });
+          return result as Result<T>;
         }
         const bytes = await abortable(response.arrayBuffer(), controller.signal);
         const redirect = op.responses[String(response.status)]?.classification === 'redirect';
@@ -2082,7 +2115,7 @@ export class Runtime {
           const data = new Uint8Array(bytes);
           const result = { data, meta, raw: data };
           Object.defineProperty(result, inspect.custom, {
-            value: () => ({ data: '[Binary response]', meta }),
+            value: () => ({ data: '[Binary response]', meta: inspectedMetadata(meta) }),
           });
           return result as Result<T>;
         }
@@ -2170,12 +2203,7 @@ export class Runtime {
                 this.options.redactFields,
                 this.contract.definitions,
               ),
-              meta: {
-                status: meta.status,
-                requestId: meta.requestId,
-                attempts: meta.attempts,
-                durationMs: meta.durationMs,
-              },
+              meta: inspectedMetadata(meta),
             }),
           });
           return result as Result<T>;
@@ -2253,7 +2281,7 @@ export class Runtime {
           { cause },
         );
       } finally {
-        clearTimeout(timer);
+        timer?.cancel();
         options.signal?.removeEventListener('abort', abort);
         try {
           this.options.diagnostics?.({
