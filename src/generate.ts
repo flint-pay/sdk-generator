@@ -19,11 +19,12 @@ import { spawnSync } from 'node:child_process';
 import { comparePolicies } from './compatibility.js';
 import { artifactHashes, prepareSite, verifyRelease } from './distribution.js';
 import { checkVersionPolicy } from './version.js';
-import { serialize, executeCodec } from './runtime.js';
+import { serialize, executeCodec, ExactNumber } from './runtime.js';
 import {
   inputSchema,
   successStatus,
   sample,
+  ExactNumberSample,
   compileSdkContract,
   type CompiledSdkContract,
   type PhpModelPlan,
@@ -109,6 +110,30 @@ function comparisonBase(before: RecordFile, next: Contract): Contract {
 const js = (v: unknown, space = 2) =>
   JSON.stringify(v, null, space)?.replaceAll('"__proto__":', '["__proto__"]:');
 const php = (s: string) => "'" + s.replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "'";
+function hasExactNumber(value: unknown): boolean {
+  return (
+    value instanceof ExactNumber ||
+    Boolean(value && typeof value === 'object' && Object.values(value).some(hasExactNumber))
+  );
+}
+/** Examples are SDK inputs, so exact numeric wrappers must survive source emission. */
+function exampleSource(value: unknown, target: 'node' | 'php', space = 2): string {
+  if (value instanceof ExactNumber)
+    return `new ExactNumber(${target === 'node' ? js(value.value) : php(value.value)})`;
+  if (!hasExactNumber(value))
+    return target === 'node'
+      ? js(value, space)!
+      : `json_decode(${php(JSON.stringify(value))}, true, 512, JSON_THROW_ON_ERROR)`;
+  if (Array.isArray(value))
+    return '[' + value.map((child) => exampleSource(child, target, space)).join(', ') + ']';
+  const fields = Object.entries(value as Record<string, unknown>).map(
+    ([key, child]) =>
+      (target === 'node'
+        ? (key === '__proto__' ? `[${js(key)}]` : js(key)) + ': '
+        : php(key) + ' => ') + exampleSource(child, target, space),
+  );
+  return (target === 'node' ? '{ ' : '[') + fields.join(', ') + (target === 'node' ? ' }' : ']');
+}
 const pascal = (s: string) => s[0]!.toUpperCase() + s.slice(1);
 const comment = (s: string) => s.replaceAll('*/', '* /').replaceAll('\r', '');
 function methodDoc(
@@ -120,7 +145,7 @@ function methodDoc(
     method !== op.method
       ? `Use ${op.resource}.${op.method}; HTTP behavior is unchanged.`
       : op.deprecated;
-  return `/**\n * ${comment(op.description).replaceAll('\n', '\n * ')}\n * ${op.verb} ${comment(op.path)}\n${deprecated ? ` * @deprecated ${comment(deprecated).replaceAll('\n', '\n * ')}\n` : ''} * @example client.${op.resource}.${method}(${comment(js(exampleInput(op, definitions), 0)!)})\n */\n`;
+  return `/**\n * ${comment(op.description).replaceAll('\n', '\n * ')}\n * ${op.verb} ${comment(op.path)}\n${deprecated ? ` * @deprecated ${comment(deprecated).replaceAll('\n', '\n * ')}\n` : ''} * @example client.${op.resource}.${method}(${comment(exampleSource(exampleInput(op, definitions), 'node', 0))})\n */\n`;
 }
 function phpModel(
   plan: PhpModelPlan,
@@ -145,10 +170,19 @@ function phpModel(
   return code + '}\n';
 }
 const checkedExamples = new WeakMap<Operation, unknown>();
+function materializeSample(value: unknown): unknown {
+  if (value instanceof ExactNumberSample) return new ExactNumber(value.token);
+  if (Array.isArray(value)) return value.map(materializeSample);
+  if (value && typeof value === 'object')
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [key, materializeSample(child)]),
+    );
+  return value;
+}
 function exampleInput(op: Operation, definitions: Record<string, Schema> = {}): unknown {
   if (checkedExamples.has(op)) return checkedExamples.get(op);
   try {
-    const input = op.example ?? sample(inputSchema(op), {}, definitions);
+    const input = op.example ?? materializeSample(sample(inputSchema(op), {}, definitions));
     serialize(input, { ...inputSchema(op), 'x-sdk-definitions': definitions });
     return input;
   } catch (error) {
@@ -170,7 +204,8 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     );
     if (!model) throw new Error('Missing input codec for ' + op.id);
     try {
-      const input = op.example ?? sample(inputSchema(op), {}, c.definitions ?? {});
+      const input =
+        op.example ?? materializeSample(sample(inputSchema(op), {}, c.definitions ?? {}));
       executeCodec(input, model.codec, {
         mode: 'request',
         definitions: targetPlan.runtime.definitions ?? {},
@@ -407,7 +442,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       )
         ? `for await (const event of result.data) { console.log(event.event, event.id, event.data); break; }\nawait client.close();\n`
         : '';
-      const example = `import { Client } from '${c.config.npm.name}';\nconst client = new Client({ baseUrl: process.env.API_BASE_URL ?? 'https://sandbox.example.invalid', allowInsecureHttp: process.env.API_ALLOW_INSECURE_HTTP === '1', ${authOptions} });\nconst result = await client.${op.resource}.${op.method}(${js(input)}, { maxAttempts: 1 });\nconsole.log(result.meta.requestId);\n${streamExample}`;
+      const example = `import { Client${hasExactNumber(input) ? ', ExactNumber' : ''} } from '${c.config.npm.name}';\nconst client = new Client({ baseUrl: process.env.API_BASE_URL ?? 'https://sandbox.example.invalid', allowInsecureHttp: process.env.API_ALLOW_INSECURE_HTTP === '1', ${authOptions} });\nconst result = await client.${op.resource}.${op.method}(${exampleSource(input, 'node')}, { maxAttempts: 1 });\nconsole.log(result.meta.requestId);\n${streamExample}`;
       put(`examples/${op.resource}-${op.method}.mjs`, example);
       put(`examples/${op.resource}-${op.method}.ts`, example);
     }
@@ -504,6 +539,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     put('src/Client.php', code);
     put('LICENSE', license);
     for (const op of c.operations) {
+      const input = exampleInput(op, definitions);
       const mode = op.authModes?.[0];
       const authentication = mode ? c.authentication?.[mode] : undefined;
       const authOptions =
@@ -517,7 +553,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         : '';
       put(
         `examples/${op.resource}-${op.method}.php`,
-        `<?php\ndeclare(strict_types=1);\nrequire __DIR__ . '/../vendor/autoload.php';\nuse ${ns}\\{Client, ClientOptions, RequestOptions, ${pascal(op.resource)}${pascal(op.method)}Input};\n$client = new Client(new ClientOptions(baseUrl: getenv('API_BASE_URL') ?: 'https://sandbox.example.invalid', ${authOptions}, allowInsecureHttp: getenv('API_ALLOW_INSECURE_HTTP') === '1'));\n$input = new ${pascal(op.resource)}${pascal(op.method)}Input(json_decode(${php(JSON.stringify(exampleInput(op, definitions)))}, true, 512, JSON_THROW_ON_ERROR));\n$result = $client->${op.resource}->${op.method}($input, new RequestOptions(maxAttempts: 1));\necho $result->meta['requestId'] ?? '';\n${streamExample}$client->close();\n`,
+        `<?php\ndeclare(strict_types=1);\nrequire __DIR__ . '/../vendor/autoload.php';\nuse ${ns}\\{Client, ClientOptions, RequestOptions, ${pascal(op.resource)}${pascal(op.method)}Input${hasExactNumber(input) ? ', ExactNumber' : ''}};\n$client = new Client(new ClientOptions(baseUrl: getenv('API_BASE_URL') ?: 'https://sandbox.example.invalid', ${authOptions}, allowInsecureHttp: getenv('API_ALLOW_INSECURE_HTTP') === '1'));\n$input = new ${pascal(op.resource)}${pascal(op.method)}Input(${exampleSource(input, 'php')});\n$result = $client->${op.resource}->${op.method}($input, new RequestOptions(maxAttempts: 1));\necho $result->meta['requestId'] ?? '';\n${streamExample}$client->close();\n`,
       );
     }
   }

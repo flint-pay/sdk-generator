@@ -1,5 +1,6 @@
 import { codecSharing } from './codec-sharing.js';
 import { Diagnostic } from './diagnostic.js';
+import { valueScopes } from './schema-intersections.js';
 import type { Contract, Operation, Schema } from './contract.js';
 import { stable } from './canonical.js';
 import {
@@ -646,6 +647,11 @@ export function prepareTargetContract(c: Contract): Contract {
   return c;
 }
 
+/** An exact numeric SDK input in a sample, materialized by the target emitter. */
+export class ExactNumberSample {
+  constructor(readonly token: string) {}
+}
+
 export function sample(
   s: Schema,
   inherited: Record<string, Schema> = {},
@@ -663,23 +669,48 @@ export function sample(
   s = directionalSchema(s, false);
   if (s.example !== undefined) return s.example;
   if (Object.hasOwn(s, 'const')) {
-    const literal = (value: import('./contract.js').Json, shape: Schema): unknown => {
-      if (Array.isArray(value)) return value.map((child) => literal(child, shape.items ?? {}));
+    const literal = (value: import('./contract.js').Json, declarations: Schema[]): unknown => {
+      const shapes = declarations.flatMap((shape) => valueScopes(shape, definitions));
+      if (Array.isArray(value))
+        return value.map((child) =>
+          literal(
+            child,
+            shapes.flatMap((shape) => (shape.items ? [shape.items] : [])),
+          ),
+        );
       if (value && typeof value === 'object')
         return Object.fromEntries(
           Object.entries(value).map(([key, child]) => [
             key,
-            literal(child, shape.properties?.[key] ?? {}),
+            literal(
+              child,
+              shapes.flatMap((shape) => {
+                const field = Object.hasOwn(shape.properties ?? {}, key)
+                  ? shape.properties?.[key]
+                  : undefined;
+                return field
+                  ? [field]
+                  : typeof shape.additionalProperties === 'object'
+                    ? [shape.additionalProperties]
+                    : [];
+              }),
+            ),
           ]),
         );
-      const type = Array.isArray(shape.type)
-        ? shape.type.find((type) => type !== 'null')
-        : shape.type;
-      return typeof value === 'number' && exactValue(valueInstruction(type, shape.format))
-        ? String(value)
-        : value;
+      if (typeof value === 'number') {
+        const numeric = shapes.find((shape) =>
+          (Array.isArray(shape.type) ? shape.type : [shape.type]).some((type) =>
+            exactValue(valueInstruction(type, shape.format)),
+          ),
+        );
+        if (numeric)
+          return numeric['x-sdk-number-input'] === 'explicit'
+            ? new ExactNumberSample(String(value))
+            : String(value);
+      }
+      return value;
     };
-    return literal(s.const!, s);
+    return literal(s.const!, [s]);
   }
   if (s.oneOf || s.anyOf || s.allOf) {
     const { oneOf, anyOf, allOf, not, discriminator, ...base } = s;
@@ -701,6 +732,8 @@ export function sample(
         next &&
         typeof result === 'object' &&
         typeof next === 'object' &&
+        !(result instanceof ExactNumberSample) &&
+        !(next instanceof ExactNumberSample) &&
         !Array.isArray(result) &&
         !Array.isArray(next)
           ? { ...result, ...next }
@@ -711,7 +744,9 @@ export function sample(
   const t = Array.isArray(s.type) ? s.type.find((t) => t !== 'null') : s.type;
   if (s.enum?.length)
     return s.enum[0] !== null && exactValue(valueInstruction(t, s.format))
-      ? String(s.enum[0])
+      ? s['x-sdk-number-input'] === 'explicit'
+        ? new ExactNumberSample(String(s.enum[0]))
+        : String(s.enum[0])
       : s.enum[0];
   if (t === 'object' || s.required || s.properties) {
     const fields = Object.entries({
@@ -756,11 +791,10 @@ export function sample(
     if (s.maximum !== undefined) value = Math.min(value, s.maximum);
     if (s.exclusiveMaximum !== undefined && value >= s.exclusiveMaximum)
       value = s.exclusiveMaximum - step;
-    return exactValue(valueInstruction(t, s.format))
-      ? t === 'number' && value === 1 && s.multipleOf === undefined
-        ? '1.00'
-        : String(value)
-      : value;
+    if (!exactValue(valueInstruction(t, s.format))) return value;
+    const token =
+      t === 'number' && value === 1 && s.multipleOf === undefined ? '1.00' : String(value);
+    return s['x-sdk-number-input'] === 'explicit' ? new ExactNumberSample(token) : token;
   }
   if (t === 'string') {
     const formatted =

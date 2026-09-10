@@ -1631,6 +1631,7 @@ export function loadContract(definitionPath: string, configPath: string): Contra
           value[key] = true;
   }
   annotate(doc, 'root');
+  for (const item of incoming) annotate(item.schema, 'schema');
   for (const [key, entry] of resolved)
     if (key.startsWith('schema:')) annotate(entry.value, 'schema');
   for (const forbidden of ['callbacks'])

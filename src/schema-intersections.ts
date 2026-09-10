@@ -1,6 +1,27 @@
 import type { Schema } from './contract.js';
 import { stable } from './canonical.js';
 
+/** Positive declarations constraining the same value, including referenced alternatives. */
+export function valueScopes(
+  shape: Schema,
+  definitions: Readonly<Record<string, Schema>> = {},
+  seen = new Set<string>(),
+): Schema[] {
+  const reference = shape['x-sdk-ref'];
+  if (reference) {
+    const target = Object.hasOwn(definitions, reference) ? definitions[reference] : undefined;
+    return target && !seen.has(reference)
+      ? valueScopes(target, definitions, new Set([...seen, reference]))
+      : [];
+  }
+  return [
+    shape,
+    ...[...(shape.allOf ?? []), ...(shape.oneOf ?? []), ...(shape.anyOf ?? [])].flatMap((branch) =>
+      valueScopes(branch, definitions, seen),
+    ),
+  ];
+}
+
 /** Project enum intersections into SDK input representations, without changing codecs.
  * A numeric enum around a union must be interpreted separately in each branch:
  * it constrains exact-number strings, but excludes a JSON-string branch.

@@ -161,6 +161,7 @@ final class CurlByteStream implements ByteStream
                 $request['headers'],
             ),
             CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_ENCODING => '',
             CURLOPT_CONNECTTIMEOUT_MS => (int) $request['timeoutMs'],
             CURLOPT_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS,
             CURLOPT_HEADERFUNCTION => function ($handle, string $line): int {
@@ -222,6 +223,7 @@ final class CurlByteStream implements ByteStream
         try {
             $this->checkRequestTimeout();
             $this->streaming = true;
+            $this->started = self::now();
         } catch (\Throwable $error) {
             $this->close();
             throw $error;

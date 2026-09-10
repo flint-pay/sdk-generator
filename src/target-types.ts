@@ -1,6 +1,6 @@
 import type { Json, Schema } from './contract.js';
 import { directionalSchema, exactValue, valueInstruction } from './codec-plan.js';
-import { numericEnumDeclaration } from './schema-intersections.js';
+import { numericEnumDeclaration, valueScopes } from './schema-intersections.js';
 const php = (s: string) => "'" + s.replaceAll('\\', '\\\\').replaceAll("'", "\\'") + "'";
 
 /** The declaration policy is shared by text emission and compatibility facts. */
@@ -94,21 +94,8 @@ export function typescriptType(
     // A constant can wrap a reference or composition that supplies its numeric
     // representation. Follow positive declarations at each value path before
     // rendering the literal, just as the surrounding input declaration does.
-    const scopes = (shape: Schema, seen = new Set<string>()): Schema[] => {
-      const reference = shape['x-sdk-ref'];
-      if (reference) {
-        const target = Object.hasOwn(definitions, reference) ? definitions[reference] : undefined;
-        return target && !seen.has(reference) ? scopes(target, new Set([...seen, reference])) : [];
-      }
-      return [
-        shape,
-        ...[...(shape.allOf ?? []), ...(shape.oneOf ?? []), ...(shape.anyOf ?? [])].flatMap(
-          (branch) => scopes(branch, seen),
-        ),
-      ];
-    };
     const literal = (value: Json, declarations: readonly Schema[]): string => {
-      const shapes = declarations.flatMap((shape) => scopes(shape));
+      const shapes = declarations.flatMap((shape) => valueScopes(shape, definitions));
       if (Array.isArray(value))
         return (
           'readonly [' +

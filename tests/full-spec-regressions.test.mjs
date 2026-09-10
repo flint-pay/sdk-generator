@@ -1,9 +1,11 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
+import { createHmac } from 'node:crypto';
+import { gzipSync } from 'node:zlib';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { loadContract, generate, validateFixtures } from '../dist/index.js';
@@ -598,4 +600,284 @@ return ['status'=>200,'headers'=>['content-type'=>'text/event-stream'],'stream'=
 $frames=[];foreach($c->api->getValue()->data as $event)$frames[]=['event'=>$event->event,'data'=>$event->data];echo json_encode($frames);`,
   );
   assert.deepEqual(JSON.parse((await exec('php', [join(dir, 'test.php')])).stdout), expected);
+});
+
+test('default streaming transports decode negotiated gzip events and JSON errors', async () => {
+  const document = responseDocument({});
+  document.paths['/value'].get.responses[200].content = {
+    'text/event-stream': { schema: { type: 'string' } },
+  };
+  const { dir, sdk } = await build('compressed-stream-', document);
+  const server = createServer((req, res) => {
+    const error = req.headers['x-test-case'] === 'error';
+    const compressed = req.headers['accept-encoding'] === 'gzip';
+    const payload = error ? '{"code":"expected_error"}' : 'data: first\n\ndata: later\n\n';
+    res.writeHead(error ? 400 : 200, {
+      'Content-Type': error ? 'application/json' : 'text/event-stream',
+      ...(compressed ? { 'Content-Encoding': 'gzip' } : {}),
+    });
+    res.end(compressed ? gzipSync(payload) : payload);
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const client = new sdk.Client({ baseUrl, allowInsecureHttp: true });
+    for (const encoding of ['identity', 'gzip']) {
+      const result = await client.api.getValue({}, { headers: { 'accept-encoding': encoding } });
+      assert.deepEqual(
+        (await Array.fromAsync(result.data)).map((e) => e.data),
+        ['first', 'later'],
+      );
+      await assert.rejects(
+        client.api.getValue(
+          {},
+          { headers: { 'accept-encoding': encoding, 'x-test-case': 'error' } },
+        ),
+        { kind: 'validation', code: 'expected_error' },
+      );
+    }
+    await client.close();
+    writeFileSync(
+      join(dir, 'compressed.php'),
+      phpHeader(dir) +
+        `
+$c=new Example\\Regressions\\Client(new Example\\Regressions\\ClientOptions(baseUrl:$argv[1],allowInsecureHttp:true));
+foreach(['identity','gzip'] as $encoding) {
+ $r=$c->api->getValue(options:new Example\\Regressions\\RequestOptions(headers:['accept-encoding'=>$encoding]));
+ $seen=[];foreach($r->data as $e)$seen[]=$e->data;
+ if($seen!==['first','later'])throw new Exception('missing events');
+ try{$c->api->getValue(options:new Example\\Regressions\\RequestOptions(headers:['accept-encoding'=>$encoding,'x-test-case'=>'error']));throw new Exception('missing error');}
+ catch(Example\\Regressions\\SdkError $e){if($e->kind!=='validation'||$e->errorCode!=='expected_error')throw $e;}
+}
+$c->close();echo 'ok';`,
+    );
+    assert.equal((await exec('php', [join(dir, 'compressed.php'), baseUrl])).stdout, 'ok');
+  } finally {
+    server.closeAllConnections();
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test('stream lifetime begins after delayed response headers in both default transports', async () => {
+  const document = responseDocument({});
+  document.paths['/value'].get.responses[200].content = {
+    'text/event-stream': { schema: { type: 'string' } },
+  };
+  const { dir, sdk } = await build('stream-clock-', document);
+  const server = createServer((req, res) => {
+    const begin = setTimeout(
+      () => {
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        res.write('data: first\n\n');
+        const end = setTimeout(() => res.end('data: later\n\n'), 50);
+        res.on('close', () => clearTimeout(end));
+      },
+      req.headers['x-test-case'] === 'slow' ? 600 : 0,
+    );
+    res.on('close', () => clearTimeout(begin));
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const client = new sdk.Client({ baseUrl, allowInsecureHttp: true });
+    for (const setup of ['fast', 'slow']) {
+      const result = await client.api.getValue(
+        {},
+        {
+          headers: { 'x-test-case': setup },
+          timeoutMs: 5000,
+          deadlineMs: 5000,
+          streamLifetimeMs: 300,
+        },
+      );
+      assert.deepEqual(
+        (await Array.fromAsync(result.data)).map((e) => e.data),
+        ['first', 'later'],
+      );
+    }
+    await client.close();
+    writeFileSync(
+      join(dir, 'clock.php'),
+      phpHeader(dir) +
+        `
+$c=new Example\\Regressions\\Client(new Example\\Regressions\\ClientOptions(baseUrl:$argv[1],allowInsecureHttp:true));
+foreach(['fast','slow'] as $setup) {
+ $r=$c->api->getValue(options:new Example\\Regressions\\RequestOptions(headers:['x-test-case'=>$setup],timeoutMs:5000,deadlineMs:5000,streamLifetimeMs:300));
+ $seen=[];foreach($r->data as $e)$seen[]=$e->data;
+ if($seen!==['first','later'])throw new Exception('missing events');
+}
+$c->close();echo 'ok';`,
+    );
+    assert.equal((await exec('php', [join(dir, 'clock.php'), baseUrl])).stdout, 'ok');
+  } finally {
+    server.closeAllConnections();
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test('incoming webhook schemas inherit conjunction direction and sensitivity annotations', async () => {
+  for (const composed of [false, true]) {
+    const field = (flag) =>
+      composed
+        ? { type: 'string', allOf: [{ type: 'string', [flag]: true }] }
+        : { type: 'string', [flag]: true };
+    const schema = {
+      type: 'object',
+      required: ['event_type', 'private_value', 'public_value'],
+      properties: {
+        event_type: { type: 'string', const: 'ready' },
+        private_value: field('writeOnly'),
+        public_value: field('readOnly'),
+        secret: field('x-sensitive'),
+      },
+    };
+    const document = responseDocument(schema);
+    document.webhooks = {
+      delivery: {
+        post: {
+          requestBody: { required: true, content: { 'application/json': { schema } } },
+          responses: { 200: { description: 'ok' } },
+        },
+      },
+    };
+    const { dir, sdk, contract } = await build('incoming-flags-', document, {
+      webhook: {
+        algorithm: 'hmac-sha256',
+        header: 'X-Signature',
+        timestampHeader: 'X-Timestamp',
+        separator: '.',
+        toleranceSeconds: 300,
+        typeField: 'event_type',
+        events: {},
+      },
+    });
+    for (const [key, flag] of [
+      ['private_value', 'writeOnly'],
+      ['public_value', 'readOnly'],
+      ['secret', 'x-sensitive'],
+    ])
+      assert.equal(contract.incoming[0].schema.properties[key][flag], true);
+    const client = new sdk.Client({ baseUrl: 'https://example.invalid' });
+    const timestamp = '1700000000',
+      secret = 'synthetic-signing-secret';
+    const cases = ['{"event_type":"ready","public_value":"visible"}', '{"event_type":"ready"}'].map(
+      (raw) => ({
+        raw,
+        headers: {
+          'X-Timestamp': timestamp,
+          'X-Signature': createHmac('sha256', secret)
+            .update(timestamp + '.' + raw)
+            .digest('hex'),
+        },
+      }),
+    );
+    const expected = { known: true, event: { event_type: 'ready', public_value: 'visible' } };
+    assert.deepEqual(
+      JSON.parse(
+        JSON.stringify(
+          client.verifyWebhook(
+            Buffer.from(cases[0].raw),
+            cases[0].headers,
+            [secret],
+            Number(timestamp),
+          ),
+        ),
+      ),
+      expected,
+    );
+    assert.throws(
+      () =>
+        client.verifyWebhook(
+          Buffer.from(cases[1].raw),
+          cases[1].headers,
+          [secret],
+          Number(timestamp),
+        ),
+      /public_value.*required/,
+    );
+    writeFileSync(join(dir, 'cases.json'), JSON.stringify(cases));
+    writeFileSync(
+      join(dir, 'incoming.php'),
+      phpHeader(dir) +
+        `
+$cases=json_decode(file_get_contents($argv[1]),true);$c=new Example\\Regressions\\Client(new Example\\Regressions\\ClientOptions(baseUrl:'https://example.invalid'));
+echo json_encode($c->verifyWebhook($cases[0]['raw'],$cases[0]['headers'],['synthetic-signing-secret'],1700000000));
+try{$c->verifyWebhook($cases[1]['raw'],$cases[1]['headers'],['synthetic-signing-secret'],1700000000);throw new Exception('missing required readOnly field');}
+catch(Example\\Regressions\\SdkError $e){if(!str_contains($e->getMessage(),'public_value'))throw $e;}`,
+    );
+    assert.deepEqual(
+      JSON.parse((await exec('php', [join(dir, 'incoming.php'), join(dir, 'cases.json')])).stdout),
+      expected,
+    );
+  }
+});
+
+test('exact fractional union samples produce executable and typechecked examples in both targets', async () => {
+  const choice = { oneOf: [{ type: 'string' }, { type: 'number' }] };
+  const nested = {
+    type: 'object',
+    const: { scalar: 0.25, items: [0.25], mapped: { value: 0.25 }, legacy: 0.25 },
+    required: ['scalar', 'items', 'mapped', 'legacy'],
+    properties: {
+      scalar: { $ref: '#/components/schemas/Choice' },
+      items: { type: 'array', items: choice },
+      mapped: { type: 'object', additionalProperties: choice },
+      legacy: { allOf: [{ type: 'number' }] },
+    },
+  };
+  const seen = [];
+  const server = createServer(async (req, res) => {
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    seen.push(raw);
+    res.writeHead(204, { 'X-Request-ID': 'example-ok' });
+    res.end();
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const env = {
+    ...process.env,
+    API_BASE_URL: `http://127.0.0.1:${server.address().port}`,
+    API_ALLOW_INSECURE_HTTP: '1',
+  };
+  try {
+    for (const [schema, sharing, wire] of [
+      [{ const: 0.25, ...choice }, false, '0.25'],
+      [nested, false, '{"scalar":0.25,"items":[0.25],"mapped":{"value":0.25},"legacy":0.25}'],
+      [nested, true, '{"scalar":0.25,"items":[0.25],"mapped":{"value":0.25},"legacy":0.25}'],
+      [{ oneOf: [{ type: 'number', enum: [1] }, { type: 'string' }] }, false, '1'],
+      [{ oneOf: [{ type: 'number', minimum: 0.25 }, { type: 'string' }] }, false, '0.25'],
+    ]) {
+      const { dir } = await build('exact-examples-', inputDocument(schema, { Choice: choice }), {
+        numericUnions: 'explicit',
+        ...(sharing ? { schemaSharing: 'named' } : {}),
+      });
+      mkdirSync(join(dir, 'out/php/vendor'));
+      writeFileSync(join(dir, 'out/php/vendor/autoload.php'), phpHeader(dir));
+      const tsExample = join(dir, 'out/node/examples/api-save.ts');
+      await exec(process.execPath, [
+        resolve('node_modules/typescript/bin/tsc'),
+        '--noEmit',
+        '--strict',
+        '--target',
+        'es2022',
+        '--module',
+        'nodenext',
+        '--typeRoots',
+        resolve('node_modules/@types'),
+        tsExample,
+      ]);
+      for (const [command, args] of [
+        [process.execPath, [join(dir, 'out/node/examples/api-save.mjs')]],
+        [process.execPath, ['--experimental-strip-types', tsExample]],
+        ['php', [join(dir, 'out/php/examples/api-save.php')]],
+      ]) {
+        assert.equal((await exec(command, args, { env })).stdout.trim(), 'example-ok');
+        assert.deepEqual(JSON.parse(seen.at(-1)), JSON.parse(wire));
+      }
+    }
+    assert.equal(seen.length, 15);
+  } finally {
+    server.closeAllConnections();
+    await new Promise((r) => server.close(r));
+  }
 });
