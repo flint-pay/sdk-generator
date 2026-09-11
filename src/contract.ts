@@ -154,7 +154,7 @@ export interface Config {
   apiVersion?: { value: string; header: string };
   license?: string;
   errors?: { codePath?: string; detailsPath?: string; requestIdHeader?: string };
-  documentation?: { overview?: string; guides?: Record<string, string> };
+  documentation?: { overview?: string; guides?: Record<string, string>; examples?: string[] };
   release?: { baseUrl?: string; policy?: 'review' | 'semver' };
 }
 export interface Contract {
@@ -1326,7 +1326,14 @@ export function loadContract(definitionPath: string, configPath: string): Contra
       header(config.errors.requestIdHeader, 'config/errors/requestIdHeader');
   }
   if (config.documentation !== undefined) {
-    keys(config.documentation, ['overview', 'guides'], 'config/documentation');
+    keys(config.documentation, ['overview', 'guides', 'examples'], 'config/documentation');
+    if (
+      config.documentation.examples !== undefined &&
+      (!Array.isArray(config.documentation.examples) ||
+        config.documentation.examples.some((id) => typeof id !== 'string' || !id.trim()) ||
+        new Set(config.documentation.examples).size !== config.documentation.examples.length)
+    )
+      fail('config/documentation/examples', 'expected unique operation IDs');
     if (
       config.documentation.overview !== undefined &&
       typeof config.documentation.overview !== 'string'

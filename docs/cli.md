@@ -33,14 +33,14 @@ OUTPUT/
     index.js / index.d.ts
     runtime.js / runtime.d.ts
     codec-plan.js / runtime-plan.js  Bundled codecs and schema adapters
-    README.md / REFERENCE.md / LICENSE
+    README.md / REFERENCE.md / RUNTIME.md / LICENSE
     examples/           JavaScript and TypeScript operation examples
     custom/             Provider-maintained helpers
     guides/             Optional provider narrative guides
   php/                  Selected Composer target
     composer.json
     src/                Client, runtime, models and compiled contract
-    README.md / REFERENCE.md / LICENSE
+    README.md / REFERENCE.md / RUNTIME.md / LICENSE
     examples/           PHP operation examples
     custom/             Provider-maintained helpers
     guides/             Optional provider narrative guides

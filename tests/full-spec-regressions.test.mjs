@@ -1,3 +1,4 @@
+import { localExampleFile } from './local-example.mjs';
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
@@ -846,7 +847,6 @@ test('exact fractional union samples produce executable and typechecked examples
   const env = {
     ...process.env,
     API_BASE_URL: `http://127.0.0.1:${server.address().port}`,
-    API_ALLOW_INSECURE_HTTP: '1',
   };
   try {
     for (const [schema, sharing, wire] of [
@@ -891,7 +891,12 @@ test('exact fractional union samples produce executable and typechecked examples
         [process.execPath, ['--experimental-strip-types', tsExample]],
         ['php', [join(dir, 'out/php/examples/api-save.php')]],
       ]) {
-        assert.equal((await exec(command, args, { env })).stdout.trim(), 'example-ok');
+        const localFile = localExampleFile(args.at(-1));
+        const localArgs = [...args.slice(0, -1), localFile];
+        const execution = await exec(command, localArgs, { env });
+        rmSync(localFile);
+        // Examples show response data before the request ID.
+        assert.match(execution.stdout.trim(), /(?:^|\n)example-ok$/);
         assert.deepEqual(JSON.parse(seen.at(-1)), JSON.parse(wire));
       }
     }

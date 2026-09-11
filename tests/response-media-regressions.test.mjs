@@ -1,3 +1,4 @@
+import { localExampleFile } from './local-example.mjs';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -322,7 +323,6 @@ test('mixed JSON, empty and SSE examples validate and run every result path in N
   const env = {
     ...process.env,
     API_BASE_URL: `http://127.0.0.1:${server.address().port}`,
-    API_ALLOW_INSECURE_HTTP: '1',
   };
   try {
     for (const mixed of [false, true]) {
@@ -350,10 +350,12 @@ test('mixed JSON, empty and SSE examples validate and run every result path in N
           [process.execPath, 'node/examples/api-value.ts'],
           ['php', 'php/examples/api-value.php'],
         ]) {
+          const localFile = localExampleFile(join(f.output, file));
           const args = file.endsWith('.ts')
-            ? ['--experimental-strip-types', join(f.output, file)]
-            : [join(f.output, file)];
+            ? ['--experimental-strip-types', localFile]
+            : [localFile];
           const execution = await exec(command, args, { env, timeout: 15000 });
+          rmSync(localFile);
           if (command === 'php') assert.doesNotMatch(execution.stderr, /Warning:|Fatal error:/);
           if (result === 'stream') assert.match(execution.stdout, /message/);
         }
