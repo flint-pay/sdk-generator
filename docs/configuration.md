@@ -100,7 +100,7 @@ Unknown configuration keys fail with a source location. Capability declarations 
 | `apiVersion`           | Optional pinned request header and value.                                                                                                       |
 | `webhook`              | Optional signing format and event schemas.                                                                                                      |
 | `money`                | Optional explicit currency precision table.                                                                                                     |
-| `documentation`        | Optional Markdown overview and named guides.                                                                                                    |
+| `documentation`        | Optional Markdown overview, named guides and featured example operation IDs.                                                                    |
 | `release`              | Optional distribution `baseUrl` and compatibility `policy` (`review` by default or `semver`); see [release policy](releases.md#version-policy). |
 
 See [CLI usage](cli.md) to diagnose or preview these inputs, and [using generated SDKs](using-sdks.md) for runtime client/request options. Credentials and runtime base URLs are supplied by consumers, not stored in the SDK configuration.
@@ -113,7 +113,7 @@ See [CLI usage](cli.md) to diagnose or preview these inputs, and [using generate
 
 A response union reached through `allOf`, including a resolved `$ref` with sibling constraints, also generates its known-variant guard. The guard checks the complete composed schema, including sibling required fields, bounds and `not` constraints, before narrowing. Tagged unions wrapped this way retain PHP variant classes; their constructors validate the selected branch together with the surrounding constraints and their getters include sibling fields. Normal response decoding and PHP response constructors retain the documented tolerance for business bounds and future fields.
 
-Providers can supply `documentation.overview` as Markdown and `documentation.guides` as a map of lowercase guide slugs to Markdown. Both packages and the release site include version-matched guidance. Keep workflow assumptions and provider-specific recovery instructions here, alongside operation examples.
+Providers can supply `documentation.overview` as Markdown and `documentation.guides` as a map of lowercase guide slugs to Markdown. The overview appears near the top of each package README; use it to link to your public SDK documentation. Both packages and the release site include version-matched guidance. Detailed SDK behavior lives in the linked `RUNTIME.md` guide, included in both packages and the release site. READMEs embed one complete quickstart followed by up to two short recipes that reuse its client, prioritizing configured examples and covering a create operation, a read operation and another resource when available. Set `documentation.examples` to an ordered list of operation IDs to feature specific workflows (for example, `["createPaymentIntent", "getPaymentIntent", "createRefund"]`). Operations outside the selected profile are omitted and remaining slots use automatic selection. Supply `operations.OPERATION_ID.example` with realistic SDK inputs to improve these examples. Keep workflow assumptions and provider-specific recovery instructions here, alongside operation examples.
 
 `errors` maps provider conventions: `codePath` and `detailsPath` are dot-separated fields in JSON error bodies; `requestIdHeader` selects the response header. Defaults are `code`, the whole redacted error body, and `x-request-id`. Malformed or non-JSON errors retain status, metadata and explicit `raw` response access. `ClientOptions.redactFields` adds field names to recursive inspection/error-detail redaction without altering response data.
 
@@ -234,7 +234,7 @@ These checks invoke generated public clients in the selected targets, including 
 
 Generated scripts read `API_BASE_URL` and optional `API_TOKEN` explicitly for legacy authentication. Named-mode examples read `API_MODE_SCHEME` variables, with the mode and scheme converted to uppercase and punctuation replaced by underscores; client construction itself does not read environment variables. Run Node examples from the generated `node/` package with `node examples/RESOURCE-METHOD.mjs`. For PHP, run `composer install` inside the generated `php/` package first, then `php examples/RESOURCE-METHOD.php`. When copying a PHP example into an application, update its `require` path to the application's `vendor/autoload.php`.
 
-Operation examples also accept `API_ALLOW_INSECURE_HTTP=1` for deliberate local HTTP testing. This is disabled by default. Do not set it for a normal HTTPS integration. TypeScript examples are normally compiled with TypeScript; Node 22 test execution can use `--experimental-strip-types`.
+Generated examples use HTTPS. The `allowInsecureHttp` client option is available for explicit local test setups; it is omitted from public examples. TypeScript examples are normally compiled with TypeScript; Node 22 test execution can use `--experimental-strip-types`.
 
 ## Nested models and ambiguous representations
 

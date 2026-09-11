@@ -1,3 +1,4 @@
+import { localExampleFile } from './local-example.mjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -684,15 +685,15 @@ test('all generated JavaScript, TypeScript and PHP operation examples execute', 
     ...process.env,
     API_BASE_URL: `http://127.0.0.1:${server.address().port}`,
     API_TOKEN: 'synthetic-test-token',
-    API_ALLOW_INSECURE_HTTP: '1',
   };
   try {
     for (const target of ['node', 'php']) {
       const dir = join(output, target, 'examples');
       for (const file of readdirSync(dir).filter((f) => f.startsWith('payments-'))) {
+        const localFile = localExampleFile(join(dir, file));
         const child = spawn(
           target === 'php' ? 'php' : process.execPath,
-          [...(file.endsWith('.ts') ? ['--experimental-strip-types'] : []), join(dir, file)],
+          [...(file.endsWith('.ts') ? ['--experimental-strip-types'] : []), localFile],
           {
             env,
           },
@@ -702,8 +703,10 @@ test('all generated JavaScript, TypeScript and PHP operation examples execute', 
         child.stdout.on('data', (b) => (stdout += b));
         child.stderr.on('data', (b) => (stderr += b));
         const code = await new Promise((r) => child.on('close', r));
+        rmSync(localFile);
         assert.equal(code, 0, file + ': ' + stderr);
-        assert.equal(stdout.trim(), 'quickstart-request');
+        // Examples show response data before the request ID.
+        assert.match(stdout.trim(), /(?:^|\n)quickstart-request$/);
       }
     }
     assert.equal(calls, contract.operations.length * 3);

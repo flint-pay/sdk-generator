@@ -8,7 +8,14 @@ import { spawnSync, spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { createHmac } from 'node:crypto';
 import { inspect } from 'node:util';
-import { loadContract, generate, compare, prepareRelease, publishSite } from '../dist/index.js';
+import {
+  loadContract,
+  generate,
+  compare,
+  prepareRelease,
+  publishSite,
+  render,
+} from '../dist/index.js';
 import { compareSchemas } from '../dist/compatibility.js';
 import { compareVersions, checkVersionPolicy } from '../dist/version.js';
 import { validateFixtures } from '../dist/fixtures.js';
@@ -244,6 +251,31 @@ test('provider narrative is versioned in both generated packages', () => {
       /authoritative resource state/,
     );
     assert.match(readFileSync(join(output, target, 'guides/recovery.md'), 'utf8'), /Package 0.1.0/);
+  }
+});
+
+test('README example selection honors profile order and rejects malformed configuration', () => {
+  const definition = structuredClone(contract);
+  const operation = definition.operations.at(-1);
+  definition.config.documentation.examples = ['outsideThisProfile', operation.id];
+  const files = render(definition);
+  for (const target of ['node', 'php']) {
+    const headings = [...files.get(`${target}/README.md`).matchAll(/^### (.+)$/gm)].map(
+      (m) => m[1],
+    );
+    assert.equal(headings[0], `${operation.resource}.${operation.method}`);
+    assert.equal(headings.length, Math.min(3, definition.operations.length));
+    assert.equal(new Set(headings).size, headings.length);
+  }
+  const config = JSON.parse(readFileSync('tests/fixtures/payment-sdk.json', 'utf8'));
+  for (const examples of ['createPayment', [null], [''], ['createPayment', 'createPayment']]) {
+    config.documentation = { examples };
+    const path = join(directory, 'invalid-readme-config.json');
+    writeFileSync(path, JSON.stringify(config));
+    assert.throws(
+      () => loadContract('tests/fixtures/payment-api.json', path),
+      /config\/documentation\/examples/,
+    );
   }
 });
 
@@ -548,12 +580,18 @@ test('coordinated site publishes versioned docs and an installable Composer repo
     const release = join(directory, 'release');
     const plan = prepareRelease(generated, release);
     assert.ok(plan.checksums['site/versions/0.1.0/node/guides/recovery.md']);
+    for (const target of ['node', 'php'])
+      assert.ok(plan.checksums[`site/versions/0.1.0/${target}/RUNTIME.md.html`]);
     const tarball = Object.keys(plan.checksums).find((p) => p.endsWith('.tgz') && !p.includes('/'));
     assert.equal(
       spawnSync('tar', ['-tzf', join(release, tarball)], { encoding: 'utf8' }).stdout.includes(
         'private-neighbor',
       ),
       false,
+    );
+    assert.match(
+      spawnSync('tar', ['-tzf', join(release, tarball)], { encoding: 'utf8' }).stdout,
+      /package\/RUNTIME\.md/,
     );
     assert.throws(() => publishSite(release, site, 'wrong'), /confirm/);
     assert.equal(publishSite(release, site, '0.1.0').sitePublished, true);

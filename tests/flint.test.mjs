@@ -1,3 +1,4 @@
+import { localExampleSource } from './local-example.mjs';
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -13,8 +14,11 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { createHash, createHmac } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
-import { loadContract, generate, validate, validateFixtures } from '../dist/index.js';
+import { spawnSync, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { createServer } from 'node:http';
+const exec = promisify(execFile);
+import { loadContract, generate, validate, validateFixtures, render } from '../dist/index.js';
 const dir = mkdtempSync(join(tmpdir(), 'sdk-flint-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
 const root = resolve('tests/providers/flint');
@@ -109,6 +113,206 @@ test('Flint profiles pin the dated spec independently of the URL and package ver
     );
   }
 });
+test('Flint READMEs lead with SDK docs and include one quickstart and concise payment and refund recipes', () => {
+  for (const target of ['node', 'php']) {
+    const readme = readFileSync(join(output, target, 'README.md'), 'utf8');
+    const docs =
+      '[Flint Pay SDK documentation](https://developers.withflintpay.com/docs/guides/sdks)';
+    assert.ok(readme.includes(docs));
+    assert.ok(!readme.includes('allowInsecureHttp'));
+    assert.ok(!readme.includes('...(process.env.API_TOKEN'));
+    if (target === 'node') assert.ok(readme.includes("token: process.env.API_TOKEN ?? ''"));
+    assert.ok(readme.indexOf(docs) < readme.indexOf('## Installation'));
+    assert.ok(readme.includes('[Runtime guide](RUNTIME.md)'));
+    assert.ok(!readme.includes('## Client and request options'));
+    assert.ok(!readme.includes('Mutually dependent numeric alternatives'));
+    const prose = readme.replace(/```[\s\S]*?```/g, '');
+    assert.ok(
+      prose.split(/\s+/).length < 500,
+      'README prose should stay focused on getting started',
+    );
+    const runtime = readFileSync(join(output, target, 'RUNTIME.md'), 'utf8');
+    assert.ok(runtime.includes('Mutually dependent numeric alternatives'));
+    assert.ok(runtime.includes('[Back to the quickstart](README.md)'));
+    const snippets = [...readme.matchAll(/```(?:typescript|php)\n([\s\S]*?)```/g)].map(
+      (match) => match[1],
+    );
+    assert.equal(snippets.length, 3);
+    for (const [index, operation] of [
+      'paymentIntents-create',
+      'paymentIntents-get',
+      'refunds-create',
+    ].entries()) {
+      const extension = target === 'node' ? 'mjs' : 'php';
+      const path = `examples/${operation}.${extension}`;
+      assert.ok(readme.includes(`[Run the standalone example](${path})`));
+      const script = readFileSync(join(output, target, path), 'utf8');
+      assert.ok(!script.includes('allowInsecureHttp'));
+      if (index === 0) {
+        assert.match(snippets[index], /catch \(/);
+        assert.match(snippets[index], /API_IDEMPOTENCY_KEY/);
+        assert.match(snippets[index], /outcome/);
+      } else {
+        assert.ok(!snippets[index].includes('new Client('));
+        assert.ok(snippets[index].length < snippets[0].length);
+      }
+      assert.ok(!snippets[index].includes('(array) (object)'));
+      assert.ok(!snippets[index].includes('var_dump'));
+      run(
+        target === 'node' ? process.execPath : 'php',
+        target === 'node'
+          ? ['--check', join(output, target, path)]
+          : ['-l', join(output, target, path)],
+      );
+    }
+    if (target === 'php') {
+      assert.ok(readme.includes("'amount_money' => (object) ["));
+      assert.ok(!snippets.join('').includes('json_decode('));
+    }
+  }
+});
+
+test('README snippets run in both targets with persisted keys and actionable errors', async () => {
+  const cases = JSON.parse(readFileSync(join(root, 'http-cases.json'), 'utf8'));
+  const seen = [];
+  const headerOnly = structuredClone(contract);
+  for (const operation of headerOnly.operations) {
+    delete operation.idempotency;
+    delete operation.retry;
+  }
+  const headerReadmes = render(headerOnly);
+  let mode = 'success';
+  const server = createServer(async (request, response) => {
+    let body = '';
+    for await (const chunk of request) body += chunk;
+    seen.push({
+      method: request.method,
+      path: request.url,
+      key: request.headers['idempotency-key'],
+      body,
+    });
+    if (mode === 'unknown') return request.socket.destroy();
+    if (mode === 'error') {
+      response.writeHead(503, {
+        'content-type': 'application/json',
+        'x-request-id': 'req_readme_error',
+      });
+      return response.end(JSON.stringify({ error: { code: 'UNAVAILABLE', message: 'Try later' } }));
+    }
+    const operation =
+      request.method === 'GET'
+        ? 'getPaymentIntent'
+        : request.url === '/v1/refunds'
+          ? 'createRefund'
+          : 'createPaymentIntent';
+    const fixture = cases.find(
+      (c) =>
+        c.operation === operation && c.responses.some((r) => r.status >= 200 && r.status < 300),
+    );
+    const reply = fixture.responses.find((r) => r.status >= 200 && r.status < 300);
+    response.writeHead(reply.status, { 'content-type': 'application/json', ...reply.headers });
+    response.end(reply.body);
+  });
+  await new Promise((done) => server.listen(0, '127.0.0.1', done));
+  const env = {
+    ...process.env,
+    API_BASE_URL: `http://127.0.0.1:${server.address().port}`,
+    API_TOKEN: 'test-token',
+    API_IDEMPOTENCY_KEY: 'saved-payment-action',
+    API_REFUNDS_CREATE_IDEMPOTENCY_KEY: 'saved-refund-action',
+  };
+  try {
+    mkdirSync(join(output, 'php/vendor'), { recursive: true });
+    writeFileSync(
+      join(output, 'php/vendor/autoload.php'),
+      "<?php require_once __DIR__ . '/../src/Runtime.php'; require_once __DIR__ . '/../src/Client.php';",
+    );
+    for (const target of ['node', 'php']) {
+      const text = readFileSync(join(output, target, 'README.md'), 'utf8');
+      const snippets = [...text.matchAll(/```(?:typescript|php)\n([\s\S]*?)```/g)].map((m) => m[1]);
+      const combined = snippets.join('\n');
+      const file = join(output, target, target === 'node' ? 'readme.mjs' : 'readme.php');
+      const first = join(
+        output,
+        target,
+        target === 'node' ? 'readme-first.mjs' : 'readme-first.php',
+      );
+      writeFileSync(file, localExampleSource(combined, target));
+      writeFileSync(first, localExampleSource(snippets[0], target));
+      const command = target === 'node' ? process.execPath : 'php';
+      if (target === 'node') {
+        const ts = join(output, target, 'readme.ts');
+        writeFileSync(ts, combined);
+        await exec(process.execPath, [
+          resolve('node_modules/typescript/bin/tsc'),
+          '--noEmit',
+          '--strict',
+          '--target',
+          'es2022',
+          '--module',
+          'nodenext',
+          '--typeRoots',
+          resolve('node_modules/@types'),
+          ts,
+        ]);
+      }
+      mode = 'success';
+      const offset = seen.length;
+      const result = await exec(command, [file], { env });
+      assert.match(result.stdout, /pi_fixture/);
+      assert.match(result.stdout, /ref_fixture/);
+      assert.match(result.stdout, /requires_capture/);
+      assert.deepEqual(
+        seen.slice(offset).map((r) => [r.method, r.path, r.key]),
+        [
+          ['POST', '/v1/payment-intents', 'saved-payment-action'],
+          ['GET', '/v1/payment-intents/pi_replace_with_sandbox_id', undefined],
+          ['POST', '/v1/refunds', 'saved-refund-action'],
+        ],
+      );
+      assert.deepEqual(JSON.parse(seen[offset].body), {
+        amount_money: { amount: 100, currency: 'USD' },
+        capture_method: 'manual',
+        payment_options: ['card'],
+      });
+      // A later invocation reloads the persisted key rather than generating another one.
+      await exec(command, [first], { env });
+      assert.equal(seen.at(-1).key, 'saved-payment-action');
+      const headerSnippet = [
+        ...headerReadmes
+          .get(`${target}/README.md`)
+          .matchAll(/```(?:typescript|php)\n([\s\S]*?)```/g),
+      ][0][1];
+      assert.doesNotMatch(headerSnippet, /headers:/);
+      assert.match(headerSnippet, /Idempotency-Key/);
+      const headerFile = join(
+        output,
+        target,
+        target === 'node' ? 'readme-header.mjs' : 'readme-header.php',
+      );
+      writeFileSync(headerFile, localExampleSource(headerSnippet, target));
+      await exec(command, [headerFile], { env });
+      assert.equal(seen.at(-1).key, 'saved-payment-action');
+      for (const errorMode of ['error', 'unknown']) {
+        mode = errorMode;
+        const before = seen.length;
+        await assert.rejects(exec(command, [first], { env }), (error) => {
+          assert.match(
+            error.stderr,
+            errorMode === 'error' ? /req_readme_error/ : /request may have succeeded/,
+          );
+          return true;
+        });
+        assert.equal(seen.length, before + 1, 'the example must not blindly resubmit');
+        assert.equal(seen.at(-1).key, 'saved-payment-action');
+      }
+    }
+  } finally {
+    server.closeAllConnections();
+    await new Promise((done) => server.close(done));
+  }
+});
+
 test('local Flint schema passes the same fifteen source-informed HTTP cases in both public clients', async () => {
   assert.deepEqual(await validateFixtures(output, join(root, 'http-cases.json')), [
     { target: 'node', scenarios: 15 },
