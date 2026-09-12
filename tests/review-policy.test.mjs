@@ -12,6 +12,7 @@ import { validateFixtures } from '../dist/fixtures.js';
 const root = mkdtempSync(join(tmpdir(), 'sdk-review-policy-'));
 after(() => rmSync(root, { recursive: true, force: true }));
 const profile = {
+  responses: { return: 'result' },
   version: '1.0.0',
   requests: { style: 'object' },
   npm: { name: 'policy-sdk' },

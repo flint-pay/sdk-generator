@@ -9,6 +9,7 @@ import { loadContract, generate, Diagnostic, validateFixtures } from '../dist/in
 const dir = mkdtempSync(join(tmpdir(), 'sdk-import-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
 const config = {
+  responses: { return: 'result' },
   version: '1.0.0',
   requests: { style: 'object' },
   npm: { name: '@example/import' },
@@ -187,8 +188,8 @@ test('reference-looking example data stays literal while named schema fields sti
   const c = load(d);
   assert.deepEqual(c.models.Entry.example, entry.example);
   assert.deepEqual(c.models.Entry.default, entry.default);
-  assert.equal(c.models.Entry.properties.example.type, 'string');
-  assert.equal(c.models.Entry.properties.$ref.type, 'string');
+  assert.equal(c.models.Entry.properties.example['x-sdk-ref'], 'Label');
+  assert.equal(c.definitions[c.models.Entry.properties.$ref['x-sdk-ref']].type, 'string');
   assert.ok(c.models.Label);
 });
 

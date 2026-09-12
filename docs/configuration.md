@@ -83,33 +83,37 @@ Relative references inside sibling fields resolve from the file declaring those 
 
 Unknown configuration keys fail with a source location. Capability declarations belong under the relevant `operations` entry unless the table marks them as top-level.
 
-| Top-level field        | Purpose and default                                                                                                                             |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `version`              | Required generated package SemVer; independent of the generator version and API version.                                                        |
-| `targets`              | `node`, `php`, or both; defaults to both.                                                                                                       |
-| `npm`                  | `name` required for Node; optional `registry` and `access` control publication metadata.                                                        |
-| `composer`             | `name` and `namespace` required for PHP.                                                                                                        |
-| `license`              | Package license metadata; defaults to `Apache-2.0`. Bundled runtime license is retained.                                                        |
-| `requests`             | Request argument style: `positional` (default) or `object`; see [request arguments](#request-arguments).                                        |
-| `responses`            | Optional SDK-wide return mode (`result` by default, or `payload`) and payload path; see [payload returns](#optional-payload-returns).           |
-| `operations`           | Public naming, aliases, examples and declared operation capabilities. Defaults to resource `api` and method equal to `operationId`.             |
-| `include`, `audiences` | Optional operation filters; operation `hidden: true` excludes that operation.                                                                   |
-| `models`               | Optional component-to-public-model name mapping.                                                                                                |
-| `overrides`            | Explicit root-document JSON Pointer replacements before reference resolution.                                                                   |
-| `validation`           | `encoding` by default; `schema` adds supported request bounds, lengths and patterns.                                                            |
-| `auth`                 | Optional explicit security scheme selection. Required when multiple declared schemes need disambiguation.                                       |
-| `errors`               | Optional provider error code/details paths and request-ID header.                                                                               |
-| `apiVersion`           | Optional pinned request header and value.                                                                                                       |
-| `webhook`              | Optional signing format and event schemas.                                                                                                      |
-| `money`                | Optional explicit currency precision table.                                                                                                     |
-| `documentation`        | Optional Markdown overview, named guides and featured example operation IDs.                                                                    |
-| `release`              | Optional distribution `baseUrl` and compatibility `policy` (`review` by default or `semver`); see [release policy](releases.md#version-policy). |
+| Top-level field        | Purpose and default                                                                                                                                             |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `version`              | Required generated package SemVer; independent of the generator version and API version.                                                                        |
+| `targets`              | `node`, `php`, or both; defaults to both.                                                                                                                       |
+| `npm`                  | `name` required for Node; optional `registry` and `access` control publication metadata.                                                                        |
+| `composer`             | `name` and `namespace` required for PHP.                                                                                                                        |
+| `license`              | Package license metadata; defaults to `Apache-2.0`. Bundled runtime license is retained.                                                                        |
+| `requests`             | Request argument style: `positional` (default) or `object`; see [request arguments](#request-arguments).                                                        |
+| `responses`            | Optional SDK-wide return mode (`payload` by default, or `result`) and payload path; see [payload returns](#payload-returns).                                    |
+| `operations`           | Public naming, aliases, examples and declared operation capabilities. Matching resource tags and operation IDs supply names; otherwise `api` and `operationId`. |
+| `include`, `audiences` | Optional operation filters; operation `hidden: true` excludes that operation.                                                                                   |
+| `models`               | Optional component-to-public-model name mapping.                                                                                                                |
+| `overrides`            | Explicit root-document JSON Pointer replacements before reference resolution.                                                                                   |
+| `validation`           | `encoding` by default; `schema` adds supported request bounds, lengths and patterns.                                                                            |
+| `auth`                 | Optional explicit security scheme selection. Required when multiple declared schemes need disambiguation.                                                       |
+| `errors`               | Optional provider error code/details paths and request-ID header.                                                                                               |
+| `apiVersion`           | Optional pinned request header and value.                                                                                                                       |
+| `webhook`              | Optional signing format and event schemas.                                                                                                                      |
+| `money`                | Optional explicit currency precision table.                                                                                                                     |
+| `documentation`        | Optional Markdown overview, named guides and featured example operation IDs.                                                                                    |
+| `release`              | Optional distribution `baseUrl` and compatibility `policy` (`review` by default or `semver`); see [release policy](releases.md#version-policy).                 |
 
 See [CLI usage](cli.md) to diagnose or preview these inputs, and [using generated SDKs](using-sdks.md) for runtime client/request options. Credentials and runtime base URLs are supplied by consumers, not stored in the SDK configuration.
 
 ## SDK customization
 
-`operations` keys are exact upstream `operationId` values. `resource` and `method` customize the public call while preserving HTTP method/path. `aliases` create deprecated methods invoking the same wire operation. Stale operation/model customization targets fail.
+`operations` keys are exact upstream `operationId` values. `resource` and `method` customize the public call while preserving HTTP method/path. `aliases` create deprecated methods invoking the same wire operation. Explicit resource, method and model names always take precedence over inferred defaults.
+
+Without overrides, a uniquely matching operation tag supplies the resource: `createPaymentIntent` tagged `payment_intents` becomes `paymentIntents.create`. Tags are normalized from camelCase, snake_case or words; singular/plural resource words are matched against the operation ID and removed from the method name. Acronyms normalize to camelCase (`createAPIKey` tagged `api_keys` becomes `apiKeys.create`). Missing, unrelated or ambiguous tags fall back to resource `api` and the unchanged operation ID. No path-based guessing is performed. Public collisions still fail diagnosis and can be resolved with explicit overrides.
+
+Upstream model names ending in `Input` default to `Request` (for example, `PaymentInput` becomes `PaymentRequest`), keeping the generator's `PaymentRequestInput` helper distinct. Existing names and explicit overrides are reserved first; inferred collisions use `RequestModel`, then numbered suffixes. Resolved model names apply consistently to recursive references and dependencies. Pin names explicitly when upgrading an existing SDK to preserve its public interface. Stale operation/model customization targets fail.
 
 `deprecated` supplies a migration message for an operation. OpenAPI `deprecated: true` also produces a notice. Generated TypeScript declarations include operation descriptions, usage examples and deprecation annotations. Tagged operation responses export an `is<Resource><Method>ResponseKnown` guard: check it before switching on known discriminator values; unknown variants remain available unchanged.
 
@@ -242,7 +246,7 @@ Generated examples use HTTPS. The `allowInsecureHttp` client option is available
 
 Named model factories can be nested in TypeScript client inputs through `InputValue<T>`. For models that also permit nonobjects, passing an object preserves its declared object branch in the factory return type so it can be used in object-constrained fields, including recursive references. Factories normalize nested wrappers into plain typed values, and request serialization revalidates them. PHP wrappers unwrap nested models into plain values for typed getters and preserve object/array/scalar/null shapes; `toArray()` applies only to array or object models. In object/array alternatives, PHP lists (including `[]`) represent JSON arrays, associative arrays represent JSON objects, and `(object) []` explicitly represents an empty JSON object. A directly declared object input still accepts `[]` as an empty object. Responses retain the object/array distinction from JSON decoding. Cyclic values, including opaque additional fields, fail before HTTP dispatch.
 
-Without `numericUnions: "explicit"`, alternatives mixing strings with exact-number strings, including corresponding nested object properties, array items and dictionary values, fail with a source diagnostic when the branches cannot be distinguished. Distinct required tags can separate object alternatives and preserve their wire representations. Numeric intersections requiring different SDK representations also fail, including intersections hidden inside `anyOf`/`oneOf` branches. Safe-integer/string alternatives remain distinct and supported. Use a provider correction only when it preserves the upstream wire contract; do not silently rewrite ambiguous values.
+Exact-number/string alternatives automatically use `ExactNumber` at ambiguous input paths: plain strings remain JSON strings and `new ExactNumber("1.2500")` selects a JSON number. This also applies inside objects, arrays and dictionaries. Other exact numeric inputs keep their string representation; distinct required tags can separate alternatives without wrappers. Numeric intersections requiring inconsistent SDK representations still fail diagnosis. Safe-integer/string alternatives remain distinct and supported.
 
 ## Request identification
 
@@ -291,9 +295,9 @@ A request shortcut overrides client authentication for that call. An explicit re
 
 Legacy `auth: { "scheme": "BearerAuth" }` and `token` remain supported. An ambiguous request needs an explicit mode. An incomplete scheme set, contradictory header override, or inapplicable mode fails before dispatch. Anonymous operations do not acquire a client default credential mode unless the operation permits it.
 
-`numericUnions: "explicit"` enables exact-number/string alternatives without changing their JSON schemas. At ambiguous input paths, strings remain JSON strings and `new ExactNumber("1.2500")` selects an exact JSON number in either target. Other exact numeric inputs retain their existing string representation. Numeric intersections with inconsistent representations remain unsupported.
+`numericUnions: "explicit"` and `schemaSharing: "named"` are deprecated compatibility aliases. Both behaviors are automatic; omit these settings in new profiles. Existing values remain accepted, invalid values still fail diagnosis, and the CLI reports a deprecation warning on stderr. Library callers can receive warnings through `loadContract(..., { onWarning })`.
 
-`schemaSharing: "named"` retains named payload dependencies as local compiled references. This bounds repeated schema expansion for large exports; it does not remove operations or constraints. Large exports can require a larger generator heap, for example `node --max-old-space-size=3072 dist/cli.js generate API.json SDK.json OUTPUT`. The full 497-operation fixture tests this setting within a 4-GiB process budget; installed clients do not need the generator heap setting. Top-level OpenAPI `webhooks` are incoming contracts and never generate outbound client methods. When HMAC verification is configured, effective literal event types bind the incoming payload schemas to the verifier. Incompatible explicit bindings fail diagnosis.
+Named payload dependencies are retained as local compiled references automatically. Library consumers inspecting `loadContract` schemas should follow `x-sdk-ref` through `contract.definitions`. When passing a schema to standalone runtime helpers, supply its definitions too: `serialize(value, { ...schema, "x-sdk-definitions": contract.definitions })` or `redact(value, schema, [], contract.definitions)`. Generated clients and model helpers supply these automatically. This bounds repeated schema expansion without removing operations or constraints. Large exports can require a larger generator heap, for example `node --max-old-space-size=3072 dist/cli.js generate API.json SDK.json OUTPUT`. The full 497-operation fixture tests automatic sharing within a 4-GiB process budget; installed clients do not need the generator heap setting. Top-level OpenAPI `webhooks` are incoming contracts and never generate outbound client methods. When HMAC verification is configured, effective literal event types bind the incoming payload schemas to the verifier. Incompatible explicit bindings fail diagnosis.
 
 ## Event stream configuration
 
@@ -315,9 +319,9 @@ A declared successful `text/event-stream` response produces a closeable event st
 
 Only configured event names have JSON payload decoding. Unknown event names retain raw strings. The media schema is not interpreted as a per-event JSON contract. Default limits are 30 seconds of idle reading and 1 MiB per event. Request options `streamIdleTimeoutMs` and `streamLifetimeMs` control idle reading and optional total lifetime. Connection setup uses the usual timeout/deadline; the stream owns its connection after the method returns. Resume uses the operation's declared last-event-ID input. Reconnection is caller-controlled; no event is automatically replayed.
 
-## Optional payload returns
+## Payload returns
 
-Existing configurations return `Result` with `data`, `meta` and `raw`. Opt into direct payload returns with `responses.return: "payload"`. Declare envelope paths explicitly; the generator never automatically unwraps a field because it is named `data`.
+New SDKs return the complete decoded body directly by default (`responses.return: "payload"`). Select `responses.return: "result"` to retain the `Result` envelope with `data`, `meta` and `raw`. Declare envelope paths explicitly; the generator never automatically unwraps a field because it is named `data`.
 
 ```json
 {
@@ -338,7 +342,7 @@ Each payload-mode method and deprecated alias also gets a `WithResponse` compani
 
 `Pages` and `Wait` helpers continue returning full `Result` envelopes. `Items` helpers continue yielding individual items. Pagination and polling paths always address the original response body, so payload unwrapping does not discard continuation or state information needed by these helpers. Existing HTTP fixtures also assert the complete wire body, via `WithResponse` for opted-in operations.
 
-Return settings and generated payload types are recorded in the compiled contract. Enabling or disabling payload mode, or changing a payload path, is a breaking SDK change under the semver release policy. Existing SDKs can keep their current defaults until ready to migrate. Generated documentation, examples and Node/PHP declarations reflect the selected mode.
+Return settings and generated payload types are recorded in the compiled contract. Enabling or disabling payload mode, or changing a payload path, is a breaking SDK change under the semver release policy. When regenerating an existing Result SDK, an omitted return mode produces an actionable diagnostic instead of silently changing returns. Set `responses.return: "result"` to preserve its API, or explicitly select `"payload"` to migrate. Operation-level explicit return choices also count as migration choices. Generated documentation, examples and Node/PHP declarations reflect the selected mode.
 
 ## Request arguments
 

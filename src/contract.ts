@@ -1,5 +1,6 @@
 import { validateRequestStyle, validatePositional, type RequestStyle } from './request-style.js';
 import { validateResponseReturn, payloadSchemas, type ResponseReturn } from './response-return.js';
+import { operationNames, modelNames, isPublicName } from './naming.js';
 import { shareContractSchemas } from './schema-sharing.js';
 import { Diagnostic, DiagnosticGroup, DiagnosticCollector, suggestion } from './diagnostic.js';
 import { valueInstruction, exactValue, discriminatorBindings } from './codec-plan.js';
@@ -141,7 +142,9 @@ export interface Config {
   requests?: RequestStyle;
   responses?: ResponseReturn;
   profiles?: string[];
+  /** @deprecated Exact-number/string alternatives are supported automatically. */
   numericUnions?: 'explicit';
+  /** @deprecated Named schema sharing is automatic. */
   schemaSharing?: 'named';
   validation?: 'encoding' | 'schema';
   auth?:
@@ -196,12 +199,6 @@ export const hash = (value: string): string => createHash('sha256').update(value
 const fail = (p: string, m: string): never => {
   throw new Diagnostic(p, m);
 };
-const identifier = /^[A-Za-z][A-Za-z0-9_]*$/;
-const reserved = new Set(
-  'class function public private protected static new default delete constructor prototype then tostring valueof tojson catch finally call request close pages items wait verifywebhook money client runtime model result sdkerror codec rawnumber cancellation clientoptions requestoptions namespace use match enum readonly trait interface extends implements clone throw return const var let await yield list echo print empty isset unset true false null string int bool float mixed void never object array iterable self parent static abstract final break case continue declare die do else elseif enddeclare endfor endforeach endif endswitch endwhile eval exit for foreach global goto if include include_once instanceof insteadof require require_once switch try while xor and or switch'.split(
-    ' ',
-  ),
-);
 // TypeScript keywords are case-sensitive and may still be valid property names.
 const reservedTypeNames = new Set(
   'debugger export import in super this typeof with package arguments keyof infer unique'.split(
@@ -218,11 +215,7 @@ function modelName(
     fail(path, 'model name is a TypeScript reserved word; customize it with config.models');
 }
 function name(value: unknown, path: string, method = false): asserts value is string {
-  if (
-    typeof value !== 'string' ||
-    !identifier.test(value) ||
-    (reserved.has(value.toLowerCase()) && !(method && value.toLowerCase() === 'list'))
-  )
+  if (!isPublicName(value, method))
     fail(
       path,
       'choose an identifier that is not a JavaScript/PHP reserved word or SDK runtime member',
@@ -928,7 +921,7 @@ function pointer(root: unknown, pointer: string, p: string): any {
 export function loadContract(
   definitionPath: string,
   configPath: string,
-  options: { collectDiagnostics?: boolean } = {},
+  options: { collectDiagnostics?: boolean; onWarning?: (warning: Diagnostic) => void } = {},
 ): Contract {
   const diagnostics = new DiagnosticCollector(options.collectDiagnostics ?? false);
   const sources: Record<string, string> = {};
@@ -1110,7 +1103,7 @@ export function loadContract(
             ? modelMatch[1]!.replace(/~1/g, '/').replace(/~0/g, '~')
             : undefined;
         const mapped = original
-          ? (own(config.models, original) ?? original)
+          ? publicModel(original)
           : 'ReferencedModel' + hash(relativePath(rootDir, target) + '#' + fragment).slice(0, 12);
         if (cycles.has(mapped) && cycles.get(mapped) !== key)
           fail(path, 'recursive model name collision');
@@ -1252,6 +1245,8 @@ export function loadContract(
     return mergeProfiles(combined, local, 'config');
   };
   const config = loadProfile(resolve(configPath)) as Config;
+  let inferredModels = new Map<string, string>();
+  const publicModel = (original: string) => inferredModels.get(original) ?? original;
 
   // Skip checks that depend on an invalid container, while validating unrelated settings.
   const invalidConfig = new Set<string>();
@@ -1324,6 +1319,16 @@ export function loadContract(
     if (config.numericUnions !== undefined && config.numericUnions !== 'explicit')
       fail('config/numericUnions', 'expected explicit');
   });
+  for (const key of ['schemaSharing', 'numericUnions'] as const)
+    if (config[key] !== undefined)
+      options.onWarning?.(
+        new Diagnostic(
+          'config/' + key,
+          'deprecated; this behavior is automatic and the setting can be omitted',
+        ),
+      );
+  config.schemaSharing ??= 'named';
+  config.numericUnions ??= 'explicit';
   diagnostics.check(() => {
     if (config.validation !== undefined && !['encoding', 'schema'].includes(config.validation))
       fail('config/validation', 'expected encoding or schema');
@@ -1334,7 +1339,7 @@ export function loadContract(
   checkConfig(['responses'], () => {
     if (config.responses !== undefined) {
       validateResponseReturn(config.responses, 'config/responses');
-      if (config.responses.payloadPath && config.responses.return !== 'payload')
+      if (config.responses.payloadPath && config.responses.return === 'result')
         fail('config/responses/payloadPath', 'payloadPath requires return: payload');
     }
   });
@@ -1683,6 +1688,7 @@ export function loadContract(
         );
   }
   diagnostics.finish();
+  inferredModels = modelNames(Object.keys(raw.components?.schemas ?? {}), config.models);
   const streamSchemas = new Map<string, Record<string, Schema>>();
   const selectedPaths = Object.fromEntries(
     Object.entries(raw.paths ?? {}).map(([path, item]) => {
@@ -1783,7 +1789,7 @@ export function loadContract(
             ...new Set(
               references
                 .filter((ref) => ref.path.startsWith(location + '/'))
-                .map((ref) => own(config.models, ref.model) ?? ref.model),
+                .map((ref) => publicModel(ref.model)),
             ),
           ].sort(),
         });
@@ -1845,7 +1851,7 @@ export function loadContract(
     Schema,
   ][]) {
     try {
-      const mapped = own(config.models, original) ?? original;
+      const mapped = publicModel(original);
       modelName(mapped, `models/${original}`, config.targets);
       if (Object.keys(models).some((k) => k.toLowerCase() === mapped.toLowerCase()))
         fail(`models/${original}`, 'model name collision');
@@ -2029,7 +2035,8 @@ export function loadContract(
           'positional';
         if (c.response !== undefined)
           validateResponseReturn(c.response, `config/operations/${id}/response`);
-        const responseReturn = {
+        const responseReturn: ResponseReturn = {
+          return: 'payload',
           ...(invalidConfig.has('responses') ? {} : config.responses),
           ...c.response,
         };
@@ -2070,8 +2077,9 @@ export function loadContract(
           (config.audiences && !c.audiences?.some((a) => config.audiences!.includes(a)))
         )
           continue;
-        const resource = c.resource ?? 'api';
-        const method = c.method ?? id;
+        const inferred = operationNames(id, op.tags);
+        const resource = c.resource ?? inferred.resource;
+        const method = c.method ?? inferred.method;
         name(resource, `${p}/resource`);
         name(method, `${p}/method`, true);
         const spelling = resourceSpellings.get(resource.toLowerCase());
@@ -2611,7 +2619,7 @@ export function loadContract(
                   (ref) =>
                     ref.path.startsWith(operationPath) || ref.path.startsWith(sharedParameters),
                 )
-                .map((ref) => own(config.models, ref.model) ?? ref.model),
+                .map((ref) => publicModel(ref.model)),
             ),
           ].sort(),
         ];

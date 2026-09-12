@@ -32,6 +32,7 @@ function emit(schema, schemas = {}) {
   writeFileSync(
     join(dir, 'sdk.json'),
     JSON.stringify({
+      responses: { return: 'result' },
       version: '1.0.0',
       validation: 'schema',
       requests: { style: 'object' },

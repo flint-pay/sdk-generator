@@ -39,5 +39,8 @@
   },
   "requests": {
     "style": "object"
+  },
+  "responses": {
+    "return": "result"
   }
 }

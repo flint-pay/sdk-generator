@@ -12,6 +12,7 @@ import { loadContract, generate, render } from '../dist/generate.js';
 const root = mkdtempSync(join(tmpdir(), 'sdk-hardening-'));
 after(() => rmSync(root, { recursive: true, force: true }));
 const profile = {
+  responses: { return: 'result' },
   version: '1.0.0',
   requests: { style: 'object' },
   npm: { name: 'hardening-sdk' },
@@ -252,7 +253,7 @@ echo json_encode(['calls'=>$calls,'items'=>$items,'kind'=>$kind]);
   }
 });
 
-test('diagnosis rejects ambiguous numeric/string alternatives inside objects, arrays, dictionaries and compositions', () => {
+test('diagnosis automatically supports numeric/string alternatives inside objects, arrays, dictionaries and compositions', () => {
   const object = (value) => ({ type: 'object', required: ['value'], properties: { value } });
   const cases = [
     [object({ type: 'string' }), object({ type: 'number' })],
@@ -279,10 +280,7 @@ test('diagnosis rejects ambiguous numeric/string alternatives inside objects, ar
       const i = inputs(`ambiguous-${keyword}-${index}`, {
         get: { operationId: 'fetchValue', responses: response({ [keyword]: branches }) },
       });
-      assert.throws(
-        () => loadContract(i.definition, i.configuration),
-        /alternatives have ambiguous SDK string inputs/,
-      );
+      assert.doesNotThrow(() => loadContract(i.definition, i.configuration));
     }
 });
 

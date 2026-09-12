@@ -38,6 +38,7 @@ const doc = {
   },
 };
 const config = {
+  responses: { return: 'result' },
   version: '1.0.0',
   requests: { style: 'object' },
   npm: { name: '@example/incoming' },

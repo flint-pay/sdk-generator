@@ -17,6 +17,7 @@ const run = promisify(execFile);
 const root = mkdtempSync(join(tmpdir(), 'sdk-review-fixes-'));
 after(() => rmSync(root, { recursive: true, force: true }));
 const profile = {
+  responses: { return: 'result' },
   version: '1.0.0',
   requests: { style: 'object' },
   npm: { name: '@example/review' },

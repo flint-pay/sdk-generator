@@ -41,6 +41,7 @@ function fixture(name, responses, config = {}, components) {
   writeFileSync(
     profile,
     JSON.stringify({
+      responses: { return: 'result' },
       version: '1.0.0',
       requests: { style: 'object' },
       npm: { name: '@example/response-media' },

@@ -11,6 +11,7 @@ import { serialize, redact } from '../dist/runtime.js';
 const root = mkdtempSync(join(tmpdir(), 'sdk-ref-siblings-'));
 after(() => rmSync(root, { recursive: true, force: true }));
 const config = {
+  responses: { return: 'result' },
   version: '1.0.0',
   validation: 'schema',
   requests: { style: 'object' },
@@ -118,11 +119,11 @@ test('3.1 sibling constraints intersect, retain local metadata, and never contam
     ),
   );
   const c = i.load(),
-    body = c.operations[0].body;
+    body = { ...c.operations[0].body, 'x-sdk-definitions': c.definitions };
   assert.equal(body.properties.short.description, 'Short');
   assert.equal(body.properties.long.description, 'Base');
   assert.deepEqual(c.models.Text, base);
-  assert.deepEqual(body.properties.plain, base);
+  assert.deepEqual(c.definitions[body.properties.plain['x-sdk-ref']], base);
   assert.equal(serialize({ short: 'abc', long: 'abcde' }, body), '{"short":"abc","long":"abcde"}');
   assert.throws(() => serialize({ short: 'a' }, body), /minLength/);
   assert.throws(() => serialize({ short: 'abcd' }, body), /maxLength/);
@@ -149,7 +150,8 @@ test('3.0 ignores reference siblings without traversing them and preserves nulla
     ),
   );
   const body = i.load().operations[0].body;
-  assert.deepEqual(body.properties.value, { type: 'string', description: 'Original' });
+  assert.equal(body.properties.value['x-sdk-ref'], 'Text');
+  assert.deepEqual(i.load().definitions.Text, { type: 'string', description: 'Original' });
   await fixtures(i, [
     accepted('ignored bounds', { value: 'long', wrapped: null }),
     rejected('ignored nullable', { value: null }),
@@ -231,7 +233,10 @@ test('external sibling references retain their own origins, dependencies, and de
   for (const name of ['base/schema.json', 'base/parent.json', 'base/nested.json', 'local.json'])
     assert.ok(c.sources[name]);
   assert.equal(
-    serialize({ id: 'a', nested: 2, local: true }, c.operations[0].body),
+    serialize(
+      { id: 'a', nested: 2, local: true },
+      { ...c.operations[0].body, 'x-sdk-definitions': c.definitions },
+    ),
     '{"id":"a","nested":2,"local":true}',
   );
   const relocated = join(root, 'relocated');
@@ -426,11 +431,19 @@ test('direction and redaction annotations cannot be weakened by siblings', async
   const body = i.load().operations[0].body;
   assert.equal(body.properties.id.readOnly, true);
   assert.equal(body.properties.credential.writeOnly, true);
-  assert.deepEqual(redact({ label: 'hidden', inherited: 'hidden', credential: 'hidden' }, body), {
-    label: '[REDACTED]',
-    inherited: '[REDACTED]',
-    credential: '[REDACTED]',
-  });
+  assert.deepEqual(
+    redact(
+      { label: 'hidden', inherited: 'hidden', credential: 'hidden' },
+      body,
+      [],
+      i.load().definitions,
+    ),
+    {
+      label: '[REDACTED]',
+      inherited: '[REDACTED]',
+      credential: '[REDACTED]',
+    },
+  );
   await fixtures(i, [
     accepted(
       'directional fields',

@@ -40,6 +40,7 @@ try {
   ) {
     const contract = loadContract(args[0]!, args[1]!, {
       collectDiagnostics: command === 'diagnose',
+      onWarning: (warning) => console.error(stable({ warning: warning.message })),
     });
     render(contract);
     if (command === 'diagnose')

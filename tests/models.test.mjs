@@ -40,6 +40,7 @@ const doc = {
   },
 };
 const cfg = {
+  responses: { return: 'result' },
   validation: 'schema',
   version: '1.0.0',
   requests: { style: 'object' },

@@ -44,6 +44,7 @@ document.paths['/private'] = {
   },
 };
 const config = {
+  responses: { return: 'result' },
   version: '1.0.0',
   include: ['saveTree'],
   models: { Tree: 'Branch' },

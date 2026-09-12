@@ -34,6 +34,7 @@ const fixture = (name) => resolve('tests/fixtures/' + name);
 const contract = loadContract(fixture('payment-api.json'), fixture('payment-sdk.json'));
 const runtimeContract = {
   operations: contract.operations,
+  definitions: contract.definitions,
   auth: contract.auth,
   apiVersion: contract.config.apiVersion,
   webhook: contract.config.webhook,
@@ -784,6 +785,7 @@ test('publishing requires a reviewed version and verifies archives before invoki
   writeFileSync(
     join(dir, 'release-plan.json'),
     JSON.stringify({
+      responses: { return: 'result' },
       version: '1.2.3',
       checksums: { 'sdk.tgz': createHash('sha256').update(archive).digest('hex') },
       npm: { registry: 'https://registry.example.invalid', access: 'restricted' },
@@ -902,6 +904,7 @@ test('dangling symlinks are rejected before writes and older generation records 
 test('tagged PHP responses retain typed known variants and preserve future variants', async () => {
   const api = JSON.parse(readFileSync('examples/library.openapi.json'));
   const config = JSON.parse(readFileSync('examples/library.sdk.json'));
+  config.responses = { return: 'result' };
   config.requests = { style: 'object' };
   api.paths['/books/{id}'].get.responses['200'].content['application/json'].schema = {
     oneOf: [
