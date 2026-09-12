@@ -4,7 +4,7 @@ Generate and install a package using the [README quickstart](../README.md#instal
 
 ## Calls, inputs and results
 
-New SDK methods return the decoded body directly. Use `WithResponse` for the full body and HTTP metadata, as in the Node example below. Providers may explicitly select a nested payload path or retain `Result` returns; consult the generated reference for the selected mode.
+New SDK methods return the decoded body directly: `const payment = await client.paymentIntents.create(input)` yields the configured payload with no SDK `data` wrapper. Use the `WithResponse` companion when you need the full decoded `body`, HTTP `meta` or the `raw` response, as in the Node example below; each invocation sends its own request, so choose one form per action. Providers may explicitly select a nested payload path or retain `Result` returns, per SDK or per operation; check the generated reference for the selected mode and follow provider migration notes when it changes. `Pages` and `Wait` always yield or return full `Result` envelopes, and `Items` yields individual items.
 
 Node.js and TypeScript share one ESM package. Use a `.mjs` file or a project with `"type": "module"`. TypeScript consumers use the included declarations with TypeScript 5.9+ and NodeNext module resolution. Generated npm packages install the pinned `@types/node` dependency required by their declarations.
 
@@ -62,8 +62,6 @@ PHP response classes include the response status in their names; tagged alternat
 For operations explicitly configured for result mode, `Result` contains `data`, `meta` and explicit raw response text in `raw`. `data` is the complete decoded API response body. If the provider wraps its payload in another `data` field, use `result.data.data` (PHP: `$result->data->data`). Endpoint-specific nesting stays intact; follow the operation example rather than assuming every endpoint has the same envelope. Node accesses metadata with properties; PHP uses array keys. Metadata includes HTTP status, response headers, attempt count, duration and an optional provider request ID. Inspect unknown response enums or variants explicitly before treating them as a known successful business state.
 
 Use strings for exact int64/uint64 and JSON `number` values, including decimals: `"9007199254740993"`, for example. The schema determines whether the string becomes an unquoted number token on the wire. Ordinary safe integers use native numbers/integers. Do not convert an exact amount to a floating-point number before handing it to the SDK. When configured, `money(currency, major)` converts an exact major-unit string to minor units and rejects whitespace, including trailing newlines, and excess precision.
-
-Mutually dependent numeric alternatives share their declarations before validation. Joint matching is limited to 256 combinations per value path in a codec execution; exceeding that limit produces a validation failure, or a protocol error while decoding a response. Collection elements have independent limits.
 
 Integer responses accept integral decimal and exponent notation: `1.0` becomes `1`, and `1e3` becomes `1000`. int64/uint64 results remain exact strings. Fractional values are rejected rather than rounded, and decimal fields retain their original precision. Node request arrays must contain an explicit value at every index; sparse arrays fail validation before dispatch.
 
@@ -143,7 +141,7 @@ When webhook verification is declared, use the generated `verifyWebhook` with or
 
 Keep handwritten domain helpers in the generated package's `custom/` directory so regeneration preserves them. See [architecture](architecture.md#extending-the-project) for imports and Composer autoloading.
 
-Request methods use the media type selected by the provider profile and set `Content-Type` accordingly. A JSON request remains JSON when the source also declares a form representation. With schema validation enabled, object property bounds count the encoded keys, including explicit null fields and additional properties; omitted optional fields do not count. Ordinary response decoding remains tolerant of these business bounds.
+With schema validation enabled, object property bounds count the encoded keys, including explicit null fields and additional properties; omitted optional fields do not count. Ordinary response decoding remains tolerant of these business bounds.
 
 ## Authentication modes
 
@@ -175,7 +173,7 @@ PHP uses the same associative maps in `ClientOptions` and `RequestOptions`. Cons
 
 ## PDF downloads and declared redirects
 
-PDF methods return `Uint8Array` in Node and binary-safe strings in PHP by default. The `WithResponse` companion exposes the bytes in `body` and `raw`, preserving including zero and non-UTF-8 bytes. JSON error responses retain ordinary SDK error decoding. Do not convert binary results to UTF-8 text before saving them.
+PDF methods return `Uint8Array` in Node and binary-safe strings in PHP by default. The `WithResponse` companion exposes the bytes in `body` and `raw`, preserving every byte, including zero and non-UTF-8 bytes. JSON error responses retain ordinary SDK error decoding. Do not convert binary results to UTF-8 text before saving them.
 
 Explicit `302` and `307` results expose an optional `location`; their `WithResponse` companions expose status and headers in `meta` and the location in `body.location`. Required Location headers are checked. Relative and cross-origin locations are returned without following them. Following a returned location is a separate application decision. Undeclared redirects still fail.
 
@@ -215,18 +213,12 @@ Debug inspection of binary/stream results omits headers and URLs; event inspecti
 
 Events expose `event`, `id`, `data`, `rawData`, and optional `retry` milliseconds. The parser handles comments, multiline data, split UTF-8 and CR/LF/CRLF. Incomplete final events are discarded. Invalid UTF-8, malformed configured JSON payloads, and oversized events close the stream with a protocol error. Breaking iteration closes the iterator's connection. Explicit close also handles streams that were never iterated. Client close releases owned streams.
 
-Node schedules long timeouts and stream lifetimes in bounded timer chunks, preserving the requested duration beyond the native timer limit.
-
 Iteration provides backpressure. PHP's default cURL multi transport queues at most one write chunk and pauses further writes until consumed. PHP cancellation and lifetime checks are cooperative while reading/iterating; synchronous injected transports must honor cancellation while blocked. Node uses AbortSignal, including during an idle read. A PHP injected transport returns a `ByteStream` in `response['stream']`; `read(): ?string` returns bounded chunks or null at EOF and `close(): void` releases resources. The injected request includes stream limits and cancellation. Connection retries can occur only before a stream result is returned, under the operation's declared retry policy. There is no automatic reconnect or delivery guarantee.
 
-Package READMEs include installation instructions, provider documentation links when configured, and a complete quickstart with error handling, followed by two short recipes. Examples show request inputs, declared response ID/status fields and request IDs; idempotent mutations create a key inline, with a reminder to reuse it for retries of the same action. The `examples/` directory contains runnable scripts for every operation; the API reference links to each script. Set the environment variables shown in an example and replace sample IDs with values from your account before running it.
+Each package's `examples/` directory contains a runnable script for every operation, linked from the API reference. Set the environment variables shown in an example and replace sample IDs with values from your account before running it.
 
 Generated examples use random idempotency keys only when the declared header schema permits their format and length. For patterns, enums, or other constraints that cannot guarantee that format, set `API_IDEMPOTENCY_KEY` to a schema-compatible key before running an example. Create a new key for a new business action and reuse the saved key only for the same action.
 
 PHP `valueOrDefault(field, fallback)` avoids the `getField()` accessor namespace, so wire fields such as `orDefault` retain their existing `getOrDefault()` getter.
 
 Authentication option types are part of the compiled public contract. Migrating from older unrestricted options to named modes, or narrowing an operation’s accepted modes, is reported as breaking and requires a major version under the semver policy. Update shared wrappers to use the mode-specific `RequestOptions<'merchant'>` type when necessary.
-
-New SDKs use direct payload returns by default. For those operations, `const payment = await client.paymentIntents.create(input)` accesses the configured payload without an SDK `data` wrapper. Use `createWithResponse(input)` instead when you need `response.body`, `response.meta`, or `response.raw`; `body` is the complete decoded API response, without unwrapping. PHP uses the same method names with `->` property access. Each invocation sends a separate request, so choose one form per action.
-
-Check the operation reference for its return mode. SDKs and individual operations can retain the existing `Result` interface. `Pages` and `Wait` always yield/return full Results; `Items` yields individual items. Follow provider migration notes when an SDK changes its return mode or payload path.

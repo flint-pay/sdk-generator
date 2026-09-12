@@ -966,9 +966,11 @@ final class Codec
             }
             if ($c === '-' || ctype_digit($c)) {
                 preg_match(
-                    '/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/',
-                    substr($text, $i),
+                    '/\G-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/',
+                    $text,
                     $matches,
+                    0,
+                    $i,
                 );
                 $token = $matches[0];
                 $safe =

@@ -4,24 +4,24 @@ The generator is a TypeScript CLI/library. There is no daemon, telemetry, hosted
 
 Start with the [CLI and library reference](cli.md) for invocation, [configuration](configuration.md) for provider inputs, or [using generated SDKs](using-sdks.md) for the consumer API.
 
-1. `src/contract.ts` reads local inputs, resolves references, applies explicit provider overrides, validates the supported subset, selects operations, and produces a language-neutral resolved contract. Source hashes record all referenced files, including the configuration.
-2. `src/target-plan.ts` compiles that input into a versioned SDK contract: public Node/PHP declarations, PHP class routing, operation descriptors, codecs, and compatibility facts. `codec-plan.ts` owns numeric representation, direction, requiredness, and execution instructions; `target-types.ts` owns declaration policies. Selected operations include required models but not excluded API surfaces.
-3. `src/generate.ts` renders those plans into standalone packages. `src/runtime.ts` and `templates/Runtime.php` execute the compiled descriptors using their existing language-specific JSON and transport primitives. Ordinary generated calls do not compile schemas.
-4. Public schema-taking helpers remain available. Node bundles the same pure codec compiler used during generation. PHP's isolated `Internal\SchemaAdapter` translates schemas into the common descriptor format. Both adapters delegate to the descriptor executor; they are not fallback paths for generated operations. No global schema cache or installed generator is required.
-5. `src/fixtures.ts` and `templates/fixtures.php` exercise generated public clients with independently specified expected HTTP cases. Tests also install packages and call both default transports against a local HTTP server. Compiler dependency checks inspect TypeScript imports and PHP tokens, and generated-client tests disable adapters to enforce the execution boundary.
-6. The private generation record stores both resolved source provenance and compiled snapshots. Compatibility compares saved previous decisions with new plans. This record is excluded from SDK archives. Selected descriptors and public dynamic schema definitions are SDK source, so an SDK for a private API must be distributed privately.
+## Pipeline
+
+| Stage                                                                                               | Owner                                                   |
+| --------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| Read local inputs, resolve references, apply overrides, select operations, validate and hash source | `src/contract.ts`                                       |
+| Compile the resolved contract into codecs, declarations, descriptors and compatibility facts        | `src/target-plan.ts`, `src/codec-plan.ts`               |
+| Render the plans into standalone packages                                                           | `src/generate.ts`                                       |
+| Execute compiled descriptors at runtime                                                             | `src/runtime.ts`, `templates/Runtime.php`               |
+| Run generated clients against independently specified HTTP cases                                    | `src/fixtures.ts`, `templates/fixtures.php`             |
+| Compare saved plans with new ones                                                                   | `src/compatibility.ts`, `src/compiled-compatibility.ts` |
+
+Compilation and comparison take explicit inputs and perform no filesystem, network, clock or environment access; generation owns file reads and writes. Compiler dependency checks inspect TypeScript imports and PHP tokens to block forbidden edges and cycles.
+
+Generated packages carry their compiled descriptors and execute them with their own language's JSON and transport primitives. Ordinary generated calls do not compile schemas. Public schema-taking helpers remain available for application-supplied schemas: Node bundles the same pure codec compiler used during generation, and PHP's isolated `Internal\SchemaAdapter` translates schemas into the same descriptor format. Neither is a fallback path for generated operations, and generated-client tests disable the adapters to enforce that boundary.
 
 Public declarations and runtime guarantees remain separate facts in the compiled contract. A target exposing `unknown` or `mixed` does not discard guarantees enforced by its codec.
 
-Codec execution first interprets exact SDK numeric strings using the positive declarations in the compiled plan, then validates every constraint against that shared JSON numeric view. Both phases use the same alternative-selection policy. Named references are followed along the finite caller value without expanding recursive schemas or modifying shared definitions. This execution path serves requests, model factories, and known-response guards in both runtimes; constraint-only siblings retain numeric meaning without response-specific schema specialization. Ordinary response tolerance and the selected request validation policy still apply during validation.
-
-When intersected unions depend on each other's numeric interpretation, the executor revisits selections as additional numeric meaning becomes available. Optional undefined request properties are omitted before this matching. TypeScript input declarations separately project numeric enum intersections through the applicable alternatives, preserving exact strings and excluding incompatible JSON-string branches without changing the runtime schemas.
-
-Overlapping `anyOf` branches reuse their matched numeric views. Before execution, the runtimes check that each newly interpreted numeric string still has a positive declaration in the final selected branches. If a contribution came only from a branch invalidated by the shared numeric view, validation fails before dispatch; internal numeric tokens cannot escape through unknown or constraint-only fields. When merging these views enables further interpretation, only subtrees with newly established numeric meaning are revisited. Response `anyOf` selection directly computes its compatible matches instead of first computing and discarding closed matches. Recursive numeric enum declarations follow named scalar alternatives without expanding their recursive object or array children.
-
-If independent selections stall on a circular dependency, the executor tries joint branch groups and verifies them with the original union selection policy before accepting their numeric interpretation. String field constraints prune incompatible candidates; unmatched branches cannot contribute numeric meaning, and `oneOf` still requires exactly one match. Joint search is limited to 256 combinations per value path during a codec execution, including recursive attempts. Exhausting this limit fails validation instead of accepting a partial interpretation. Separate collection elements have separate limits, and ordinary independent selections do not use this search.
-
-Pagination declarations project item constraints through the response schema. Constraints on the same element remain intersections; response alternatives remain unions. An item constraint such as `minLength` cannot widen an inherited string declaration to `unknown`.
+The private generation record stores resolved source provenance and compiled snapshots, so compatibility compares saved previous decisions against new plans rather than reinterpreting old source schemas. It is excluded from SDK archives. Selected descriptors and public dynamic schema definitions are SDK source, so an SDK for a private API must be distributed privately.
 
 ## Regeneration transaction
 
@@ -29,7 +29,7 @@ Preview renders all artifacts in memory, checks prior owned file hashes, refuses
 
 Atomic directory replacement is scoped to one output directory on the same filesystem. Readers may briefly observe a missing directory between the backup and replacement renames. A process crash can leave a sibling backup/staging directory or lock; inspect these before recovery. Concurrent manual changes during generation are unsupported. Do not generate into a repository root or a directory used by a running deployment.
 
-Deterministic rendering normalizes object-key order, excludes timestamps/absolute workspace paths from generated packages, and pins compiler versions with package-lock.json. The private record contains resolved data and source hashes. Local source files and the pinned generator revision are required to reproduce provenance.
+Deterministic rendering normalizes object-key order, excludes timestamps/absolute workspace paths from generated packages, and pins compiler versions with package-lock.json. Local source files and the pinned generator revision are required to reproduce provenance.
 
 ## Extending the project
 
@@ -41,14 +41,6 @@ Provider-owned domain helpers live in generated package `custom/` directories an
 
 Node consumers import helpers using `package-name/custom/helper.js`; matching `.d.ts` files can supply helper types. PHP classes in `custom/` are discovered by Composer's generated classmap during installation or `composer dump-autoload`. The generator owns only the PHP directory marker and never overwrites handwritten helper files. Both package archives include intentional custom files and exclude unrelated neighboring source files.
 
-`src/compatibility.ts` compares compiled input/wire policies. `src/compiled-compatibility.ts` compares saved public declarations, PHP identities, and response guarantees. `value-guarantee.ts` owns bounded returned-value inclusion; unsupported proofs remain review findings. The public schema comparison entry points compile their arguments under current semantics and cannot recover arbitrary historical runtime behavior. `src/distribution.ts` prepares and deploys an independently hosted Composer repository and versioned documentation. Markdown rendering disables raw HTML; downloadable examples receive a `.txt` suffix so PHP-capable hosting cannot execute them as scripts. Release checksums cover docs and examples as well as archives.
+Unsupported generation input produces a diagnostic; unavailable compatibility proof produces a review finding. The public schema comparison entry points compile their arguments under current semantics and cannot recover arbitrary historical runtime behavior.
 
-## Full public contracts
-
-Transport compilation records body representation (`empty`, `json`, `binary`, `sse`) separately from success/error/redirect classification. Event stream payload schemas are explicit operation configuration and compile to `streamEventCodecs`. Executors consume those codecs; a media schema is never reinterpreted as an event payload schema. Incoming OpenAPI webhooks retain provenance and payload dependencies in a separate collection and do not participate in outbound operation dispatch.
-
-Named authentication modes retain complete OpenAPI AND requirement sets and operation bindings. A selected mode's credentials become request-local headers after destination validation. Compatible local profiles compose operation selections and role bindings before contract validation.
-
-Codec semantics version 3 adds literals, exact divisibility, JSON uniqueness, property counts, conditionals, containment, and proven discriminator tag bindings. Literal JSON remains data at every traversal. Conditional and containment predicates use strict matching on the shared interpreted JSON value. Branch selection and the request's business-validation policy remain separate decisions. Explicit numeric wrappers distinguish JSON numbers from JSON strings at opted-in ambiguous input paths; model inputs preserve that interpreted kind through subsequent encoding.
-
-Ingestion automatically shares named schemas at value-descending edges while retaining conjunctive routing facts at each use site. After declarations and codec routing are compiled, `codec-sharing.ts` interns repeated complete instructions into local definitions. Reference wrappers preserve selection tags, direction flags and request policy. Both runtime plans and generated model factories use the shared definitions. PHP's schema registry loads the compiled contract once and reuses its arrays across clients; no schema adapter is invoked by generated operations. The full-source tests enforce package-size, generation-time and peak-memory budgets and verify all public operations and incoming declarations.
+`src/distribution.ts` prepares and deploys an independently hosted Composer repository and versioned documentation. Markdown rendering disables raw HTML; downloadable examples receive a `.txt` suffix so PHP-capable hosting cannot execute them as scripts. Release checksums cover docs and examples as well as archives.

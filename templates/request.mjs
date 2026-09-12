@@ -1,7 +1,7 @@
-import { Model, SdkError } from './runtime.js';
+import { Model, modelInputValue, SdkError } from './runtime.js';
 
 export function requestInput(paths, values, fields, body, required, params) {
-  if (params instanceof Model) params = params.toJSON();
+  if (params instanceof Model) params = modelInputValue(params);
   if (params !== undefined && (!params || typeof params !== 'object' || Array.isArray(params)))
     throw new SdkError('validation', 'Expected a params object', 'not_sent');
   const input = Object.fromEntries(paths.map((name, index) => [name, values[index]]));
