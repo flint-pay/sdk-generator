@@ -1875,7 +1875,18 @@ export class Runtime {
     let path = op.path;
     const query: string[] = [];
     for (const p of op.parameters) {
-      const value = Object.hasOwn(input, p.name) ? input[p.name] : undefined;
+      let value = Object.hasOwn(input, p.name) ? input[p.name] : undefined;
+      if (
+        value === undefined &&
+        p.in === 'header' &&
+        op.idempotency?.header.toLowerCase() === p.name.toLowerCase()
+      ) {
+        value =
+          options.idempotencyKey ??
+          Object.entries(options.headers ?? {}).find(
+            ([name]) => name.toLowerCase() === p.name.toLowerCase(),
+          )?.[1];
+      }
       if (value === undefined) {
         if (p.required) bad(p.name, 'required parameter is missing');
         continue;
