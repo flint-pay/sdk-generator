@@ -83,7 +83,7 @@ const model = new Model({ value: 'private value' }, schema);
 console.log(redact(model.toJSON(), schema)); // { value: '[REDACTED]' }
 ```
 
-Node `Model.toJSON()` returns a defensive copy. Editing it does not modify the model; construct a new model from the edited copy. This keeps inspection and transmitted values consistent while preserving exact numeric kinds.
+Node `Model.toJSON()` returns a defensive copy of the public JSON representation. Exact numbers become strings in this copy. When a field allows both numbers and strings, rebuilding a model from the copy treats those strings as JSON strings. To edit an input, retain the original input values, including `ExactNumber` instances, and construct a new model from the updated input. If you use a `toJSON()` copy instead, explicitly restore `ExactNumber` at fields intended to be JSON numbers in ambiguous alternatives. Editing a copy does not change the original model or its transmitted numeric kinds.
 
 PHP model accessors (`get()`, magic and typed getters, `toArray()`, `jsonSerialize()`, `toInputArray()`, and `toInputValue()`) also return defensive copies. Editing a returned object or nested value does not modify the model. To change an input, edit a `toInputArray()` or `toInputValue()` copy and construct a new model from it; these input exports preserve exact numeric kinds in ambiguous unions.
 

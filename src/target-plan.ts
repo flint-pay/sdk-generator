@@ -355,6 +355,20 @@ function compileRequestCall(op: Operation, c: Contract, optionsType: string) {
       ' ',
     ),
   );
+  // Positional identifiers are shared by both targets. PHP superglobals cannot
+  // be parameter variables, even though their wire names are valid.
+  for (const name of [
+    'GLOBALS',
+    '_SERVER',
+    '_GET',
+    '_POST',
+    '_FILES',
+    '_COOKIE',
+    '_SESSION',
+    '_REQUEST',
+    '_ENV',
+  ])
+    reserved.add(name);
   const names = paths.map((p, i) => {
     let name =
       /^[A-Za-z_][A-Za-z0-9_]*$/.test(p.name) && !reserved.has(p.name) ? p.name : `path${i}`;
