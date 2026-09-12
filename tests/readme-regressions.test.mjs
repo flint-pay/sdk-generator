@@ -138,7 +138,7 @@ test('README quickstarts and recipes preserve source-looking literals, including
     }
   });
 });
-test('README saved keys replace required and optional header samples without conflicting options', async () => {
+test('README generated keys replace required and optional header samples without conflicting options', async () => {
   const scenarios = [
     ['required', 'Idempotency-Key', true, true],
     ['optional', 'x-action-key', false, true],
@@ -171,22 +171,15 @@ test('README saved keys replace required and optional header samples without con
   await withServer(async (baseUrl, requests) => {
     for (const target of ['node', 'php']) {
       const before = requests.length;
-      await runReadme(output, target, {
-        API_BASE_URL: baseUrl,
-        API_IDEMPOTENCY_KEY: 'saved-required-key',
-        API_ACTIONS_OPTIONAL_IDEMPOTENCY_KEY: 'saved-optional-key',
-        API_ACTIONS_HEADERONLY_IDEMPOTENCY_KEY: 'saved-header-only-key',
-      });
+      await runReadme(output, target, { API_BASE_URL: baseUrl });
+      const calls = requests.slice(before);
       assert.deepEqual(
-        requests
-          .slice(before)
-          .map((r, index) => [r.path, r.headers[scenarios[index][1].toLowerCase()]]),
-        [
-          ['/required', 'saved-required-key'],
-          ['/optional', 'saved-optional-key'],
-          ['/headerOnly', 'saved-header-only-key'],
-        ],
+        calls.map((r) => r.path),
+        ['/required', '/optional', '/headerOnly'],
       );
+      const keys = calls.map((r, index) => r.headers[scenarios[index][1].toLowerCase()]);
+      for (const key of keys) assert.match(key, /^[a-f0-9-]{32,36}$/);
+      assert.equal(new Set(keys).size, 3);
     }
   });
 });

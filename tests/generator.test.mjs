@@ -1,3 +1,4 @@
+import ts from 'typescript';
 import { localExampleFile } from './local-example.mjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -92,6 +93,28 @@ test('PHP passes the same HTTP fixtures and native capability checks', () => {
   assert.equal(r.status, 0, r.stderr + r.stdout);
   assert.equal(JSON.parse(r.stdout).length, cases.length);
 });
+test('package exports preserve types-first resolution instead of relying on sibling declarations', () => {
+  const metadata = JSON.parse(readFileSync(join(output, 'node/package.json'), 'utf8'));
+  assert.deepEqual(Object.keys(metadata.exports['.']), ['types', 'import']);
+  const trace = [];
+  const resolved = ts.resolveModuleName(
+    metadata.name,
+    join(output, 'node/consumer.mts'),
+    {
+      module: ts.ModuleKind.NodeNext,
+      moduleResolution: ts.ModuleResolutionKind.NodeNext,
+      traceResolution: true,
+    },
+    { ...ts.sys, trace: (message) => trace.push(message) },
+    undefined,
+    undefined,
+    ts.ModuleKind.ESNext,
+  );
+  assert.equal(resolved.resolvedModule.resolvedFileName, join(output, 'node/index.d.ts'));
+  assert.ok(trace.includes("Matched 'exports' condition 'types'."), trace.join('\n'));
+  assert.ok(!trace.includes("Matched 'exports' condition 'import'."), trace.join('\n'));
+});
+
 test('generation is deterministic and preview never writes', () => {
   const missing = join(temporary, 'no-write');
   const p = generate(contract, missing, true);
@@ -156,7 +179,7 @@ test('diagnostics identify unsupported constructs, stale overrides and naming co
   );
   invalid(
     (a) => {},
-    /stale operation/,
+    /operation ID .* is not in the contract/,
     (c) => (c.operations.missing = { method: 'gone' }),
   );
   invalid(

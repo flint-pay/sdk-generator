@@ -1,3 +1,4 @@
+export { DiagnosticGroup } from './diagnostic.js';
 export {
   loadContract,
   Diagnostic,

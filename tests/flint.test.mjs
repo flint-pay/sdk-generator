@@ -150,7 +150,11 @@ test('Flint READMEs lead with SDK docs and include one quickstart and concise pa
       assert.ok(!script.includes('allowInsecureHttp'));
       if (index === 0) {
         assert.match(snippets[index], /catch \(/);
-        assert.match(snippets[index], /API_IDEMPOTENCY_KEY/);
+        assert.match(
+          snippets[index],
+          target === 'node' ? /crypto\.randomUUID\(\)/ : /random_bytes\(16\)/,
+        );
+        assert.doesNotMatch(snippets[index], /API_IDEMPOTENCY_KEY|Set .* to the saved key/);
         assert.match(snippets[index], /outcome/);
       } else {
         assert.ok(!snippets[index].includes('new Client('));
@@ -172,7 +176,7 @@ test('Flint READMEs lead with SDK docs and include one quickstart and concise pa
   }
 });
 
-test('README snippets run in both targets with persisted keys and actionable errors', async () => {
+test('README snippets run in both targets with per-action keys and actionable errors', async () => {
   const cases = JSON.parse(readFileSync(join(root, 'http-cases.json'), 'utf8'));
   const seen = [];
   const headerOnly = structuredClone(contract);
@@ -218,8 +222,6 @@ test('README snippets run in both targets with persisted keys and actionable err
     ...process.env,
     API_BASE_URL: `http://127.0.0.1:${server.address().port}`,
     API_TOKEN: 'test-token',
-    API_IDEMPOTENCY_KEY: 'saved-payment-action',
-    API_REFUNDS_CREATE_IDEMPOTENCY_KEY: 'saved-refund-action',
   };
   try {
     mkdirSync(join(output, 'php/vendor'), { recursive: true });
@@ -263,21 +265,26 @@ test('README snippets run in both targets with persisted keys and actionable err
       assert.match(result.stdout, /ref_fixture/);
       assert.match(result.stdout, /requires_capture/);
       assert.deepEqual(
-        seen.slice(offset).map((r) => [r.method, r.path, r.key]),
+        seen.slice(offset).map((r) => [r.method, r.path]),
         [
-          ['POST', '/v1/payment-intents', 'saved-payment-action'],
-          ['GET', '/v1/payment-intents/pi_replace_with_sandbox_id', undefined],
-          ['POST', '/v1/refunds', 'saved-refund-action'],
+          ['POST', '/v1/payment-intents'],
+          ['GET', '/v1/payment-intents/pi_replace_with_sandbox_id'],
+          ['POST', '/v1/refunds'],
         ],
       );
+      assert.match(seen[offset].key, /^[a-f0-9-]{32,36}$/);
+      assert.match(seen[offset + 2].key, /^[a-f0-9-]{32,36}$/);
+      assert.notEqual(seen[offset].key, seen[offset + 2].key);
+      assert.equal(seen[offset + 1].key, undefined);
       assert.deepEqual(JSON.parse(seen[offset].body), {
         amount_money: { amount: 100, currency: 'USD' },
         capture_method: 'manual',
         payment_options: ['card'],
       });
-      // A later invocation reloads the persisted key rather than generating another one.
+      // Running the example again starts a new action with a fresh key.
       await exec(command, [first], { env });
-      assert.equal(seen.at(-1).key, 'saved-payment-action');
+      assert.match(seen.at(-1).key, /^[a-f0-9-]{32,36}$/);
+      assert.notEqual(seen.at(-1).key, seen[offset].key);
       const headerSnippet = [
         ...headerReadmes
           .get(`${target}/README.md`)
@@ -292,7 +299,7 @@ test('README snippets run in both targets with persisted keys and actionable err
       );
       writeFileSync(headerFile, localExampleSource(headerSnippet, target));
       await exec(command, [headerFile], { env });
-      assert.equal(seen.at(-1).key, 'saved-payment-action');
+      assert.match(seen.at(-1).key, /^[a-f0-9-]{32,36}$/);
       for (const errorMode of ['error', 'unknown']) {
         mode = errorMode;
         const before = seen.length;
@@ -304,7 +311,7 @@ test('README snippets run in both targets with persisted keys and actionable err
           return true;
         });
         assert.equal(seen.length, before + 1, 'the example must not blindly resubmit');
-        assert.equal(seen.at(-1).key, 'saved-payment-action');
+        assert.match(seen.at(-1).key, /^[a-f0-9-]{32,36}$/);
       }
     }
   } finally {

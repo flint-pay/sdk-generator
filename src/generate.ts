@@ -353,7 +353,7 @@ function exampleParts(
   if (target === 'node') {
     const authOptions =
       mode && authentication
-        ? `authMode: ${js(mode)}, credentials: { [${js(mode)}]: { ${authentication.schemes.map((scheme) => `[${js(scheme.name)}]: process.env.${('API_' + mode + '_' + scheme.name).replace(/[^A-Za-z0-9_]/g, '_').toUpperCase()} ?? ''`).join(', ')} } }`
+        ? `authMode: ${js(mode)},\n  credentials: {\n    [${js(mode)}]: {\n${authentication.schemes.map((scheme) => `      [${js(scheme.name)}]: process.env.${('API_' + mode + '_' + scheme.name).replace(/[^A-Za-z0-9_]/g, '_').toUpperCase()} ?? '',`).join('\n')}\n    },\n  }`
         : op.authenticated
           ? `token: process.env.API_TOKEN ?? ''`
           : '';
@@ -380,7 +380,7 @@ function exampleParts(
   }
   const authOptions =
     mode && authentication
-      ? `authMode: ${php(mode)}, credentials: [${php(mode)} => [${authentication.schemes.map((scheme) => `${php(scheme.name)} => getenv(${php(('API_' + mode + '_' + scheme.name).replace(/[^A-Za-z0-9_]/g, '_').toUpperCase())}) ?: ''`).join(', ')}]]`
+      ? `authMode: ${php(mode)},\n  credentials: [\n    ${php(mode)} => [\n${authentication.schemes.map((scheme) => `      ${php(scheme.name)} => getenv(${php(('API_' + mode + '_' + scheme.name).replace(/[^A-Za-z0-9_]/g, '_').toUpperCase())}) ?: '',`).join('\n')}\n    ],\n  ]`
       : op.authenticated
         ? "token: getenv('API_TOKEN') ?: ''"
         : '';
@@ -429,7 +429,7 @@ function readmeExamples(c: Contract, target: 'node' | 'php'): string {
   }
   const extension = target === 'node' ? 'mjs' : 'php';
   return (
-    'Replace sample IDs with values from your account. For idempotent mutations, create and save a unique key with the business action before sending the request; reload that same key when retrying. Use a different key for each new action.\n\n' +
+    'Replace sample IDs with values from your account. Each new action gets a unique idempotency key. Save it with the action if retries need to survive a process restart.\n\n' +
     selected
       .map((op, index) => {
         const path = `examples/${op.resource}-${op.method}.${extension}`;
@@ -444,10 +444,6 @@ function readmeExamples(c: Contract, target: 'node' | 'php'): string {
         let requestOption = '';
         const key =
           index === 0 ? 'idempotencyKey' : op.resource + pascal(op.method) + 'IdempotencyKey';
-        const env =
-          index === 0
-            ? 'API_IDEMPOTENCY_KEY'
-            : ('API_' + op.resource + '_' + op.method + '_IDEMPOTENCY_KEY').toUpperCase();
         let keySetup = '';
         const headerName = op.idempotency?.header ?? 'Idempotency-Key';
         const headerParameters = op.parameters.filter(
@@ -458,8 +454,8 @@ function readmeExamples(c: Contract, target: 'node' | 'php'): string {
           const expression = target === 'node' ? key : '$' + key;
           keySetup =
             target === 'node'
-              ? `// Load the key already saved with this business action.\nconst ${key} = process.env.${env};\nif (!${key}) throw new Error('Set ${env} to the saved key');\n\n`
-              : `// Load the key already saved with this business action.\n$${key} = getenv('${env}');\nif (!$${key}) throw new \\RuntimeException('Set ${env} to the saved key');\n\n`;
+              ? `// Reuse this key when retrying the same action.\nconst ${key} = crypto.randomUUID();\n\n`
+              : `// Reuse this key when retrying the same action.\n$${key} = bin2hex(random_bytes(16));\n\n`;
           // Declared input headers are the single source of the key, including required ones.
           if (headerParameters.length) {
             for (const parameter of headerParameters) fields.set(parameter.name, expression);
@@ -610,36 +606,41 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     const put = (p: string, value: string) => files.set('node/' + p, value);
     put(
       'package.json',
-      stable({
-        name: c.config.npm.name,
-        version: c.config.version,
-        description: `${c.title} server SDK`,
-        type: 'module',
-        main: './index.js',
-        types: './index.d.ts',
-        exports: {
-          '.': { types: './index.d.ts', import: './index.js' },
-          './custom/*': './custom/*',
+      // Conditional export key order is semantic; canonical sorting would change resolution.
+      JSON.stringify(
+        {
+          name: c.config.npm.name,
+          version: c.config.version,
+          description: `${c.title} server SDK`,
+          type: 'module',
+          main: './index.js',
+          types: './index.d.ts',
+          exports: {
+            '.': { types: './index.d.ts', import: './index.js' },
+            './custom/*': './custom/*',
+          },
+          engines: { node: '>=22' },
+          dependencies: { '@types/node': packageMetadata.dependencies['@types/node'] },
+          publishConfig: {
+            registry: c.config.npm.registry ?? 'https://registry.npmjs.org',
+            access: c.config.npm.access ?? 'public',
+          },
+          license: c.config.license ?? 'Apache-2.0',
+          files: [
+            '*.js',
+            '*.d.ts',
+            'README.md',
+            'REFERENCE.md',
+            'RUNTIME.md',
+            'LICENSE',
+            'examples/',
+            'guides/',
+            'custom/',
+          ],
         },
-        engines: { node: '>=22' },
-        dependencies: { '@types/node': packageMetadata.dependencies['@types/node'] },
-        publishConfig: {
-          registry: c.config.npm.registry ?? 'https://registry.npmjs.org',
-          access: c.config.npm.access ?? 'public',
-        },
-        license: c.config.license ?? 'Apache-2.0',
-        files: [
-          '*.js',
-          '*.d.ts',
-          'README.md',
-          'REFERENCE.md',
-          'RUNTIME.md',
-          'LICENSE',
-          'examples/',
-          'guides/',
-          'custom/',
-        ],
-      }),
+        null,
+        2,
+      ) + '\n',
     );
     put(
       'runtime.js',
