@@ -1,3 +1,8 @@
+export const AUTH_SHORTCUT_RESERVED = new Set(
+  'baseUrl token authMode credentials headers idempotencyKey ifMatch timeoutMs deadlineMs maxAttempts signal cancellation maxPages maxItems streamIdleTimeoutMs streamLifetimeMs allowedOrigins allowInsecureHttp transport diagnostics redactFields constructor prototype __proto__ withDeadline this'
+    .toLowerCase()
+    .split(' '),
+);
 import type {
   Operation,
   Schema,
@@ -6,6 +11,7 @@ import type {
   Config,
   IncomingWebhook,
   AuthenticationMode,
+  AuthShortcuts,
 } from './contract.js';
 import {
   compileCodec,
@@ -28,6 +34,7 @@ export interface RuntimeContract {
   definitions?: Record<string, Schema>;
   auth?: Auth;
   authentication?: Record<string, AuthenticationMode>;
+  authShortcuts?: AuthShortcuts;
   apiVersion?: { header: string; value: string };
   webhook?: Webhook;
   money?: { currencies: Record<string, number> };
@@ -166,6 +173,23 @@ export function assertRuntimePlan(value: unknown): asserts value is CompiledRunt
         destinations.add(scheme.header.toLowerCase());
       }
     }
+  if (plan.authShortcuts !== undefined) {
+    for (const [name, value] of Object.entries(record(plan.authShortcuts, 'authShortcuts'))) {
+      const shortcut = record(value, 'auth shortcut');
+      const modes = record(plan.authentication, 'authentication');
+      const mode = typeof shortcut.mode === 'string' ? modes[shortcut.mode] : undefined;
+      const schemes = mode && record(mode, 'authentication mode').schemes;
+      if (
+        !/^[a-z][a-zA-Z0-9]*$/.test(name) ||
+        AUTH_SHORTCUT_RESERVED.has(name.toLowerCase()) ||
+        typeof shortcut.scheme !== 'string' ||
+        !Array.isArray(schemes) ||
+        schemes.length !== 1 ||
+        record(schemes[0], 'authentication scheme').name !== shortcut.scheme
+      )
+        throw new Error('Invalid authentication shortcut');
+    }
+  }
   if (plan.incoming !== undefined) {
     if (!Array.isArray(plan.incoming)) throw new Error('Invalid incoming contracts');
     for (const declaration of plan.incoming) {

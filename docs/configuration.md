@@ -90,6 +90,7 @@ Unknown configuration keys fail with a source location. Capability declarations 
 | `npm`                  | `name` required for Node; optional `registry` and `access` control publication metadata.                                                        |
 | `composer`             | `name` and `namespace` required for PHP.                                                                                                        |
 | `license`              | Package license metadata; defaults to `Apache-2.0`. Bundled runtime license is retained.                                                        |
+| `responses`            | Optional SDK-wide return mode (`result` by default, or `payload`) and payload path; see [payload returns](#optional-payload-returns).           |
 | `operations`           | Public naming, aliases, examples and declared operation capabilities. Defaults to resource `api` and method equal to `operationId`.             |
 | `include`, `audiences` | Optional operation filters; operation `hidden: true` excludes that operation.                                                                   |
 | `models`               | Optional component-to-public-model name mapping.                                                                                                |
@@ -267,6 +268,26 @@ Use `auth.modes` to name complete OpenAPI security alternatives. Each mode has `
 }
 ```
 
+Configure public credential shortcuts alongside the modes:
+
+```json
+{
+  "auth": {
+    "modes": {
+      "merchant": { "schemes": ["BearerAuth"] },
+      "checkout": { "schemes": ["CheckoutId", "CheckoutSecret"] }
+    },
+    "shortcuts": {
+      "apiKey": { "mode": "merchant", "scheme": "BearerAuth" }
+    }
+  }
+}
+```
+
+This generates `apiKey` on client and request options in Node and PHP. Rename it to `apiToken` if that matches your product terminology. Each shortcut must target the sole scheme of a declared mode; combined credentials still use explicit mode options. Names must start with a lowercase ASCII letter, contain only ASCII letters/digits, and avoid existing option names. Profiles merge shortcut mappings and reject conflicting targets.
+
+A request shortcut overrides client authentication for that call. An explicit request mode also overrides a client shortcut. Only one shortcut may be supplied per options object, and it cannot be combined with explicit `authMode` or `credentials` there. Endpoint mode restrictions still apply; anonymous endpoints omit client credentials. Generated examples use shortcuts when available and read their uppercase snake-case environment variable (such as `API_KEY`) explicitly.
+
 Legacy `auth: { "scheme": "BearerAuth" }` and `token` remain supported. An ambiguous request needs an explicit mode. An incomplete scheme set, contradictory header override, or inapplicable mode fails before dispatch. Anonymous operations do not acquire a client default credential mode unless the operation permits it.
 
 `numericUnions: "explicit"` enables exact-number/string alternatives without changing their JSON schemas. At ambiguous input paths, strings remain JSON strings and `new ExactNumber("1.2500")` selects an exact JSON number in either target. Other exact numeric inputs retain their existing string representation. Numeric intersections with inconsistent representations remain unsupported.
@@ -292,3 +313,28 @@ A declared successful `text/event-stream` response produces a closeable event st
 ```
 
 Only configured event names have JSON payload decoding. Unknown event names retain raw strings. The media schema is not interpreted as a per-event JSON contract. Default limits are 30 seconds of idle reading and 1 MiB per event. Request options `streamIdleTimeoutMs` and `streamLifetimeMs` control idle reading and optional total lifetime. Connection setup uses the usual timeout/deadline; the stream owns its connection after the method returns. Resume uses the operation's declared last-event-ID input. Reconnection is caller-controlled; no event is automatically replayed.
+
+## Optional payload returns
+
+Existing configurations return `Result` with `data`, `meta` and `raw`. Opt into direct payload returns with `responses.return: "payload"`. Declare envelope paths explicitly; the generator never automatically unwraps a field because it is named `data`.
+
+```json
+{
+  "responses": { "return": "payload" },
+  "operations": {
+    "createPaymentIntent": { "response": { "payloadPath": "data" } },
+    "getPaymentIntent": { "response": { "payloadPath": "payment_intent" } },
+    "getLegacyReport": { "response": { "return": "result" } }
+  }
+}
+```
+
+These settings merge at the SDK and operation levels. With payload mode and no `payloadPath`, methods return the complete decoded body directly. You may also set an SDK-wide `responses.payloadPath`. An operation's `response.payloadPath: null` clears that inherited path; `response.return: "result"` opts the operation out entirely.
+
+A dot-separated `payloadPath` must identify required, declared properties through non-null objects in every successful JSON response. References and schema compositions are checked. Optional paths, array traversal, and paths through empty, binary or streaming responses receive diagnostics. A nullable payload itself is allowed. Use whole-body mode or a result-mode override for endpoints with incompatible response shapes. Unknown union variants retain conservative output types; consumers must narrow them before assuming a known payload shape.
+
+Each payload-mode method and deprecated alias also gets a `WithResponse` companion accepting identical inputs/options. For example, `client.paymentIntents.create(input)` returns the payload, while `client.paymentIntents.createWithResponse(input)` returns `SdkResponse` with the full decoded `body`, HTTP `meta`, and `raw`. PHP exposes the same method names and properties. Each call makes its own request; choose one form for an action. These companions are generated only for payload-mode operations, and their names participate in collision checks.
+
+`Pages` and `Wait` helpers continue returning full `Result` envelopes. `Items` helpers continue yielding individual items. Pagination and polling paths always address the original response body, so payload unwrapping does not discard continuation or state information needed by these helpers. Existing HTTP fixtures also assert the complete wire body, via `WithResponse` for opted-in operations.
+
+Return settings and generated payload types are recorded in the compiled contract. Enabling or disabling payload mode, or changing a payload path, is a breaking SDK change under the semver release policy. Existing SDKs can keep their current defaults until ready to migrate. Generated documentation, examples and Node/PHP declarations reflect the selected mode.

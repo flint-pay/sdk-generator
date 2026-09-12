@@ -83,19 +83,31 @@ foreach ($cases as $index => $case) {
             ucfirst($operation['resource']) .
             ucfirst($operation['method']) .
             'Input';
-        $result = $client->{$operation['resource']}->{$operation['method']}(
+        $payload = ($operation['response']['return'] ?? 'result') === 'payload';
+        $method = $operation['method'] . ($payload ? 'WithResponse' : '');
+        $result = $client->{$operation['resource']}->{$method}(
             new $inputClass($input),
             new $requestOptionsClass(
-                idempotencyKey: $o['idempotencyKey'] ?? null,
-                ifMatch: $o['ifMatch'] ?? null,
-                maxAttempts: $o['maxAttempts'] ?? null,
-                deadlineMs: $o['deadlineMs'] ?? null,
-                timeoutMs: $o['timeoutMs'] ?? null,
-                headers: $o['headers'] ?? [],
-                authMode: $o['authMode'] ?? null,
-                credentials: $o['credentials'] ?? null,
+                ...[
+                    'idempotencyKey' => $o['idempotencyKey'] ?? null,
+                    'ifMatch' => $o['ifMatch'] ?? null,
+                    'maxAttempts' => $o['maxAttempts'] ?? null,
+                    'deadlineMs' => $o['deadlineMs'] ?? null,
+                    'timeoutMs' => $o['timeoutMs'] ?? null,
+                    'headers' => $o['headers'] ?? [],
+                    'authMode' => $o['authMode'] ?? null,
+                    'credentials' => $o['credentials'] ?? null,
+                    ...array_intersect_key($o, $contract['authShortcuts'] ?? []),
+                ],
             ),
         );
+        if ($payload) {
+            $result = (object) [
+                'data' => $result->body,
+                'meta' => $result->meta,
+                'raw' => $result->raw,
+            ];
+        }
         check(!isset($case['error']), $case['name'] . ': expected error');
         if (array_key_exists('data', $case)) {
             check(

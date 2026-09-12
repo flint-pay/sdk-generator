@@ -76,7 +76,13 @@ export async function validateFixtures(
   const c = JSON.parse(readFileSync(join(output, '.sdk-generator.json'), 'utf8'))
     .interface as Contract;
   const contract = {
-    operations: c.operations.map(({ id, resource, method }) => ({ id, resource, method })),
+    authShortcuts: c.authShortcuts ?? {},
+    operations: c.operations.map(({ id, resource, method, response }) => ({
+      id,
+      resource,
+      method,
+      response,
+    })),
   };
   const report: { target: string; scenarios: number }[] = [];
   if ((c.config.targets ?? ['node', 'php']).includes('node')) {
@@ -129,10 +135,13 @@ export async function validateFixtures(
             },
           );
         else {
-          const result = await client[operation.resource][operation.method](
-            scenario.input,
-            scenario.options,
-          );
+          const payload = operation.response?.return === 'payload';
+          const response = await client[operation.resource][
+            operation.method + (payload ? 'WithResponse' : '')
+          ](scenario.input, scenario.options);
+          const result = payload
+            ? { data: response.body, meta: response.meta, raw: response.raw }
+            : response;
           if (scenario.data !== undefined)
             assert.deepEqual(JSON.parse(JSON.stringify(result.data)), scenario.data);
           if (scenario.dataBase64 !== undefined) {

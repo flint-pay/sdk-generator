@@ -82,5 +82,1995 @@
   "documentation": {
     "overview": "Use the Flint Pay SDK to integrate with the Flint API from your server. See the [Flint Pay SDK documentation](https://developers.withflintpay.com/docs/guides/sdks) for setup and integration guides.",
     "examples": ["createPaymentIntent", "getPaymentIntent", "createRefund"]
+  },
+  "operations": {
+    "addOrderCharge": {
+      "resource": "orders",
+      "method": "addCharge"
+    },
+    "addOrderLineItems": {
+      "resource": "orders",
+      "method": "addLineItems"
+    },
+    "addReturnLineItem": {
+      "resource": "returns",
+      "method": "addLineItem"
+    },
+    "addRiskListItems": {
+      "resource": "riskLists",
+      "method": "addItems"
+    },
+    "advanceOnboarding": {
+      "resource": "onboarding",
+      "method": "advance"
+    },
+    "applyInventoryCount": {
+      "resource": "inventoryCounts",
+      "method": "apply"
+    },
+    "applyOrderDiscount": {
+      "resource": "orders",
+      "method": "applyDiscount"
+    },
+    "approveReview": {
+      "resource": "reviews",
+      "method": "approve"
+    },
+    "assignToUnconfiguredDeliveryProfile": {
+      "resource": "deliveryProfiles",
+      "method": "assignToUnconfigured"
+    },
+    "authorizePartnerInstall": {
+      "resource": "oauth",
+      "method": "authorizePartnerInstall"
+    },
+    "cancelInventoryCount": {
+      "resource": "inventoryCounts",
+      "method": "cancel"
+    },
+    "cancelInvoicePaymentAttempt": {
+      "resource": "invoices",
+      "method": "cancelPaymentAttempt"
+    },
+    "cancelMeReturn": {
+      "resource": "me",
+      "method": "cancelReturn"
+    },
+    "cancelMeSubscription": {
+      "resource": "me",
+      "method": "cancelSubscription"
+    },
+    "cancelOrderPayment": {
+      "resource": "orders",
+      "method": "cancelPayment"
+    },
+    "cancelOrderPaymentAttempt": {
+      "resource": "orders",
+      "method": "cancelPaymentAttempt"
+    },
+    "cancelPaymentIntent": {
+      "resource": "paymentIntents",
+      "method": "cancel"
+    },
+    "cancelPayout": {
+      "resource": "payouts",
+      "method": "cancel"
+    },
+    "cancelReturn": {
+      "resource": "returns",
+      "method": "cancel"
+    },
+    "cancelReturnDisposition": {
+      "resource": "returnDispositions",
+      "method": "cancel"
+    },
+    "cancelReturnLineItem": {
+      "resource": "returns",
+      "method": "cancelLineItem"
+    },
+    "cancelReturnResolution": {
+      "resource": "returnResolutions",
+      "method": "cancel"
+    },
+    "cancelSubscription": {
+      "resource": "subscriptions",
+      "method": "cancel"
+    },
+    "captureOrderPayment": {
+      "resource": "orders",
+      "method": "capturePayment"
+    },
+    "capturePaymentIntent": {
+      "resource": "paymentIntents",
+      "method": "capture"
+    },
+    "changeMeSubscriptionPaymentMethod": {
+      "resource": "me",
+      "method": "changeSubscriptionPaymentMethod"
+    },
+    "changeSubscriptionPaymentMethod": {
+      "resource": "subscriptions",
+      "method": "changePaymentMethod"
+    },
+    "checkDeliveryRateCallbackConnection": {
+      "resource": "deliveryRateCallbacks",
+      "method": "checkConnection"
+    },
+    "closeCheckoutSession": {
+      "resource": "checkoutSessions",
+      "method": "closeSession"
+    },
+    "closeOrder": {
+      "resource": "orders",
+      "method": "closeSession"
+    },
+    "collectInvoice": {
+      "resource": "invoices",
+      "method": "collect"
+    },
+    "commitInventoryReservation": {
+      "resource": "inventoryReservations",
+      "method": "commit"
+    },
+    "completeReturn": {
+      "resource": "returns",
+      "method": "complete"
+    },
+    "confirmMeEmailChangeRequest": {
+      "resource": "me",
+      "method": "confirmEmailChangeRequest"
+    },
+    "confirmPaymentIntent": {
+      "resource": "paymentIntents",
+      "method": "confirm"
+    },
+    "confirmReturnResolution": {
+      "resource": "returnResolutions",
+      "method": "confirm"
+    },
+    "consumeInventoryReservation": {
+      "resource": "inventoryReservations",
+      "method": "consume"
+    },
+    "createAPIKey": {
+      "resource": "apiKeys",
+      "method": "create"
+    },
+    "createBundle": {
+      "resource": "bundles",
+      "method": "create"
+    },
+    "createCategory": {
+      "resource": "categories",
+      "method": "create"
+    },
+    "createCheckoutSession": {
+      "resource": "checkoutSessions",
+      "method": "create"
+    },
+    "createCheckoutSessionDeliveryQuote": {
+      "resource": "checkoutSessions",
+      "method": "createDeliveryQuote"
+    },
+    "createCheckoutSessionDeliverySelection": {
+      "resource": "checkoutSessions",
+      "method": "createDeliverySelection"
+    },
+    "createCreditNote": {
+      "resource": "creditNotes",
+      "method": "create"
+    },
+    "createCreditNoteAllocation": {
+      "resource": "creditNotes",
+      "method": "createAllocation"
+    },
+    "createCustomer": {
+      "resource": "customers",
+      "method": "create"
+    },
+    "createCustomerAddress": {
+      "resource": "customers",
+      "method": "createAddress"
+    },
+    "createCustomerDeletionRequest": {
+      "resource": "customers",
+      "method": "createDeletionRequest"
+    },
+    "createCustomerSession": {
+      "resource": "customerSessions",
+      "method": "create"
+    },
+    "createDeliveryLocationSet": {
+      "resource": "deliveryLocationSets",
+      "method": "create"
+    },
+    "createDeliveryMethod": {
+      "resource": "deliveryMethods",
+      "method": "create"
+    },
+    "createDeliveryPreview": {
+      "resource": "deliveryPreviews",
+      "method": "create"
+    },
+    "createDeliveryProfile": {
+      "resource": "deliveryProfiles",
+      "method": "create"
+    },
+    "createDeliveryRateCallback": {
+      "resource": "deliveryRateCallbacks",
+      "method": "create"
+    },
+    "createDeliveryRateCallbackTestDelivery": {
+      "resource": "deliveryRateCallbacks",
+      "method": "createTestDelivery"
+    },
+    "createDeliveryZone": {
+      "resource": "deliveryZones",
+      "method": "create"
+    },
+    "createDemoSession": {
+      "resource": "demoSessions",
+      "method": "create"
+    },
+    "createDeveloperPartnerApp": {
+      "resource": "developer",
+      "method": "createPartnerApp"
+    },
+    "createDeveloperSandbox": {
+      "resource": "developer",
+      "method": "createSandbox"
+    },
+    "createDevice": {
+      "resource": "devices",
+      "method": "create"
+    },
+    "createFeedbackReport": {
+      "resource": "feedbackReports",
+      "method": "create"
+    },
+    "createFulfillment": {
+      "resource": "orders",
+      "method": "createFulfillment"
+    },
+    "createFulfillmentEvent": {
+      "resource": "fulfillments",
+      "method": "createEvent"
+    },
+    "createInventoryAdjustment": {
+      "resource": "inventoryAdjustments",
+      "method": "create"
+    },
+    "createInventoryAllocationPolicy": {
+      "resource": "inventoryAllocationPolicies",
+      "method": "create"
+    },
+    "createInventoryCount": {
+      "resource": "inventoryCounts",
+      "method": "create"
+    },
+    "createInventoryItem": {
+      "resource": "inventoryItems",
+      "method": "create"
+    },
+    "createInventoryReceipt": {
+      "resource": "inventoryReceipts",
+      "method": "create"
+    },
+    "createInventoryReservation": {
+      "resource": "inventoryReservations",
+      "method": "create"
+    },
+    "createInventoryTransfer": {
+      "resource": "inventoryTransfers",
+      "method": "create"
+    },
+    "createInvoice": {
+      "resource": "invoices",
+      "method": "create"
+    },
+    "createInvoicePaymentTerm": {
+      "resource": "invoicePaymentTerms",
+      "method": "create"
+    },
+    "createLocation": {
+      "resource": "locations",
+      "method": "create"
+    },
+    "createMeAddress": {
+      "resource": "me",
+      "method": "createAddress"
+    },
+    "createMeDeletionRequest": {
+      "resource": "me",
+      "method": "createDeletionRequest"
+    },
+    "createMeEmailChangeRequest": {
+      "resource": "me",
+      "method": "createEmailChangeRequest"
+    },
+    "createMeInvoiceCheckoutSession": {
+      "resource": "me",
+      "method": "createInvoiceCheckoutSession"
+    },
+    "createMeReturn": {
+      "resource": "me",
+      "method": "createReturn"
+    },
+    "createMeReturnPreview": {
+      "resource": "me",
+      "method": "createReturnPreview"
+    },
+    "createMeReturnResolutionCheckoutSession": {
+      "resource": "me",
+      "method": "createReturnResolutionCheckoutSession"
+    },
+    "createMerchantAccountSession": {
+      "resource": "merchantAccountSessions",
+      "method": "create"
+    },
+    "createModifierGroup": {
+      "resource": "modifierGroups",
+      "method": "create"
+    },
+    "createModifierSet": {
+      "resource": "modifierSets",
+      "method": "create"
+    },
+    "createOnboardingAPIKey": {
+      "resource": "onboarding",
+      "method": "createAPIKey"
+    },
+    "createOrder": {
+      "resource": "orders",
+      "method": "create"
+    },
+    "createOrderPaymentIntent": {
+      "resource": "orders",
+      "method": "createPaymentIntent"
+    },
+    "createOrganization": {
+      "resource": "organizations",
+      "method": "create"
+    },
+    "createPackage": {
+      "resource": "shipments",
+      "method": "createPackage"
+    },
+    "createPackageItem": {
+      "resource": "packages",
+      "method": "createItem"
+    },
+    "createPaymentIntent": {
+      "resource": "paymentIntents",
+      "method": "create"
+    },
+    "createPaymentLink": {
+      "resource": "paymentLinks",
+      "method": "create"
+    },
+    "createPaymentMethodDomain": {
+      "resource": "paymentMethodDomains",
+      "method": "create"
+    },
+    "createPayout": {
+      "resource": "payouts",
+      "method": "create"
+    },
+    "createProduct": {
+      "resource": "products",
+      "method": "create"
+    },
+    "createProductVariant": {
+      "resource": "products",
+      "method": "createVariant"
+    },
+    "createPromotion": {
+      "resource": "promotions",
+      "method": "create"
+    },
+    "createPromotionCode": {
+      "resource": "promotions",
+      "method": "createCode"
+    },
+    "createRefund": {
+      "resource": "refunds",
+      "method": "create"
+    },
+    "createReport": {
+      "resource": "reports",
+      "method": "create"
+    },
+    "createReturn": {
+      "resource": "returns",
+      "method": "create"
+    },
+    "createReturnDisposition": {
+      "resource": "returns",
+      "method": "createDisposition"
+    },
+    "createReturnInspection": {
+      "resource": "returns",
+      "method": "createInspection"
+    },
+    "createReturnPolicy": {
+      "resource": "returnPolicies",
+      "method": "create"
+    },
+    "createReturnPreview": {
+      "resource": "returnPreviews",
+      "method": "create"
+    },
+    "createReturnReason": {
+      "resource": "returnReasons",
+      "method": "create"
+    },
+    "createReturnReceipt": {
+      "resource": "returns",
+      "method": "createReceipt"
+    },
+    "createReturnResolution": {
+      "resource": "returns",
+      "method": "createResolution"
+    },
+    "createRiskList": {
+      "resource": "riskLists",
+      "method": "create"
+    },
+    "createRiskPreview": {
+      "resource": "riskPreviews",
+      "method": "create"
+    },
+    "createRiskRule": {
+      "resource": "riskRules",
+      "method": "create"
+    },
+    "createShipment": {
+      "resource": "fulfillments",
+      "method": "createShipment"
+    },
+    "createSubscription": {
+      "resource": "subscriptions",
+      "method": "create"
+    },
+    "createSubscriptionPaymentRetry": {
+      "resource": "subscriptions",
+      "method": "createPaymentRetry"
+    },
+    "createSubscriptionPlan": {
+      "resource": "subscriptionPlans",
+      "method": "create"
+    },
+    "createWebhookEndpoint": {
+      "resource": "webhookEndpoints",
+      "method": "create"
+    },
+    "createWebhookTestEvent": {
+      "resource": "webhookEndpoints",
+      "method": "createWebhookTestEvent"
+    },
+    "decideReturn": {
+      "resource": "returns",
+      "method": "decide"
+    },
+    "decideReturnInspectionLineItem": {
+      "resource": "returnInspections",
+      "method": "decideLineItem"
+    },
+    "declineReview": {
+      "resource": "reviews",
+      "method": "decline"
+    },
+    "deleteBundle": {
+      "resource": "bundles",
+      "method": "remove"
+    },
+    "deleteCategory": {
+      "resource": "categories",
+      "method": "remove"
+    },
+    "deleteCheckoutSessionCurrentDeliverySelection": {
+      "resource": "checkoutSessions",
+      "method": "deleteCurrentDeliverySelection"
+    },
+    "deleteCustomerAddress": {
+      "resource": "customers",
+      "method": "deleteAddress"
+    },
+    "deleteDeliveryLocationSet": {
+      "resource": "deliveryLocationSets",
+      "method": "remove"
+    },
+    "deleteDeliveryMethod": {
+      "resource": "deliveryMethods",
+      "method": "remove"
+    },
+    "deleteDeliveryProfile": {
+      "resource": "deliveryProfiles",
+      "method": "remove"
+    },
+    "deleteDeliveryRateCallback": {
+      "resource": "deliveryRateCallbacks",
+      "method": "remove"
+    },
+    "deleteDeliveryZone": {
+      "resource": "deliveryZones",
+      "method": "remove"
+    },
+    "deleteDeveloperSandbox": {
+      "resource": "developer",
+      "method": "deleteSandbox"
+    },
+    "deleteDevice": {
+      "resource": "devices",
+      "method": "remove"
+    },
+    "deleteInventoryAllocationPolicy": {
+      "resource": "inventoryAllocationPolicies",
+      "method": "remove"
+    },
+    "deleteInventoryItem": {
+      "resource": "inventoryItems",
+      "method": "remove"
+    },
+    "deleteInvoicePaymentTerm": {
+      "resource": "invoicePaymentTerms",
+      "method": "remove"
+    },
+    "deleteLocation": {
+      "resource": "locations",
+      "method": "remove"
+    },
+    "deleteMeAddress": {
+      "resource": "me",
+      "method": "deleteAddress"
+    },
+    "deleteModifierGroup": {
+      "resource": "modifierGroups",
+      "method": "remove"
+    },
+    "deleteModifierSet": {
+      "resource": "modifierSets",
+      "method": "remove"
+    },
+    "deleteOrderCharge": {
+      "resource": "orders",
+      "method": "deleteCharge"
+    },
+    "deleteOrderLineItem": {
+      "resource": "orders",
+      "method": "deleteLineItem"
+    },
+    "deleteOrganization": {
+      "resource": "organizations",
+      "method": "remove"
+    },
+    "deletePackageItem": {
+      "resource": "packages",
+      "method": "deleteItem"
+    },
+    "deletePayoutDestination": {
+      "resource": "payoutSettings",
+      "method": "deletePayoutDestination"
+    },
+    "deleteProduct": {
+      "resource": "products",
+      "method": "remove"
+    },
+    "deleteProductVariant": {
+      "resource": "products",
+      "method": "deleteVariant"
+    },
+    "deletePromotion": {
+      "resource": "promotions",
+      "method": "remove"
+    },
+    "deletePromotionCode": {
+      "resource": "promotions",
+      "method": "deleteCode"
+    },
+    "deleteReturnLineItem": {
+      "resource": "returns",
+      "method": "deleteLineItem"
+    },
+    "deleteReturnPolicy": {
+      "resource": "returnPolicies",
+      "method": "remove"
+    },
+    "deleteReturnReason": {
+      "resource": "returnReasons",
+      "method": "remove"
+    },
+    "deleteRiskList": {
+      "resource": "riskLists",
+      "method": "remove"
+    },
+    "deleteRiskListItem": {
+      "resource": "riskLists",
+      "method": "deleteItem"
+    },
+    "deleteRiskRule": {
+      "resource": "riskRules",
+      "method": "remove"
+    },
+    "deleteSubscriptionPlan": {
+      "resource": "subscriptionPlans",
+      "method": "remove"
+    },
+    "deleteWebhookEndpoint": {
+      "resource": "webhookEndpoints",
+      "method": "remove"
+    },
+    "exchangePartnerInstallToken": {
+      "resource": "oauth",
+      "method": "exchangePartnerInstallToken"
+    },
+    "getAPIKey": {
+      "resource": "apiKeys",
+      "method": "get"
+    },
+    "getAnalyticsOverview": {
+      "resource": "analytics",
+      "method": "getOverview"
+    },
+    "getBalanceTransaction": {
+      "resource": "balanceTransactions",
+      "method": "get"
+    },
+    "getBundle": {
+      "resource": "bundles",
+      "method": "get"
+    },
+    "getCategory": {
+      "resource": "categories",
+      "method": "get"
+    },
+    "getCheckoutSession": {
+      "resource": "checkoutSessions",
+      "method": "get"
+    },
+    "getCheckoutSessionCurrentDeliverySelection": {
+      "resource": "checkoutSessions",
+      "method": "getCurrentDeliverySelection"
+    },
+    "getCheckoutSessionDeliveryQuote": {
+      "resource": "checkoutSessions",
+      "method": "getDeliveryQuote"
+    },
+    "getCheckoutSessionDeliverySelectionHistory": {
+      "resource": "checkoutSessions",
+      "method": "getDeliverySelectionHistory"
+    },
+    "getCreditNote": {
+      "resource": "creditNotes",
+      "method": "get"
+    },
+    "getCreditNoteAllocation": {
+      "resource": "creditNotes",
+      "method": "getAllocation"
+    },
+    "getCreditNotePDF": {
+      "resource": "creditNotes",
+      "method": "getPDF"
+    },
+    "getCurrentAPIKeyRequestLog": {
+      "resource": "developer",
+      "method": "getCurrentAPIKeyRequestLog"
+    },
+    "getCustomer": {
+      "resource": "customers",
+      "method": "get"
+    },
+    "getCustomerAddress": {
+      "resource": "customers",
+      "method": "getAddress"
+    },
+    "getCustomerDeletionRequest": {
+      "resource": "customers",
+      "method": "getDeletionRequest"
+    },
+    "getDeliveryLocationSet": {
+      "resource": "deliveryLocationSets",
+      "method": "get"
+    },
+    "getDeliveryMethod": {
+      "resource": "deliveryMethods",
+      "method": "get"
+    },
+    "getDeliveryProfile": {
+      "resource": "deliveryProfiles",
+      "method": "get"
+    },
+    "getDeliveryRateCallback": {
+      "resource": "deliveryRateCallbacks",
+      "method": "get"
+    },
+    "getDeliveryRevocation": {
+      "resource": "deliveryRevocations",
+      "method": "get"
+    },
+    "getDeliveryZone": {
+      "resource": "deliveryZones",
+      "method": "get"
+    },
+    "getDeveloperAuthContext": {
+      "resource": "developer",
+      "method": "getAuthContext"
+    },
+    "getDeveloperPartnerApp": {
+      "resource": "developer",
+      "method": "getPartnerApp"
+    },
+    "getDeveloperPartnerAppInstall": {
+      "resource": "developer",
+      "method": "getPartnerAppInstall"
+    },
+    "getDeveloperSandbox": {
+      "resource": "developer",
+      "method": "getSandbox"
+    },
+    "getDevice": {
+      "resource": "devices",
+      "method": "get"
+    },
+    "getDispute": {
+      "resource": "disputes",
+      "method": "get"
+    },
+    "getEffectiveSettings": {
+      "resource": "settings",
+      "method": "getEffective"
+    },
+    "getFeedbackReport": {
+      "resource": "feedbackReports",
+      "method": "get"
+    },
+    "getFraudWarning": {
+      "resource": "fraudWarnings",
+      "method": "get"
+    },
+    "getFulfillment": {
+      "resource": "fulfillments",
+      "method": "get"
+    },
+    "getFulfillmentEvent": {
+      "resource": "fulfillmentEvents",
+      "method": "get"
+    },
+    "getFulfillmentNotification": {
+      "resource": "fulfillmentNotifications",
+      "method": "get"
+    },
+    "getInvoice": {
+      "resource": "invoices",
+      "method": "get"
+    },
+    "getInvoicePDF": {
+      "resource": "invoices",
+      "method": "getPDF"
+    },
+    "getInvoicePaymentAttempt": {
+      "resource": "invoices",
+      "method": "getPaymentAttempt"
+    },
+    "getInvoicePaymentTerm": {
+      "resource": "invoicePaymentTerms",
+      "method": "get"
+    },
+    "getLocation": {
+      "resource": "locations",
+      "method": "get"
+    },
+    "getMe": {
+      "resource": "me",
+      "method": "get"
+    },
+    "getMeAddress": {
+      "resource": "me",
+      "method": "getAddress"
+    },
+    "getMeCreditNote": {
+      "resource": "me",
+      "method": "getCreditNote"
+    },
+    "getMeCreditNotePDF": {
+      "resource": "me",
+      "method": "getCreditNotePDF"
+    },
+    "getMeDeletionRequest": {
+      "resource": "me",
+      "method": "getDeletionRequest"
+    },
+    "getMeInvoice": {
+      "resource": "me",
+      "method": "getInvoice"
+    },
+    "getMeInvoicePDF": {
+      "resource": "me",
+      "method": "getInvoicePDF"
+    },
+    "getMeOrder": {
+      "resource": "me",
+      "method": "getOrder"
+    },
+    "getMeReturn": {
+      "resource": "me",
+      "method": "getReturn"
+    },
+    "getMeSubscription": {
+      "resource": "me",
+      "method": "getSubscription"
+    },
+    "getMerchant": {
+      "resource": "merchants",
+      "method": "get"
+    },
+    "getMerchantBillingBalance": {
+      "resource": "merchantBillingBalances",
+      "method": "get"
+    },
+    "getMerchantSubscriptionInvoice": {
+      "resource": "merchantSubscriptionInvoices",
+      "method": "get"
+    },
+    "getModifierGroup": {
+      "resource": "modifierGroups",
+      "method": "get"
+    },
+    "getModifierSet": {
+      "resource": "modifierSets",
+      "method": "get"
+    },
+    "getOnboardingState": {
+      "resource": "onboarding",
+      "method": "getState"
+    },
+    "getOpenAPISpec": {
+      "resource": "specification",
+      "method": "get"
+    },
+    "getOrCreateInvoiceCheckoutSession": {
+      "resource": "invoices",
+      "method": "getOrCreateCheckoutSession"
+    },
+    "getOrCreateReturnResolutionCheckoutSession": {
+      "resource": "returnResolutions",
+      "method": "getOrCreateCheckoutSession"
+    },
+    "getOrder": {
+      "resource": "orders",
+      "method": "get"
+    },
+    "getOrderCurrentDeliverySelection": {
+      "resource": "orders",
+      "method": "getCurrentDeliverySelection"
+    },
+    "getOrderPaymentAttempt": {
+      "resource": "orders",
+      "method": "getPaymentAttempt"
+    },
+    "getOrganization": {
+      "resource": "organizations",
+      "method": "get"
+    },
+    "getPackage": {
+      "resource": "packages",
+      "method": "get"
+    },
+    "getPackageItem": {
+      "resource": "packages",
+      "method": "getItem"
+    },
+    "getPaymentIntent": {
+      "resource": "paymentIntents",
+      "method": "get"
+    },
+    "getPaymentLink": {
+      "resource": "paymentLinks",
+      "method": "get"
+    },
+    "getPaymentLinkPublic": {
+      "resource": "paymentLinks",
+      "method": "getPublic"
+    },
+    "getPaymentMethod": {
+      "resource": "paymentMethods",
+      "method": "get"
+    },
+    "getPaymentMethodDomain": {
+      "resource": "paymentMethodDomains",
+      "method": "get"
+    },
+    "getPaymentVolumeTimeseries": {
+      "resource": "analytics",
+      "method": "getPaymentVolumeTimeseries"
+    },
+    "getPayout": {
+      "resource": "payouts",
+      "method": "get"
+    },
+    "getPayoutDestination": {
+      "resource": "payoutSettings",
+      "method": "getPayoutDestination"
+    },
+    "getPayoutSettings": {
+      "resource": "payoutSettings",
+      "method": "get"
+    },
+    "getProduct": {
+      "resource": "products",
+      "method": "get"
+    },
+    "getProductOption": {
+      "resource": "products",
+      "method": "getOption"
+    },
+    "getProductVariant": {
+      "resource": "products",
+      "method": "getVariant"
+    },
+    "getPromotion": {
+      "resource": "promotions",
+      "method": "get"
+    },
+    "getRefund": {
+      "resource": "refunds",
+      "method": "get"
+    },
+    "getReport": {
+      "resource": "reports",
+      "method": "get"
+    },
+    "getReportDownload": {
+      "resource": "reportDownloads",
+      "method": "get"
+    },
+    "getResourceTimeline": {
+      "resource": "developer",
+      "method": "getResourceTimeline"
+    },
+    "getReturn": {
+      "resource": "returns",
+      "method": "get"
+    },
+    "getReturnDisposition": {
+      "resource": "returnDispositions",
+      "method": "get"
+    },
+    "getReturnInspection": {
+      "resource": "returnInspections",
+      "method": "get"
+    },
+    "getReturnLineItem": {
+      "resource": "returns",
+      "method": "getLineItem"
+    },
+    "getReturnPolicy": {
+      "resource": "returnPolicies",
+      "method": "get"
+    },
+    "getReturnPolicyRevision": {
+      "resource": "returnPolicies",
+      "method": "getRevision"
+    },
+    "getReturnReason": {
+      "resource": "returnReasons",
+      "method": "get"
+    },
+    "getReturnReceipt": {
+      "resource": "returnReceipts",
+      "method": "get"
+    },
+    "getReturnResolution": {
+      "resource": "returnResolutions",
+      "method": "get"
+    },
+    "getReview": {
+      "resource": "reviews",
+      "method": "get"
+    },
+    "getRiskList": {
+      "resource": "riskLists",
+      "method": "get"
+    },
+    "getRiskListItem": {
+      "resource": "riskLists",
+      "method": "getItem"
+    },
+    "getRiskRule": {
+      "resource": "riskRules",
+      "method": "get"
+    },
+    "getRiskRuleAttributeRegistry": {
+      "resource": "riskRules",
+      "method": "getAttributeRegistry"
+    },
+    "getSettings": {
+      "resource": "settings",
+      "method": "get"
+    },
+    "getShipment": {
+      "resource": "shipments",
+      "method": "get"
+    },
+    "getSubscription": {
+      "resource": "subscriptions",
+      "method": "get"
+    },
+    "getSubscriptionAnalytics": {
+      "resource": "analytics",
+      "method": "getSubscription"
+    },
+    "getSubscriptionPaymentRetry": {
+      "resource": "subscriptions",
+      "method": "getPaymentRetry"
+    },
+    "getSubscriptionPlan": {
+      "resource": "subscriptionPlans",
+      "method": "get"
+    },
+    "getWebhookDelivery": {
+      "resource": "webhookDeliveries",
+      "method": "get"
+    },
+    "getWebhookEndpoint": {
+      "resource": "webhookEndpoints",
+      "method": "get"
+    },
+    "getWebhookEvent": {
+      "resource": "webhookEvents",
+      "method": "get"
+    },
+    "grantOrganizationMembership": {
+      "resource": "organizations",
+      "method": "grantMembership"
+    },
+    "issueCreditNote": {
+      "resource": "creditNotes",
+      "method": "issue"
+    },
+    "issueDeveloperSandboxTestKey": {
+      "resource": "developer",
+      "method": "issueSandboxTestKey"
+    },
+    "issueInvoice": {
+      "resource": "invoices",
+      "method": "issue"
+    },
+    "listAPIKeys": {
+      "resource": "apiKeys",
+      "method": "list"
+    },
+    "listBalanceTransactions": {
+      "resource": "balanceTransactions",
+      "method": "list"
+    },
+    "listBalances": {
+      "resource": "balances",
+      "method": "list"
+    },
+    "listBundleComponents": {
+      "resource": "bundles",
+      "method": "listComponents"
+    },
+    "listBundles": {
+      "resource": "bundles",
+      "method": "list"
+    },
+    "listCapabilities": {
+      "resource": "capabilities",
+      "method": "list"
+    },
+    "listCategories": {
+      "resource": "categories",
+      "method": "list"
+    },
+    "listCheckoutSessions": {
+      "resource": "checkoutSessions",
+      "method": "list"
+    },
+    "listCreditNoteAllocations": {
+      "resource": "creditNotes",
+      "method": "listAllocations"
+    },
+    "listCreditNotes": {
+      "resource": "creditNotes",
+      "method": "list"
+    },
+    "listCurrentAPIKeyRequestLogs": {
+      "resource": "developer",
+      "method": "listCurrentAPIKeyRequestLogs"
+    },
+    "listCustomerAddresses": {
+      "resource": "customers",
+      "method": "listAddresses"
+    },
+    "listCustomerDeletionRequests": {
+      "resource": "customerDeletionRequests",
+      "method": "list"
+    },
+    "listCustomers": {
+      "resource": "customers",
+      "method": "list"
+    },
+    "listDeliveryLocationSets": {
+      "resource": "deliveryLocationSets",
+      "method": "list"
+    },
+    "listDeliveryMethods": {
+      "resource": "deliveryMethods",
+      "method": "list"
+    },
+    "listDeliveryProfiles": {
+      "resource": "deliveryProfiles",
+      "method": "list"
+    },
+    "listDeliveryQuotes": {
+      "resource": "deliveryQuotes",
+      "method": "list"
+    },
+    "listDeliveryRateCallbacks": {
+      "resource": "deliveryRateCallbacks",
+      "method": "list"
+    },
+    "listDeliveryZones": {
+      "resource": "deliveryZones",
+      "method": "list"
+    },
+    "listDeveloperPartnerAppInstalls": {
+      "resource": "developer",
+      "method": "listPartnerAppInstalls"
+    },
+    "listDeveloperPartnerApps": {
+      "resource": "developer",
+      "method": "listPartnerApps"
+    },
+    "listDeveloperSandboxes": {
+      "resource": "developer",
+      "method": "listSandboxes"
+    },
+    "listDevices": {
+      "resource": "devices",
+      "method": "list"
+    },
+    "listDisputes": {
+      "resource": "disputes",
+      "method": "list"
+    },
+    "listFeedbackReports": {
+      "resource": "feedbackReports",
+      "method": "list"
+    },
+    "listFraudWarnings": {
+      "resource": "fraudWarnings",
+      "method": "list"
+    },
+    "listFulfillmentEvents": {
+      "resource": "fulfillmentEvents",
+      "method": "list"
+    },
+    "listFulfillmentNotifications": {
+      "resource": "fulfillmentNotifications",
+      "method": "list"
+    },
+    "listFulfillments": {
+      "resource": "fulfillments",
+      "method": "list"
+    },
+    "listInventoryAdjustments": {
+      "resource": "inventoryAdjustments",
+      "method": "list"
+    },
+    "listInventoryAllocationPolicies": {
+      "resource": "inventoryAllocationPolicies",
+      "method": "list"
+    },
+    "listInventoryCounts": {
+      "resource": "inventoryCounts",
+      "method": "list"
+    },
+    "listInventoryItems": {
+      "resource": "inventoryItems",
+      "method": "list"
+    },
+    "listInventoryLevels": {
+      "resource": "inventoryLevels",
+      "method": "list"
+    },
+    "listInventoryMovements": {
+      "resource": "inventoryMovements",
+      "method": "list"
+    },
+    "listInventoryReceipts": {
+      "resource": "inventoryReceipts",
+      "method": "list"
+    },
+    "listInventoryReservations": {
+      "resource": "inventoryReservations",
+      "method": "list"
+    },
+    "listInventoryTransfers": {
+      "resource": "inventoryTransfers",
+      "method": "list"
+    },
+    "listInvoiceDeliveryAttempts": {
+      "resource": "invoices",
+      "method": "listDeliveryAttempts"
+    },
+    "listInvoiceEvents": {
+      "resource": "invoices",
+      "method": "listEvents"
+    },
+    "listInvoicePaymentAttempts": {
+      "resource": "invoices",
+      "method": "listPaymentAttempts"
+    },
+    "listInvoicePaymentTerms": {
+      "resource": "invoicePaymentTerms",
+      "method": "list"
+    },
+    "listInvoices": {
+      "resource": "invoices",
+      "method": "list"
+    },
+    "listLocations": {
+      "resource": "locations",
+      "method": "list"
+    },
+    "listMeAddresses": {
+      "resource": "me",
+      "method": "listAddresses"
+    },
+    "listMeCreditNotes": {
+      "resource": "me",
+      "method": "listCreditNotes"
+    },
+    "listMeFulfillments": {
+      "resource": "me",
+      "method": "listFulfillments"
+    },
+    "listMeInvoices": {
+      "resource": "me",
+      "method": "listInvoices"
+    },
+    "listMeOrderActivities": {
+      "resource": "me",
+      "method": "listOrderActivities"
+    },
+    "listMeOrders": {
+      "resource": "me",
+      "method": "listOrders"
+    },
+    "listMePackages": {
+      "resource": "me",
+      "method": "listPackages"
+    },
+    "listMePaymentMethods": {
+      "resource": "me",
+      "method": "listPaymentMethods"
+    },
+    "listMePayments": {
+      "resource": "me",
+      "method": "listPayments"
+    },
+    "listMeRefunds": {
+      "resource": "me",
+      "method": "listRefunds"
+    },
+    "listMeReturns": {
+      "resource": "me",
+      "method": "listReturns"
+    },
+    "listMeShipments": {
+      "resource": "me",
+      "method": "listShipments"
+    },
+    "listMeSubscriptions": {
+      "resource": "me",
+      "method": "listSubscriptions"
+    },
+    "listMerchantBillingBalances": {
+      "resource": "merchantBillingBalances",
+      "method": "list"
+    },
+    "listMerchantSubscriptionInvoices": {
+      "resource": "merchantSubscriptionInvoices",
+      "method": "list"
+    },
+    "listModifierGroups": {
+      "resource": "modifierGroups",
+      "method": "list"
+    },
+    "listModifierSets": {
+      "resource": "modifierSets",
+      "method": "list"
+    },
+    "listOrderActivities": {
+      "resource": "orders",
+      "method": "listActivities"
+    },
+    "listOrderPaymentAttempts": {
+      "resource": "orders",
+      "method": "listPaymentAttempts"
+    },
+    "listOrders": {
+      "resource": "orders",
+      "method": "list"
+    },
+    "listOrganizationMemberships": {
+      "resource": "organizations",
+      "method": "listMemberships"
+    },
+    "listOrganizations": {
+      "resource": "organizations",
+      "method": "list"
+    },
+    "listPackageItems": {
+      "resource": "packages",
+      "method": "listItems"
+    },
+    "listPackages": {
+      "resource": "packages",
+      "method": "list"
+    },
+    "listPaymentIntents": {
+      "resource": "paymentIntents",
+      "method": "list"
+    },
+    "listPaymentLinks": {
+      "resource": "paymentLinks",
+      "method": "list"
+    },
+    "listPaymentMethodDomains": {
+      "resource": "paymentMethodDomains",
+      "method": "list"
+    },
+    "listPaymentMethods": {
+      "resource": "paymentMethods",
+      "method": "list"
+    },
+    "listPayoutDestinations": {
+      "resource": "payoutSettings",
+      "method": "listPayoutDestinations"
+    },
+    "listPayoutEntries": {
+      "resource": "payouts",
+      "method": "listEntries"
+    },
+    "listPayouts": {
+      "resource": "payouts",
+      "method": "list"
+    },
+    "listProductOptions": {
+      "resource": "products",
+      "method": "listOptions"
+    },
+    "listProductVariants": {
+      "resource": "products",
+      "method": "listVariants"
+    },
+    "listProducts": {
+      "resource": "products",
+      "method": "list"
+    },
+    "listPromotionCodes": {
+      "resource": "promotions",
+      "method": "listCodes"
+    },
+    "listPromotions": {
+      "resource": "promotions",
+      "method": "list"
+    },
+    "listRefunds": {
+      "resource": "refunds",
+      "method": "list"
+    },
+    "listReports": {
+      "resource": "reports",
+      "method": "list"
+    },
+    "listReturnDispositions": {
+      "resource": "returnDispositions",
+      "method": "list"
+    },
+    "listReturnInspections": {
+      "resource": "returnInspections",
+      "method": "list"
+    },
+    "listReturnLineItems": {
+      "resource": "returns",
+      "method": "listLineItems"
+    },
+    "listReturnPolicies": {
+      "resource": "returnPolicies",
+      "method": "list"
+    },
+    "listReturnPolicyRevisions": {
+      "resource": "returnPolicies",
+      "method": "listRevisions"
+    },
+    "listReturnReasons": {
+      "resource": "returnReasons",
+      "method": "list"
+    },
+    "listReturnReceipts": {
+      "resource": "returnReceipts",
+      "method": "list"
+    },
+    "listReturnResolutions": {
+      "resource": "returnResolutions",
+      "method": "list"
+    },
+    "listReturns": {
+      "resource": "returns",
+      "method": "list"
+    },
+    "listReviews": {
+      "resource": "reviews",
+      "method": "list"
+    },
+    "listRiskListItems": {
+      "resource": "riskLists",
+      "method": "listItems"
+    },
+    "listRiskLists": {
+      "resource": "riskLists",
+      "method": "list"
+    },
+    "listRiskRules": {
+      "resource": "riskRules",
+      "method": "list"
+    },
+    "listShipments": {
+      "resource": "shipments",
+      "method": "list"
+    },
+    "listSubscriptionPaymentRetries": {
+      "resource": "subscriptions",
+      "method": "listPaymentRetries"
+    },
+    "listSubscriptionPlans": {
+      "resource": "subscriptionPlans",
+      "method": "list"
+    },
+    "listSubscriptions": {
+      "resource": "subscriptions",
+      "method": "list"
+    },
+    "listWebhookDeliveries": {
+      "resource": "webhookEvents",
+      "method": "listWebhookDeliveries"
+    },
+    "listWebhookDeliveryAttempts": {
+      "resource": "webhookDeliveries",
+      "method": "listAttempts"
+    },
+    "listWebhookEndpoints": {
+      "resource": "webhookEndpoints",
+      "method": "list"
+    },
+    "listWebhookEventTypes": {
+      "resource": "webhookEventTypes",
+      "method": "list"
+    },
+    "listWebhookEvents": {
+      "resource": "webhookEvents",
+      "method": "list"
+    },
+    "markInvoiceUncollectible": {
+      "resource": "invoices",
+      "method": "markUncollectible"
+    },
+    "pauseInvoiceReminders": {
+      "resource": "invoices",
+      "method": "pauseReminders"
+    },
+    "pauseMeSubscription": {
+      "resource": "me",
+      "method": "pauseSubscription"
+    },
+    "pauseSubscription": {
+      "resource": "subscriptions",
+      "method": "pause"
+    },
+    "payOrder": {
+      "resource": "orders",
+      "method": "pay"
+    },
+    "previewOrderDiscounts": {
+      "resource": "orders",
+      "method": "previewDiscounts"
+    },
+    "previewPartnerInstallAuthorization": {
+      "resource": "oauth",
+      "method": "previewPartnerInstallAuthorization"
+    },
+    "processExistingReturn": {
+      "resource": "returns",
+      "method": "processExisting"
+    },
+    "publishLocationGeography": {
+      "resource": "locations",
+      "method": "publishGeography"
+    },
+    "publishReturnPolicyRevision": {
+      "resource": "returnPolicies",
+      "method": "publishRevision"
+    },
+    "queryCheckoutSessionPickupAvailability": {
+      "resource": "checkoutSessions",
+      "method": "queryPickupAvailability"
+    },
+    "reactivateMeSubscription": {
+      "resource": "me",
+      "method": "reactivateSubscription"
+    },
+    "reactivateSubscription": {
+      "resource": "subscriptions",
+      "method": "reactivate"
+    },
+    "recordManualInvoicePayment": {
+      "resource": "invoices",
+      "method": "recordManualPayment"
+    },
+    "refreshCustomerSession": {
+      "resource": "customerSessions",
+      "method": "refresh"
+    },
+    "refreshMerchantAccountSession": {
+      "resource": "merchantAccountSessions",
+      "method": "refresh"
+    },
+    "regenerateInvoicePublicLink": {
+      "resource": "invoices",
+      "method": "regeneratePublicLink"
+    },
+    "releaseInventoryReservation": {
+      "resource": "inventoryReservations",
+      "method": "release"
+    },
+    "releaseReturnResolution": {
+      "resource": "returnResolutions",
+      "method": "release"
+    },
+    "removeMePaymentMethod": {
+      "resource": "me",
+      "method": "removePaymentMethod"
+    },
+    "removeOrderDiscounts": {
+      "resource": "orders",
+      "method": "removeDiscounts"
+    },
+    "removePaymentMethod": {
+      "resource": "paymentMethods",
+      "method": "remove"
+    },
+    "reopenReturn": {
+      "resource": "returns",
+      "method": "reopen"
+    },
+    "repriceOrderDiscounts": {
+      "resource": "orders",
+      "method": "repriceDiscounts"
+    },
+    "resendMeOrderReceipt": {
+      "resource": "me",
+      "method": "resendOrderReceipt"
+    },
+    "resendOrderReceipt": {
+      "resource": "orders",
+      "method": "resendReceipt"
+    },
+    "resendWebhookDelivery": {
+      "resource": "webhookDeliveries",
+      "method": "resend"
+    },
+    "resetDemoSession": {
+      "resource": "demoSessions",
+      "method": "reset"
+    },
+    "resetDeveloperSandbox": {
+      "resource": "developer",
+      "method": "resetSandbox"
+    },
+    "resolveCustomerDeletionRequest": {
+      "resource": "customerDeletionRequests",
+      "method": "resolve"
+    },
+    "resolveOrderInventoryException": {
+      "resource": "orders",
+      "method": "resolveInventoryException"
+    },
+    "resolvePaymentLink": {
+      "resource": "paymentLinks",
+      "method": "resolve"
+    },
+    "resolvePromotionCode": {
+      "resource": "promotions",
+      "method": "resolveCode"
+    },
+    "resumeInvoiceReminders": {
+      "resource": "invoices",
+      "method": "resumeReminders"
+    },
+    "resumeMeSubscription": {
+      "resource": "me",
+      "method": "resumeSubscription"
+    },
+    "resumeSubscription": {
+      "resource": "subscriptions",
+      "method": "resume"
+    },
+    "retryReturnDisposition": {
+      "resource": "returnDispositions",
+      "method": "retry"
+    },
+    "retryReturnResolution": {
+      "resource": "returnResolutions",
+      "method": "retry"
+    },
+    "reverseCreditNoteAllocation": {
+      "resource": "creditNotes",
+      "method": "reverseAllocation"
+    },
+    "reverseManualInvoicePayment": {
+      "resource": "invoices",
+      "method": "reverseManualPayment"
+    },
+    "revokeAPIKey": {
+      "resource": "apiKeys",
+      "method": "revoke"
+    },
+    "revokeCustomerSession": {
+      "resource": "customerSessions",
+      "method": "revoke"
+    },
+    "revokeCustomerSessions": {
+      "resource": "customers",
+      "method": "revokeSessions"
+    },
+    "revokeDeliveryDependency": {
+      "resource": "deliveryRevocations",
+      "method": "revokeDeliveryDependency"
+    },
+    "revokeDeveloperPartnerAppInstall": {
+      "resource": "developer",
+      "method": "revokePartnerAppInstall"
+    },
+    "revokeDeveloperPartnerEnvironmentGrant": {
+      "resource": "developer",
+      "method": "revokePartnerEnvironmentGrant"
+    },
+    "revokeOrganizationMembership": {
+      "resource": "organizations",
+      "method": "revokeMembership"
+    },
+    "rotateDeliveryRateCallbackSigningKey": {
+      "resource": "deliveryRateCallbacks",
+      "method": "rotateSigningKey"
+    },
+    "rotateDeveloperPartnerAppSecret": {
+      "resource": "developer",
+      "method": "rotatePartnerAppSecret"
+    },
+    "rotateWebhookSecret": {
+      "resource": "webhookEndpoints",
+      "method": "rotateWebhookSecret"
+    },
+    "saveMePaymentMethod": {
+      "resource": "me",
+      "method": "savePaymentMethod"
+    },
+    "savePaymentMethod": {
+      "resource": "paymentMethods",
+      "method": "save"
+    },
+    "sendInvoiceReminder": {
+      "resource": "invoices",
+      "method": "sendReminder"
+    },
+    "setDefaultCustomerAddress": {
+      "resource": "customers",
+      "method": "setDefaultAddress"
+    },
+    "setDefaultMeAddress": {
+      "resource": "me",
+      "method": "setDefaultAddress"
+    },
+    "setDefaultMePaymentMethod": {
+      "resource": "me",
+      "method": "setDefaultPaymentMethod"
+    },
+    "setDefaultPaymentMethod": {
+      "resource": "paymentMethods",
+      "method": "setDefault"
+    },
+    "skipSubscriptionCycle": {
+      "resource": "subscriptions",
+      "method": "skipCycle"
+    },
+    "startOnboarding": {
+      "resource": "onboarding",
+      "method": "startFlow"
+    },
+    "streamWebhookEvents": {
+      "resource": "webhookEvents",
+      "method": "stream"
+    },
+    "transferOrganizationOwnership": {
+      "resource": "organizations",
+      "method": "transferOwnership"
+    },
+    "transitionFulfillment": {
+      "resource": "fulfillments",
+      "method": "transition"
+    },
+    "transitionInventoryTransfer": {
+      "resource": "inventoryTransfers",
+      "method": "transition"
+    },
+    "transitionPackage": {
+      "resource": "packages",
+      "method": "transition"
+    },
+    "updateAPIKey": {
+      "resource": "apiKeys",
+      "method": "update"
+    },
+    "updateBundle": {
+      "resource": "bundles",
+      "method": "update"
+    },
+    "updateCategory": {
+      "resource": "categories",
+      "method": "update"
+    },
+    "updateCheckoutSession": {
+      "resource": "checkoutSessions",
+      "method": "update"
+    },
+    "updateCreditNote": {
+      "resource": "creditNotes",
+      "method": "update"
+    },
+    "updateCustomer": {
+      "resource": "customers",
+      "method": "update"
+    },
+    "updateCustomerAddress": {
+      "resource": "customers",
+      "method": "updateAddress"
+    },
+    "updateDeliveryLocationSet": {
+      "resource": "deliveryLocationSets",
+      "method": "update"
+    },
+    "updateDeliveryMethod": {
+      "resource": "deliveryMethods",
+      "method": "update"
+    },
+    "updateDeliveryProfile": {
+      "resource": "deliveryProfiles",
+      "method": "update"
+    },
+    "updateDeliveryRateCallback": {
+      "resource": "deliveryRateCallbacks",
+      "method": "update"
+    },
+    "updateDeliveryZone": {
+      "resource": "deliveryZones",
+      "method": "update"
+    },
+    "updateDeveloperPartnerApp": {
+      "resource": "developer",
+      "method": "updatePartnerApp"
+    },
+    "updateDevice": {
+      "resource": "devices",
+      "method": "update"
+    },
+    "updateFulfillment": {
+      "resource": "fulfillments",
+      "method": "update"
+    },
+    "updateInventoryAllocationPolicy": {
+      "resource": "inventoryAllocationPolicies",
+      "method": "update"
+    },
+    "updateInventoryCount": {
+      "resource": "inventoryCounts",
+      "method": "update"
+    },
+    "updateInventoryItem": {
+      "resource": "inventoryItems",
+      "method": "update"
+    },
+    "updateInventoryLevel": {
+      "resource": "inventoryLevels",
+      "method": "update"
+    },
+    "updateInventoryTransfer": {
+      "resource": "inventoryTransfers",
+      "method": "update"
+    },
+    "updateInvoice": {
+      "resource": "invoices",
+      "method": "update"
+    },
+    "updateInvoicePaymentTerm": {
+      "resource": "invoicePaymentTerms",
+      "method": "update"
+    },
+    "updateLocation": {
+      "resource": "locations",
+      "method": "update"
+    },
+    "updateLocationInventory": {
+      "resource": "locations",
+      "method": "updateInventory"
+    },
+    "updateMe": {
+      "resource": "me",
+      "method": "update"
+    },
+    "updateMeAddress": {
+      "resource": "me",
+      "method": "updateAddress"
+    },
+    "updateMerchant": {
+      "resource": "merchants",
+      "method": "update"
+    },
+    "updateModifierGroup": {
+      "resource": "modifierGroups",
+      "method": "update"
+    },
+    "updateModifierSet": {
+      "resource": "modifierSets",
+      "method": "update"
+    },
+    "updateOrder": {
+      "resource": "orders",
+      "method": "update"
+    },
+    "updateOrderCharge": {
+      "resource": "orders",
+      "method": "updateCharge"
+    },
+    "updateOrderLineItem": {
+      "resource": "orders",
+      "method": "updateLineItem"
+    },
+    "updateOrganization": {
+      "resource": "organizations",
+      "method": "update"
+    },
+    "updatePackage": {
+      "resource": "packages",
+      "method": "update"
+    },
+    "updatePackageItem": {
+      "resource": "packages",
+      "method": "updateItem"
+    },
+    "updatePaymentIntent": {
+      "resource": "paymentIntents",
+      "method": "update"
+    },
+    "updatePaymentLink": {
+      "resource": "paymentLinks",
+      "method": "update"
+    },
+    "updatePaymentMethodDomain": {
+      "resource": "paymentMethodDomains",
+      "method": "update"
+    },
+    "updatePayoutDestination": {
+      "resource": "payoutSettings",
+      "method": "updatePayoutDestination"
+    },
+    "updatePayoutSettings": {
+      "resource": "payoutSettings",
+      "method": "update"
+    },
+    "updateProduct": {
+      "resource": "products",
+      "method": "update"
+    },
+    "updateProductVariant": {
+      "resource": "products",
+      "method": "updateVariant"
+    },
+    "updatePromotion": {
+      "resource": "promotions",
+      "method": "update"
+    },
+    "updatePromotionCode": {
+      "resource": "promotions",
+      "method": "updateCode"
+    },
+    "updateRefund": {
+      "resource": "refunds",
+      "method": "update"
+    },
+    "updateReturn": {
+      "resource": "returns",
+      "method": "update"
+    },
+    "updateReturnLineItem": {
+      "resource": "returns",
+      "method": "updateLineItem"
+    },
+    "updateReturnPolicy": {
+      "resource": "returnPolicies",
+      "method": "update"
+    },
+    "updateReturnReason": {
+      "resource": "returnReasons",
+      "method": "update"
+    },
+    "updateReturnResolution": {
+      "resource": "returnResolutions",
+      "method": "update"
+    },
+    "updateRiskList": {
+      "resource": "riskLists",
+      "method": "update"
+    },
+    "updateRiskRule": {
+      "resource": "riskRules",
+      "method": "update"
+    },
+    "updateSettings": {
+      "resource": "settings",
+      "method": "update"
+    },
+    "updateShipment": {
+      "resource": "shipments",
+      "method": "update"
+    },
+    "updateSubscription": {
+      "resource": "subscriptions",
+      "method": "update"
+    },
+    "updateSubscriptionBillingSchedule": {
+      "resource": "subscriptions",
+      "method": "updateBillingSchedule"
+    },
+    "updateSubscriptionPlan": {
+      "resource": "subscriptionPlans",
+      "method": "update"
+    },
+    "updateWebhookEndpoint": {
+      "resource": "webhookEndpoints",
+      "method": "update"
+    },
+    "verifyOnboardingEmail": {
+      "resource": "onboarding",
+      "method": "verifyEmailCode"
+    },
+    "verifyReturnReceiptLineItem": {
+      "resource": "returnReceipts",
+      "method": "verifyLineItem"
+    },
+    "voidCreditNote": {
+      "resource": "creditNotes",
+      "method": "voidResource"
+    },
+    "voidInvoice": {
+      "resource": "invoices",
+      "method": "voidResource"
+    },
+    "voidPackage": {
+      "resource": "packages",
+      "method": "voidResource"
+    },
+    "voidShipment": {
+      "resource": "shipments",
+      "method": "voidResource"
+    },
+    "waiveReturnLineInspection": {
+      "resource": "returns",
+      "method": "waiveLineInspection"
+    }
   }
 }

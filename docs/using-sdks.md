@@ -1,6 +1,6 @@
 # Using generated SDKs
 
-Generate and install a package using the [README quickstart](../README.md#install-and-use-the-generated-packages). Each package contains its own `README.md`, `REFERENCE.md`, `RUNTIME.md`, typed interfaces and operation examples. Public resource and method names come from the SDK configuration; these examples use the bundled library contract.
+Generate and install a package using the [README quickstart](../README.md#install-and-use-the-generated-packages). Each package contains its own `README.md`, `REFERENCE.md`, `MODELS.md`, `RUNTIME.md`, typed interfaces and operation examples. The reference groups operations by resource and includes pagination and polling recipes. The model reference and TypeScript field comments preserve descriptions, units, constraints and examples. Public resource and method names come from the SDK configuration; these examples use the bundled library contract.
 
 ## Calls, inputs and results
 
@@ -27,7 +27,7 @@ try {
 }
 ```
 
-PHP uses presence-aware input classes and a reusable client. Save this in a consumer with the generated Composer package installed:
+PHP accepts associative input arrays or presence-aware input classes and uses a reusable client. Arrays are validated through the same generated input codec; existing input classes continue to work. Save this in a consumer with the generated Composer package installed:
 
 ```php
 <?php
@@ -38,7 +38,7 @@ use Example\Library\{Client, ClientOptions, RequestOptions, BooksRetrieveInput, 
 $client = new Client(new ClientOptions(baseUrl: 'https://your-api.example.com'));
 try {
   $result = $client->books->retrieve(
-    new BooksRetrieveInput(['id' => 'book/123']),
+    ['id' => 'book/123'],
     new RequestOptions(headers: ['X-Tenant' => 'tenant-example'], maxAttempts: 1),
   );
   echo $result->data->getTitle();
@@ -51,13 +51,13 @@ try {
 
 Set `baseUrl` to your API's base URL; these examples do not point to a hosted service. Its path prefix is retained when operation paths are appended, so avoid duplicating `/v1` if it is already present in the generated operation paths. Provide `token` through your application's credential source when the selected contract requires authentication. The SDK itself does not read environment variables or discover credentials.
 
-Path, query and header parameters are properties of the operation input; a JSON request body is under `body`. Optional fields may be omitted. Explicit null is accepted only where nullable; it does not automatically mean the server will clear a value. PHP inputs use omitted array keys for omission and `['field' => null]` for explicit null. PHP models provide `has()` and `get()`; typed getters unwrap nested model values and throw for missing optional fields. In object/array alternatives, PHP lists (including `[]`) represent JSON arrays; use `(object) []` for an empty JSON object. Exact numeric enums accept equivalent spellings such as `1.0` and `1e0` for the value `1`, with membership checked at runtime. Numeric `anyOf` branches also accept equivalent decimal/integer spellings and preserve the request token; `oneOf` still rejects a value matching multiple branches.
+Path, query and header parameters are properties of the operation input; a JSON request body is under `body`. Optional fields may be omitted. Explicit null is accepted only where nullable; it does not automatically mean the server will clear a value. PHP inputs use omitted array keys for omission and `['field' => null]` for explicit null. PHP models provide `has()`, generated presence methods such as `hasDescription()`, and `get()`. Use `valueOrDefault('description', 'fallback')` to supply a fallback only when omitted; an explicit null stays null. Typed getters unwrap nested model values and throw a field-specific error for missing optional fields. In object/array alternatives, PHP lists (including `[]`) represent JSON arrays; use `(object) []` for an empty JSON object. Exact numeric enums accept equivalent spellings such as `1.0` and `1e0` for the value `1`, with membership checked at runtime. Numeric `anyOf` branches also accept equivalent decimal/integer spellings and preserve the request token; `oneOf` still rejects a value matching multiple branches.
 
 An OpenAPI 3.1 schema with `properties` or `required` but no `type` does not by itself require an object. Generated TypeScript types preserve the permitted nonobject values; narrow such responses before accessing their fields. An enclosing object constraint in an `allOf` composition still applies to the same value.
 
 PHP response classes include the response status in their names; tagged alternatives also include the branch position. Follow the package's migration notes when upgrading code that dispatches by class: adding a status can introduce a new return class even with an identical JSON shape, and reassigning an existing branch position requires a breaking release. Dispatching by the discriminator value also requires explicit handling of unknown tags.
 
-`Result` contains `data`, `meta` and explicit raw response text in `raw`. Node accesses metadata with properties; PHP uses array keys. Metadata includes HTTP status, response headers, attempt count, duration and an optional provider request ID. Inspect unknown response enums or variants explicitly before treating them as a known successful business state.
+`Result` contains `data`, `meta` and explicit raw response text in `raw`. `data` is the complete decoded API response body. If the provider wraps its payload in another `data` field, use `result.data.data` (PHP: `$result->data->data`). Endpoint-specific nesting stays intact; follow the operation example rather than assuming every endpoint has the same envelope. Node accesses metadata with properties; PHP uses array keys. Metadata includes HTTP status, response headers, attempt count, duration and an optional provider request ID. Inspect unknown response enums or variants explicitly before treating them as a known successful business state.
 
 Use strings for exact int64/uint64 and JSON `number` values, including decimals: `"9007199254740993"`, for example. The schema determines whether the string becomes an unquoted number token on the wire. Ordinary safe integers use native numbers/integers. Do not convert an exact amount to a floating-point number before handing it to the SDK. When configured, `money(currency, major)` converts an exact major-unit string to minor units and rejects whitespace, including trailing newlines, and excess precision.
 
@@ -115,7 +115,7 @@ Pass client defaults to `new Client({...})` in Node or `new Client(new ClientOpt
 
 Request timeout, deadline and attempt settings take precedence over client defaults. Increasing `maxAttempts` cannot enable an undeclared retry policy. Avoid setting a client-wide retry count greater than the limit of any operation you call. No mutable client-wide tenant headers are shared between calls.
 
-Node clients can serve concurrent calls within an event loop. PHP clients support sequential calls within one execution context; do not share a client concurrently across threads or fibers. Close PHP clients to release their owned cURL handle. Injected transports must honor cancellation/timeouts and disable their own redirects and retries; they receive credentials and bodies. Node clients expose no `close()` method: the default fetch pool belongs to the runtime, and a custom transport's cleanup belongs to its caller.
+Node clients can serve concurrent calls within an event loop. PHP clients support sequential calls within one execution context; do not share a client concurrently across threads or fibers. Close PHP clients to release their owned cURL handle. Injected transports must honor cancellation/timeouts and disable their own redirects and retries; they receive credentials and bodies. Node clients with streaming operations expose `close()` to release owned streams. Non-streaming Node clients need no cleanup and do not expose `close()`. The default fetch pool belongs to the runtime, and a custom transport's cleanup belongs to its caller.
 
 ## Errors and recovery
 
@@ -157,6 +157,17 @@ const client = new Client({
 });
 const result = await client.orders.get(input, { authMode: 'merchant' });
 ```
+
+When the provider configures an `apiKey` shortcut, you can use:
+
+```ts
+const client = new Client({ baseUrl, apiKey: 'default-key' });
+await client.orders.get(input, { apiKey: 'request-key' });
+```
+
+PHP accepts the same configured name as a named argument: `new ClientOptions(baseUrl: $baseUrl, apiKey: $key)` or `new RequestOptions(apiKey: $key)`. The shortcut selects its configured mode and credential. Request overrides do not mutate the client. Explicit request authentication remains available for other modes; do not mix a shortcut and explicit authentication in the same options object.
+
+Generated TypeScript `AuthMode` and `Credentials` declarations list the actual modes and required scheme keys. Each operation limits request options to its permitted modes. The generated runtime guide includes the complete mode/key table. Missing-credential errors name the scheme and mode without printing secret values.
 
 PHP uses the same associative maps in `ClientOptions` and `RequestOptions`. Constructor additions are optional named arguments; legacy token-based clients continue to work.
 
@@ -204,3 +215,13 @@ Node schedules long timeouts and stream lifetimes in bounded timer chunks, prese
 Iteration provides backpressure. PHP's default cURL multi transport queues at most one write chunk and pauses further writes until consumed. PHP cancellation and lifetime checks are cooperative while reading/iterating; synchronous injected transports must honor cancellation while blocked. Node uses AbortSignal, including during an idle read. A PHP injected transport returns a `ByteStream` in `response['stream']`; `read(): ?string` returns bounded chunks or null at EOF and `close(): void` releases resources. The injected request includes stream limits and cancellation. Connection retries can occur only before a stream result is returned, under the operation's declared retry policy. There is no automatic reconnect or delivery guarantee.
 
 Package READMEs include installation instructions, provider documentation links when configured, and a complete quickstart with error handling, followed by two short recipes. Examples show request inputs, declared response ID/status fields and request IDs; idempotent mutations create a key inline, with a reminder to reuse it for retries of the same action. The `examples/` directory contains runnable scripts for every operation; the API reference links to each script. Set the environment variables shown in an example and replace sample IDs with values from your account before running it.
+
+Generated examples use random idempotency keys only when the declared header schema permits their format and length. For patterns, enums, or other constraints that cannot guarantee that format, set `API_IDEMPOTENCY_KEY` to a schema-compatible key before running an example. Create a new key for a new business action and reuse the saved key only for the same action.
+
+PHP `valueOrDefault(field, fallback)` avoids the `getField()` accessor namespace, so wire fields such as `orDefault` retain their existing `getOrDefault()` getter.
+
+Authentication option types are part of the compiled public contract. Migrating from older unrestricted options to named modes, or narrowing an operation’s accepted modes, is reported as breaking and requires a major version under the semver policy. Update shared wrappers to use the mode-specific `RequestOptions<'merchant'>` type when necessary.
+
+Some providers opt into direct payload returns. For those operations, `const payment = await client.paymentIntents.create(input)` accesses the configured payload without an SDK `data` wrapper. Use `createWithResponse(input)` instead when you need `response.body`, `response.meta`, or `response.raw`; `body` is the complete decoded API response, without unwrapping. PHP uses the same method names with `->` property access. Each invocation sends a separate request, so choose one form per action.
+
+Check the operation reference for its return mode. SDKs and individual operations can retain the existing `Result` interface. `Pages` and `Wait` always yield/return full Results; `Items` yields individual items. Follow provider migration notes when an SDK changes its return mode or payload path.

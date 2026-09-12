@@ -70,6 +70,23 @@ const html = (text: string) =>
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;');
 const markdown = new MarkdownIt({ html: false });
+// Match the heading fragments used by the package's Markdown references.
+markdown.core.ruler.push('sdk-heading-ids', (state) => {
+  const used = new Set<string>();
+  for (let index = 0; index < state.tokens.length; index++) {
+    const token = state.tokens[index]!;
+    if (token.type !== 'heading_open') continue;
+    const title = state.tokens[index + 1]?.content ?? '';
+    const base = title
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}_\s-]/gu, '')
+      .replace(/\s/g, '-');
+    let id = base;
+    for (let suffix = 1; used.has(id); suffix++) id = base + '-' + suffix;
+    used.add(id);
+    token.attrSet('id', id);
+  }
+});
 markdown.renderer.rules.link_open = (tokens, index, options, env, renderer) => {
   const token = tokens[index]!;
   const href = token.attrGet('href');
@@ -99,7 +116,7 @@ export function prepareSite(
     writeFileSync(join(site, path), data);
   };
   for (const path of owned.filter((p) =>
-    /^(node|php)\/(README\.md|REFERENCE\.md|RUNTIME\.md|guides\/|examples\/)/.test(p),
+    /^(node|php)\/(README\.md|REFERENCE\.md|MODELS\.md|RUNTIME\.md|guides\/|examples\/)/.test(p),
   ))
     put(
       `${versionPath}/${path}${/\.(php|mjs|ts)$/.test(path) ? '.txt' : ''}`,

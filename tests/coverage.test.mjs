@@ -602,8 +602,17 @@ test('coordinated site publishes versioned docs and an installable Composer repo
       const source = readFileSync(join(release, path), 'utf8');
       for (const match of source.matchAll(/href="([^"]+)"/g)) {
         const url = new URL(match[1], baseUrl + path.slice(5));
-        if (url.origin === new URL(baseUrl).origin)
-          assert.equal((await fetch(url)).status, 200, `Broken documentation link: ${url}`);
+        if (url.origin === new URL(baseUrl).origin) {
+          const response = await fetch(url);
+          assert.equal(response.status, 200, `Broken documentation link: ${url}`);
+          if (url.hash)
+            assert.ok(
+              (await response.text()).includes(
+                'id="' + decodeURIComponent(url.hash.slice(1)) + '"',
+              ),
+              `Broken documentation fragment: ${url}`,
+            );
+        }
       }
     }
     assert.equal(

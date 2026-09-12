@@ -157,12 +157,32 @@ export function assertCompiledSnapshot(value: unknown): asserts value is Compile
   assertRuntimePlan(plan.runtime);
   const php = object(plan.php, 'php');
   assertRuntimePlan(php.runtime);
+  if (plan.responseReturns !== undefined)
+    for (const [id, value] of Object.entries(object(plan.responseReturns, 'responseReturns'))) {
+      const response = object(value, 'responseReturns.' + id);
+      fields(response, ['node', 'nodeDocumentation', 'php', 'phpNative'], 'string', id);
+      if (!Array.isArray(response.path) || response.path.some((p) => typeof p !== 'string' || !p))
+        throw new Error('Invalid payload path for ' + id);
+    }
   const node = object(plan.node, 'node');
   for (const target of [node, php]) object(target.operations, 'target.operations');
   fields(node, ['eventType'], 'string', 'node');
+  if (node.responseReturnDeclarations !== undefined)
+    fields(node, ['responseReturnDeclarations'], 'string', 'node');
+  if (node.authentication !== undefined) {
+    const authentication = object(node.authentication, 'node.authentication');
+    fields(authentication, ['declarations'], 'string', 'node.authentication');
+    for (const [mode, schemes] of Object.entries(
+      object(authentication.modes, 'node.authentication.modes'),
+    ))
+      if (!Array.isArray(schemes) || schemes.some((s) => typeof s !== 'string'))
+        throw new Error('Invalid authentication scheme names for ' + mode);
+  }
   for (const [name, value] of Object.entries(object(node.models, 'node.models'))) {
     const model = object(value, 'node.models.' + name);
     fields(model, ['input', 'output'], 'string', name);
+    for (const field of ['documentedInput', 'documentedOutput'])
+      if (model[field] !== undefined) fields(model, [field], 'string', name);
     fields(model, ['objectFactory'], 'boolean', name);
     assertCodecPlan(model.codec, 'node.models.' + name);
     if (model.sharedCodec !== undefined) fields(model, ['sharedCodec'], 'string', name);
@@ -170,6 +190,13 @@ export function assertCompiledSnapshot(value: unknown): asserts value is Compile
   for (const [name, value] of Object.entries(object(node.operations, 'node.operations'))) {
     const op = object(value, name);
     fields(op, ['input', 'output', 'items'], 'string', name);
+    if (op.requestOptions !== undefined) fields(op, ['requestOptions'], 'string', name);
+    if (
+      op.authModes !== undefined &&
+      (!Array.isArray(op.authModes) || op.authModes.some((mode) => typeof mode !== 'string'))
+    )
+      throw new Error('Invalid operation authentication types: ' + name);
+    if (op.documentedInput !== undefined) fields(op, ['documentedInput'], 'string', name);
     fields(op, ['inputRequired'], 'boolean', name);
     if (op.known !== undefined) {
       const known = object(op.known, name + '.known');

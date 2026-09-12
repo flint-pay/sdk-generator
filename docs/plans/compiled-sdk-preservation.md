@@ -113,3 +113,5 @@ Validation completed on Node 24.19.0/PHP 8.5.10 and Node 22.16.0/PHP 8.2.33. Bot
 The documentation review covered all 13 repository Markdown documents and 49 local links, plus generated package documentation, its six local links and the executable public-helper example. The design document describes the implemented architecture; consumer guides describe public behavior and compatibility limits.
 
 The final completion scan found no remaining items in the implementation and preservation checklist.
+
+The consumer DX update retains that historical file and adds `tests/fixtures/dx-public-baseline.json` as the current public-interface checkpoint. The reviewed differences are field documentation and complete call examples in Node declarations, and additive PHP array input support, presence methods, and optional-field fallback access. The current preservation test uses the DX checkpoint; consumer compilation and runtime tests cover the behavior behind those changes.

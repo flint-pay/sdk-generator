@@ -1,8 +1,9 @@
+import { validateResponseReturn, payloadSchemas, type ResponseReturn } from './response-return.js';
 import { shareContractSchemas } from './schema-sharing.js';
 import { Diagnostic, DiagnosticGroup, DiagnosticCollector, suggestion } from './diagnostic.js';
 import { valueInstruction, exactValue, discriminatorBindings } from './codec-plan.js';
 import { stable } from './canonical.js';
-import { successStatus } from './runtime-plan.js';
+import { successStatus, AUTH_SHORTCUT_RESERVED } from './runtime-plan.js';
 import { visitIntersectedProperties } from './schema-intersections.js';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname, relative as relativePath } from 'node:path';
@@ -67,6 +68,7 @@ export interface Retry {
   baseDelayMs: number;
 }
 export interface Capability {
+  response?: ResponseReturn;
   stream?: { events?: Record<string, string>; idleTimeoutMs?: number; maxEventBytes?: number };
   requestMediaType?: string;
   resource?: string;
@@ -117,6 +119,7 @@ export interface Auth {
   type: 'bearer' | 'apiKey';
   header: string;
 }
+export type AuthShortcuts = Record<string, { mode: string; scheme: string }>;
 export interface AuthenticationMode {
   schemes: (Auth & { name: string })[];
   operations?: string[];
@@ -133,13 +136,17 @@ export interface Webhook {
   typeField: string;
 }
 export interface Config {
+  responses?: ResponseReturn;
   profiles?: string[];
   numericUnions?: 'explicit';
   schemaSharing?: 'named';
   validation?: 'encoding' | 'schema';
   auth?:
     | { scheme: string }
-    | { modes: Record<string, { schemes: string[]; operations?: string[] }> };
+    | {
+        modes: Record<string, { schemes: string[]; operations?: string[] }>;
+        shortcuts?: AuthShortcuts;
+      };
   targets?: ('node' | 'php')[];
   version: string;
   npm: { name: string; registry?: string; access?: 'public' | 'restricted' };
@@ -167,6 +174,7 @@ export interface Contract {
   modelDependencies?: Record<string, string[]>;
   auth?: Auth;
   authentication?: Record<string, AuthenticationMode>;
+  authShortcuts?: AuthShortcuts;
   config: Config;
   sources: Record<string, string>;
   hash: string;
@@ -1254,6 +1262,7 @@ export function loadContract(
     )
       invalidConfig.add(key);
   for (const key of [
+    'responses',
     'auth',
     'npm',
     'composer',
@@ -1277,6 +1286,7 @@ export function loadContract(
     keys(
       config,
       [
+        'responses',
         'targets',
         'validation',
         'numericUnions',
@@ -1312,6 +1322,13 @@ export function loadContract(
   diagnostics.check(() => {
     if (config.validation !== undefined && !['encoding', 'schema'].includes(config.validation))
       fail('config/validation', 'expected encoding or schema');
+  });
+  checkConfig(['responses'], () => {
+    if (config.responses !== undefined) {
+      validateResponseReturn(config.responses, 'config/responses');
+      if (config.responses.payloadPath && config.responses.return !== 'payload')
+        fail('config/responses/payloadPath', 'payloadPath requires return: payload');
+    }
   });
   checkConfig(['operations'], () => {
     for (const [id, capability] of Object.entries(config.operations ?? {}))
@@ -1891,7 +1908,7 @@ export function loadContract(
         ? undefined
         : Object.keys(schemes)[0];
   if (namedAuth) {
-    keys(namedAuth, ['modes'], 'config/auth');
+    keys(namedAuth, ['modes', 'shortcuts'], 'config/auth');
     record(namedAuth.modes, 'config/auth/modes');
     if (!Object.keys(namedAuth.modes).length)
       fail('config/auth/modes', 'declare at least one authentication mode');
@@ -1911,6 +1928,28 @@ export function loadContract(
         schemes: compiled,
         ...(settings.operations ? { operations: settings.operations } : {}),
       };
+    }
+    if (namedAuth.shortcuts !== undefined) {
+      record(namedAuth.shortcuts, 'config/auth/shortcuts');
+      for (const [key, shortcut] of Object.entries(namedAuth.shortcuts)) {
+        const path = 'config/auth/shortcuts/' + key;
+        if (!/^[a-z][a-zA-Z0-9]*$/.test(key) || AUTH_SHORTCUT_RESERVED.has(key.toLowerCase()))
+          fail(
+            path,
+            'shortcut name must be a portable option name that does not collide with existing options',
+          );
+        record(shortcut, path);
+        keys(shortcut, ['mode', 'scheme'], path);
+        const mode = authentication![shortcut.mode];
+        if (
+          typeof shortcut.mode !== 'string' ||
+          typeof shortcut.scheme !== 'string' ||
+          !mode ||
+          mode.schemes.length !== 1 ||
+          mode.schemes[0]!.name !== shortcut.scheme
+        )
+          fail(path, 'shortcut must target the sole scheme of a declared authentication mode');
+      }
     }
   } else {
     if (config.auth) {
@@ -1955,6 +1994,7 @@ export function loadContract(
         keys(
           c,
           [
+            'response',
             'resource',
             'method',
             'audiences',
@@ -1972,6 +2012,15 @@ export function loadContract(
           ],
           `config/operations/${id}`,
         );
+        if (c.response !== undefined)
+          validateResponseReturn(c.response, `config/operations/${id}/response`);
+        const responseReturn = {
+          ...(invalidConfig.has('responses') ? {} : config.responses),
+          ...c.response,
+        };
+        const payloadReturn = responseReturn.return === 'payload';
+        if (!payloadReturn && c.response?.payloadPath != null)
+          fail(`config/operations/${id}/response`, 'payloadPath requires return: payload');
         for (const key of ['aliases', 'audiences'] as const)
           if (c[key] !== undefined) strings(c[key], `config/operations/${id}/${key}`);
         if (c.hidden !== undefined && typeof c.hidden !== 'boolean')
@@ -2017,6 +2066,7 @@ export function loadContract(
         const allNames = [
           method,
           ...(c.aliases ?? []),
+          ...(payloadReturn ? [method, ...(c.aliases ?? [])].map((n) => n + 'WithResponse') : []),
           ...(c.pagination ? [method + 'Pages', method + 'Items'] : []),
           ...(c.polling ? [method + 'Wait'] : []),
         ];
@@ -2365,8 +2415,9 @@ export function loadContract(
           keys(c.conditional, ['header'], p);
           header(c.conditional.header, p);
         }
-        operations.push({
+        const operation: Operation = {
           ...c,
+          ...(payloadReturn ? { response: responseReturn } : {}),
           id,
           resource,
           method,
@@ -2387,7 +2438,10 @@ export function loadContract(
             : op.deprecated
               ? { deprecated: 'Deprecated by the API provider; consult its migration guide.' }
               : {}),
-        });
+        };
+        if (!payloadReturn) delete operation.response;
+        if (payloadReturn && responseReturn.payloadPath) payloadSchemas(operation);
+        operations.push(operation);
       } catch (error) {
         diagnostics.capture(error);
       }
@@ -2546,6 +2600,7 @@ export function loadContract(
       }),
     ),
     ...(authentication ? { authentication } : {}),
+    ...(namedAuth?.shortcuts ? { authShortcuts: namedAuth.shortcuts } : {}),
     config,
     sources,
     hash: '',
