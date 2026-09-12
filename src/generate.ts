@@ -259,6 +259,7 @@ function publicArguments(
   input: unknown,
   target: 'node' | 'php',
   syntax: ExampleSyntax = {},
+  multiline = false,
 ): string {
   return requestArguments(op, input)
     .map((value) =>
@@ -267,10 +268,11 @@ function publicArguments(
           ? 'undefined'
           : 'null'
         : target === 'node'
-          ? exampleSource(value, 'node', 0, syntax)
+          ? exampleSource(value, 'node', multiline ? 2 : 0, syntax)
           : phpExampleSource(value, 0, true, syntax),
     )
-    .join(', ');
+    .map((source) => (multiline ? source.replace(/^/gm, '  ') : source))
+    .join(multiline ? ',\n' : ', ');
 }
 
 function callPlan(op: Operation, plan: CompiledSdkContract, optionsType: string) {
@@ -495,7 +497,7 @@ function exampleParts(
       setup: `const ${client} = new Client({\n  baseUrl: process.env.API_BASE_URL ?? 'https://sandbox.example.invalid',\n${authOptions ? '  ' + authOptions + ',\n' : ''}});\n`,
       call:
         key.keySetup +
-        `const ${result} = await ${client}.${op.resource}.${op.method}(\n${publicArguments(op, input, 'node', syntax)}${requestArguments(op, input).length ? ',' : ''}\n  { ${requestOptions} },\n);\n${exampleResult(op, c.definitions ?? {}, 'node', result)}${op.response?.return === 'payload' ? '' : `console.log(${result}.meta.requestId);\n`}` +
+        `const ${result} = await ${client}.${op.resource}.${op.method}(\n${publicArguments(op, input, 'node', syntax, true)}${requestArguments(op, input).length ? ',\n' : ''}  { ${requestOptions} },\n);\n${exampleResult(op, c.definitions ?? {}, 'node', result)}${op.response?.return === 'payload' ? '' : `console.log(${result}.meta.requestId);\n`}` +
         (hasStream
           ? `if (${result}${op.response?.return === 'payload' ? '' : '.data'} instanceof EventStream) {\n  for await (const event of ${result}${op.response?.return === 'payload' ? '' : '.data'}) { console.log(event.event, event.id, event.data); break; }\n}\n`
           : ''),
