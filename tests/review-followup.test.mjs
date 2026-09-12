@@ -180,11 +180,12 @@ ob_start();var_dump($s);$debug=ob_get_clean();echo json_encode(['debug'=>$debug,
 });
 
 test('model JSON copies cannot change stored values or exact numeric wire kinds', async () => {
-  const model = sdk.makePayload({
+  const input = {
     amount: new sdk.ExactNumber('1.2500'),
     nested: { value: 'original' },
     items: ['one'],
-  });
+  };
+  const model = sdk.makePayload(input);
   const copy = model.toJSON();
   copy.amount = '2';
   copy.nested.value = 'edited';
@@ -203,6 +204,12 @@ test('model JSON copies cannot change stored values or exact numeric wire kinds'
   await client.api.save({ body: model });
   assert.match(body, /"amount":1\.2500/);
   assert.deepEqual(JSON.parse(body), { ...expected, amount: 1.25 });
+  // Rebuild from retained input, not the public JSON copy: ExactNumber selects
+  // a JSON number in an alternative that also accepts strings.
+  const updated = sdk.makePayload({ ...input, nested: { ...input.nested, value: 'edited' } });
+  await client.api.save({ body: updated });
+  assert.match(body, /"amount":1\.2500/);
+  assert.deepEqual(JSON.parse(body), { ...expected, amount: 1.25, nested: { value: 'edited' } });
   assert.equal(sdk.serialize(new sdk.Model(null, { type: 'null' }), { type: 'null' }), 'null');
 });
 

@@ -158,6 +158,72 @@ test('PHP positional methods dispatch the same wire request', () => {
   assert.equal(requests[3].body, null);
   assert.equal(requests[4].body, '{}');
 });
+test('positional parameters named after PHP superglobals preserve their wire values', async () => {
+  // The first three names also exercise collisions with allocated fallback names.
+  const names = [
+    'path1',
+    'GLOBALS',
+    'path1_',
+    '_SERVER',
+    '_GET',
+    '_POST',
+    '_FILES',
+    '_COOKIE',
+    '_SESSION',
+    '_REQUEST',
+    '_ENV',
+  ];
+  const f = fixture({
+    apiEdit(api) {
+      api.paths['/reserved/' + names.map((name) => `{${name}}`).join('/')] = {
+        get: {
+          operationId: 'getReserved',
+          parameters: names.map(path),
+          responses: {
+            200: { description: 'OK', content: { 'application/json': { schema: response } } },
+          },
+        },
+      };
+    },
+  });
+  const values = names.map((_, index) => `value${index}/part`);
+  const expected = '/reserved/' + values.map(encodeURIComponent).join('/');
+  const { c, requests } = await client(f);
+  await c.api.getReserved(...values);
+  assert.equal(requests.at(-1).path, expected);
+  const phpRequests = JSON.parse(
+    php(
+      f,
+      `$c->api->getReserved(${values.map((value) => `'${value}'`).join(', ')}); echo json_encode($requests);`,
+    ),
+  );
+  assert.equal(phpRequests[0].url, 'https://example.invalid' + expected);
+  const consumer = join(f.output, 'node/reserved.ts');
+  writeFileSync(
+    consumer,
+    `import {Client} from './index.js';
+const c = new Client({baseUrl:'https://example.invalid'});
+c.api.getReserved(${values.map((value) => JSON.stringify(value)).join(', ')});
+`,
+  );
+  execFileSync(
+    process.execPath,
+    [
+      resolve('node_modules/typescript/bin/tsc'),
+      '--strict',
+      '--noEmit',
+      '--module',
+      'NodeNext',
+      '--target',
+      'ES2022',
+      '--typeRoots',
+      resolve('node_modules/@types'),
+      consumer,
+    ],
+    { stdio: 'pipe' },
+  );
+});
+
 test('TypeScript declarations and generated examples use the selected call style', () => {
   const f = fixture();
   const source = `import {Client} from './index.js'; const c=new Client({baseUrl:'https://example.invalid'});
