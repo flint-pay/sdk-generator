@@ -23,6 +23,28 @@ Contract loading and generation use local inputs. Relative `$ref` paths resolve 
 
 Only `publish` uploads to npm. `generate`, `validate`, `preview` and `release` do not publish. See [releases](releases.md) for version policy, destinations and recovery after partial publication.
 
+## Diagnostic findings
+
+`diagnose` collects independent configuration errors and unknown operation IDs, then validates models and operations in separate stages. Unknown settings list valid keys and suggest close spellings; unknown operation IDs suggest nearby IDs from the contract, including local path-item references.
+
+On failure, it exits with status 1 and writes JSON to stderr:
+
+```json
+{
+  "valid": false,
+  "error": "config/version: expected a semantic package version",
+  "diagnostics": [
+    { "location": "config/version", "message": "expected a semantic package version" }
+  ]
+}
+```
+
+The `error` string remains available for existing consumers. Each `diagnostics` entry has a location and a message without the repeated location prefix. Successful output is unchanged. No files are written.
+
+Checks that depend on an invalid setting are skipped. Loading failures (such as invalid JSON or unresolved references) can prevent later checks; config errors stop compilation, and model errors stop operation validation. Within model and operation validation, diagnostics report the first failure per model or operation and continue checking the others. Fix the reported findings and rerun to reach dependent checks.
+
+Library callers can opt in with `loadContract(apiPath, configPath, { collectDiagnostics: true })` and inspect `DiagnosticGroup.findings`. Other commands and ordinary `loadContract` calls still stop on a validation failure.
+
 ## Generated layout
 
 ```text

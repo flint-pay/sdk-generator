@@ -8,6 +8,7 @@ import {
   publishRelease,
   render,
 } from './generate.js';
+import { DiagnosticGroup } from './diagnostic.js';
 import { Diagnostic, stable } from './contract.js';
 import { publishSite } from './distribution.js';
 const args = process.argv.slice(2);
@@ -37,7 +38,9 @@ try {
     args.length >= 2 &&
     args.length <= 3
   ) {
-    const contract = loadContract(args[0]!, args[1]!);
+    const contract = loadContract(args[0]!, args[1]!, {
+      collectDiagnostics: command === 'diagnose',
+    });
     render(contract);
     if (command === 'diagnose')
       console.log(
@@ -55,6 +58,21 @@ try {
     }
   } else throw new Diagnostic('arguments', usage);
 } catch (error) {
-  console.error(stable({ error: error instanceof Error ? error.message : String(error) }));
+  console.error(
+    stable({
+      error: error instanceof Error ? error.message : String(error),
+      ...(command === 'diagnose'
+        ? {
+            valid: false,
+            diagnostics: (error instanceof DiagnosticGroup
+              ? error.findings
+              : error instanceof Diagnostic
+                ? [error]
+                : []
+            ).map((finding) => ({ location: finding.location, message: finding.detail })),
+          }
+        : {}),
+    }),
+  );
   process.exitCode = 1;
 }
