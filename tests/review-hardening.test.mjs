@@ -13,6 +13,7 @@ const root = mkdtempSync(join(tmpdir(), 'sdk-hardening-'));
 after(() => rmSync(root, { recursive: true, force: true }));
 const profile = {
   version: '1.0.0',
+  requests: { style: 'object' },
   npm: { name: 'hardening-sdk' },
   composer: { name: 'hardening/sdk', namespace: 'HardeningSdk' },
 };

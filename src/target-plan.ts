@@ -1,3 +1,4 @@
+import { positional, pathParameters, hasParams } from './request-style.js';
 import { payloadSchemas, payloadHasAlternatives } from './response-return.js';
 import { schemaComment } from './schema-documentation.js';
 import { codecSharing } from './codec-sharing.js';
@@ -324,7 +325,91 @@ function compileAuthentication(c: Contract): NodeAuthenticationPlan | undefined 
   return { declarations, modes };
 }
 
+const js = (v: unknown) => JSON.stringify(v, null, 2)?.replaceAll('"__proto__":', '["__proto__"]:');
+const php = (s: string) => "'" + s.replaceAll('\\', '\\\\').replaceAll("'", "\\'") + "'";
+function compileRequestCall(op: Operation, c: Contract, optionsType: string) {
+  const paths = pathParameters(op);
+  const fields = op.parameters.filter((p) => p.in !== 'path');
+  const requiredFields = new Set(inputSchema(op).required);
+  const paramsRequired = op.bodyRequired || fields.some((p) => requiredFields.has(p.name));
+  const type = (schema: Schema) =>
+    typescriptType(schema, false, undefined, false, undefined, undefined, c.models);
+  // An omitted optional body may accompany query/header params. Exclude declared
+  // body fields in that branch so a partially supplied body still needs its required fields.
+  const bodyType = op.body
+    ? `InputValue<${type(op.body)}>` +
+      (!op.bodyRequired && fields.length
+        ? ` | { ${[...new Set(valueScopes(op.body, c.definitions).flatMap((s) => Object.keys(s.properties ?? {})))].map((name) => `${JSON.stringify(name)}?: never`).join('; ')} }`
+        : '')
+    : undefined;
+  const paramsType = [
+    ...(bodyType ? [`(${bodyType})`] : []),
+    ...(fields.length
+      ? [
+          `{ ${fields.map((p) => `${JSON.stringify(p.name)}${requiredFields.has(p.name) ? '' : '?'}: ${requiredFields.has(p.name) ? `InputValue<${type(p.schema)}>` : optionalPropertyType(p.name, `InputValue<${type(p.schema)}>`)}`).join('; ')} }`,
+        ]
+      : []),
+  ].join(' & ');
+  const reserved = new Set(
+    '_sdkRequestInput _sdkPayload _sdkResponse params options input rest arguments eval await yield break case catch class const continue debugger default delete do else enum export extends false finally for function if import in instanceof let new null return super switch this throw true try typeof var void while with implements interface package private protected public static'.split(
+      ' ',
+    ),
+  );
+  const names = paths.map((p, i) => {
+    let name =
+      /^[A-Za-z_][A-Za-z0-9_]*$/.test(p.name) && !reserved.has(p.name) ? p.name : `path${i}`;
+    while (reserved.has(name)) name += '_';
+    reserved.add(name);
+    return name;
+  });
+  const nodeArgs = [...names, ...(hasParams(op) ? ['params'] : []), 'options'].join(', ');
+  const nodeSignature = [
+    ...paths.map((p, i) => `${names[i]}: InputValue<${type(p.schema)}>`),
+    ...(hasParams(op) ? [`params${paramsRequired ? '' : '?'}: ${paramsType}`] : []),
+    `options?: ${optionsType}`,
+  ].join(', ');
+  const nodeInput = `_sdkRequestInput(${js(paths.map((p) => p.name))}, [${names.join(', ')}], ${js(fields.map((p) => p.name))}, ${Boolean(op.body)}, ${op.bodyRequired}, ${hasParams(op) ? 'params' : 'undefined'})`;
+  const phpSignature = [
+    ...names.map(
+      (name, i) =>
+        `${phpType(paths[i]!.schema) === 'mixed' ? 'mixed' : phpType(paths[i]!.schema) + '|Model'} $${name}`,
+    ),
+    ...(hasParams(op)
+      ? [
+          `${paramsRequired ? 'array|Model' : 'array|Model|null'} $params${paramsRequired ? '' : ' = null'}`,
+        ]
+      : []),
+    '?RequestOptions $options = null',
+  ].join(', ');
+  let phpPrelude = `$input = [${paths.map((p, i) => `${php(p.name)} => $${names[i]}`).join(', ')}]; `;
+  if (hasParams(op)) {
+    phpPrelude +=
+      "$params = $params instanceof Model ? $params->toInputArray() : $params; $rest = $params ?? []; if ($rest && array_is_list($rest)) throw new SdkError('validation', 'Expected associative params', 'not_sent'); ";
+    for (const p of fields)
+      phpPrelude += `if (array_key_exists(${php(p.name)}, $rest)) { $input[${php(p.name)}] = $rest[${php(p.name)}]; unset($rest[${php(p.name)}]); } `;
+    if (op.body)
+      phpPrelude += `if (${op.bodyRequired ? 'true' : '$params !== null && (!$params || $rest)'}) $input['body'] = (object) $rest; `;
+    else
+      phpPrelude +=
+        "foreach ($rest as $name => $value) { if (array_key_exists($name, $input)) throw new SdkError('validation', 'Path values belong in positional arguments', 'not_sent'); $input[$name] = $value; } ";
+  }
+  return {
+    nodeArgs,
+    nodeSignature,
+    nodeInput,
+    phpSignature,
+    phpPrelude,
+    phpDoc: hasParams(op)
+      ? '@param array|Model $params Flat body fields and query/header parameters; path arguments follow URL order.'
+      : 'Path arguments follow URL order; request options come last.',
+  };
+}
+
 export interface CompiledSdkContract {
+  requestCalls?: Record<
+    string,
+    ReturnType<typeof compileRequestCall> & { paths: string[]; params: boolean }
+  >;
   responseReturns?: Record<
     string,
     { path: string[]; node: string; nodeDocumentation: string; php: string; phpNative: string }
@@ -462,6 +547,32 @@ export function compileSdkContract(source: Contract): {
   if (phpRuntime.webhook) phpRuntime.webhook.eventModels = eventModels;
   const authentication = compileAuthentication(c);
   const plan: CompiledSdkContract = {
+    ...(c.operations.some(positional)
+      ? {
+          requestCalls: Object.fromEntries(
+            c.operations.filter(positional).map((op) => [
+              op.id,
+              {
+                ...compileRequestCall(
+                  op,
+                  c,
+                  authentication
+                    ? `RequestOptions<${
+                        op.authModes
+                          ?.slice()
+                          .sort()
+                          .map((mode) => JSON.stringify(mode))
+                          .join(' | ') || 'never'
+                      }>`
+                    : 'RequestOptions',
+                ),
+                paths: pathParameters(op).map((p) => p.name),
+                params: hasParams(op),
+              },
+            ]),
+          ),
+        }
+      : {}),
     format: 1,
     semantics: runtime.semantics + '/results-1',
     targets: [...(c.config.targets ?? ['node', 'php'])],

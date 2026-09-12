@@ -32,6 +32,7 @@ const doc = {
 const config = {
   version: '1.0.0',
   auth: { scheme: 'BearerAuth' },
+  requests: { style: 'object' },
   npm: { name: '@example/auth' },
   composer: { name: 'example/auth', namespace: 'Example\\Auth' },
 };

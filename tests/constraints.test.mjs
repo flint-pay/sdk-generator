@@ -92,6 +92,7 @@ const doc = {
 const config = {
   validation: 'schema',
   version: '1.0.0',
+  requests: { style: 'object' },
   npm: { name: '@example/constraints' },
   composer: { name: 'example/constraints', namespace: 'Example\\Constraints' },
 };

@@ -33,6 +33,7 @@ function load(content, selection) {
   };
   const config = {
     version: '1.0.0',
+    requests: { style: 'object' },
     npm: { name: '@example/media' },
     composer: { name: 'example/media', namespace: 'Example\\Media' },
     ...(selection === undefined

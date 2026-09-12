@@ -34,6 +34,7 @@ function emit(schema, schemas = {}) {
     JSON.stringify({
       version: '1.0.0',
       validation: 'schema',
+      requests: { style: 'object' },
       npm: { name: 'review-sdk' },
       composer: { name: 'review/sdk', namespace: 'ReviewSdk' },
     }),

@@ -123,6 +123,7 @@ writeFileSync(
   join(dir, 'sdk.json'),
   JSON.stringify({
     version: '1.0.0',
+    requests: { style: 'object' },
     npm: { name: '@example/streams' },
     composer: { name: 'example/streams', namespace: 'Example\\Streams' },
     operations: {

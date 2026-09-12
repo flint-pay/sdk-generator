@@ -9,6 +9,7 @@ import { DiagnosticCollector } from '../dist/diagnostic.js';
 
 const api = JSON.parse(readFileSync('examples/library.openapi.json', 'utf8'));
 const config = JSON.parse(readFileSync('examples/library.sdk.json', 'utf8'));
+config.requests = { style: 'object' };
 function fixture(t, change = () => {}) {
   const dir = mkdtempSync(join(tmpdir(), 'sdk-diagnostics-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));

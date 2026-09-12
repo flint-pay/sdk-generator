@@ -40,7 +40,7 @@ Save this as `example.mjs`. Replace the base URL with an API implementing the ex
 ```js
 import { Client } from '@example/library';
 const client = new Client({ baseUrl: 'https://your-api.example.com' });
-const { data, meta } = await client.books.retrieve({ id: 'book/123' });
+const { data, meta } = await client.books.retrieve('book/123');
 console.log(data.title, meta.requestId);
 ```
 
@@ -60,9 +60,9 @@ Save this as `example.php`, set the API base URL, and run `php example.php`:
 <?php
 require __DIR__ . '/vendor/autoload.php';
 
-use Example\Library\{Client, ClientOptions, BooksRetrieveInput};
+use Example\Library\{Client, ClientOptions};
 $client = new Client(new ClientOptions(baseUrl: 'https://your-api.example.com'));
-$result = $client->books->retrieve(new BooksRetrieveInput(['id' => 'book/123']));
+$result = $client->books->retrieve('book/123');
 echo $result->data->getTitle();
 $client->close();
 ```

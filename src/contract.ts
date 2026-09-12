@@ -1,3 +1,4 @@
+import { validateRequestStyle, validatePositional, type RequestStyle } from './request-style.js';
 import { validateResponseReturn, payloadSchemas, type ResponseReturn } from './response-return.js';
 import { shareContractSchemas } from './schema-sharing.js';
 import { Diagnostic, DiagnosticGroup, DiagnosticCollector, suggestion } from './diagnostic.js';
@@ -68,6 +69,7 @@ export interface Retry {
   baseDelayMs: number;
 }
 export interface Capability {
+  request?: RequestStyle;
   response?: ResponseReturn;
   stream?: { events?: Record<string, string>; idleTimeoutMs?: number; maxEventBytes?: number };
   requestMediaType?: string;
@@ -136,6 +138,7 @@ export interface Webhook {
   typeField: string;
 }
 export interface Config {
+  requests?: RequestStyle;
   responses?: ResponseReturn;
   profiles?: string[];
   numericUnions?: 'explicit';
@@ -1262,6 +1265,7 @@ export function loadContract(
     )
       invalidConfig.add(key);
   for (const key of [
+    'requests',
     'responses',
     'auth',
     'npm',
@@ -1286,6 +1290,7 @@ export function loadContract(
     keys(
       config,
       [
+        'requests',
         'responses',
         'targets',
         'validation',
@@ -1322,6 +1327,9 @@ export function loadContract(
   diagnostics.check(() => {
     if (config.validation !== undefined && !['encoding', 'schema'].includes(config.validation))
       fail('config/validation', 'expected encoding or schema');
+  });
+  checkConfig(['requests'], () => {
+    if (config.requests !== undefined) validateRequestStyle(config.requests, 'config/requests');
   });
   checkConfig(['responses'], () => {
     if (config.responses !== undefined) {
@@ -1994,6 +2002,7 @@ export function loadContract(
         keys(
           c,
           [
+            'request',
             'response',
             'resource',
             'method',
@@ -2012,6 +2021,12 @@ export function loadContract(
           ],
           `config/operations/${id}`,
         );
+        if (c.request !== undefined)
+          validateRequestStyle(c.request, `config/operations/${id}/request`);
+        const requestStyle =
+          c.request?.style ??
+          (invalidConfig.has('requests') ? undefined : config.requests?.style) ??
+          'positional';
         if (c.response !== undefined)
           validateResponseReturn(c.response, `config/operations/${id}/response`);
         const responseReturn = {
@@ -2417,6 +2432,7 @@ export function loadContract(
         }
         const operation: Operation = {
           ...c,
+          ...(requestStyle === 'positional' ? { request: { style: 'positional' as const } } : {}),
           ...(payloadReturn ? { response: responseReturn } : {}),
           id,
           resource,
@@ -2441,6 +2457,8 @@ export function loadContract(
         };
         if (!payloadReturn) delete operation.response;
         if (payloadReturn && responseReturn.payloadPath) payloadSchemas(operation);
+        if (requestStyle !== 'positional') delete operation.request;
+        validatePositional(operation, definitions);
         operations.push(operation);
       } catch (error) {
         diagnostics.capture(error);

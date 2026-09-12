@@ -25,6 +25,7 @@ function fixture(name, paths, config = {}) {
     profile,
     JSON.stringify({
       version: '1.0.0',
+      requests: { style: 'object' },
       npm: { name: 'edge-sdk' },
       composer: { name: 'edge/sdk', namespace: 'EdgeSdk' },
       ...config,

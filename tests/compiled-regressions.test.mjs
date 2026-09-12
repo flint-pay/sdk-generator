@@ -34,6 +34,7 @@ function fixture(name, responses, { schemas, ...config } = {}) {
     profile,
     JSON.stringify({
       version: '1.0.0',
+      requests: { style: 'object' },
       npm: { name: '@example/compiled-regression' },
       composer: { name: 'example/compiled-regression', namespace: 'Example\\Regression' },
       release: { policy: 'semver' },

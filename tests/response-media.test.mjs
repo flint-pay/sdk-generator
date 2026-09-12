@@ -42,6 +42,7 @@ writeFileSync(
   join(dir, 'sdk.json'),
   JSON.stringify({
     version: '1.0.0',
+    requests: { style: 'object' },
     npm: { name: '@example/response-media' },
     composer: { name: 'example/response-media', namespace: 'Example\\Media' },
   }),

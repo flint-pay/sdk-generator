@@ -39,6 +39,7 @@ function fixture(name, { header, example, response, auth = false, components = {
   };
   const config = {
     version: '1.0.0',
+    requests: { style: 'object' },
     npm: { name: '@example/dx-review' },
     composer: { name: 'example/dx-review', namespace: 'Example\\DxReview' },
     validation: 'schema',

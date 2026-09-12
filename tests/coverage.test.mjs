@@ -441,6 +441,7 @@ test('unsupported prereleases and malformed new configuration fail during diagno
 test('model dependencies exclude structurally identical unreferenced private models', () => {
   const api = JSON.parse(readFileSync('examples/library.openapi.json'));
   const config = JSON.parse(readFileSync('examples/library.sdk.json'));
+  config.requests = { style: 'object' };
   const response = api.paths['/books/{id}'].get.responses['200'].content['application/json'];
   api.components = { schemas: { Book: response.schema } };
   response.schema = { $ref: '#/components/schemas/Book' };

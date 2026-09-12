@@ -902,6 +902,7 @@ test('dangling symlinks are rejected before writes and older generation records 
 test('tagged PHP responses retain typed known variants and preserve future variants', async () => {
   const api = JSON.parse(readFileSync('examples/library.openapi.json'));
   const config = JSON.parse(readFileSync('examples/library.sdk.json'));
+  config.requests = { style: 'object' };
   api.paths['/books/{id}'].get.responses['200'].content['application/json'].schema = {
     oneOf: [
       {

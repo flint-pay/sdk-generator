@@ -47,6 +47,7 @@ const config = {
   version: '1.0.0',
   include: ['saveTree'],
   models: { Tree: 'Branch' },
+  requests: { style: 'object' },
   npm: { name: '@example/trees' },
   composer: { name: 'example/trees', namespace: 'Example\\Trees' },
 };

@@ -57,6 +57,7 @@ writeFileSync(
   JSON.stringify({
     version: '1.0.0',
     numericUnions: 'explicit',
+    requests: { style: 'object' },
     npm: { name: 'review-fixes' },
     composer: { name: 'review/fixes', namespace: 'ReviewFixes' },
   }),

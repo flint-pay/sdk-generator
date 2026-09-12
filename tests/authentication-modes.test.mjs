@@ -35,6 +35,7 @@ const api = {
 };
 const config = {
   version: '1.0.0',
+  requests: { style: 'object' },
   npm: { name: '@example/modes' },
   composer: { name: 'example/modes', namespace: 'Example\\Modes' },
   auth: {

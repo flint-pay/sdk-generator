@@ -89,6 +89,7 @@ test('getBundle retains its original referenced graph and decodes inherited disc
       join(dir, 'sdk.json'),
       JSON.stringify({
         version: '1.0.0',
+        requests: { style: 'object' },
         npm: { name: '@example/bundle' },
         composer: { name: 'example/bundle', namespace: 'Example\\BundleSdk' },
         auth: { scheme: 'BearerAuth' },

@@ -85,22 +85,48 @@ foreach ($cases as $index => $case) {
             'Input';
         $payload = ($operation['response']['return'] ?? 'result') === 'payload';
         $method = $operation['method'] . ($payload ? 'WithResponse' : '');
-        $result = $client->{$operation['resource']}->{$method}(
-            new $inputClass($input),
-            new $requestOptionsClass(
-                ...[
-                    'idempotencyKey' => $o['idempotencyKey'] ?? null,
-                    'ifMatch' => $o['ifMatch'] ?? null,
-                    'maxAttempts' => $o['maxAttempts'] ?? null,
-                    'deadlineMs' => $o['deadlineMs'] ?? null,
-                    'timeoutMs' => $o['timeoutMs'] ?? null,
-                    'headers' => $o['headers'] ?? [],
-                    'authMode' => $o['authMode'] ?? null,
-                    'credentials' => $o['credentials'] ?? null,
-                    ...array_intersect_key($o, $contract['authShortcuts'] ?? []),
-                ],
-            ),
+        $arguments = [new $inputClass($input)];
+        if (($operation['request']['style'] ?? 'object') === 'positional') {
+            preg_match_all('/\{([^}]+)\}/', $operation['path'], $matches);
+            $arguments = [];
+            foreach (array_unique($matches[1]) as $name) {
+                $arguments[] = $input[$name] ?? null;
+            }
+            $params = (array) ($input['body'] ?? []);
+            $hasParams = isset($operation['body']);
+            foreach ($operation['parameters'] as $parameter) {
+                if ($parameter['in'] === 'path') {
+                    continue;
+                }
+                $hasParams = true;
+                if (array_key_exists($parameter['name'], $input)) {
+                    $params[$parameter['name']] = $input[$parameter['name']];
+                }
+            }
+            if ($hasParams) {
+                $arguments[] =
+                    !$operation['bodyRequired'] &&
+                    isset($operation['body']) &&
+                    !array_key_exists('body', $input) &&
+                    !$params
+                        ? null
+                        : $params;
+            }
+        }
+        $arguments[] = new $requestOptionsClass(
+            ...[
+                'idempotencyKey' => $o['idempotencyKey'] ?? null,
+                'ifMatch' => $o['ifMatch'] ?? null,
+                'maxAttempts' => $o['maxAttempts'] ?? null,
+                'deadlineMs' => $o['deadlineMs'] ?? null,
+                'timeoutMs' => $o['timeoutMs'] ?? null,
+                'headers' => $o['headers'] ?? [],
+                'authMode' => $o['authMode'] ?? null,
+                'credentials' => $o['credentials'] ?? null,
+                ...array_intersect_key($o, $contract['authShortcuts'] ?? []),
+            ],
         );
+        $result = $client->{$operation['resource']}->{$method}(...$arguments);
         if ($payload) {
             $result = (object) [
                 'data' => $result->body,
