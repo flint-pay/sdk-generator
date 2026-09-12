@@ -31,7 +31,15 @@ export function inputSchema(op: Operation): Schema {
   const properties: Record<string, Schema> = Object.fromEntries(
     op.parameters.map((p) => [p.name, p.schema]),
   );
-  const required = op.parameters.filter((p) => p.required).map((p) => p.name);
+  // A declared idempotency header can also be supplied through request options.
+  // The runtime still requires it before dispatch when the API declares it required.
+  const required = op.parameters
+    .filter(
+      (p) =>
+        p.required &&
+        !(p.in === 'header' && op.idempotency?.header.toLowerCase() === p.name.toLowerCase()),
+    )
+    .map((p) => p.name);
   if (op.body) {
     properties.body = op.body;
     if (op.bodyRequired) required.push('body');

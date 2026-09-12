@@ -3168,13 +3168,33 @@ class Runtime
         $path = $op['path'];
         $query = [];
         foreach ($op['parameters'] as $p) {
-            if (!array_key_exists($p['name'], $input)) {
+            $present = array_key_exists($p['name'], $input);
+            $value = $present ? $input[$p['name']] : null;
+            if (
+                !$present &&
+                $p['in'] === 'header' &&
+                strtolower($op['idempotency']['header'] ?? '') === strtolower($p['name'])
+            ) {
+                if (($options->idempotencyKey ?? null) !== null) {
+                    $value = $options->idempotencyKey;
+                    $present = true;
+                } else {
+                    foreach ($options->headers ?? [] as $name => $headerValue) {
+                        if (strtolower($name) === strtolower($p['name'])) {
+                            $value = $headerValue;
+                            $present = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (!$present) {
                 if ($p['required'] ?? false) {
                     Codec::fail($p['name'], 'required parameter is missing');
                 }
                 continue;
             }
-            $v = $this->decode($input[$p['name']], $p['codec'], ['path' => $p['name']]);
+            $v = $this->decode($value, $p['codec'], ['path' => $p['name']]);
             $scalar = fn($v) => $v instanceof RawNumber
                 ? $v->value
                 : (is_bool($v)
