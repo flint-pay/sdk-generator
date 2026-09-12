@@ -50,24 +50,11 @@ Apply these rules to new and substantially changed code. Existing violations are
 - **Verify behavior independently.** For semantic changes, exercise real generated clients in both targets with independently expected wire values and decoded outcomes. Include a failure witness and a compatible control where relevant. Snapshot/typechecking evidence supplements runtime behavior; neither alone proves SDK compatibility. Do not update expected outputs solely because the new implementation produced them.
 - **Remove temporary paths deliberately.** Record the scope and exit condition for migration fallbacks and compatibility adapters. Generated operations must not silently fall back to legacy execution for unsupported compiled nodes. Preserve public dynamic-schema entry points while removing superseded operation paths; an adapter needed by callers is not removable migration scaffolding.
 
-TypeScript's [discriminated unions and `never` exhaustiveness checks](https://www.typescriptlang.org/docs/handbook/2/narrowing.html#exhaustiveness-checking) make missing handling a compiler error when a closed union gains a member. Use that pattern for internal variants; an intentional open API response alternative is a separate explicit case, not an excuse for a catch-all internal handler.
-
 ## Enforcement and evidence
 
 CI runs `npm run check`, `npm test`, and `npm pack --dry-run` across the Node/PHP matrix. TypeScript already enables `strict`, `noUncheckedIndexedAccess`, and `exactOptionalPropertyTypes`. These checks do not automatically enforce semantic ownership, exhaustive switches, import boundaries, or the absence of explicit `any`. Formatting checks remain part of the documented local workflow.
 
-Compiler and codec changes require these automated checks:
-
-| Rule                             | Required enforcement for the new boundary                                                                                                                                                              |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Closed internal variants         | Explicit exhaustive handling checked by TypeScript; runtime rejection tests for malformed/unknown serialized variants and PHP dispatch coverage.                                                       |
-| Module boundaries                | A check of imports/dependencies that blocks forbidden edges and cycles in the new layers, run by CI. Inspect actual imports rather than matching words such as `Schema` in comments or variable names. |
-| One ordinary operation path      | Architecture checks on generated artifacts plus behavioral tests proving compiled operations do not invoke legacy schema adapters.                                                                     |
-| Stable public APIs/configuration | Generated-consumer compilation/execution, export/signature comparisons, and fixtures covering default/override effects.                                                                                |
-| Adapter and target agreement     | Independently expected cases through dynamic helpers, generated operations, and both target runtimes; include nested/invalid values and diagnostic behavior.                                           |
-| Determinism and record evolution | Tests of repeated compilation without input mutation and fixtures for old/new record formats and baseline retention.                                                                                   |
-
-The compiled boundary, codec, and contract tests run under `npm test` in both CI environments. Semantic ownership, abstraction value, and fixture independence also require review; a passing dependency check cannot establish them.
+A compiler or codec change needs automated checks for the boundary it adds: exhaustive handling of closed variants plus runtime rejection of malformed serialized ones, an import check that blocks forbidden edges and cycles, behavioral proof that compiled operations do not invoke the schema adapters, generated-consumer compilation against the public API, independently expected cases through both runtimes, and repeated compilation without input mutation. Semantic ownership, abstraction value, and fixture independence also require review; a passing dependency check cannot establish them.
 
 For a semantic PR, explain the changed guarantee, its owner, public/configuration impact, any replaced logic or retained adapter, and the independent evidence. Keep this explanation proportional to the change. Do not use file size, test count, or a smaller diff as a substitute for showing that behavior remains correct.
 

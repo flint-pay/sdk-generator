@@ -1712,6 +1712,19 @@ export class Model<T = unknown> {
     );
   }
 }
+/** Internal input copy for argument adapters; not exported by the SDK entrypoint. */
+export function modelInputValue(model: Model): unknown {
+  // Positional arguments must retain numeric kinds while separating body and
+  // parameter fields. The public toJSON representation deliberately uses strings.
+  const copy = (value: unknown): unknown => {
+    if (value instanceof ParsedNumber) return new ExactNumber(value.value);
+    if (Array.isArray(value)) return value.map(copy);
+    if (value && typeof value === 'object')
+      return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, copy(child)]));
+    return value;
+  };
+  return copy(modelInputs.get(model) ?? model.toJSON());
+}
 /** Internal factory; does not expand the public Model class method surface. */
 export function modelFromCodec<T>(value: InputValue<T>, codec: CodecPlan): Model<T> {
   // Reflect invokes the implementation-only third argument on the known Model constructor.

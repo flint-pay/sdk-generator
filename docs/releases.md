@@ -51,17 +51,11 @@ Added-result checks compare public types and runtime guarantees separately. Mixe
 
 Returned-value inclusion covers single explicit scalar/object/array types, pure and mixed dictionaries, and nested forms. Recursive references, compositions, typeless schemas, nullable type unions, and arbitrary prior-result unions retain review findings where inclusion cannot be proved. Their generation and execution support is unchanged.
 
-Version 2 private generation records save compiled contracts and runtime identities alongside source provenance and the original comparison baseline. Repeated compiled subtrees use validated shared references to keep large records bounded; this storage encoding preserves the complete logical plans. Regeneration preserves that baseline even if a generator-only change affects compatibility without changing generated files. Older records remain usable and retain explicit historical review findings; recompiling their schemas does not establish what an older runtime guaranteed. Unknown compiled formats or malformed records fail with diagnostics. Runtime implementation changes retain review even when compiled value guarantees are equal. Review findings retain the existing acknowledgment policy.
+The private generation record saves compiled contracts and runtime identities alongside source provenance and the original comparison baseline. Regeneration preserves that baseline even if a generator-only change affects compatibility without changing generated files. Older records remain usable and retain explicit historical review findings; recompiling their schemas does not establish what an older runtime guaranteed. Malformed or unrecognized records fail with diagnostics. Runtime implementation changes retain review even when compiled value guarantees are equal.
 
 Changes inside `allOf`, `anyOf`, and `not` receive a generic `review` finding; the comparison does not recursively classify every nested constraint change. Other comparisons may still identify a breaking change, but a `review` finding alone does not block a patch release under `release.policy: "semver"` or require an explicit acknowledgment.
 
 For example, with `validation: "schema"`, adding `minLength: 3` to a string input property inside an otherwise unchanged `allOf` branch can reject a previously valid one-character value while producing only a `review` finding. Review the nested constraints and choose the appropriate version increase manually before release. Successful release preparation does not establish that these changes are compatible.
-
-Deferred improvements:
-
-- Compare straightforward changes within otherwise unchanged `allOf` branches and classify provable input narrowing as breaking, accounting for the surrounding constraints.
-- Retain `review` for reorganized branches, overlapping constraints, and alternatives whose compatibility cannot be determined safely.
-- Consider requiring explicit acknowledgment of unresolved `review` findings during release preparation under the `semver` policy.
 
 ## Explicit npm publication
 

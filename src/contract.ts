@@ -2,6 +2,7 @@ import { validateRequestStyle, validatePositional, type RequestStyle } from './r
 import { validateResponseReturn, payloadSchemas, type ResponseReturn } from './response-return.js';
 import { operationNames, modelNames, isPublicName } from './naming.js';
 import { shareContractSchemas } from './schema-sharing.js';
+import { SourceJson } from './source-json.js';
 import { Diagnostic, DiagnosticGroup, DiagnosticCollector, suggestion } from './diagnostic.js';
 import { valueInstruction, exactValue, discriminatorBindings } from './codec-plan.js';
 import { stable } from './canonical.js';
@@ -926,6 +927,7 @@ export function loadContract(
   const diagnostics = new DiagnosticCollector(options.collectDiagnostics ?? false);
   const sources: Record<string, string> = {};
   const documents = new Map<string, unknown>();
+  const sourceJson = new SourceJson();
   const rootDir = dirname(resolve(definitionPath));
   const references: { path: string; model: string }[] = [];
   const resolved = new Map<string, { value: any; models: string[] }>();
@@ -995,7 +997,7 @@ export function loadContract(
         return fail(file, 'cannot read input');
       }
       try {
-        documents.set(file, JSON.parse(content));
+        documents.set(file, sourceJson.parse(content, file));
       } catch {
         return fail(file, 'expected valid JSON; YAML is not supported');
       }
@@ -1018,6 +1020,23 @@ export function loadContract(
     if (Array.isArray(value))
       return value.map((v, i) => deref(v, file, `${path}/${i}`, stack, context));
     if (!value || typeof value !== 'object') return value;
+    if (context === 'schema' && !(raw.openapi.startsWith('3.0.') && '$ref' in value))
+      for (const key of [
+        'minimum',
+        'maximum',
+        'exclusiveMinimum',
+        'exclusiveMaximum',
+        'multipleOf',
+        'minLength',
+        'maxLength',
+        'minItems',
+        'maxItems',
+        'minProperties',
+        'maxProperties',
+        'const',
+        'enum',
+      ])
+        if (Object.hasOwn(value, key)) sourceJson.assertMember(value, key, path + '/' + key);
     const map = context.startsWith('map:');
     if (!map && Object.keys(value).some((key) => key.startsWith('x-sdk-')))
       fail(path, 'x-sdk-* extensions are reserved for resolved generator metadata');
@@ -1226,7 +1245,9 @@ export function loadContract(
   };
   const loadProfile = (file: string, stack = new Set<string>()): unknown => {
     if (stack.has(file)) fail('config/profiles', 'profile reference cycle');
-    const input = structuredClone(load(file));
+    const source = load(file);
+    sourceJson.assertExact(source, 'config');
+    const input = structuredClone(source);
     record(input, 'config');
     const { profiles, ...local } = input;
     let combined: unknown = {};
@@ -1583,6 +1604,7 @@ export function loadContract(
       const decoded = key.replace(/~1/g, '/').replace(/~0/g, '~');
       if (!Object.hasOwn(parent, decoded)) fail('config/overrides/' + p, 'stale override target');
       parent[decoded] = replacement;
+      sourceJson.forget(parent, decoded);
     });
   }
   const reachable = new Set<string>();

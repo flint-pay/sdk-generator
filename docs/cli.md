@@ -39,7 +39,7 @@ On failure, it exits with status 1 and writes JSON to stderr:
 }
 ```
 
-The `error` string remains available for existing consumers. Each `diagnostics` entry has a location and a message without the repeated location prefix. Successful output is unchanged. No files are written.
+The `error` string carries the first finding; each `diagnostics` entry has a location and a message without the repeated location prefix. No files are written.
 
 Checks that depend on an invalid setting are skipped. Loading failures (such as invalid JSON or unresolved references) can prevent later checks; config errors stop compilation, and model errors stop operation validation. Within model and operation validation, diagnostics report the first failure per model or operation and continue checking the others. Fix the reported findings and rerun to reach dependent checks.
 
@@ -55,14 +55,14 @@ OUTPUT/
     index.js / index.d.ts
     runtime.js / runtime.d.ts
     codec-plan.js / runtime-plan.js  Bundled codecs and schema adapters
-    README.md / REFERENCE.md / RUNTIME.md / LICENSE
+    README.md / REFERENCE.md / MODELS.md / RUNTIME.md / LICENSE
     examples/           JavaScript and TypeScript operation examples
     custom/             Provider-maintained helpers
     guides/             Optional provider narrative guides
   php/                  Selected Composer target
     composer.json
     src/                Client, runtime, models and compiled contract
-    README.md / REFERENCE.md / RUNTIME.md / LICENSE
+    README.md / REFERENCE.md / MODELS.md / RUNTIME.md / LICENSE
     examples/           PHP operation examples
     custom/             Provider-maintained helpers
     guides/             Optional provider narrative guides

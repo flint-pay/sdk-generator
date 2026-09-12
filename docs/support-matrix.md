@@ -51,7 +51,7 @@ Descriptions, examples and defaults are metadata, not evidence of server behavio
 
 For null-only values, use `type: "null"`. The legacy `type: ["null"]` form permits non-null values in Node but rejects them in PHP; see [schema-taking helpers](using-sdks.md#schema-taking-helpers).
 
-Exact numeric enum membership and numeric composition merging compare mathematical values, including equivalent decimal/exponent spellings. Exact numeric enum inputs use strings for `number`, `int64`, and `uint64`, including single-element type arrays. Money conversion rejects whitespace and excess precision. Mutually dependent unions use joint matching with a limit of 256 combinations per value path; exhaustion fails validation. PHP typed getters unwrap nested models, and object/array alternative matching distinguishes lists from objects.
+Exact numeric enum membership and numeric composition merging compare mathematical values, including equivalent decimal/exponent spellings. Exact numeric enum inputs use strings for `number`, `int64`, and `uint64`, including single-element type arrays. Mutually dependent unions are matched jointly under a bounded search; an unusually ambiguous schema can exhaust it and fail validation.
 
 Integer response decoding accepts integral decimal/exponent tokens without floating-point rounding. Exponent expansion is limited to 10,000 appended zero digits to bound allocation; larger expansions produce a protocol error. Decimal precision and the public representation of unknown numeric fields are preserved. Sparse Node input arrays are rejected, including arrays in additional fields.
 
@@ -63,7 +63,7 @@ Offset pagination requires compatible SDK representations: int64/uint64 continua
 
 Compatibility checks compare public declarations and runtime guarantees separately. Losing required keys in mixed objects or nested dictionary values is breaking even where TypeScript exposes `unknown`. Added-result inclusion covers explicit scalar/object/array types, dictionaries, nesting, null and absent bodies. References, complex compositions, nullable type unions and arbitrary result unions retain review findings where inclusion cannot be proved; their execution support is unchanged.
 
-Nested constraint changes in `allOf`, `anyOf`, and `not` can receive only a `review` finding even when they break existing inputs. The SemVer release policy relies on provider judgment for these findings. See [known compatibility limitations and deferred improvements](releases.md#known-compatibility-limitations).
+Nested constraint changes in `allOf`, `anyOf`, and `not` can receive only a `review` finding even when they break existing inputs. The SemVer release policy relies on provider judgment for these findings. See [known compatibility limitations](releases.md#known-compatibility-limitations).
 
 ## Unsupported capabilities
 
@@ -76,5 +76,3 @@ The schema can still express per-item bulk results, resource relationships, next
 Undeclared optional capabilities produce no helper. Unsupported or incomplete capability declarations produce diagnostics. An operation with unsupported wire semantics fails generation rather than shipping as a working SDK.
 
 `multipleOf` uses exact decimal divisibility. Work that requires more than 10,000 appended digits fails validation; power-of-ten divisors need no expansion. `const` and `uniqueItems` compare JSON values with exact numeric equality and order-independent object keys; array order remains significant. `contains` requires a matching element in schema validation and strict variant guards; `minContains` and `maxContains` remain unsupported. Constants are never inserted automatically.
-
-Declared PDF responses return bytes; explicit 302/307 responses return Location metadata without following redirects. SSE responses yield closeable streams through both default and injected transports. Full authentication profiles compose complete scheme sets, including paired checkout headers. Incoming OpenAPI webhooks are retained separately from outbound operations. See [configuration](configuration.md) and [consumer usage](using-sdks.md) for the public interfaces.

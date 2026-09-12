@@ -79,7 +79,6 @@ Generated Node packages support Node.js 22+, ESM JavaScript and TypeScript 5.9+.
 - Declared cursor, offset and link pagination, conditional requests, bounded polling, HMAC webhook verification and optional money conversion.
 - Deterministic regeneration that detects hand edits, previews without writing, compares public interfaces and runtime guarantees against saved compiled contracts, validates packages, and prepares release archives, reference documentation and migration notes.
 - Provider narrative guides, npm publication, and coordinated deployment of versioned documentation and a Composer repository with artifact checksums and immutable releases.
-- Shared HTTP conformance fixtures, local HTTP transport tests, npm and Composer installation tests, and durable duplicate-event examples.
 
 The [support matrix](docs/support-matrix.md) lists the exact supported subset and what is outside it. Unsupported constructs fail generation instead of silently degrading. The bundled library and payment examples are synthetic; the test suite also exercises pinned provider contracts.
 
