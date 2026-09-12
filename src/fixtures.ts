@@ -167,7 +167,24 @@ export async function validateFixtures(
     const temp = mkdtempSync(join(tmpdir(), 'sdk-fixtures-'));
     try {
       const runtimePath = join(temp, 'runtime.json');
-      writeFileSync(runtimePath, JSON.stringify(contract));
+      // The PHP harness only needs call routing, not a second copy of every codec.
+      writeFileSync(
+        runtimePath,
+        JSON.stringify({
+          authShortcuts: contract.authShortcuts,
+          operations: contract.operations.map((op) => ({
+            id: op.id,
+            resource: op.resource,
+            method: op.method,
+            path: op.path,
+            request: op.request,
+            response: op.response,
+            ...(op.body !== undefined ? { body: true } : {}),
+            bodyRequired: op.bodyRequired,
+            parameters: op.parameters.map(({ name, in: location }) => ({ name, in: location })),
+          })),
+        }),
+      );
       const r = spawnSync(
         'php',
         [
