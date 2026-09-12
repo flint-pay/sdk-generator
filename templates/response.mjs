@@ -1,4 +1,16 @@
+import { inspect } from 'node:util';
 import { SdkError } from './runtime.js';
+
+export function sdkResponse(result) {
+  const response = { body: result.data, meta: result.meta, raw: result.raw };
+  Object.defineProperty(response, inspect.custom, {
+    value: () => {
+      const safe = result[inspect.custom]();
+      return { body: safe.data, meta: safe.meta };
+    },
+  });
+  return response;
+}
 
 export function responsePayload(result, path) {
   let value = result.data;

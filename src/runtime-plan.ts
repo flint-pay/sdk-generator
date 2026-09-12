@@ -1,5 +1,5 @@
 export const AUTH_SHORTCUT_RESERVED = new Set(
-  'baseUrl token authMode credentials headers idempotencyKey ifMatch timeoutMs deadlineMs maxAttempts signal cancellation maxPages maxItems streamIdleTimeoutMs streamLifetimeMs allowedOrigins allowInsecureHttp transport diagnostics redactFields constructor prototype __proto__ withDeadline'
+  'baseUrl token authMode credentials headers idempotencyKey ifMatch timeoutMs deadlineMs maxAttempts signal cancellation maxPages maxItems streamIdleTimeoutMs streamLifetimeMs allowedOrigins allowInsecureHttp transport diagnostics redactFields constructor prototype __proto__ withDeadline this'
     .toLowerCase()
     .split(' '),
 );

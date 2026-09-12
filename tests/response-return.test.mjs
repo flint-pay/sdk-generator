@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { inspect } from 'node:util';
 import { execFileSync } from 'node:child_process';
 import { loadContract, generate, preview, validateFixtures } from '../dist/index.js';
 import { compileSdkContract } from '../dist/target-plan.js';
@@ -173,6 +174,43 @@ const metadata:string=p.meta;`,
     assert.match(f.read('node/examples/api-getItem.mjs'), /result.id/);
     assert.doesNotMatch(f.read('php/examples/api-getItem.php'), /result->data|result->meta/);
   });
+test('WithResponse inspection preserves redaction while retaining explicit raw access', async () => {
+  const f = fixture({
+    responses: { return: 'payload' },
+    schema: {
+      type: 'object',
+      required: ['secret', 'personal'],
+      properties: {
+        secret: { type: 'string', 'x-sensitive': true },
+        personal: { type: 'string' },
+      },
+    },
+  });
+  const { Client } = await import(pathToFileURL(join(f.output, 'node/index.js')));
+  const raw = '{"secret":"sensitive-body","personal":"private-value"}';
+  const c = new Client({
+    baseUrl: 'https://example.invalid',
+    redactFields: ['personal'],
+    transport: async () =>
+      new Response(raw, {
+        headers: {
+          'content-type': 'application/json',
+          'set-cookie': 'private-cookie',
+          'x-request-id': 'req_safe',
+        },
+      }),
+  });
+  const full = await c.api.getItemWithResponse();
+  const debug = inspect(full);
+  assert.doesNotMatch(debug, /sensitive-body|private-value|private-cookie|https:|raw:|headers:/);
+  assert.match(debug, /REDACTED/);
+  assert.match(debug, /req_safe/);
+  assert.equal(full.body.secret, 'sensitive-body');
+  assert.equal(full.body.personal, 'private-value');
+  assert.equal(full.meta.headers['set-cookie'], 'private-cookie');
+  assert.equal(full.raw, raw);
+});
+
 test('whole-body payload returns support bare objects, scalars, null and empty responses', async () => {
   for (const [schema, body, expected] of [
     [item, '{"id":"bare"}', { id: 'bare' }],
@@ -433,6 +471,8 @@ test('binary whole-body returns retain bytes and full-response metadata', async 
   assert.deepEqual(full.body, bytes);
   assert.equal(full.body, full.raw);
   assert.equal(full.meta.status, 206);
+  assert.match(inspect(full), /Binary response/);
+  assert.doesNotMatch(inspect(full), /Uint8Array|raw:|headers:|https:/);
   const program = `require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';$c=new Example\\ResponseReturn\\Client(new Example\\ResponseReturn\\ClientOptions('https://example.invalid',transport:fn($r)=>['status'=>206,'headers'=>['content-type'=>'application/pdf'],'body'=>hex2bin('0001ff')]));$r=$c->api->getItemWithResponse();if($r->body!==$r->raw||$r->meta['status']!==206)throw new Exception('full response');echo bin2hex($c->api->getItem());`;
   assert.equal(
     execFileSync('php', ['-r', program, join(f.output, 'php')], { encoding: 'utf8' }),

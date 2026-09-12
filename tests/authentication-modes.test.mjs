@@ -405,6 +405,7 @@ test('shortcut configuration rejects unknown targets, combined credentials and o
     { apiKey: { mode: 'merchant', scheme: 'Customer' } },
     { apiKey: { mode: 'checkout', scheme: 'CheckoutID' } },
     { baseUrl: { mode: 'merchant', scheme: 'Merchant' } },
+    { this: { mode: 'merchant', scheme: 'Merchant' } },
     { 'api-key': { mode: 'merchant', scheme: 'Merchant' } },
   ])
     assert.throws(() => load({ ...config, auth: { ...config.auth, shortcuts } }), /shortcut/);

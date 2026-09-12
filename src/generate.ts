@@ -817,7 +817,9 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     if (targetPlan.node.authentication) declarations += targetPlan.node.authentication.declarations;
     if (hasPayloadReturns) {
       put('response.js', readFileSync(join(here, '../templates/response.mjs'), 'utf8'));
-      code = "import { responsePayload as _sdkPayload } from './response.js';\n" + code;
+      code =
+        "import { responsePayload as _sdkPayload, sdkResponse as _sdkResponse } from './response.js';\n" +
+        code;
       declarations += targetPlan.node.responseReturnDeclarations!;
     }
 
@@ -848,7 +850,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
           code += `      ${method}: (input = {}, options) => ${request}${payload ? `.then(result => _sdkPayload(result, ${js(payload.path)}))` : ''},\n`;
           declarations += `    ${methodDoc(op, method, definitions)}    ${method}(input${required ? '' : '?'}: ${prefix}Input, options?: ${requestOptionsType}): Promise<${payload ? payload.node : `Result<${prefix}Response>`}>;\n`;
           if (payload) {
-            code += `      ${method}WithResponse: (input = {}, options) => ${request}.then(result => ({body: result.data, meta: result.meta, raw: result.raw})),\n`;
+            code += `      ${method}WithResponse: (input = {}, options) => ${request}.then(_sdkResponse),\n`;
             declarations += `    /** Complete decoded body and HTTP metadata, without payload unwrapping. */\n    ${method}WithResponse(input${required ? '' : '?'}: ${prefix}Input, options?: ${requestOptionsType}): Promise<SdkResponse<${prefix}Response>>;\n`;
           }
         }
