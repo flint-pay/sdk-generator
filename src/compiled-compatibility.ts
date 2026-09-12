@@ -40,6 +40,63 @@ export function compareCompiledContracts(
   const node = previous.targets.includes('node') && next.targets.includes('node');
   const php = previous.targets.includes('php') && next.targets.includes('php');
   if (!node && !php) return findings;
+  if (node) {
+    // Historical plans emitted unrestricted runtime options. Narrowing those
+    // exports is breaking even when the API and its credential modes are unchanged.
+    if (stable(previous.node.authentication) !== stable(next.node.authentication))
+      findings.push({
+        severity: 'breaking',
+        subject: 'authentication options',
+        message:
+          'Public ClientOptions/RequestOptions authentication declarations changed; update option types and wrappers before upgrading.',
+      });
+    for (const [id, old] of Object.entries(previous.node.operations)) {
+      const current = next.node.operations[id];
+      if (
+        !current ||
+        (old.requestOptions ?? 'RequestOptions') === (current.requestOptions ?? 'RequestOptions')
+      )
+        continue;
+      const widened =
+        old.authModes !== undefined &&
+        current.authModes !== undefined &&
+        old.authModes.every((mode) => current.authModes!.includes(mode));
+      findings.push({
+        severity: widened ? 'additive' : 'breaking',
+        subject: id + '.options',
+        message: widened
+          ? 'Operation authentication option types accept additional modes.'
+          : 'Operation RequestOptions were narrowed; update callers that forward shared options.',
+      });
+    }
+  }
+  for (const id of Object.keys(previous.node.operations)) {
+    if (!next.node.operations[id]) continue;
+    const old = previous.responseReturns?.[id],
+      current = next.responseReturns?.[id];
+    if (
+      stable(old?.path) !== stable(current?.path) ||
+      (node && old?.node !== current?.node) ||
+      (php && old?.php !== current?.php)
+    )
+      findings.push({
+        severity: 'breaking',
+        subject: id + '.responseReturn',
+        message:
+          'Public response return mode, payload path, or payload type changed; migrate callers before upgrading.',
+      });
+  }
+  if (
+    node &&
+    previous.node.responseReturnDeclarations &&
+    previous.node.responseReturnDeclarations !== next.node.responseReturnDeclarations
+  )
+    findings.push({
+      severity: 'breaking',
+      subject: 'response return declarations',
+      message:
+        'Public payload/response helper declarations changed; review consumer types before upgrading.',
+    });
   const samePolicy = stable(previous.policy) === stable(next.policy);
   for (const [id, oldResponses] of Object.entries(previous.responses)) {
     const responses = next.responses[id];

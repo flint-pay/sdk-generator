@@ -272,3 +272,168 @@ $c->close();echo 'ok';
   );
   assert.equal(execFileSync('php', [join(dir, 'sequential.php')], { encoding: 'utf8' }), 'ok');
 });
+
+test('configured shortcuts preserve request isolation and explicit modes in Node and PHP', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const settings = {
+    ...config,
+    auth: {
+      ...config.auth,
+      shortcuts: {
+        apiKey: { mode: 'merchant', scheme: 'Merchant' },
+        apiToken: { mode: 'customer', scheme: 'Customer' },
+      },
+    },
+  };
+  const output = join(dir, 'shortcuts');
+  generate(load(settings), output);
+  const { Client } = await import(pathToFileURL(join(output, 'node/index.js')).href);
+  const seen = [];
+  const client = new Client({
+    baseUrl: 'https://example.invalid',
+    apiKey: 'default',
+    transport: async (url, init) => {
+      seen.push([url.pathname, init.headers.authorization, init.headers['x-checkout-id']]);
+      return new Response(null, { status: 204 });
+    },
+  });
+  await Promise.all([
+    client.api.checkoutCall({}, { apiKey: 'override' }),
+    client.api.checkoutCall(
+      {},
+      { authMode: 'checkout', credentials: { CheckoutID: 'id', CheckoutSecret: 'secret' } },
+    ),
+    client.api.customerCall({}, { apiToken: 'customer' }),
+    client.api.merchantCall(),
+    client.api.health(),
+  ]);
+  assert.deepEqual(seen, [
+    ['/checkout', 'Bearer override', undefined],
+    ['/checkout', undefined, 'id'],
+    ['/customer', 'Bearer customer', undefined],
+    ['/merchant', 'Bearer default', undefined],
+    ['/health', undefined, undefined],
+  ]);
+  for (const options of [
+    { apiKey: 'x', authMode: 'merchant' },
+    { apiKey: 'x', credentials: { Merchant: 'x' } },
+    { apiKey: 'x', apiToken: 'y' },
+    { apiKey: '' },
+    { apiKey: 'x\r\ny' },
+  ])
+    await assert.rejects(client.api.checkoutCall({}, options), { kind: 'authentication' });
+  await assert.rejects(client.api.customerCall(), /not permitted/);
+  await assert.rejects(client.api.health({}, { apiKey: 'x' }), /not permitted/);
+  assert.equal(seen.length, 5);
+  await assert.rejects(
+    new Client({
+      baseUrl: 'https://example.invalid',
+      apiKey: 'x',
+      authMode: 'merchant',
+    }).api.merchantCall(),
+    /shortcut/,
+  );
+  await assert.rejects(
+    new Client({
+      baseUrl: 'https://example.invalid',
+      apiKey: 'x',
+      credentials: { merchant: { Merchant: 'y' } },
+    }).api.merchantCall(),
+    /shortcut/,
+  );
+
+  const phpFile = join(dir, 'shortcuts.php');
+  writeFileSync(
+    phpFile,
+    `<?php
+require ${JSON.stringify(join(output, 'php/src/Runtime.php'))}; require ${JSON.stringify(join(output, 'php/src/Client.php'))};
+use Example\\Modes\\{Client,ClientOptions,RequestOptions,SdkError};
+$seen=[];
+$c=new Client(new ClientOptions(baseUrl:'https://example.invalid',apiKey:'default',transport:function($r)use(&$seen){$seen[]=$r['headers'];return ['status'=>204,'headers'=>[],'body'=>''];}));
+$c->api->checkoutCall(options:(new RequestOptions(apiKey:'override'))->withDeadline(1000));
+$c->api->checkoutCall(options:new RequestOptions(authMode:'checkout',credentials:['CheckoutID'=>'id','CheckoutSecret'=>'secret']));
+$c->api->customerCall(options:new RequestOptions(apiToken:'customer'));
+$c->api->merchantCall(); $c->api->health();
+if($seen[0]['authorization']!=='Bearer override'||$seen[1]['x-checkout-id']!=='id'||isset($seen[1]['authorization'])||$seen[2]['authorization']!=='Bearer customer'||$seen[3]['authorization']!=='Bearer default'||isset($seen[4]['authorization']))throw new Exception('headers');
+foreach([new RequestOptions(apiKey:'x',authMode:'merchant'),new RequestOptions(apiKey:'x',credentials:['Merchant'=>'x']),new RequestOptions(apiKey:'x',apiToken:'y'),new RequestOptions(apiKey:'')] as $o){try{$c->api->checkoutCall(options:$o);throw new Exception('accepted invalid auth');}catch(SdkError $e){if($e->kind!=='authentication')throw $e;}}
+ob_start();var_dump(new RequestOptions(apiKey:'secret-value'),new ClientOptions(baseUrl:'https://example.invalid',apiKey:'secret-value'));$debug=ob_get_clean();if(str_contains($debug,'secret-value'))throw new Exception('secret leaked');
+if(count($seen)!==5)throw new Exception('dispatched invalid request');
+$c->close();echo 'ok';`,
+  );
+  assert.equal(execFileSync('php', [phpFile], { encoding: 'utf8' }), 'ok');
+  assert.match(readFileSync(join(output, 'node/index.d.ts'), 'utf8'), /"apiKey"\?: string/);
+  const types = join(output, 'node/shortcuts.mts');
+  writeFileSync(
+    types,
+    `import { Client } from './index.js';
+const c = new Client({baseUrl:'https://example.invalid',apiKey:'default'});
+c.api.checkoutCall({}, {apiKey:'override'});
+c.api.customerCall({}, {apiToken:'customer'});
+// @ts-expect-error merchant shortcut is not permitted on customer endpoints
+c.api.customerCall({}, {apiKey:'merchant'});
+// @ts-expect-error unknown shortcut
+new Client({baseUrl:'https://example.invalid',accessKey:'x'});
+`,
+  );
+  execFileSync(process.execPath, [
+    'node_modules/typescript/bin/tsc',
+    '--noEmit',
+    '--strict',
+    '--skipLibCheck',
+    '--module',
+    'NodeNext',
+    '--target',
+    'ES2022',
+    '--typeRoots',
+    join(process.cwd(), 'node_modules/@types'),
+    types,
+  ]);
+  assert.match(readFileSync(join(output, 'node/README.md'), 'utf8'), /apiKey:/);
+  const { compileSdkContract } = await import('../dist/target-plan.js');
+  const { assertRuntimePlan } = await import('../dist/runtime-plan.js');
+  const { plan } = compileSdkContract(load(settings));
+  const restored = JSON.parse(JSON.stringify(plan.runtime));
+  assert.deepEqual(restored.authShortcuts, settings.auth.shortcuts);
+  assertRuntimePlan(restored);
+  restored.authShortcuts.apiKey.scheme = 'Customer';
+  assert.throws(() => assertRuntimePlan(restored), /shortcut/);
+});
+
+test('shortcut configuration rejects unknown targets, combined credentials and option collisions', () => {
+  for (const shortcuts of [
+    { apiKey: { mode: 'missing', scheme: 'Merchant' } },
+    { apiKey: { mode: 'merchant', scheme: 'Customer' } },
+    { apiKey: { mode: 'checkout', scheme: 'CheckoutID' } },
+    { baseUrl: { mode: 'merchant', scheme: 'Merchant' } },
+    { 'api-key': { mode: 'merchant', scheme: 'Merchant' } },
+  ])
+    assert.throws(() => load({ ...config, auth: { ...config.auth, shortcuts } }), /shortcut/);
+});
+
+test('profiles compose shortcut mappings and reject conflicting targets', () => {
+  load();
+  writeFileSync(join(dir, 'shortcut-base.json'), JSON.stringify(config));
+  writeFileSync(
+    join(dir, 'shortcut-profile.json'),
+    JSON.stringify({
+      auth: { shortcuts: { apiKey: { mode: 'merchant', scheme: 'Merchant' } } },
+    }),
+  );
+  const composed = { profiles: ['shortcut-base.json', 'shortcut-profile.json'] };
+  writeFileSync(join(dir, 'shortcut-composed.json'), JSON.stringify(composed));
+  assert.deepEqual(
+    loadContract(join(dir, 'api.json'), join(dir, 'shortcut-composed.json')).authShortcuts,
+    { apiKey: { mode: 'merchant', scheme: 'Merchant' } },
+  );
+  writeFileSync(
+    join(dir, 'shortcut-composed.json'),
+    JSON.stringify({
+      ...composed,
+      auth: { shortcuts: { apiKey: { mode: 'customer', scheme: 'Customer' } } },
+    }),
+  );
+  assert.throws(
+    () => loadContract(join(dir, 'api.json'), join(dir, 'shortcut-composed.json')),
+    /conflict/,
+  );
+});

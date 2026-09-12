@@ -1,3 +1,4 @@
+import { schemaComment } from './schema-documentation.js';
 import type { Json, Schema } from './contract.js';
 import { directionalSchema, exactValue, valueInstruction } from './codec-plan.js';
 import { numericEnumDeclaration, valueScopes } from './schema-intersections.js';
@@ -80,6 +81,7 @@ export function typescriptType(
   objectContext?: ObjectContext,
   arrayContext?: ArrayContext,
   definitions: Readonly<Record<string, Schema>> = {},
+  documentation = false,
 ): string {
   definitions = s['x-sdk-definitions'] ?? definitions;
   const render = (
@@ -89,7 +91,8 @@ export function typescriptType(
     knownVariant = false,
     object?: ObjectContext,
     array?: ArrayContext,
-  ): string => typescriptType(schema, output, tag, knownVariant, object, array, definitions);
+  ): string =>
+    typescriptType(schema, output, tag, knownVariant, object, array, definitions, documentation);
   if (!response && Object.hasOwn(s, 'const')) {
     // A constant can wrap a reference or composition that supplies its numeric
     // representation. Follow positive declarations at each value path before
@@ -298,10 +301,12 @@ export function typescriptType(
       return (
         '{ ' +
         declaration.fields
-          .map(([k, v]) =>
-            !response && v.readOnly
-              ? `${JSON.stringify(k)}?: ${optionalPropertyType(k, 'never')};`
-              : `${JSON.stringify(k)}${s.required?.includes(k) ? '' : '?'}: ${s.required?.includes(k) ? render(v, response && k !== discriminator) : optionalPropertyType(k, render(v, response && k !== discriminator))};`,
+          .map(
+            ([k, v]) =>
+              (documentation ? schemaComment(v) : '') +
+              (!response && v.readOnly
+                ? `${JSON.stringify(k)}?: ${optionalPropertyType(k, 'never')};`
+                : `${JSON.stringify(k)}${s.required?.includes(k) ? '' : '?'}: ${s.required?.includes(k) ? render(v, response && k !== discriminator) : optionalPropertyType(k, render(v, response && k !== discriminator))};`),
           )
           .join(' ') +
         (declaration.open ? ` [key: string]: unknown;` : '') +

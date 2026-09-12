@@ -63,7 +63,7 @@ import {writeFileSync} from 'node:fs';
 const started=performance.now();
 const c=loadContract(${JSON.stringify(api)},${JSON.stringify(config)});
 generate(c,${JSON.stringify(output)});
-writeFileSync(${JSON.stringify(join(dir, 'summary.json'))},JSON.stringify({operations:c.operations.map(o=>o.id),incoming:c.incoming.map(o=>({name:o.name,model:o.model})),events:Object.keys(c.config.webhook.events),modes:c.authentication,elapsedMs:performance.now()-started,maxRSS:process.resourceUsage().maxRSS,definitions:Object.keys(c.definitions).length}));
+writeFileSync(${JSON.stringify(join(dir, 'summary.json'))},JSON.stringify({operations:c.operations.map(o=>o.id),methods:c.operations.map(o=>({resource:o.resource,method:o.method})),incoming:c.incoming.map(o=>({name:o.name,model:o.model})),events:Object.keys(c.config.webhook.events),modes:c.authentication,elapsedMs:performance.now()-started,maxRSS:process.resourceUsage().maxRSS,definitions:Object.keys(c.definitions).length}));
 `,
       );
       run(process.execPath, [script]);
@@ -174,7 +174,11 @@ import * as sdk from '@example/flint-full-sdk';
 const {Client,ExactNumber}=sdk;
 const c=new Client({baseUrl:'https://api.example.invalid'});
 const ids=${JSON.stringify(summary.operations)};
-assert.deepEqual(Object.keys(c.api).sort(),ids.sort());
+const methods=${JSON.stringify(summary.methods)};
+assert.equal(methods.length,ids.length);
+for(const {resource,method} of methods) assert.equal(typeof c[resource][method],'function');
+assert.ok(Object.keys(c).length > 1);
+assert.equal(typeof c.paymentIntents.create,'function');
 for(const incoming of ${JSON.stringify(summary.incoming)}) assert.equal(typeof sdk['make'+incoming.model],'function',incoming.name);
 const verified=c.verifyWebhook(Buffer.from(${JSON.stringify(raw)}),${JSON.stringify(headers)},[${JSON.stringify(encodedSecret)}],${timestamp});
 assert.equal(verified.known,true);
@@ -189,7 +193,7 @@ const streaming=new Client({baseUrl:'https://api.example.invalid',authMode:'merc
  assert.equal(request.headers['last-event-id'],'whev_previous');
  return new Response('event: ready\\ndata: {"cursor":"whev_resume"}\\n\\n',{headers:{'content-type':'text/event-stream'}});
 }});
-const stream=await streaming.api.streamWebhookEvents({'Last-Event-ID':'whev_previous'});
+const stream=await streaming.webhookEvents.stream({'Last-Event-ID':'whev_previous'});
 const frames=await Array.fromAsync(stream.data);
 assert.equal(frames[0].data.cursor,'whev_resume');
 await streaming.close();
@@ -201,10 +205,10 @@ await c.close();
         join(consumer, 'check.php'),
         `<?php
 require __DIR__.'/vendor/autoload.php';
-use Example\\FlintFull\\{Client,ClientOptions,ExactNumber,ByteStream,SdkError,ApiStreamWebhookEventsInput};
+use Example\\FlintFull\\{Client,ClientOptions,ExactNumber,ByteStream,SdkError,WebhookEventsStreamInput};
 $c=new Client(new ClientOptions(baseUrl:'https://api.example.invalid'));
 $ids=json_decode('${JSON.stringify(summary.operations)}',true,512,JSON_THROW_ON_ERROR);
-foreach($ids as $id) if(!method_exists($c->api,$id)) throw new Exception('Missing operation '.$id);
+foreach(json_decode('${JSON.stringify(summary.methods)}',true) as $method) if(!method_exists($c->{$method['resource']},$method['method'])) throw new Exception('Missing method '.$method['method']);
 foreach(json_decode('${JSON.stringify(summary.incoming)}',true,512,JSON_THROW_ON_ERROR) as $incoming) if(!class_exists('Example'.chr(92).'FlintFull'.chr(92).$incoming['model'].'Input'))throw new Exception('Missing incoming model '.$incoming['name']);
 $event=$c->verifyWebhook(base64_decode('${Buffer.from(raw).toString('base64')}'),json_decode('${JSON.stringify(headers)}',true,512,JSON_THROW_ON_ERROR),['${encodedSecret}'],${timestamp});
 if(!$event['known'] || $event['event']->get('data')->amount_money->amount !== '9007199254740993') throw new Exception('Webhook payload mismatch');
@@ -223,7 +227,7 @@ $streaming=new Client(new ClientOptions(baseUrl:'https://api.example.invalid',au
   public function close():void{$this->done=true;}
  }];
 }));
-$stream=$streaming->api->streamWebhookEvents(new ApiStreamWebhookEventsInput(['Last-Event-ID'=>'whev_previous']));
+$stream=$streaming->webhookEvents->stream(new WebhookEventsStreamInput(['Last-Event-ID'=>'whev_previous']));
 $frames=iterator_to_array($stream->data);
 if($frames[0]->data->cursor!=='whev_resume')throw new Exception('stream payload');
 $streaming->close();

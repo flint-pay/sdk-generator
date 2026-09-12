@@ -1,3 +1,5 @@
+import { payloadSchemas, payloadHasAlternatives } from './response-return.js';
+import { schemaComment } from './schema-documentation.js';
 import { codecSharing } from './codec-sharing.js';
 import { Diagnostic } from './diagnostic.js';
 import { valueScopes } from './schema-intersections.js';
@@ -37,7 +39,12 @@ export function inputSchema(op: Operation): Schema {
   return { type: 'object', properties, required, additionalProperties: false };
 }
 const modelIndexes = new WeakMap<Record<string, Schema>, Map<string, string>>();
-export function namedType(s: Schema, models: Record<string, Schema>, response = false): string {
+export function namedType(
+  s: Schema,
+  models: Record<string, Schema>,
+  response = false,
+  documentation = false,
+): string {
   const identity = stable(s);
   const indexed = modelIndexes.get(models);
   const name = indexed?.get(identity);
@@ -48,14 +55,18 @@ export function namedType(s: Schema, models: Record<string, Schema>, response = 
     : Object.entries(models).find(([, value]) => stable(value) === identity);
   return match
     ? match[0] + (response ? '' : 'Input')
-    : typescriptType(s, response, undefined, false, undefined, undefined, models);
+    : typescriptType(s, response, undefined, false, undefined, undefined, models, documentation);
 }
-export function operationInputType(op: Operation, models: Record<string, Schema>): string {
+export function operationInputType(
+  op: Operation,
+  models: Record<string, Schema>,
+  documentation = false,
+): string {
   const schema = inputSchema(op);
   return `{ ${Object.entries(schema.properties!)
     .map(
       ([key, value]) =>
-        `${JSON.stringify(key)}${schema.required!.includes(key) ? '' : '?'}: ${schema.required!.includes(key) ? `InputValue<${namedType(value, models)}>` : optionalPropertyType(key, `InputValue<${namedType(value, models)}>`)};`,
+        `${documentation ? schemaComment(value) : ''}${JSON.stringify(key)}${schema.required!.includes(key) ? '' : '?'}: ${schema.required!.includes(key) ? `InputValue<${namedType(value, models, false, documentation)}>` : optionalPropertyType(key, `InputValue<${namedType(value, models, false, documentation)}>`)};`,
     )
     .join(' ')} }`;
 }
@@ -125,6 +136,7 @@ export function runtimeContract(c: Contract) {
     ...(c.definitions ? { definitions: c.definitions } : {}),
     ...(c.auth ? { auth: c.auth } : {}),
     ...(c.authentication ? { authentication: c.authentication } : {}),
+    ...(c.authShortcuts ? { authShortcuts: c.authShortcuts } : {}),
     ...(c.config.apiVersion ? { apiVersion: c.config.apiVersion } : {}),
     ...(c.config.webhook ? { webhook: c.config.webhook } : {}),
     ...(c.config.money ? { money: c.config.money } : {}),
@@ -271,17 +283,58 @@ function variantDeclaration(schema: Schema): Schema {
   };
 }
 
+export interface NodeAuthenticationPlan {
+  declarations: string;
+  modes: Record<string, string[]>;
+}
+function compileAuthentication(c: Contract): NodeAuthenticationPlan | undefined {
+  if (!c.authentication) return undefined;
+  const modes = Object.fromEntries(
+    Object.entries(c.authentication)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([name, mode]) => [name, mode.schemes.map((s) => s.name).sort()]),
+  );
+  const shortcuts = Object.keys(c.authShortcuts ?? {})
+    .sort()
+    .map((name) => `${JSON.stringify(name)}?: string;`)
+    .join(' ');
+  const requestShortcuts = Object.entries(c.authShortcuts ?? {})
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(
+      ([name, shortcut]) =>
+        `${JSON.stringify(name)}?: ${JSON.stringify(shortcut.mode)} extends M ? string : never;`,
+    )
+    .join(' ');
+  const declarations = `export interface Credentials {\n${Object.entries(modes)
+    .map(
+      ([mode, schemes]) =>
+        `  ${JSON.stringify(mode)}: { ${schemes.map((name) => `${JSON.stringify(name)}: string;`).join(' ')} };`,
+    )
+    .join(
+      '\n',
+    )}\n}\nexport type AuthMode = keyof Credentials;\nexport type ClientOptions = Omit<RuntimeClientOptions, 'authMode' | 'credentials'> & { ${shortcuts ? shortcuts + ' ' : ''}authMode?: AuthMode; credentials?: Partial<Credentials> };\nexport type RequestOptions<M extends AuthMode = AuthMode> = Omit<RuntimeRequestOptions, 'authMode' | 'credentials'> & ${requestShortcuts ? '{ ' + requestShortcuts + ' } & ' : ''}({ authMode?: undefined; credentials?: Credentials[M] } | { [K in M]: { authMode: K; credentials?: Credentials[K] } }[M]);\n`;
+  return { declarations, modes };
+}
+
 export interface CompiledSdkContract {
+  responseReturns?: Record<
+    string,
+    { path: string[]; node: string; nodeDocumentation: string; php: string; phpNative: string }
+  >;
   format: 1;
   semantics: string;
   targets: ('node' | 'php')[];
   runtime: CompiledRuntimePlan;
   node: {
+    authentication?: NodeAuthenticationPlan;
+    responseReturnDeclarations?: string;
     models: Record<
       string,
       {
         input: string;
         output: string;
+        documentedInput?: string;
+        documentedOutput?: string;
         objectFactory: boolean;
         codec: CodecPlan;
         sharedCodec?: string;
@@ -292,7 +345,11 @@ export interface CompiledSdkContract {
       {
         input: string;
         output: string;
+        documentedInput?: string;
+        documentedOutput?: string;
         inputRequired: boolean;
+        requestOptions?: string;
+        authModes?: string[];
         items: string;
         known?: { type: string; codecs: CodecPlan[] };
       }
@@ -395,17 +452,39 @@ export function compileSdkContract(source: Contract): {
     }
   }
   if (phpRuntime.webhook) phpRuntime.webhook.eventModels = eventModels;
+  const authentication = compileAuthentication(c);
   const plan: CompiledSdkContract = {
     format: 1,
     semantics: runtime.semantics + '/results-1',
     targets: [...(c.config.targets ?? ['node', 'php'])],
     runtime,
     node: {
+      ...(authentication ? { authentication } : {}),
       models: Object.fromEntries(
         Object.entries(models).map(([name, s]) => [
           name,
           {
             input: typescriptType(s, false, undefined, false, undefined, undefined, models),
+            documentedInput: typescriptType(
+              s,
+              false,
+              undefined,
+              false,
+              undefined,
+              undefined,
+              models,
+              true,
+            ),
+            documentedOutput: typescriptType(
+              s,
+              true,
+              undefined,
+              false,
+              undefined,
+              undefined,
+              models,
+              true,
+            ),
             output: typescriptType(s, true, undefined, false, undefined, undefined, models),
             codec: compileCodec(s),
             ...(Object.hasOwn(shared, name) ? { sharedCodec: name } : {}),
@@ -426,8 +505,19 @@ export function compileSdkContract(source: Contract): {
             op.id,
             {
               input: operationInputType(op, models),
+              documentedInput: operationInputType(op, models, true),
               output: resultType(op, models),
               inputRequired: Boolean(inputSchema(op).required?.length),
+              requestOptions: authentication
+                ? `RequestOptions<${
+                    op.authModes
+                      ?.slice()
+                      .sort()
+                      .map((mode) => JSON.stringify(mode))
+                      .join(' | ') || 'never'
+                  }>`
+                : 'RequestOptions',
+              ...(authentication ? { authModes: op.authModes?.slice().sort() ?? [] } : {}),
               items: op.pagination
                 ? [...new Set(itemSchemas(op).map((s) => namedType(s, models, true)))].join(
                     ' | ',
@@ -589,6 +679,45 @@ export function compileSdkContract(source: Contract): {
     for (const operation of Object.values(plan.node.operations))
       if (operation.known) operation.known.codecs = operation.known.codecs.map(sharing.compact);
     for (const model of plan.php.models) model.codec = sharing.compact(model.codec);
+  }
+  const responseReturns = Object.fromEntries(
+    c.operations
+      .filter((op) => op.response?.return === 'payload')
+      .map((op) => {
+        const projected = payloadSchemas(op, c.definitions);
+        const uncertain = payloadHasAlternatives(op, c.definitions);
+        const nativeTypes = [...new Set(projected.flatMap((s) => phpType(s).split('|')))];
+        return [
+          op.id,
+          {
+            path: op.response?.payloadPath?.split('.') ?? [],
+            node: projected.length
+              ? `_SdkPayloadAt<${plan.node.operations[op.id]!.output}, ${JSON.stringify(op.response!.payloadPath!.split('.'))}>`
+              : plan.node.operations[op.id]!.output,
+            nodeDocumentation: uncertain
+              ? 'unknown'
+              : projected.length
+                ? projected.map((s) => typescriptType(s, true)).join(' | ')
+                : plan.documentation[op.id]!.nodeOutput,
+            php: uncertain
+              ? 'mixed'
+              : projected.length
+                ? projected.map((s) => phpDocType(s, true)).join('|')
+                : plan.php.operations[op.id]!.output,
+            phpNative: uncertain
+              ? 'mixed'
+              : projected.length
+                ? nativeTypes.includes('mixed')
+                  ? 'mixed'
+                  : nativeTypes.join('|')
+                : 'mixed',
+          },
+        ];
+      }),
+  );
+  if (Object.keys(responseReturns).length) {
+    plan.responseReturns = responseReturns;
+    plan.node.responseReturnDeclarations = `type _SdkPayloadAt<T, P extends readonly string[]> = P extends readonly [infer K extends string, ...infer R extends string[]] ? T extends Record<K, infer V> ? _SdkPayloadAt<V, R> : unknown : T;\nexport interface SdkResponse<T> { body: T; meta: Result<T>['meta']; raw: Result<T>['raw']; }\n`;
   }
   return { source: c, plan };
 }

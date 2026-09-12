@@ -76,7 +76,9 @@ final class RequestOptions
         public readonly ?array $credentials = null,
         public readonly ?int $streamIdleTimeoutMs = null,
         public readonly ?int $streamLifetimeMs = null,
-    ) {}
+    ) {
+        /* AUTH_SHORTCUT_PARAMETERS */
+    }
     public function __debugInfo(): array
     {
         return [
@@ -101,6 +103,7 @@ final class RequestOptions
             $this->credentials,
             $this->streamIdleTimeoutMs,
             $this->streamLifetimeMs,
+            /* AUTH_SHORTCUT_FORWARD */
         );
     }
 }
@@ -119,7 +122,9 @@ final class ClientOptions
         public readonly array $redactFields = [],
         public readonly ?string $authMode = null,
         public readonly array $credentials = [],
-    ) {}
+    ) {
+        /* AUTH_SHORTCUT_PARAMETERS */
+    }
     public function __debugInfo(): array
     {
         return ['baseUrl' => $this->baseUrl, 'token' => '[REDACTED]'];
@@ -677,11 +682,21 @@ class Model implements \JsonSerializable
     public function get(string $field): mixed
     {
         if (!$this->has($field)) {
-            throw new SdkError('validation', 'Field was omitted');
+            throw new SdkError(
+                'validation',
+                'Field ' .
+                    $field .
+                    ' was omitted; use has() or valueOrDefault() for optional fields.',
+            );
         }
         return self::copyValue(
             is_object($this->values) ? $this->values->{$field} : $this->values[$field],
         );
+    }
+    /** Return the fallback only for omission; an explicit null remains null. */
+    public function valueOrDefault(string $field, mixed $default = null): mixed
+    {
+        return $this->has($field) ? $this->get($field) : self::copyValue($default);
     }
     public function __get(string $field): mixed
     {
@@ -2848,6 +2863,16 @@ class Runtime
         if (!is_array($this->contract['operations'] ?? null)) {
             throw new \InvalidArgumentException('Missing compiled operations');
         }
+        foreach ($this->contract['authShortcuts'] ?? [] as $name => $shortcut) {
+            $schemes = $this->contract['authentication'][$shortcut['mode'] ?? '']['schemes'] ?? [];
+            if (
+                !preg_match('/^[a-z][a-zA-Z0-9]*$/', $name) ||
+                count($schemes) !== 1 ||
+                ($schemes[0]['name'] ?? null) !== ($shortcut['scheme'] ?? null)
+            ) {
+                throw new \InvalidArgumentException('Invalid authentication shortcut');
+            }
+        }
         if (isset($this->contract['authentication'])) {
             if (!is_array($this->contract['authentication'])) {
                 throw new \InvalidArgumentException('Invalid authentication modes');
@@ -3208,12 +3233,47 @@ class Runtime
         }
         if (isset($this->contract['authentication'])) {
             $permitted = $op['authModes'] ?? [];
-            $modeName = $o->authMode ?? ($permitted ? $this->options->authMode : null);
+            $shortcutAuth = function ($options) {
+                $supplied = [];
+                foreach ($this->contract['authShortcuts'] ?? [] as $key => $shortcut) {
+                    if (($options->$key ?? null) !== null) {
+                        $supplied[] = [
+                            'mode' => $shortcut['mode'],
+                            'credentials' => [$shortcut['scheme'] => $options->$key],
+                        ];
+                    }
+                }
+                if (
+                    count($supplied) > 1 ||
+                    ($supplied &&
+                        ($options->authMode !== null ||
+                            ($options->credentials !== null &&
+                                ($options instanceof RequestOptions ||
+                                    $options->credentials !== []))))
+                ) {
+                    throw new SdkError(
+                        'authentication',
+                        'Use one authentication shortcut or explicit authMode/credentials, not both',
+                    );
+                }
+                return $supplied[0] ?? null;
+            };
+            $clientShortcut = $shortcutAuth($this->options);
+            $requestShortcut = $shortcutAuth($o);
+            $defaultMode = $this->options->authMode ?? ($clientShortcut['mode'] ?? null);
+            $modeName =
+                $requestShortcut['mode'] ?? ($o->authMode ?? ($permitted ? $defaultMode : null));
             if ($modeName === null && $op['authenticated'] && count($permitted) === 1) {
                 $modeName = $permitted[0];
             }
             if ($modeName === null && $op['authenticated']) {
-                throw new SdkError('authentication', 'Select an explicit authentication mode');
+                throw new SdkError(
+                    'authentication',
+                    'Select an explicit authentication mode for ' .
+                        $op['id'] .
+                        '; permitted modes: ' .
+                        implode(', ', $permitted),
+                );
             }
             $selected =
                 $modeName === null ? null : $this->contract['authentication'][$modeName] ?? null;
@@ -3223,12 +3283,20 @@ class Runtime
             ) {
                 throw new SdkError(
                     'authentication',
-                    'Authentication mode is not permitted for this operation',
+                    'Authentication mode is not permitted for ' .
+                        $op['id'] .
+                        '; permitted modes: ' .
+                        implode(', ', $permitted),
                 );
             }
             $expected = [];
             if ($selected !== null) {
-                $credentials = $o->credentials ?? ($this->options->credentials[$modeName] ?? []);
+                $credentials =
+                    $requestShortcut['credentials'] ??
+                    ($o->credentials ??
+                        (($clientShortcut['mode'] ?? null) === $modeName
+                            ? $clientShortcut['credentials']
+                            : $this->options->credentials[$modeName] ?? []));
                 foreach ($selected['schemes'] as $scheme) {
                     $credential = $credentials[$scheme['name']] ?? null;
                     if (
@@ -3238,7 +3306,10 @@ class Runtime
                     ) {
                         throw new SdkError(
                             'authentication',
-                            'A complete credential set is required for the selected mode',
+                            'Missing or invalid credential ' .
+                                $scheme['name'] .
+                                ' for authentication mode ' .
+                                $modeName,
                         );
                     }
                     $expected[strtolower($scheme['header'])] =

@@ -7,11 +7,11 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { loadContract, render } from '../dist/index.js';
 const baseline = JSON.parse(
-  readFileSync(new URL('./fixtures/compiled-public-baseline.json', import.meta.url)),
+  readFileSync(new URL('./fixtures/dx-public-baseline.json', import.meta.url)),
 );
 const digest = (value) => createHash('sha256').update(value).digest('hex');
 
-test('unchanged Node declarations and PHP public signatures match the frozen pre-migration baseline', () => {
+test('Node declarations and PHP public signatures match the reviewed DX baseline', () => {
   const root = mkdtempSync(join(tmpdir(), 'sdk-public-preservation-'));
   try {
     for (const fixture of baseline.fixtures) {

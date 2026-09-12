@@ -51,3 +51,22 @@ The `getBundle` diagnostic control retains the original referenced graph. Its fa
 Transport tests also enforce slow-consumer buffer budgets over 2,048 16-KiB event frames: less than 24 MiB additional Node array-buffer memory and 8 MiB additional PHP managed memory, including repeated PHP stream opens and early closes. A 15,000-object uniqueness case has a ten-second bound per target.
 
 The complete export needs a 3-GiB Node heap during generator commands; the examples set `--max-old-space-size=3072` explicitly because Node 22 defaults to a smaller heap in constrained environments. This stays inside the tested 4-GiB process budget. The installed SDKs do not require that generator setting; PHP consumers run with the default 128-MiB memory limit.
+
+## Resource-oriented full SDK
+
+The full profiles name all 497 operations in `full-common-sdk.json`, grouped by API resource. For example, `client.paymentIntents.create()`, `client.paymentIntents.get()`, `client.orders.createPaymentIntent()` and `client.refunds.create()` replace the former flat `client.api` methods. The generated reference lists every resource and method. Source operation IDs and wire requests are unchanged.
+
+This is a public naming change: consumers of previously generated full packages must update resource/method calls and operation input/response type names. For example, PHP `ApiCreatePaymentIntentInput` becomes `PaymentIntentsCreateInput`; streaming moves to `webhookEvents.stream()` and `WebhookEventsStreamInput`. Publish an existing package under a new major version when adopting these profiles. Pinned upstream OpenAPI files and HTTP expectations remain unchanged; the fixture manifest records the reviewed local profile changes.
+
+Flint preserves its endpoint-specific response bodies. Creating a payment intent returns `result.data.data.payment_intent`; retrieving one returns `result.data.data`. Give these values a local name to keep business code clear:
+
+```js
+const created = await client.paymentIntents.create(input, options);
+const paymentIntent = created.data.data.payment_intent;
+const retrieved = await client.paymentIntents.get({
+  payment_intent_id: paymentIntent.payment_intent_id,
+});
+const refreshedPaymentIntent = retrieved.data.data;
+```
+
+In PHP the equivalent paths are `$created->data->data->payment_intent` and `$retrieved->data->data`. SDK `meta` is HTTP metadata; any metadata inside `data` belongs to the provider's JSON body.

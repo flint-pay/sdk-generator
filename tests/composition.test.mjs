@@ -326,7 +326,7 @@ test('generated quickstart inputs satisfy composed request schemas', async () =>
   )) {
     const source = readFileSync(join(output, 'node/examples', file), 'utf8');
     const match = source.match(
-      /const result = await client\.api\.([^(]+)\(([\s\S]*), \{ maxAttempts: 1 \}\);/,
+      /const result = await client\.api\.([^(]+)\(\s*([\s\S]*?),\s*\{ maxAttempts: 1 \},?\s*\);/,
     );
     assert.ok(match, file);
     let dispatched = false;
@@ -338,7 +338,7 @@ test('generated quickstart inputs satisfy composed request schemas', async () =>
       },
     });
     await assert.rejects(
-      client.api[match[1]](JSON.parse(match[2]), { maxAttempts: 1 }),
+      client.api[match[1]](new Function(`return (${match[2]})`)(), { maxAttempts: 1 }),
       (e) => e.kind === 'transport',
       file,
     );

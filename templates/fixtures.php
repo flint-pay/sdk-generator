@@ -83,7 +83,9 @@ foreach ($cases as $index => $case) {
             ucfirst($operation['resource']) .
             ucfirst($operation['method']) .
             'Input';
-        $result = $client->{$operation['resource']}->{$operation['method']}(
+        $payload = ($operation['response']['return'] ?? 'result') === 'payload';
+        $method = $operation['method'] . ($payload ? 'WithResponse' : '');
+        $result = $client->{$operation['resource']}->{$method}(
             new $inputClass($input),
             new $requestOptionsClass(
                 idempotencyKey: $o['idempotencyKey'] ?? null,
@@ -96,6 +98,13 @@ foreach ($cases as $index => $case) {
                 credentials: $o['credentials'] ?? null,
             ),
         );
+        if ($payload) {
+            $result = (object) [
+                'data' => $result->body,
+                'meta' => $result->meta,
+                'raw' => $result->raw,
+            ];
+        }
         check(!isset($case['error']), $case['name'] . ': expected error');
         if (array_key_exists('data', $case)) {
             check(

@@ -1,0 +1,34 @@
+{
+  "predecessor": "compiled-public-baseline.json",
+  "description": "Reviewed DX interface: field documentation and complete examples; PHP array inputs and presence/fallback helpers. Historical migration hashes remain in the predecessor file.",
+  "fixtures": [
+    {
+      "name": "library",
+      "api": "examples/library.openapi.json",
+      "config": "examples/library.sdk.json",
+      "nodeDeclarationsSha256": "c8035a05badf47110b9028532df5c96072fd69262e70b512872b6b06d4e2014a",
+      "phpDeclarationsSha256": "cf7ea1a71c0472578d390322107a1f9d7d4035c8aaa4423d78049e8052cdeba9"
+    },
+    {
+      "name": "payment",
+      "api": "tests/fixtures/payment-api.json",
+      "config": "tests/fixtures/payment-sdk.json",
+      "nodeDeclarationsSha256": "8de24aabe2af98e665607080efe291411222495081e88b270daabaf94cc946a7",
+      "phpDeclarationsSha256": "4db8dfedbfa551f99d6b31f33874b79816363cfa4b74064e16704d18aeb5edfc"
+    },
+    {
+      "name": "flint",
+      "api": "tests/providers/flint/openapi.json",
+      "config": "tests/providers/flint/sdk.json",
+      "nodeDeclarationsSha256": "c9dc64c71d10362b6f757812dc02a80d1334dc720258818844d38b145a00faa2",
+      "phpDeclarationsSha256": "92d3e256dbb9a0677f51e27f825c0c5f7e6d7ce5c82b8e003c353f2ad30b0ff3"
+    },
+    {
+      "name": "risk",
+      "api": "tests/providers/flint/risk-openapi.json",
+      "config": "tests/providers/flint/risk-sdk.json",
+      "nodeDeclarationsSha256": "480a9683d891c477f75da8e70353a0bf615ac91df78912d3b9ccd48dd15e92bc",
+      "phpDeclarationsSha256": "665d04efa37eb6ece8e9dd1e7cec668152dc63bd8b5b23ef15dffb41df31a903"
+    }
+  ]
+}
