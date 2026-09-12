@@ -1,6 +1,6 @@
 import { validateRequestStyle, validatePositional, type RequestStyle } from './request-style.js';
 import { validateResponseReturn, payloadSchemas, type ResponseReturn } from './response-return.js';
-import { operationNames, modelNames } from './naming.js';
+import { operationNames, modelNames, isPublicName } from './naming.js';
 import { shareContractSchemas } from './schema-sharing.js';
 import { Diagnostic, DiagnosticGroup, DiagnosticCollector, suggestion } from './diagnostic.js';
 import { valueInstruction, exactValue, discriminatorBindings } from './codec-plan.js';
@@ -199,12 +199,6 @@ export const hash = (value: string): string => createHash('sha256').update(value
 const fail = (p: string, m: string): never => {
   throw new Diagnostic(p, m);
 };
-const identifier = /^[A-Za-z][A-Za-z0-9_]*$/;
-const reserved = new Set(
-  'class function public private protected static new default delete constructor prototype then tostring valueof tojson catch finally call request close pages items wait verifywebhook money client runtime model result sdkerror codec rawnumber cancellation clientoptions requestoptions namespace use match enum readonly trait interface extends implements clone throw return const var let await yield list echo print empty isset unset true false null string int bool float mixed void never object array iterable self parent static abstract final break case continue declare die do else elseif enddeclare endfor endforeach endif endswitch endwhile eval exit for foreach global goto if include include_once instanceof insteadof require require_once switch try while xor and or switch'.split(
-    ' ',
-  ),
-);
 // TypeScript keywords are case-sensitive and may still be valid property names.
 const reservedTypeNames = new Set(
   'debugger export import in super this typeof with package arguments keyof infer unique'.split(
@@ -221,11 +215,7 @@ function modelName(
     fail(path, 'model name is a TypeScript reserved word; customize it with config.models');
 }
 function name(value: unknown, path: string, method = false): asserts value is string {
-  if (
-    typeof value !== 'string' ||
-    !identifier.test(value) ||
-    (reserved.has(value.toLowerCase()) && !(method && value.toLowerCase() === 'list'))
-  )
+  if (!isPublicName(value, method))
     fail(
       path,
       'choose an identifier that is not a JavaScript/PHP reserved word or SDK runtime member',

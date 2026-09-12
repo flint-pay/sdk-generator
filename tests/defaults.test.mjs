@@ -100,6 +100,83 @@ test('model suffix rules reserve explicit names and resolve inferred collisions 
   );
 });
 
+test('reserved inferred operation names fall back to valid operation IDs', async () => {
+  for (const [id, tag] of [
+    ['deleteUser', 'users'],
+    ['closeAccount', 'accounts'],
+    ['requestToken', 'tokens'],
+    ['getClient', 'client'],
+  ]) {
+    const f = fixture();
+    const api = JSON.parse(readFileSync(f.definition, 'utf8'));
+    api.paths['/payment-intents'].post.operationId = id;
+    api.paths['/payment-intents'].post.tags = [tag];
+    writeFileSync(f.definition, JSON.stringify(api));
+    const contract = loadContract(f.definition, f.configuration);
+    assert.equal(contract.operations[0].resource, 'api');
+    assert.equal(contract.operations[0].method, id);
+    const output = join(f.dir, 'out');
+    generate(contract, output);
+    const { Client } = await import(join(output, 'node/index.js'));
+    const client = new Client({
+      baseUrl: 'https://example.invalid',
+      transport: async () => new Response('{"data":"ok"}', { status: 200 }),
+    });
+    assert.equal((await client.api[id]({})).data, 'ok');
+    assert.equal((await client.api[id + 'WithResponse']({})).body.data, 'ok');
+  }
+  assert.deepEqual(operationNames('listUsers', ['users']), { resource: 'users', method: 'list' });
+  assert.throws(
+    () => fixture({ operations: { createPaymentIntent: { method: 'delete' } } }),
+    /reserved word or SDK runtime member/,
+  );
+});
+
+test('Input models receive a nonreserved name throughout recursive generated helpers', async () => {
+  const f = fixture();
+  writeFileSync(
+    f.definition,
+    readFileSync(f.definition, 'utf8').replaceAll('PaymentInput', 'Input'),
+  );
+  const contract = loadContract(f.definition, f.configuration);
+  assert.ok(contract.models.RequestModel);
+  assert.ok(contract.definitions.RequestModel);
+  assert.deepEqual(contract.modelDependencies.createPaymentIntent, ['RequestModel']);
+  const output = join(f.dir, 'out');
+  generate(contract, output);
+  const { Client, makeRequestModel } = await import(join(output, 'node/index.js'));
+  const client = new Client({
+    baseUrl: 'https://example.invalid',
+    transport: async (_, request) => {
+      assert.equal(request.body, '{"child":{"amount":"1.25"}}');
+      return new Response('{"data":"ok"}', { status: 200 });
+    },
+  });
+  assert.equal(
+    (await client.paymentIntents.create(makeRequestModel({ child: { amount: '1.25' } }))).data,
+    'ok',
+  );
+  assert.equal(
+    execFileSync(
+      'php',
+      [
+        '-r',
+        String.raw`
+require $argv[1].'/php/src/Runtime.php';
+require $argv[1].'/php/src/Client.php';
+$input = new Example\Defaults\RequestModelInput(['child'=>['amount'=>'1.25']]);
+echo json_encode($input);
+`,
+        output,
+      ],
+      { encoding: 'utf8' },
+    ),
+    '{"child":{"amount":"1.25"}}',
+  );
+  assert.equal(modelNames(['Input', 'RequestModel']).get('Input'), 'RequestModel2');
+  assert.throws(() => fixture({ models: { PaymentInput: 'Request' } }), /reserved word/);
+});
+
 test('automatic defaults generate recursive models, exact unions, direct bodies and WithResponse', async () => {
   const f = fixture(),
     output = join(f.dir, 'out');

@@ -1,3 +1,18 @@
+const identifier = /^[A-Za-z][A-Za-z0-9_]*$/;
+const reserved = new Set(
+  'class function public private protected static new default delete constructor prototype then tostring valueof tojson catch finally call request close pages items wait verifywebhook money client runtime model result sdkerror codec rawnumber cancellation clientoptions requestoptions namespace use match enum readonly trait interface extends implements clone throw return const var let await yield list echo print empty isset unset true false null string int bool float mixed void never object array iterable self parent static abstract final break case continue declare die do else elseif enddeclare endfor endforeach endif endswitch endwhile eval exit for foreach global goto if include include_once instanceof insteadof require require_once switch try while xor and or switch'.split(
+    ' ',
+  ),
+);
+/** Apply the same public identifier rules to inference and contract validation. */
+export function isPublicName(value: unknown, method = false): value is string {
+  return (
+    typeof value === 'string' &&
+    identifier.test(value) &&
+    (!reserved.has(value.toLowerCase()) || (method && value.toLowerCase() === 'list'))
+  );
+}
+
 /** Split OpenAPI camelCase, acronym, snake_case and human-readable tags consistently. */
 function words(value: string): string[] {
   return value
@@ -32,7 +47,8 @@ export function operationNames(id: string, tags: unknown): { resource: string; m
           ...parts.slice(0, start),
           ...parts.slice(start + resourceWords.length),
         ]);
-        candidates.set(resource + '.' + method, { resource, method });
+        if (isPublicName(resource) && isPublicName(method, true))
+          candidates.set(resource + '.' + method, { resource, method });
       }
     }
   return candidates.size === 1 ? [...candidates.values()][0]! : { resource: 'api', method: id };
@@ -41,7 +57,7 @@ export function operationNames(id: string, tags: unknown): { resource: string; m
 /** Reserve explicit names first; generated Input helpers must not shadow source models. */
 export function modelNames(originals: string[], overrides: Record<string, string> = {}) {
   const names = new Map<string, string>();
-  const occupied = new Set<string>();
+  const occupied = new Set(reserved);
   const reserve = (original: string, name: string) => {
     names.set(original, name);
     occupied.add(name.toLowerCase());
