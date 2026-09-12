@@ -332,3 +332,103 @@ test('pagination and polling share positional path IDs and flat query params', a
     'https://example.invalid/orders/ord1',
   ]);
 });
+
+test('positional types allow option-supplied idempotency and query-only optional bodies', async () => {
+  const f = fixture({
+    bodySchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['name'],
+      properties: { name: string, description: string },
+    },
+    apiEdit(api) {
+      api.paths['/optional'].post.parameters = [query];
+      api.paths['/customers'].post.parameters = [
+        { name: 'Idempotency-Key', in: 'header', required: true, schema: string },
+      ];
+      api.paths['/ping'].get.parameters = [
+        { name: 'Idempotency-Key', in: 'header', required: true, schema: string },
+      ];
+    },
+    config: {
+      operations: Object.fromEntries(
+        ['createCustomer', 'ping'].map((id) => [
+          id,
+          {
+            idempotency: { header: 'idempotency-key', retention: '24h', scope: 'command' },
+          },
+        ]),
+      ),
+    },
+  });
+  const { c, requests } = await client(f);
+  await c.api.createCustomer({ name: 'a' }, { idempotencyKey: 'key' });
+  assert.equal(requests.at(-1).headers['idempotency-key'], 'key');
+  await c.api.ping(undefined, { idempotencyKey: 'key' });
+  await assert.rejects(c.api.ping(), { kind: 'validation' });
+  await c.api.optional({ limit: 2 });
+  assert.equal(requests.at(-1).path, '/optional?limit=2');
+  assert.equal(requests.at(-1).body, undefined);
+  await c.api.optional({ limit: 2, name: 'a' });
+  assert.equal(requests.at(-1).body, '{"name":"a"}');
+  await assert.rejects(c.api.optional({ limit: 2, description: 'partial' }), {
+    kind: 'validation',
+  });
+  const file = join(f.output, 'node/check.ts');
+  writeFileSync(
+    file,
+    `import {Client} from './index.js'; const c=new Client({baseUrl:'https://example.invalid'});
+await c.api.createCustomer({name:'a'}, {idempotencyKey:'key'});
+await c.api.ping(undefined, {idempotencyKey:'key'});
+await c.api.ping();
+await c.api.optional({limit:2});
+await c.api.optional({limit:2,name:'a'});
+// @ts-expect-error A supplied body must include its required fields
+await c.api.optional({limit:2,description:'partial'});
+// @ts-expect-error Required bodies still require params
+await c.api.createCustomer();
+`,
+  );
+  execFileSync(
+    process.execPath,
+    [
+      resolve('node_modules/typescript/bin/tsc'),
+      '--strict',
+      '--noEmit',
+      '--module',
+      'nodenext',
+      '--target',
+      'es2022',
+      '--typeRoots',
+      resolve('node_modules/@types'),
+      file,
+    ],
+    { stdio: 'pipe' },
+  );
+  const result = JSON.parse(
+    php(
+      f,
+      `$c->api->createCustomer(['name'=>'a'], new RequestOptions(idempotencyKey:'key')); $c->api->ping(options: new RequestOptions(idempotencyKey:'key')); $c->api->optional(['limit'=>2]); echo json_encode($requests);`,
+    ),
+  );
+  assert.equal(result[0].headers['idempotency-key'], 'key');
+  assert.equal(result[1].headers['idempotency-key'], 'key');
+  assert.equal(result[2].body, null);
+});
+
+test('path arguments cannot shadow generated request and response helpers', async () => {
+  const f = fixture({
+    apiEdit(api) {
+      const op = api.paths['/orders/{order_id}'].get;
+      delete api.paths['/orders/{order_id}'].get;
+      op.parameters = ['_sdkRequestInput', '_sdkPayload', '_sdkResponse'].map(path);
+      api.paths['/helpers/{_sdkRequestInput}/{_sdkPayload}/{_sdkResponse}'] = { get: op };
+    },
+    config: { operations: { getOrder: { response: { return: 'payload' } } } },
+  });
+  const { c, requests } = await client(f);
+  assert.equal((await c.api.getOrder('one', 'two', 'three')).id, 'ok');
+  assert.equal((await c.api.getOrderWithResponse('one', 'two', 'three')).body.id, 'ok');
+  assert.equal(requests.at(-1).path, '/helpers/one/two/three');
+  assert.equal(php(f, "echo $c->api->getOrder('one','two','three')->id;"), 'ok');
+});

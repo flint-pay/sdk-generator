@@ -330,19 +330,28 @@ const php = (s: string) => "'" + s.replaceAll('\\', '\\\\').replaceAll("'", "\\'
 function compileRequestCall(op: Operation, c: Contract, optionsType: string) {
   const paths = pathParameters(op);
   const fields = op.parameters.filter((p) => p.in !== 'path');
-  const paramsRequired = op.bodyRequired || fields.some((p) => p.required);
+  const requiredFields = new Set(inputSchema(op).required);
+  const paramsRequired = op.bodyRequired || fields.some((p) => requiredFields.has(p.name));
   const type = (schema: Schema) =>
     typescriptType(schema, false, undefined, false, undefined, undefined, c.models);
+  // An omitted optional body may accompany query/header params. Exclude declared
+  // body fields in that branch so a partially supplied body still needs its required fields.
+  const bodyType = op.body
+    ? `InputValue<${type(op.body)}>` +
+      (!op.bodyRequired && fields.length
+        ? ` | { ${[...new Set(valueScopes(op.body, c.definitions).flatMap((s) => Object.keys(s.properties ?? {})))].map((name) => `${JSON.stringify(name)}?: never`).join('; ')} }`
+        : '')
+    : undefined;
   const paramsType = [
-    ...(op.body ? [`InputValue<${type(op.body)}>`] : []),
+    ...(bodyType ? [`(${bodyType})`] : []),
     ...(fields.length
       ? [
-          `{ ${fields.map((p) => `${JSON.stringify(p.name)}${p.required ? '' : '?'}: ${p.required ? `InputValue<${type(p.schema)}>` : optionalPropertyType(p.name, `InputValue<${type(p.schema)}>`)}`).join('; ')} }`,
+          `{ ${fields.map((p) => `${JSON.stringify(p.name)}${requiredFields.has(p.name) ? '' : '?'}: ${requiredFields.has(p.name) ? `InputValue<${type(p.schema)}>` : optionalPropertyType(p.name, `InputValue<${type(p.schema)}>`)}`).join('; ')} }`,
         ]
       : []),
   ].join(' & ');
   const reserved = new Set(
-    'params options input rest arguments eval await yield break case catch class const continue debugger default delete do else enum export extends false finally for function if import in instanceof let new null return super switch this throw true try typeof var void while with implements interface package private protected public static'.split(
+    '_sdkRequestInput _sdkPayload _sdkResponse params options input rest arguments eval await yield break case catch class const continue debugger default delete do else enum export extends false finally for function if import in instanceof let new null return super switch this throw true try typeof var void while with implements interface package private protected public static'.split(
       ' ',
     ),
   );
