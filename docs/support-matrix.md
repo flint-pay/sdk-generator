@@ -4,7 +4,7 @@ A capability must be declared to generate its public helper. Both targets implem
 
 | Capability                 | Node.js/TypeScript                                               | PHP                                                         |
 | -------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------- |
-| Runtime/package            | Node 22+, ESM npm package, TypeScript 5.9+ declarations          | PHP 8.2+, Composer, ext-json/ext-curl                       |
+| Runtime/package            | Node 22+, ESM; TypeScript 5.9+ for TypeScript consumers          | PHP 8.2+, Composer, ext-json/ext-curl                       |
 | Authentication             | Named complete bearer/header API-key modes                       | Same                                                        |
 | Credential destinations    | Allowed origins; return declared redirects; reject unsafe links  | Same                                                        |
 | Per-request tenant headers | Concurrent calls with isolated options                           | Isolated sequential calls; no cross-thread sharing          |

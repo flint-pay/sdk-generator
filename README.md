@@ -69,7 +69,7 @@ $client->close();
 
 The wire path escapes `book/123` as a single path parameter. Resource and method names are independent of the upstream operation ID and URL.
 
-Generated Node packages support Node.js 22+, ESM JavaScript and TypeScript 5.9+. PHP packages require no framework. Optional SQLite webhook examples require Node.js 22.16+ or PHP's `pdo_sqlite` extension. See [using generated SDKs](docs/using-sdks.md) for request options, errors and recovery, and [releases](docs/releases.md) for publishing and hosted Composer installation.
+Generated Node packages require Node.js 22+ and support ESM JavaScript. TypeScript consumers require TypeScript 5.9+; JavaScript consumers do not need TypeScript. PHP packages require no framework. Optional SQLite webhook examples require Node.js 22.16+ or PHP's `pdo_sqlite` extension. See [using generated SDKs](docs/using-sdks.md) for request options, errors and recovery, and [releases](docs/releases.md) for publishing and hosted Composer installation.
 
 ## What you get
 
