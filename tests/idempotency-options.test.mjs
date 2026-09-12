@@ -42,6 +42,7 @@ test('required idempotency headers accept request options in both targets withou
     join(dir, 'sdk.json'),
     JSON.stringify({
       version: '1.0.0',
+      requests: { style: 'object' },
       npm: { name: '@example/required-key' },
       composer: { name: 'example/required-key', namespace: 'RequiredKey' },
       validation: 'schema',

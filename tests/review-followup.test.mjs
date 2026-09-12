@@ -60,6 +60,7 @@ const api = {
 const profile = {
   version: '1.0.0',
   numericUnions: 'explicit',
+  requests: { style: 'object' },
   npm: { name: 'followup-sdk' },
   composer: { name: 'followup/sdk', namespace: 'FollowupSdk' },
   operations: {

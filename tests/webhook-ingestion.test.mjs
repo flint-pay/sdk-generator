@@ -39,6 +39,7 @@ const doc = {
 };
 const config = {
   version: '1.0.0',
+  requests: { style: 'object' },
   npm: { name: '@example/incoming' },
   composer: { name: 'example/incoming', namespace: 'Example\\Incoming' },
   webhook: {

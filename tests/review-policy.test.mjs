@@ -13,6 +13,7 @@ const root = mkdtempSync(join(tmpdir(), 'sdk-review-policy-'));
 after(() => rmSync(root, { recursive: true, force: true }));
 const profile = {
   version: '1.0.0',
+  requests: { style: 'object' },
   npm: { name: 'policy-sdk' },
   composer: { name: 'policy/sdk', namespace: 'PolicySdk' },
   release: { policy: 'semver' },

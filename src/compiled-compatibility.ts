@@ -72,6 +72,26 @@ export function compareCompiledContracts(
   }
   for (const id of Object.keys(previous.node.operations)) {
     if (!next.node.operations[id]) continue;
+    if (
+      stable(
+        previous.requestCalls?.[id] && {
+          paths: previous.requestCalls[id]!.paths,
+          params: previous.requestCalls[id]!.params,
+        },
+      ) !==
+      stable(
+        next.requestCalls?.[id] && {
+          paths: next.requestCalls[id]!.paths,
+          params: next.requestCalls[id]!.params,
+        },
+      )
+    )
+      findings.push({
+        severity: 'breaking',
+        subject: id + '.request',
+        message:
+          'Public request argument style or positional path order changed; migrate callers before upgrading.',
+      });
     const old = previous.responseReturns?.[id],
       current = next.responseReturns?.[id];
     if (

@@ -53,6 +53,7 @@ function fixture(name, schema = mixed, targets = ['node', 'php']) {
   const config = {
     version: '1.0.0',
     targets,
+    requests: { style: 'object' },
     npm: { name: '@example/compiled' },
     composer: { name: 'example/compiled', namespace: 'Example\\Compiled' },
     release: { policy: 'semver' },

@@ -17,6 +17,7 @@ const semantic = new Set([
   'value-guarantee',
   'response-plan',
   'response-return',
+  'request-style',
   'response-compatibility',
   'compiled-compatibility',
   'compiled-record',

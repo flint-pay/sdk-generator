@@ -13,6 +13,7 @@ after(() => rmSync(root, { recursive: true, force: true }));
 const config = {
   version: '1.0.0',
   validation: 'schema',
+  requests: { style: 'object' },
   npm: { name: 'siblings-sdk' },
   composer: { name: 'siblings/sdk', namespace: 'SiblingsSdk' },
 };

@@ -13,6 +13,7 @@ const root = mkdtempSync(join(tmpdir(), 'sdk-composition-'));
 after(() => rmSync(root, { recursive: true, force: true }));
 const config = {
   version: '1.0.0',
+  requests: { style: 'object' },
   npm: { name: '@example/composition' },
   composer: { name: 'example/composition', namespace: 'Example\\Composition' },
 };

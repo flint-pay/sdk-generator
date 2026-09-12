@@ -1,3 +1,4 @@
+import { requestArguments } from './request-style.js';
 import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
@@ -77,11 +78,8 @@ export async function validateFixtures(
     .interface as Contract;
   const contract = {
     authShortcuts: c.authShortcuts ?? {},
-    operations: c.operations.map(({ id, resource, method, response }) => ({
-      id,
-      resource,
-      method,
-      response,
+    operations: c.operations.map((op) => ({
+      ...op,
     })),
   };
   const report: { target: string; scenarios: number }[] = [];
@@ -127,7 +125,10 @@ export async function validateFixtures(
       try {
         if (scenario.error)
           await assert.rejects(
-            client[operation.resource][operation.method](scenario.input, scenario.options),
+            client[operation.resource][operation.method](
+              ...requestArguments(operation, scenario.input),
+              scenario.options,
+            ),
             (e: any) => {
               for (const [k, v] of Object.entries(scenario.error!))
                 assert.deepEqual(['status', 'requestId'].includes(k) ? e.meta?.[k] : e[k], v);
@@ -138,7 +139,7 @@ export async function validateFixtures(
           const payload = operation.response?.return === 'payload';
           const response = await client[operation.resource][
             operation.method + (payload ? 'WithResponse' : '')
-          ](scenario.input, scenario.options);
+          ](...requestArguments(operation, scenario.input), scenario.options);
           const result = payload
             ? { data: response.body, meta: response.meta, raw: response.raw }
             : response;

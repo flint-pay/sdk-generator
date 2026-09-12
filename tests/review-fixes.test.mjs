@@ -18,6 +18,7 @@ const root = mkdtempSync(join(tmpdir(), 'sdk-review-fixes-'));
 after(() => rmSync(root, { recursive: true, force: true }));
 const profile = {
   version: '1.0.0',
+  requests: { style: 'object' },
   npm: { name: '@example/review' },
   composer: { name: 'example/review', namespace: 'Review' },
 };

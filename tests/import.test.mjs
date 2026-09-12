@@ -10,6 +10,7 @@ const dir = mkdtempSync(join(tmpdir(), 'sdk-import-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
 const config = {
   version: '1.0.0',
+  requests: { style: 'object' },
   npm: { name: '@example/import' },
   composer: { name: 'example/import', namespace: 'Example\\Import' },
 };

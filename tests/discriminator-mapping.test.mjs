@@ -56,6 +56,7 @@ function load(
     join(dir, 'sdk.json'),
     JSON.stringify({
       version: '1.0.0',
+      requests: { style: 'object' },
       npm: { name: '@example/mapping' },
       composer: { name: 'example/mapping', namespace: 'Example\\Mapping' },
     }),

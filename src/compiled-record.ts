@@ -157,6 +157,18 @@ export function assertCompiledSnapshot(value: unknown): asserts value is Compile
   assertRuntimePlan(plan.runtime);
   const php = object(plan.php, 'php');
   assertRuntimePlan(php.runtime);
+  if (plan.requestCalls !== undefined)
+    for (const [id, value] of Object.entries(object(plan.requestCalls, 'requestCalls'))) {
+      const call = object(value, 'requestCalls.' + id);
+      strings(call.paths, id + '.paths');
+      fields(call, ['params'], 'boolean', id);
+      fields(
+        call,
+        ['nodeArgs', 'nodeSignature', 'nodeInput', 'phpSignature', 'phpPrelude', 'phpDoc'],
+        'string',
+        id,
+      );
+    }
   if (plan.responseReturns !== undefined)
     for (const [id, value] of Object.entries(object(plan.responseReturns, 'responseReturns'))) {
       const response = object(value, 'responseReturns.' + id);

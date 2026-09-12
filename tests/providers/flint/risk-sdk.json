@@ -36,5 +36,8 @@
   },
   "documentation": {
     "overview": "Use the Flint Pay SDK to integrate with the Flint API from your server. See the [Flint Pay SDK documentation](https://developers.withflintpay.com/docs/guides/sdks) for setup and integration guides."
+  },
+  "requests": {
+    "style": "object"
   }
 }

@@ -16,10 +16,10 @@ const client = new Client({
 });
 
 try {
-  const result = await client.books.retrieve(
-    { id: 'book/123' },
-    { headers: { 'X-Tenant': 'tenant-example' }, maxAttempts: 1 },
-  );
+  const result = await client.books.retrieve('book/123', {
+    headers: { 'X-Tenant': 'tenant-example' },
+    maxAttempts: 1,
+  });
   console.log(result.data.title, result.meta.requestId);
 } catch (error) {
   if (!(error instanceof SdkError)) throw error;
@@ -27,18 +27,18 @@ try {
 }
 ```
 
-PHP accepts associative input arrays or presence-aware input classes and uses a reusable client. Arrays are validated through the same generated input codec; existing input classes continue to work. Save this in a consumer with the generated Composer package installed:
+PHP uses the same argument order: path values, a flat params array when needed, then RequestOptions. Save this in a consumer with the generated Composer package installed:
 
 ```php
 <?php
 require __DIR__ . '/vendor/autoload.php';
 
-use Example\Library\{Client, ClientOptions, RequestOptions, BooksRetrieveInput, SdkError};
+use Example\Library\{Client, ClientOptions, RequestOptions, SdkError};
 
 $client = new Client(new ClientOptions(baseUrl: 'https://your-api.example.com'));
 try {
   $result = $client->books->retrieve(
-    ['id' => 'book/123'],
+    'book/123',
     new RequestOptions(headers: ['X-Tenant' => 'tenant-example'], maxAttempts: 1),
   );
   echo $result->data->getTitle();
@@ -51,7 +51,7 @@ try {
 
 Set `baseUrl` to your API's base URL; these examples do not point to a hosted service. Its path prefix is retained when operation paths are appended, so avoid duplicating `/v1` if it is already present in the generated operation paths. Provide `token` through your application's credential source when the selected contract requires authentication. The SDK itself does not read environment variables or discover credentials.
 
-Path, query and header parameters are properties of the operation input; a JSON request body is under `body`. Optional fields may be omitted. Explicit null is accepted only where nullable; it does not automatically mean the server will clear a value. PHP inputs use omitted array keys for omission and `['field' => null]` for explicit null. PHP models provide `has()`, generated presence methods such as `hasDescription()`, and `get()`. Use `valueOrDefault('description', 'fallback')` to supply a fallback only when omitted; an explicit null stays null. Typed getters unwrap nested model values and throw a field-specific error for missing optional fields. In object/array alternatives, PHP lists (including `[]`) represent JSON arrays; use `(object) []` for an empty JSON object. Exact numeric enums accept equivalent spellings such as `1.0` and `1e0` for the value `1`, with membership checked at runtime. Numeric `anyOf` branches also accept equivalent decimal/integer spellings and preserve the request token; `oneOf` still rejects a value matching multiple branches.
+By default, path values are positional arguments in URL order. Body fields and query/header parameters share the next params object or array, with request options last. There is no `body` wrapper. If the operation has no body or query/header parameters, omit the params argument entirely. Set `requests.style: "object"` to use a single input object containing path/query/header parameters and a `body` field. Optional fields may be omitted. Explicit null is accepted only where nullable; it does not automatically mean the server will clear a value. PHP inputs use omitted array keys for omission and `['field' => null]` for explicit null. PHP models provide `has()`, generated presence methods such as `hasDescription()`, and `get()`. Use `valueOrDefault('description', 'fallback')` to supply a fallback only when omitted; an explicit null stays null. Typed getters unwrap nested model values and throw a field-specific error for missing optional fields. In object/array alternatives, PHP lists (including `[]`) represent JSON arrays; use `(object) []` for an empty JSON object. Exact numeric enums accept equivalent spellings such as `1.0` and `1e0` for the value `1`, with membership checked at runtime. Numeric `anyOf` branches also accept equivalent decimal/integer spellings and preserve the request token; `oneOf` still rejects a value matching multiple branches.
 
 An OpenAPI 3.1 schema with `properties` or `required` but no `type` does not by itself require an object. Generated TypeScript types preserve the permitted nonobject values; narrow such responses before accessing their fields. An enclosing object constraint in an `allOf` composition still applies to the same value.
 

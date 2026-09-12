@@ -90,6 +90,7 @@ Unknown configuration keys fail with a source location. Capability declarations 
 | `npm`                  | `name` required for Node; optional `registry` and `access` control publication metadata.                                                        |
 | `composer`             | `name` and `namespace` required for PHP.                                                                                                        |
 | `license`              | Package license metadata; defaults to `Apache-2.0`. Bundled runtime license is retained.                                                        |
+| `requests`             | Request argument style: `positional` (default) or `object`; see [request arguments](#request-arguments).                                        |
 | `responses`            | Optional SDK-wide return mode (`result` by default, or `payload`) and payload path; see [payload returns](#optional-payload-returns).           |
 | `operations`           | Public naming, aliases, examples and declared operation capabilities. Defaults to resource `api` and method equal to `operationId`.             |
 | `include`, `audiences` | Optional operation filters; operation `hidden: true` excludes that operation.                                                                   |
@@ -338,3 +339,32 @@ Each payload-mode method and deprecated alias also gets a `WithResponse` compani
 `Pages` and `Wait` helpers continue returning full `Result` envelopes. `Items` helpers continue yielding individual items. Pagination and polling paths always address the original response body, so payload unwrapping does not discard continuation or state information needed by these helpers. Existing HTTP fixtures also assert the complete wire body, via `WithResponse` for opted-in operations.
 
 Return settings and generated payload types are recorded in the compiled contract. Enabling or disabling payload mode, or changing a payload path, is a breaking SDK change under the semver release policy. Existing SDKs can keep their current defaults until ready to migrate. Generated documentation, examples and Node/PHP declarations reflect the selected mode.
+
+## Request arguments
+
+The default is `requests.style: "positional"` for both Node/TypeScript and PHP. Path values come first, in URL placeholder order, followed by flat params and request options:
+
+```ts
+await flint.paymentIntents.get(paymentIntentId);
+await flint.orders.update(orderId, { metadata: { source: 'store' } }, { idempotencyKey });
+await flint.customers.list({ page_size: 100, page_token: nextPageToken });
+```
+
+PHP follows the same order, using associative arrays for params and `new RequestOptions(...)` for options. Nested model values remain supported. Operations without a body or query/header parameters omit the params argument, so a path-only method accepts `(id, options)`. Other operations keep the params slot: use `undefined` in Node or `null` in PHP to omit optional params while supplying options. Required request bodies require a params object, including `{}` / `[]` for an empty object. An omitted optional body sends no body; an explicitly empty params object sends `{}`. For operations with both an optional body and query/header parameters, params containing only those parameters omit the body; use object style if you need to distinguish an empty body in that case.
+
+Aliases, `WithResponse`, `Pages`, `Items`, and `Wait` use the same argument order as the primary method. The schema still controls path, query, header and body encoding.
+
+Use the object style for an entire SDK or an individual operation:
+
+```json
+{
+  "requests": { "style": "positional" },
+  "operations": {
+    "replaceRawDocument": { "request": { "style": "object" } }
+  }
+}
+```
+
+Object style accepts `(input, options)`, with path/query/header fields on `input` and the request body under `input.body`. It also supports the generated PHP operation input classes. Positional style requires a non-null object body; nonobject bodies and body fields colliding with declared query/header parameters receive diagnostics. Declared query/header names are reserved for those destinations; remaining params fields go into the body. Typed additional-property dictionaries combined with query/header parameters require object style because their TypeScript index signatures cannot exclude the parameter keys. Use the operation override for those contracts.
+
+Configuration `example` values, HTTP fixtures, and exported operation `Input` shapes retain the canonical `{ pathField, queryField, body }` structure. Generated runnable examples translate those inputs into the selected public call style. Changing styles or positional path order is reported as a breaking SDK change by release compatibility checks. Profiles merge request styles using the usual conflict rules.

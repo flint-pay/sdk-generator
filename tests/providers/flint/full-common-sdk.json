@@ -2072,5 +2072,8 @@
       "resource": "returns",
       "method": "waiveLineInspection"
     }
+  },
+  "requests": {
+    "style": "object"
   }
 }

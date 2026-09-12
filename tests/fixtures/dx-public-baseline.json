@@ -1,13 +1,13 @@
 {
   "predecessor": "compiled-public-baseline.json",
-  "description": "Reviewed DX interface: field documentation and complete examples; PHP array inputs and presence/fallback helpers. Historical migration hashes remain in the predecessor file.",
+  "description": "Reviewed DX interface: field documentation and complete examples; PHP array inputs and presence/fallback helpers. Historical migration hashes remain in the predecessor file. The library fixture now uses default positional requests; payment and Flint retain explicit object-style coverage.",
   "fixtures": [
     {
       "name": "library",
       "api": "examples/library.openapi.json",
       "config": "examples/library.sdk.json",
-      "nodeDeclarationsSha256": "c8035a05badf47110b9028532df5c96072fd69262e70b512872b6b06d4e2014a",
-      "phpDeclarationsSha256": "cf7ea1a71c0472578d390322107a1f9d7d4035c8aaa4423d78049e8052cdeba9"
+      "nodeDeclarationsSha256": "6b2847b680784f32cfbf842412b2ed422f7b1357c28c5a55e272504d356bdafb",
+      "phpDeclarationsSha256": "32db940efa2afba22eb9ad5288c01cdbfb2ee5666eda1d47ec06d5030f14850f"
     },
     {
       "name": "payment",

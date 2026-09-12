@@ -55,6 +55,7 @@ function fixture({
   };
   const config = {
     version: '1.0.0',
+    requests: { style: 'object' },
     npm: { name: '@example/response-return' },
     composer: { name: 'example/response-return', namespace: 'Example\\ResponseReturn' },
     ...(responses ? { responses } : {}),

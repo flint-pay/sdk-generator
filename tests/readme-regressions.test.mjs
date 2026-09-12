@@ -29,6 +29,7 @@ function fixture(name, paths, operations, apiExtra = {}, configExtra = {}) {
     config,
     JSON.stringify({
       version: '1.0.0',
+      requests: { style: 'object' },
       npm: { name: '@example/readme' },
       composer: { name: 'example/readme', namespace: 'Example\\Readme' },
       operations,
