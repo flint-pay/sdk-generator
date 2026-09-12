@@ -438,3 +438,99 @@ test('profiles compose shortcut mappings and reject conflicting targets', () => 
     /conflict/,
   );
 });
+
+test('shortcut detection ignores inherited option properties', async () => {
+  const output = join(dir, 'inherited-shortcuts');
+  generate(
+    load({
+      ...config,
+      auth: {
+        ...config.auth,
+        shortcuts: {
+          toString: { mode: 'merchant', scheme: 'Merchant' },
+          valueOf: { mode: 'customer', scheme: 'Customer' },
+        },
+      },
+    }),
+    output,
+  );
+  const { Client } = await import(pathToFileURL(join(output, 'node/index.js')).href);
+  const seen = [];
+  const transport = async (url, init) => {
+    seen.push(init.headers.authorization);
+    return new Response(null, { status: 204 });
+  };
+  const explicit = new Client({
+    baseUrl: 'https://example.invalid',
+    authMode: 'merchant',
+    credentials: { merchant: { Merchant: 'explicit' } },
+    transport,
+  });
+  await explicit.api.merchantCall();
+  await explicit.api.customerCall({}, { valueOf: 'request' });
+  const shortcut = new Client({
+    baseUrl: 'https://example.invalid',
+    toString: 'client',
+    transport,
+  });
+  await shortcut.api.merchantCall();
+  await shortcut.api.merchantCall({}, { toString: 'override' });
+  await shortcut.api.health();
+  assert.deepEqual(seen, [
+    'Bearer explicit',
+    'Bearer request',
+    'Bearer client',
+    'Bearer override',
+    undefined,
+  ]);
+});
+
+test('HTTP fixtures forward configured shortcuts in both targets', async () => {
+  const output = join(dir, 'shortcut-fixtures');
+  generate(
+    load({
+      ...config,
+      auth: {
+        ...config.auth,
+        shortcuts: { merchantToken: { mode: 'merchant', scheme: 'Merchant' } },
+      },
+    }),
+    output,
+  );
+  const fixtures = join(dir, 'shortcut-fixtures.json');
+  writeFileSync(
+    fixtures,
+    JSON.stringify([
+      {
+        name: 'shortcut header',
+        operation: 'merchantCall',
+        input: {},
+        options: { merchantToken: 'fixture-token' },
+        expected: {
+          method: 'GET',
+          path: '/v1/merchant',
+          headers: { authorization: 'Bearer fixture-token' },
+        },
+        responses: [{ status: 204 }],
+        empty: true,
+      },
+      {
+        name: 'shortcut conflicts with explicit mode',
+        operation: 'merchantCall',
+        input: {},
+        options: {
+          merchantToken: 'fixture-token',
+          authMode: 'merchant',
+          credentials: { Merchant: 'explicit-token' },
+        },
+        responses: [],
+        attempts: 0,
+        error: { kind: 'authentication' },
+      },
+    ]),
+  );
+  assert.deepEqual(await validateFixtures(output, fixtures), [
+    { target: 'node', scenarios: 2 },
+    { target: 'php', scenarios: 2 },
+  ]);
+});

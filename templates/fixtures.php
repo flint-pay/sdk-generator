@@ -88,14 +88,17 @@ foreach ($cases as $index => $case) {
         $result = $client->{$operation['resource']}->{$method}(
             new $inputClass($input),
             new $requestOptionsClass(
-                idempotencyKey: $o['idempotencyKey'] ?? null,
-                ifMatch: $o['ifMatch'] ?? null,
-                maxAttempts: $o['maxAttempts'] ?? null,
-                deadlineMs: $o['deadlineMs'] ?? null,
-                timeoutMs: $o['timeoutMs'] ?? null,
-                headers: $o['headers'] ?? [],
-                authMode: $o['authMode'] ?? null,
-                credentials: $o['credentials'] ?? null,
+                ...[
+                    'idempotencyKey' => $o['idempotencyKey'] ?? null,
+                    'ifMatch' => $o['ifMatch'] ?? null,
+                    'maxAttempts' => $o['maxAttempts'] ?? null,
+                    'deadlineMs' => $o['deadlineMs'] ?? null,
+                    'timeoutMs' => $o['timeoutMs'] ?? null,
+                    'headers' => $o['headers'] ?? [],
+                    'authMode' => $o['authMode'] ?? null,
+                    'credentials' => $o['credentials'] ?? null,
+                    ...array_intersect_key($o, $contract['authShortcuts'] ?? []),
+                ],
             ),
         );
         if ($payload) {

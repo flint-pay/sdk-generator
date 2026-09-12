@@ -76,6 +76,7 @@ export async function validateFixtures(
   const c = JSON.parse(readFileSync(join(output, '.sdk-generator.json'), 'utf8'))
     .interface as Contract;
   const contract = {
+    authShortcuts: c.authShortcuts ?? {},
     operations: c.operations.map(({ id, resource, method, response }) => ({
       id,
       resource,

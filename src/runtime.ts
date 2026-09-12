@@ -1905,7 +1905,9 @@ export class Runtime {
       const permitted = op.authModes ?? [];
       const shortcutAuth = (value: RequestOptions | ClientOptions) => {
         const supplied = Object.entries(this.contract.authShortcuts ?? {}).filter(
-          ([key]) => (value as unknown as Record<string, unknown>)[key] !== undefined,
+          ([key]) =>
+            Object.hasOwn(value, key) &&
+            (value as unknown as Record<string, unknown>)[key] !== undefined,
         );
         if (
           supplied.length > 1 ||
