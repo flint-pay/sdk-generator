@@ -16,6 +16,7 @@ const cli = resolve('dist/cli.js');
 const compiler = resolve('node_modules/typescript/bin/tsc');
 const api = JSON.parse(readFileSync('examples/library.openapi.json'));
 const config = JSON.parse(readFileSync('examples/library.sdk.json'));
+config.responses = { return: 'result' };
 config.requests = { style: 'object' };
 const run = (command, args) => spawnSync(command, args, { encoding: 'utf8', timeout: 120000 });
 const invoke = (...args) => run(process.execPath, [cli, ...args]);

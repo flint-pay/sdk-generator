@@ -1,34 +1,34 @@
 {
   "predecessor": "compiled-public-baseline.json",
-  "description": "Reviewed DX interface: field documentation and complete examples; PHP array inputs and presence/fallback helpers. Historical migration hashes remain in the predecessor file. The library fixture now uses default positional requests; payment and Flint retain explicit object-style coverage.",
+  "description": "Reviewed DX interface: field documentation and complete examples; PHP array inputs and presence/fallback helpers. Historical migration hashes remain in the predecessor file. The library fixture now uses default positional requests; payment and Flint retain explicit object-style coverage. Automatic named sharing replaces repeated inline types with equivalent named references, ExactNumber is exported automatically, and the library fixture exercises default payload returns with WithResponse companions. Existing payment and Flint profiles explicitly retain Result returns.",
   "fixtures": [
     {
       "name": "library",
       "api": "examples/library.openapi.json",
       "config": "examples/library.sdk.json",
-      "nodeDeclarationsSha256": "6b2847b680784f32cfbf842412b2ed422f7b1357c28c5a55e272504d356bdafb",
-      "phpDeclarationsSha256": "32db940efa2afba22eb9ad5288c01cdbfb2ee5666eda1d47ec06d5030f14850f"
+      "nodeDeclarationsSha256": "c01e16cd221df2373a22768b1178c4db91b7e0f775d2e3377be195122c954c94",
+      "phpDeclarationsSha256": "8956d33a1e3536cc08149380e44294b03174774d608a7e8f808f36f2690c8c87"
     },
     {
       "name": "payment",
       "api": "tests/fixtures/payment-api.json",
       "config": "tests/fixtures/payment-sdk.json",
-      "nodeDeclarationsSha256": "8de24aabe2af98e665607080efe291411222495081e88b270daabaf94cc946a7",
-      "phpDeclarationsSha256": "4db8dfedbfa551f99d6b31f33874b79816363cfa4b74064e16704d18aeb5edfc"
+      "nodeDeclarationsSha256": "96b3bd757dc26b6bc460bb9404b5ebb71b5a5c6e9c7bdcecada587a4532b0b25",
+      "phpDeclarationsSha256": "8e1a5d93afbc3ebbe7b41166eca3237f63087fc8bfe8012dec27677fe230a120"
     },
     {
       "name": "flint",
       "api": "tests/providers/flint/openapi.json",
       "config": "tests/providers/flint/sdk.json",
-      "nodeDeclarationsSha256": "c9dc64c71d10362b6f757812dc02a80d1334dc720258818844d38b145a00faa2",
-      "phpDeclarationsSha256": "92d3e256dbb9a0677f51e27f825c0c5f7e6d7ce5c82b8e003c353f2ad30b0ff3"
+      "nodeDeclarationsSha256": "911eda6234bb24f28c1a70b9bd73be99278432a91323fc7cd610503a8249525f",
+      "phpDeclarationsSha256": "3bb757c77bc3bd52495432141c4a95b9dd1334ac3f7153f882d738dc3d6c9276"
     },
     {
       "name": "risk",
       "api": "tests/providers/flint/risk-openapi.json",
       "config": "tests/providers/flint/risk-sdk.json",
-      "nodeDeclarationsSha256": "480a9683d891c477f75da8e70353a0bf615ac91df78912d3b9ccd48dd15e92bc",
-      "phpDeclarationsSha256": "665d04efa37eb6ece8e9dd1e7cec668152dc63bd8b5b23ef15dffb41df31a903"
+      "nodeDeclarationsSha256": "18638beb66c118061747945f51fc93d21be88223ed94aefcb6332671426c0f8c",
+      "phpDeclarationsSha256": "a8beb38e92952a311fd12ec51cb58289332267878082de41120d69a9c1317523"
     }
   ]
 }

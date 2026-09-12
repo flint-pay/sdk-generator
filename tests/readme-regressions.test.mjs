@@ -28,6 +28,7 @@ function fixture(name, paths, operations, apiExtra = {}, configExtra = {}) {
   writeFileSync(
     config,
     JSON.stringify({
+      responses: { return: 'result' },
       version: '1.0.0',
       requests: { style: 'object' },
       npm: { name: '@example/readme' },

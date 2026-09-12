@@ -33,6 +33,7 @@ function fixture(name, responses, { schemas, ...config } = {}) {
   writeFileSync(
     profile,
     JSON.stringify({
+      responses: { return: 'result' },
       version: '1.0.0',
       requests: { style: 'object' },
       npm: { name: '@example/compiled-regression' },

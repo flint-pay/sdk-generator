@@ -8,8 +8,6 @@
     "namespace": "Example\\FlintFull"
   },
   "validation": "schema",
-  "numericUnions": "explicit",
-  "schemaSharing": "named",
   "models": {
     "Money": "MoneyValue",
     "Return": "ReturnResource",
@@ -2075,5 +2073,8 @@
   },
   "requests": {
     "style": "object"
+  },
+  "responses": {
+    "return": "result"
   }
 }

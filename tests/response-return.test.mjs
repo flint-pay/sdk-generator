@@ -125,9 +125,9 @@ function typecheck(f, source) {
   }
 }
 
-test('unchanged configs retain Result, and a per-operation opt-out overrides SDK defaults', async () => {
+test('explicit result configs retain Result, and a per-operation opt-out overrides SDK defaults', async () => {
   for (const options of [
-    {},
+    { responses: { return: 'result' } },
     {
       responses: { return: 'payload', payloadPath: 'data' },
       operations: { getItem: { response: { return: 'result' } } },
@@ -260,7 +260,11 @@ test('payload path configuration rejects missing, optional, nullable and mixed s
   ])
     assert.throws(() => fixture({ responses }), /response/);
   assert.throws(
-    () => fixture({ operations: { getItem: { response: { payloadPath: 'data' } } } }),
+    () =>
+      fixture({
+        responses: { return: 'result' },
+        operations: { getItem: { response: { payloadPath: 'data' } } },
+      }),
     /requires return/,
   );
   assert.throws(
@@ -292,7 +296,7 @@ test('nested and composed payload paths are validated and decoded', async () => 
   );
 });
 test('return mode and path migrations are breaking in preview and semver policy', () => {
-  const legacy = fixture();
+  const legacy = fixture({ responses: { return: 'result' } });
   const opted = fixture({ responses: { return: 'payload', payloadPath: 'data' } });
   const before = compileSdkContract(legacy.contract).plan,
     after = compileSdkContract(opted.contract).plan;

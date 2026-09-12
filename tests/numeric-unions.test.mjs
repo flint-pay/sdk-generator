@@ -41,13 +41,8 @@ const config = {
   npm: { name: '@example/values' },
   composer: { name: 'example/values', namespace: 'Example\\Values' },
 };
-test('opt-in numeric unions preserve JSON strings and explicit numeric tokens in both clients', async () => {
+test('automatic numeric unions preserve JSON strings and explicit numeric tokens in both clients', async () => {
   writeFileSync(join(dir, 'sdk.json'), JSON.stringify(config));
-  assert.throws(
-    () => loadContract(join(dir, 'api.json'), join(dir, 'sdk.json')),
-    /ambiguous SDK string inputs/,
-  );
-  writeFileSync(join(dir, 'sdk.json'), JSON.stringify({ ...config, numericUnions: 'explicit' }));
   const contract = loadContract(join(dir, 'api.json'), join(dir, 'sdk.json'));
   assert.equal(
     contract.operations[0].body.properties.values.items.oneOf[1]['x-sdk-number-input'],

@@ -16,6 +16,7 @@ const exec = promisify(execFile);
 const root = mkdtempSync(join(tmpdir(), 'sdk-full-regressions-'));
 after(() => rmSync(root, { recursive: true, force: true }));
 const settings = {
+  responses: { return: 'result' },
   version: '1.0.0',
   requests: { style: 'object' },
   npm: { name: '@example/regressions' },

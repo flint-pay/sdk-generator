@@ -1,8 +1,10 @@
 # Using generated SDKs
 
-Generate and install a package using the [README quickstart](../README.md#install-and-use-the-generated-packages). Each package contains its own `README.md`, `REFERENCE.md`, `MODELS.md`, `RUNTIME.md`, typed interfaces and operation examples. The reference groups operations by resource and includes pagination and polling recipes. The model reference and TypeScript field comments preserve descriptions, units, constraints and examples. Public resource and method names come from the SDK configuration; these examples use the bundled library contract.
+Generate and install a package using the [README quickstart](../README.md#install-and-use-the-generated-packages). Each package contains its own `README.md`, `REFERENCE.md`, `MODELS.md`, `RUNTIME.md`, typed interfaces and operation examples. The reference groups operations by resource and includes pagination and polling recipes. The model reference and TypeScript field comments preserve descriptions, units, constraints and examples. Public resource and method names come from explicit SDK configuration or matching OpenAPI tags and operation IDs; these examples use the bundled library contract.
 
 ## Calls, inputs and results
+
+New SDK methods return the decoded body directly. Use `WithResponse` for the full body and HTTP metadata, as in the Node example below. Providers may explicitly select a nested payload path or retain `Result` returns; consult the generated reference for the selected mode.
 
 Node.js and TypeScript share one ESM package. Use a `.mjs` file or a project with `"type": "module"`. TypeScript consumers use the included declarations with TypeScript 5.9+ and NodeNext module resolution. Generated npm packages install the pinned `@types/node` dependency required by their declarations.
 
@@ -16,11 +18,11 @@ const client = new Client({
 });
 
 try {
-  const result = await client.books.retrieve('book/123', {
+  const result = await client.books.retrieveWithResponse('book/123', {
     headers: { 'X-Tenant': 'tenant-example' },
     maxAttempts: 1,
   });
-  console.log(result.data.title, result.meta.requestId);
+  console.log(result.body.title, result.meta.requestId);
 } catch (error) {
   if (!(error instanceof SdkError)) throw error;
   console.error(error.kind, error.code, error.meta?.requestId, error.outcome);
@@ -41,7 +43,7 @@ try {
     'book/123',
     new RequestOptions(headers: ['X-Tenant' => 'tenant-example'], maxAttempts: 1),
   );
-  echo $result->data->getTitle();
+  echo $result->getTitle();
 } catch (SdkError $error) {
   error_log($error->kind . ': ' . ($error->meta['requestId'] ?? 'no request ID'));
 } finally {
@@ -57,7 +59,7 @@ An OpenAPI 3.1 schema with `properties` or `required` but no `type` does not by 
 
 PHP response classes include the response status in their names; tagged alternatives also include the branch position. Follow the package's migration notes when upgrading code that dispatches by class: adding a status can introduce a new return class even with an identical JSON shape, and reassigning an existing branch position requires a breaking release. Dispatching by the discriminator value also requires explicit handling of unknown tags.
 
-`Result` contains `data`, `meta` and explicit raw response text in `raw`. `data` is the complete decoded API response body. If the provider wraps its payload in another `data` field, use `result.data.data` (PHP: `$result->data->data`). Endpoint-specific nesting stays intact; follow the operation example rather than assuming every endpoint has the same envelope. Node accesses metadata with properties; PHP uses array keys. Metadata includes HTTP status, response headers, attempt count, duration and an optional provider request ID. Inspect unknown response enums or variants explicitly before treating them as a known successful business state.
+For operations explicitly configured for result mode, `Result` contains `data`, `meta` and explicit raw response text in `raw`. `data` is the complete decoded API response body. If the provider wraps its payload in another `data` field, use `result.data.data` (PHP: `$result->data->data`). Endpoint-specific nesting stays intact; follow the operation example rather than assuming every endpoint has the same envelope. Node accesses metadata with properties; PHP uses array keys. Metadata includes HTTP status, response headers, attempt count, duration and an optional provider request ID. Inspect unknown response enums or variants explicitly before treating them as a known successful business state.
 
 Use strings for exact int64/uint64 and JSON `number` values, including decimals: `"9007199254740993"`, for example. The schema determines whether the string becomes an unquoted number token on the wire. Ordinary safe integers use native numbers/integers. Do not convert an exact amount to a floating-point number before handing it to the SDK. When configured, `money(currency, major)` converts an exact major-unit string to minor units and rejects whitespace, including trailing newlines, and excess precision.
 
@@ -173,21 +175,21 @@ PHP uses the same associative maps in `ClientOptions` and `RequestOptions`. Cons
 
 ## PDF downloads and declared redirects
 
-PDF methods return `Result<Uint8Array>` in Node and binary-safe strings in PHP. Both `data` and `raw` preserve the bytes, including zero and non-UTF-8 bytes. JSON error responses retain ordinary SDK error decoding. Do not convert binary results to UTF-8 text before saving them.
+PDF methods return `Uint8Array` in Node and binary-safe strings in PHP by default. The `WithResponse` companion exposes the bytes in `body` and `raw`, preserving including zero and non-UTF-8 bytes. JSON error responses retain ordinary SDK error decoding. Do not convert binary results to UTF-8 text before saving them.
 
-Explicit `302` and `307` results expose status and headers in `meta` and an optional `data.location`. Required Location headers are checked. Relative and cross-origin locations are returned without following them. Following a returned location is a separate application decision. Undeclared redirects still fail.
+Explicit `302` and `307` results expose an optional `location`; their `WithResponse` companions expose status and headers in `meta` and the location in `body.location`. Required Location headers are checked. Relative and cross-origin locations are returned without following them. Following a returned location is a separate application decision. Undeclared redirects still fail.
 
 ## Consuming server-sent events
 
 ```js
-const result = await client.events.watch(input, { signal, streamIdleTimeoutMs: 30000 });
+const result = await client.events.watchWithResponse(input, { signal, streamIdleTimeoutMs: 30000 });
 try {
-  for await (const event of result.data) {
+  for await (const event of result.body) {
     console.log(event.event, event.id, event.data);
     // Persist a cursor only after your application's event work succeeds.
   }
 } finally {
-  await result.data.close();
+  await result.body.close();
 }
 await client.close();
 ```
@@ -195,13 +197,16 @@ await client.close();
 PHP exposes the same result fields and closeable iteration:
 
 ```php
-$result = $client->events->watch($input, new RequestOptions(streamIdleTimeoutMs: 30000));
+$result = $client->events->watchWithResponse(
+  $input,
+  new RequestOptions(streamIdleTimeoutMs: 30000),
+);
 try {
-  foreach ($result->data as $event) {
+  foreach ($result->body as $event) {
     processEvent($event->event, $event->id, $event->data);
   }
 } finally {
-  $result->data->close();
+  $result->body->close();
 }
 $client->close();
 ```
@@ -222,6 +227,6 @@ PHP `valueOrDefault(field, fallback)` avoids the `getField()` accessor namespace
 
 Authentication option types are part of the compiled public contract. Migrating from older unrestricted options to named modes, or narrowing an operation’s accepted modes, is reported as breaking and requires a major version under the semver policy. Update shared wrappers to use the mode-specific `RequestOptions<'merchant'>` type when necessary.
 
-Some providers opt into direct payload returns. For those operations, `const payment = await client.paymentIntents.create(input)` accesses the configured payload without an SDK `data` wrapper. Use `createWithResponse(input)` instead when you need `response.body`, `response.meta`, or `response.raw`; `body` is the complete decoded API response, without unwrapping. PHP uses the same method names with `->` property access. Each invocation sends a separate request, so choose one form per action.
+New SDKs use direct payload returns by default. For those operations, `const payment = await client.paymentIntents.create(input)` accesses the configured payload without an SDK `data` wrapper. Use `createWithResponse(input)` instead when you need `response.body`, `response.meta`, or `response.raw`; `body` is the complete decoded API response, without unwrapping. PHP uses the same method names with `->` property access. Each invocation sends a separate request, so choose one form per action.
 
 Check the operation reference for its return mode. SDKs and individual operations can retain the existing `Result` interface. `Pages` and `Wait` always yield/return full Results; `Items` yields individual items. Follow provider migration notes when an SDK changes its return mode or payload path.

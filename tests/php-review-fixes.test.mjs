@@ -55,6 +55,7 @@ writeFileSync(
 writeFileSync(
   join(dir, 'sdk.json'),
   JSON.stringify({
+    responses: { return: 'result' },
     version: '1.0.0',
     numericUnions: 'explicit',
     requests: { style: 'object' },

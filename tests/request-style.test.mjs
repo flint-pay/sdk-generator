@@ -70,6 +70,7 @@ function fixture({ style = null, bodySchema = body, config = {}, apiEdit = () =>
   writeFileSync(
     join(dir, 'sdk.json'),
     JSON.stringify({
+      responses: { return: 'result' },
       version: '1.0.0',
       npm: { name: '@example/requests' },
       composer: { name: 'example/requests', namespace: 'Example\\Requests' },

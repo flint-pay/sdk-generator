@@ -51,6 +51,7 @@ function fixture(name, schema = mixed, targets = ['node', 'php']) {
     },
   };
   const config = {
+    responses: { return: 'result' },
     version: '1.0.0',
     targets,
     requests: { style: 'object' },

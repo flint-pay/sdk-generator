@@ -12,6 +12,7 @@ import { serialize, normalize, isKnownVariant, redact } from '../dist/runtime.js
 const root = mkdtempSync(join(tmpdir(), 'sdk-composition-'));
 after(() => rmSync(root, { recursive: true, force: true }));
 const config = {
+  responses: { return: 'result' },
   version: '1.0.0',
   requests: { style: 'object' },
   npm: { name: '@example/composition' },
@@ -373,8 +374,6 @@ test('unrepresentable numeric compositions fail with source diagnostics rather t
         { type: 'object', properties: { amount: exact } },
       ],
     },
-    { oneOf: [exact, { type: 'string' }] },
-    { anyOf: [{ type: 'number' }, { type: 'string' }] },
   ]) {
     const doc = structuredClone(definition);
     doc.components.schemas.Choice = shape;
