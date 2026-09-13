@@ -336,6 +336,49 @@ function parameterType(s: Schema, p: string, item = false): string {
   }
   return type;
 }
+/** A narrow generation-time safeguard, not a general regex complexity proof. */
+function rejectNestedRepetition(source: string, path: string): void {
+  const groups = [{ atoms: 0, alternative: false, repeated: false }];
+  const atom = (repeated = false) => {
+    const group = groups[groups.length - 1]!;
+    group.atoms++;
+    group.repeated = repeated;
+  };
+  for (let i = 0; i < source.length; i++) {
+    const ch = source[i]!;
+    if (ch === '\\') {
+      i++;
+      if (source[i] === 'u') i += 4;
+      else if (source[i] === 'x') i += 2;
+      atom();
+    } else if (ch === '[') {
+      while (++i < source.length) {
+        if (source[i] === '\\') i++;
+        else if (source[i] === ']') break;
+      }
+      atom();
+    } else if (ch === '(') {
+      groups.push({ atoms: 0, alternative: false, repeated: false });
+      if (source.slice(i + 1, i + 3) === '?:') i += 2;
+    } else if (ch === ')') {
+      const group = groups.pop()!;
+      atom(group.atoms === 1 && !group.alternative && group.repeated);
+    } else if (ch === '|') {
+      groups[groups.length - 1]!.alternative = true;
+    } else if (ch === '*' || ch === '+' || ch === '?' || ch === '{') {
+      const bound = ch === '{' ? source.slice(i).match(/^\{\d+(,\d*)?\}/) : undefined;
+      const unbounded = ch === '*' || ch === '+' || bound?.[1] === ',';
+      const group = groups[groups.length - 1]!;
+      if (unbounded && group.repeated)
+        fail(path, 'nested unbounded repetition is unsupported; simplify the pattern');
+      if (unbounded) group.repeated = true;
+      if (bound) i += bound[0].length - 1;
+    } else {
+      atom();
+    }
+  }
+}
+
 // A deliberately portable ECMAScript subset; translate differences in PCRE rather
 // than silently applying a different pattern in the PHP target.
 function portablePattern(source: string, p: string): string {
@@ -344,6 +387,7 @@ function portablePattern(source: string, p: string): string {
   } catch {
     fail(p, 'invalid Unicode regular expression');
   }
+  rejectNestedRepetition(source, p);
   const space =
     '\\x09-\\x0d\\x20\\x{00a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}\\x{2029}\\x{202f}\\x{205f}\\x{3000}\\x{feff}';
   // PHP's /u enables Unicode properties for these escapes; ECMAScript /u

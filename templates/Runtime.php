@@ -3189,6 +3189,43 @@ class Runtime
                         }
                     }
                 }
+                if (!$present && ($op['idempotency']['auto'] ?? false)) {
+                    $value = bin2hex(random_bytes(16));
+                    $present = true;
+                }
+            }
+            if (
+                $p['in'] === 'header' &&
+                in_array(
+                    strtolower($p['name']),
+                    [
+                        strtolower($op['conditional']['header'] ?? ''),
+                        strtolower($this->contract['apiVersion']['header'] ?? ''),
+                    ],
+                    true,
+                )
+            ) {
+                // Match final header precedence before validating the wire value.
+                foreach ($o->headers as $name => $headerValue) {
+                    if (strtolower($name) === strtolower($p['name'])) {
+                        $value = $headerValue;
+                        $present = true;
+                    }
+                }
+                if (
+                    strtolower($this->contract['apiVersion']['header'] ?? '') ===
+                    strtolower($p['name'])
+                ) {
+                    $value = $this->contract['apiVersion']['value'];
+                    $present = true;
+                }
+                if (
+                    strtolower($op['conditional']['header'] ?? '') === strtolower($p['name']) &&
+                    $o->ifMatch !== null
+                ) {
+                    $value = $o->ifMatch;
+                    $present = true;
+                }
             }
             if (!$present) {
                 if ($p['required'] ?? false) {
