@@ -28,17 +28,22 @@ import { compileSchemaPolicy, type SchemaPolicy } from './schema-policy.js';
 export { successStatus };
 const pascal = (s: string) => s[0]!.toUpperCase() + s.slice(1);
 
-export function inputSchema(op: Operation): Schema {
+export function inputSchema(op: Operation, apiVersion?: Contract['config']['apiVersion']): Schema {
   const properties: Record<string, Schema> = Object.fromEntries(
     op.parameters.map((p) => [p.name, p.schema]),
   );
-  // A declared idempotency header can also be supplied through request options.
-  // The runtime still requires it before dispatch when the API declares it required.
+  // Managed headers may be supplied outside the operation input. The runtime
+  // validates their effective values and requiredness before dispatch.
   const required = op.parameters
     .filter(
       (p) =>
         p.required &&
-        !(p.in === 'header' && op.idempotency?.header.toLowerCase() === p.name.toLowerCase()),
+        !(
+          p.in === 'header' &&
+          [op.idempotency?.header, op.conditional?.header, apiVersion?.header].some(
+            (header) => header?.toLowerCase() === p.name.toLowerCase(),
+          )
+        ),
     )
     .map((p) => p.name);
   if (op.body) {
@@ -70,8 +75,9 @@ export function operationInputType(
   op: Operation,
   models: Record<string, Schema>,
   documentation = false,
+  apiVersion?: Contract['config']['apiVersion'],
 ): string {
-  const schema = inputSchema(op);
+  const schema = inputSchema(op, apiVersion);
   return `{ ${Object.entries(schema.properties!)
     .map(
       ([key, value]) =>
@@ -330,7 +336,7 @@ const php = (s: string) => "'" + s.replaceAll('\\', '\\\\').replaceAll("'", "\\'
 function compileRequestCall(op: Operation, c: Contract, optionsType: string) {
   const paths = pathParameters(op);
   const fields = op.parameters.filter((p) => p.in !== 'path');
-  const requiredFields = new Set(inputSchema(op).required);
+  const requiredFields = new Set(inputSchema(op, c.config.apiVersion).required);
   const paramsRequired = op.bodyRequired || fields.some((p) => requiredFields.has(p.name));
   const type = (schema: Schema) =>
     typescriptType(schema, false, undefined, false, undefined, undefined, c.models);
@@ -637,10 +643,10 @@ export function compileSdkContract(source: Contract): {
           return [
             op.id,
             {
-              input: operationInputType(op, models),
-              documentedInput: operationInputType(op, models, true),
+              input: operationInputType(op, models, false, c.config.apiVersion),
+              documentedInput: operationInputType(op, models, true, c.config.apiVersion),
               output: resultType(op, models),
-              inputRequired: Boolean(inputSchema(op).required?.length),
+              inputRequired: Boolean(inputSchema(op, c.config.apiVersion).required?.length),
               requestOptions: authentication
                 ? `RequestOptions<${
                     op.authModes
@@ -694,7 +700,7 @@ export function compileSdkContract(source: Contract): {
         ...c.operations.map((op) =>
           compilePhpModel(
             pascal(op.resource) + pascal(op.method) + 'Input',
-            inputSchema(op),
+            inputSchema(op, c.config.apiVersion),
             false,
             sharedNames,
           ),
@@ -742,7 +748,7 @@ export function compileSdkContract(source: Contract): {
         op.id,
         {
           nodeInput: typescriptType(
-            inputSchema(op),
+            inputSchema(op, c.config.apiVersion),
             false,
             undefined,
             false,
@@ -751,7 +757,7 @@ export function compileSdkContract(source: Contract): {
             models,
           ),
           nodeOutput: resultType(op),
-          phpInput: phpDocType(inputSchema(op)),
+          phpInput: phpDocType(inputSchema(op, c.config.apiVersion)),
           phpOutput: Object.entries(op.responses)
             .filter(([status]) => successStatus(status) || status === 'default')
             .map(([, response]) => (response.schema ? phpDocType(response.schema, true) : 'null'))
@@ -793,7 +799,7 @@ export function compileSdkContract(source: Contract): {
         source.operations.map((op) => [
           op.id,
           {
-            input: compileSchemaPolicy(inputSchema(op), 'input'),
+            input: compileSchemaPolicy(inputSchema(op, source.config.apiVersion), 'input'),
             responses: Object.fromEntries(
               Object.entries(op.responses).flatMap(([status, response]) =>
                 response.schema ? [[status, compileSchemaPolicy(response.schema, 'response')]] : [],

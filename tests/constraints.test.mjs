@@ -460,3 +460,36 @@ test('compatibility retains new literal and applicator facts when inclusion need
     ),
   );
 });
+
+test('diagnosis rejects simple nested unbounded repetition without rejecting delimited patterns', () => {
+  for (const pattern of [
+    '^(a+)+$',
+    '(.*)*',
+    '(?:[a-z]+){2,}',
+    '((a+))+',
+    '(a+?)+',
+    '(a{1,})+',
+    '([()]+)+',
+  ]) {
+    const d = structuredClone(doc);
+    d.components.schemas.Value.properties.value = { type: 'string', pattern };
+    assert.throws(() => load(d), /properties\/value\/pattern: nested unbounded repetition/);
+  }
+  for (const pattern of [
+    '^[a-z]+$',
+    '^a+?$',
+    '^(ab)+$',
+    '^(a+)?$',
+    '^(a{1,4})+$',
+    '^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$',
+    '^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$',
+    '^\\(a+\\)+$',
+    '^[()+*]+$',
+    '^\\u0028a+\\u0029+$',
+    '^\\x28a+\\x29+$',
+  ]) {
+    const d = structuredClone(doc);
+    d.components.schemas.Value.properties.value = { type: 'string', pattern };
+    assert.doesNotThrow(() => load(d), pattern);
+  }
+});
