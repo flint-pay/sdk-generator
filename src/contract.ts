@@ -442,6 +442,30 @@ function portablePattern(source: string, p: string): string {
 function schema(s: Schema, p: string, legacy = false, explicitNumbers = false): void {
   if (!s || typeof s !== 'object' || Array.isArray(s)) fail(p, 'expected a schema object');
   if (s['x-sdk-ref']) return;
+  if (s.dependentRequired !== undefined) {
+    const dependencies = s.dependentRequired;
+    if (!dependencies || typeof dependencies !== 'object' || Array.isArray(dependencies))
+      fail(p + '/dependentRequired', 'expected a property dependency map');
+    if (s.allOf !== undefined && (!Array.isArray(s.allOf) || !s.allOf.length))
+      fail(p + '/allOf', 'expected a nonempty schema array');
+    const branches: Schema[] = [];
+    for (const [key, required] of Object.entries(dependencies as Record<string, unknown>)) {
+      if (
+        !Array.isArray(required) ||
+        required.some((value) => typeof value !== 'string') ||
+        new Set(required).size !== required.length
+      )
+        fail(p + '/dependentRequired/' + key, 'expected unique property names');
+      if ((required as string[]).length > 0)
+        branches.push({
+          if: { type: 'object', required: [key] },
+          then: { required: required as string[] },
+        });
+    }
+    if (branches.length) s.allOf = [...(s.allOf ?? []), ...branches];
+    delete s.dependentRequired;
+  }
+
   if (s.nullable !== undefined) {
     if (!legacy || typeof s.nullable !== 'boolean')
       fail(p + '/nullable', 'nullable is an OpenAPI 3.0 boolean; use a null type in 3.1');
