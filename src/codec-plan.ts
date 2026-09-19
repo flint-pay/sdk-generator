@@ -142,13 +142,16 @@ export function directionalSchema(schema: Schema, response: boolean): Schema {
   };
   collect(schema);
   if (!omitted.size) return schema;
+  // A directional field cannot satisfy a predicate in the opposite direction.
+  // Keep predicates intact so its absence makes the condition false; applied
+  // constraints still omit directionally unavailable required fields.
   const project = (s: Schema): Schema => ({
     ...s,
     ...(s.required ? { required: s.required.filter((key) => !omitted.has(key)) } : {}),
     ...(s.allOf ? { allOf: s.allOf.map(project) } : {}),
     ...(s.anyOf ? { anyOf: s.anyOf.map(project) } : {}),
     ...(s.oneOf ? { oneOf: s.oneOf.map(project) } : {}),
-    ...(s.if ? { if: project(s.if) } : {}),
+    ...(s.if ? { if: s.if } : {}),
     ...(s.then ? { then: project(s.then) } : {}),
     ...(s.else ? { else: project(s.else) } : {}),
   });
