@@ -949,9 +949,21 @@ final class Codec
             self::assertPlan($value['extra'], "$path.extra", $depth + 1);
         }
     }
+    private static ?\WeakMap $validationFailures = null;
+
+    /** @internal Only codec-authored diagnostics may be promoted into response errors. */
+    public static function validationFailureMessage(\Throwable $error): ?string
+    {
+        return self::$validationFailures[$error] ?? null;
+    }
+
     public static function fail(string $path, string $reason): never
     {
-        throw new SdkError('validation', "$path: $reason");
+        $message = "$path: $reason";
+        $error = new SdkError('validation', $message);
+        self::$validationFailures ??= new \WeakMap();
+        self::$validationFailures[$error] = $message;
+        throw $error;
     }
     public static function parse(string $text, bool $preserveNumbers = false): mixed
     {
@@ -2666,10 +2678,10 @@ final class Codec
                 }
             }
             return array_map(
-                fn($v) => self::executeNode(
+                fn($v, $index) => self::executeNode(
                     $v,
                     $s['element'] ?? self::ANY_CODEC,
-                    "{$path}[]",
+                    "{$path}[$index]",
                     $response,
                     $matching,
                     $definitions,
@@ -2678,6 +2690,7 @@ final class Codec
                     $allowUnknownResponseFields,
                 ),
                 $value,
+                array_keys($value),
             );
         }
         if ($type === 'string' && !is_string($value)) {
@@ -2976,6 +2989,22 @@ class Runtime
                     (!is_int($op['stream'][$key]) || $op['stream'][$key] <= 0)
                 ) {
                     throw new \InvalidArgumentException('Invalid stream limits');
+                }
+            }
+            if (array_key_exists('successJsonFallback', $op)) {
+                $candidates = array_keys(
+                    array_filter(
+                        $op['responses'],
+                        fn($response, $status) => preg_match('/^2[0-9]{2}$/D', (string) $status) &&
+                            ($response['bodyKind'] ?? null) === 'json',
+                        ARRAY_FILTER_USE_BOTH,
+                    ),
+                );
+                if (
+                    count($candidates) !== 1 ||
+                    (string) $candidates[0] !== $op['successJsonFallback']
+                ) {
+                    throw new \InvalidArgumentException('Invalid JSON success fallback');
                 }
             }
             foreach ($op['responses'] as $status => $response) {
@@ -3512,7 +3541,11 @@ class Runtime
                 $rh = array_change_key_case($response['headers'], CASE_LOWER);
                 $raw = $response['body'] ?? '';
                 $declaredResponse =
-                    $op['responses'][(string) $status] ?? ($op['responses']['default'] ?? null);
+                    $op['responses'][(string) $status] ??
+                    ($op['responses']['default'] ??
+                        ($status >= 200 && $status < 300 && isset($op['successJsonFallback'])
+                            ? $op['responses'][$op['successJsonFallback']]
+                            : null));
                 $redirect =
                     ($op['responses'][(string) $status]['classification'] ?? null) === 'redirect';
                 $binary =
@@ -3629,8 +3662,7 @@ class Runtime
                     );
                 }
                 if (($status >= 200 && $status < 300) || $status === 304 || $redirect) {
-                    $declared =
-                        $op['responses'][(string) $status] ?? ($op['responses']['default'] ?? null);
+                    $declared = $declaredResponse;
                     if ($declared === null) {
                         throw new SdkError(
                             'protocol',
@@ -3638,6 +3670,7 @@ class Runtime
                             'response',
                             false,
                             $meta,
+                            raw: $raw,
                         );
                     }
                     try {
@@ -3679,39 +3712,45 @@ class Runtime
                         } elseif ($raw !== '') {
                             throw new \RuntimeException('Unexpected body for an empty response');
                         }
+                        $model = $declared['model'] ?? null;
+                        if (isset($declared['variants']) && is_object($data)) {
+                            $codec = $declared['codec'];
+                            $definitions = $this->contract['definitions'] ?? [];
+                            for ($depth = 0; isset($codec['reference']); $depth++) {
+                                if ($depth > 256) {
+                                    Codec::fail(
+                                        'response',
+                                        'codec reference exceeds nesting limit',
+                                    );
+                                }
+                                $definitions = $codec['definitions'] ?? $definitions;
+                                $codec =
+                                    $definitions[$codec['reference']] ??
+                                    throw new \LogicException('Unresolved response codec');
+                            }
+                            $tag = $codec['tag'] ?? null;
+                            $model =
+                                $tag === null
+                                    ? null
+                                    : $declared['variants'][$data->{$tag} ?? ''] ?? null;
+                        }
+                        if ($model !== null && is_object($data)) {
+                            $class = __NAMESPACE__ . '\\' . $model;
+                            $data = new $class((array) $data, $this->options->redactFields);
+                        }
                     } catch (\Throwable $cause) {
                         throw new SdkError(
                             'protocol',
-                            'Response cannot be represented by the declared schema',
+                            'Response cannot be represented by the declared schema' .
+                                (($reason = Codec::validationFailureMessage($cause)) !== null
+                                    ? ': ' . $reason
+                                    : ''),
                             'response',
                             false,
                             $meta,
                             previous: $cause,
                             raw: $raw,
                         );
-                    }
-                    $model = $declared['model'] ?? null;
-                    if (isset($declared['variants']) && is_object($data)) {
-                        $codec = $declared['codec'];
-                        $definitions = $this->contract['definitions'] ?? [];
-                        for ($depth = 0; isset($codec['reference']); $depth++) {
-                            if ($depth > 256) {
-                                Codec::fail('response', 'codec reference exceeds nesting limit');
-                            }
-                            $definitions = $codec['definitions'] ?? $definitions;
-                            $codec =
-                                $definitions[$codec['reference']] ??
-                                throw new \LogicException('Unresolved response codec');
-                        }
-                        $tag = $codec['tag'] ?? null;
-                        $model =
-                            $tag === null
-                                ? null
-                                : $declared['variants'][$data->{$tag} ?? ''] ?? null;
-                    }
-                    if ($model !== null && is_object($data)) {
-                        $class = __NAMESPACE__ . '\\' . $model;
-                        $data = new $class((array) $data, $this->options->redactFields);
                     }
                     // Decoding and model construction are synchronous; transport
                     // timeouts cannot interrupt them. Include them in the deadline.
@@ -3723,6 +3762,7 @@ class Runtime
                             'response',
                             false,
                             $meta,
+                            raw: $raw,
                         );
                     }
                     return new Result($data, $meta, $raw);

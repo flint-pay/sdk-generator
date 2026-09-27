@@ -55,6 +55,8 @@ Exact numeric enum membership and numeric composition merging compare mathematic
 
 Integer response decoding accepts integral decimal/exponent tokens without floating-point rounding. Exponent expansion is limited to 10,000 appended zero digits to bound allocation; larger expansions produce a protocol error. Decimal precision and the public representation of unknown numeric fields are preserved. Sparse Node input arrays are rejected, including arrays in additional fields.
 
+Undeclared 2xx statuses reuse the sole declared JSON 2xx response only when neither an exact declaration nor `default` exists. Multiple candidates, non-JSON kinds and redirects are not inferred. Required fields remain enforced; schema errors expose the failing field path and preserve the buffered JSON body for explicit recovery in both targets. See [response recovery](using-sdks.md#successful-http-responses-and-schema-drift).
+
 HTTP success bodies and verified webhook payloads must contain well-formed UTF-8 JSON without a byte-order mark or unpaired surrogate escapes. Malformed bodies produce a protocol error; decoding never repairs them by inserting replacement characters. HTTP error statuses remain available even when their bodies cannot be parsed.
 
 Offset pagination requires compatible SDK representations: int64/uint64 continuations require int64/uint64 query parameters. Cursor parameters must be scalar strings, and offset parameters must be scalar integers. Incompatible declarations fail diagnosis.

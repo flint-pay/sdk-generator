@@ -148,6 +148,59 @@ The SDK applies only declared bounded retries. `retryAllowed` reports retry elig
 
 Ordinary error inspection includes the message, status, provider code, redacted details and stack frames. Message extraction, provider codes and details apply schema and `redactFields` redaction. PHP debug traces omit call arguments. Diagnostics report status and kind without messages, details or stack traces. `raw`, response headers, arbitrary `data` logging and injected transports require application-level handling of sensitive information.
 
+### Successful HTTP responses and schema drift
+
+Exact HTTP status declarations take precedence, followed by a declared `default`. If neither exists for an actual 2xx response, the SDK reuses the sole declared JSON 2xx response, including its codec and PHP model class. Metadata retains the actual status. Multiple JSON success declarations remain ambiguous, even when their schemas match; binary, streaming, empty and redirect responses are never inferred.
+
+Required fields and value types remain enforced. Schema failures are non-retryable `protocol` errors with `outcome: response`; the top-level message includes codec diagnostics such as `response.payment.id: required field is missing`, and the original cause remains available. The server may already have created the payment. Buffered JSON response failures and payload-extraction errors retain `raw` for explicit recovery; raw bodies are omitted from ordinary error inspection and diagnostics.
+
+Inside a catch block, a synthetic create response with a top-level string `id` can be recovered as below. Use the actual endpoint's ID path and reconcile its state before continuing. This parses an unvalidated body only to recover the ID; it does not restore the SDK's typed guarantees or justify resubmitting the mutation.
+
+```js
+if (
+  error instanceof SdkError &&
+  error.kind === 'protocol' &&
+  error.status >= 200 &&
+  error.status < 300 &&
+  error.raw
+) {
+  let body;
+  try {
+    body = JSON.parse(error.raw);
+  } catch {
+    throw error;
+  }
+  const paymentId = typeof body?.id === 'string' ? body.id : undefined;
+  if (!paymentId) throw error;
+  // Reconcile this payment ID with the provider; do not submit another create.
+} else {
+  throw error;
+}
+```
+
+```php
+if (
+  $error instanceof SdkError &&
+  $error->kind === 'protocol' &&
+  $error->status >= 200 &&
+  $error->status < 300 &&
+  $error->raw !== null
+) {
+  try {
+    $body = json_decode($error->raw, true, 512, JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING);
+  } catch (\JsonException) {
+    throw $error;
+  }
+  $paymentId = is_array($body) && is_string($body['id'] ?? null) ? $body['id'] : null;
+  if ($paymentId === null) {
+    throw $error;
+  }
+  // Reconcile this payment ID with the provider; do not submit another create.
+} else {
+  throw $error;
+}
+```
+
 ## Optional capabilities
 
 Only declared capabilities generate convenience methods. An operation named `list` with pagination exposes `listPages(input, options)` and `listItems(input, options)` on its resource. Node uses `for await ... of`; PHP uses `foreach`. Pages yield results with metadata; items yield individual values. Pagination is lazy, bounded by deadline and caller limits, and does not promise a stable snapshot. Providers must configure compatible continuation and query representations; generation rejects an exact integer continuation paired with an ordinary integer query parameter.

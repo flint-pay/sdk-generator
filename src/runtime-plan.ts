@@ -46,6 +46,8 @@ export interface CompiledOperation
   streamEventCodecs?: Record<string, CodecPlan>;
   parameters: (Omit<Operation['parameters'][number], 'schema'> & { codec: CodecPlan })[];
   body?: CodecPlan;
+  /** Sole JSON 2xx declaration eligible for an otherwise undeclared success. */
+  successJsonFallback?: string;
   responses: Record<
     string,
     Omit<Operation['responses'][string], 'schema'> & {
@@ -90,8 +92,16 @@ export function compileRuntimePlan(contract: RuntimeContract): CompiledRuntimePl
       : {}),
     operations: operations.map((op) => {
       const { parameters, body, responses, streamEventSchemas, ...operation } = op;
+      const jsonSuccesses = Object.entries(responses).filter(
+        ([status, response]) =>
+          status.length === 3 &&
+          /^2\d\d$/.test(status) &&
+          (response.bodyKind ?? (response.schema ? 'json' : 'empty')) === 'json',
+      );
+      const successJsonFallback = jsonSuccesses.length === 1 ? jsonSuccesses[0]?.[0] : undefined;
       return {
         ...operation,
+        ...(successJsonFallback === undefined ? {} : { successJsonFallback }),
         ...(streamEventSchemas
           ? {
               streamEventCodecs: Object.fromEntries(
@@ -247,7 +257,18 @@ export function assertRuntimePlan(value: unknown): asserts value is CompiledRunt
         )
           throw new Error('Invalid stream limits');
     }
-    for (const [status, response] of Object.entries(record(op.responses, `${op.id}.responses`))) {
+    const responses = record(op.responses, `${op.id}.responses`);
+    if (op.successJsonFallback !== undefined) {
+      const candidates = Object.entries(responses).filter(
+        ([status, response]) =>
+          status.length === 3 &&
+          /^2\d\d$/.test(status) &&
+          record(response, 'response').bodyKind === 'json',
+      );
+      if (candidates.length !== 1 || candidates[0]?.[0] !== op.successJsonFallback)
+        throw new Error('Invalid JSON success fallback');
+    }
+    for (const [status, response] of Object.entries(responses)) {
       const result = record(response, `${op.id}.responses.${status}`);
       if (
         result.bodyKind !== undefined &&

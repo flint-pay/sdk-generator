@@ -325,8 +325,12 @@ export class EventStream implements AsyncIterable<ServerSentEvent> {
     }
   }
 }
+const validationFailures = new WeakMap<Error, string>();
 const bad = (path: string, reason: string): never => {
-  throw new SdkError('validation', `${path}: ${reason}`);
+  const message = `${path}: ${reason}`;
+  const error = new SdkError('validation', message);
+  validationFailures.set(error, message);
+  throw error;
 };
 const exactInteger = /^-?(?:0|[1-9]\d*)$/;
 const exactDecimal = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
@@ -2117,7 +2121,12 @@ export class Runtime {
             : {}),
         };
         diagnosticMeta = meta;
-        const declaredResponse = op.responses[String(response.status)] ?? op.responses.default;
+        const declaredResponse =
+          op.responses[String(response.status)] ??
+          op.responses.default ??
+          (response.ok && op.successJsonFallback
+            ? op.responses[op.successJsonFallback]
+            : undefined);
         if (response.ok && declaredResponse?.bodyKind === 'sse') {
           if (
             response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() !==
@@ -2234,9 +2243,19 @@ export class Runtime {
             meta,
           );
         if (response.ok || response.status === 304 || redirect) {
-          const declared = op.responses[String(response.status)] ?? op.responses.default;
+          const declared = declaredResponse;
           if (!declared)
-            throw new SdkError('protocol', 'Undeclared success status', 'response', false, meta);
+            throw new SdkError(
+              'protocol',
+              'Undeclared success status',
+              'response',
+              false,
+              meta,
+              undefined,
+              undefined,
+              undefined,
+              raw,
+            );
           try {
             if (redirect) {
               const location = response.headers.get('location');
@@ -2258,7 +2277,10 @@ export class Runtime {
           } catch (cause) {
             throw new SdkError(
               'protocol',
-              'Response cannot be represented by the declared schema',
+              'Response cannot be represented by the declared schema' +
+                (cause instanceof Error && validationFailures.has(cause)
+                  ? ': ' + validationFailures.get(cause)
+                  : ''),
               'response',
               false,
               meta,
@@ -2278,6 +2300,10 @@ export class Runtime {
               'response',
               false,
               meta,
+              undefined,
+              undefined,
+              undefined,
+              raw,
             );
           const result = { data: data as T, meta, raw };
           Object.defineProperty(result, inspect.custom, {

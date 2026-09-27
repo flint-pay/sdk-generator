@@ -22,6 +22,10 @@ export function responsePayload(result, path) {
         'response',
         false,
         result.meta,
+        undefined,
+        undefined,
+        undefined,
+        result.raw,
       );
     }
     value = value[key];

@@ -319,6 +319,8 @@ Only configured event names have JSON payload decoding. Unknown event names reta
 
 ## Payload returns
 
+For successful responses, exact status declarations and then `default` remain authoritative. An otherwise undeclared 2xx can reuse the sole declared JSON 2xx response; multiple JSON declarations remain ambiguous. This behavior needs no configuration and preserves strict required fields. See [response drift and recovery](using-sdks.md#successful-http-responses-and-schema-drift).
+
 New SDKs return the complete decoded body directly by default (`responses.return: "payload"`). Select `responses.return: "result"` to retain the `Result` envelope with `data`, `meta` and `raw`. Declare envelope paths explicitly; the generator never automatically unwraps a field because it is named `data`.
 
 ```json

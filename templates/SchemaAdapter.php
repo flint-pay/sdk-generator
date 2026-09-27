@@ -88,13 +88,25 @@ final class SchemaAdapter
                 $op['streamEventCodecs'] = array_map($root, $op['streamEventSchemas']);
                 unset($op['streamEventSchemas']);
             }
-            foreach ($op['responses'] as &$response) {
+            $jsonSuccesses = [];
+            foreach ($op['responses'] as $status => &$response) {
+                $response['bodyKind'] ??= isset($response['schema']) ? 'json' : 'empty';
+                if (
+                    preg_match('/^2[0-9]{2}$/D', (string) $status) &&
+                    $response['bodyKind'] === 'json'
+                ) {
+                    $jsonSuccesses[] = (string) $status;
+                }
                 if (isset($response['schema'])) {
                     $response['codec'] = $root($response['schema']);
                     unset($response['schema']);
                 }
             }
             unset($response);
+            unset($op['successJsonFallback']);
+            if (count($jsonSuccesses) === 1) {
+                $op['successJsonFallback'] = $jsonSuccesses[0];
+            }
         }
         unset($op);
         if (isset($contract['definitions'])) {
