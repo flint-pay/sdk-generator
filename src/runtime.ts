@@ -1867,10 +1867,11 @@ export class Runtime {
       positive(options.streamIdleTimeoutMs, 'streamIdleTimeoutMs');
     if (options.streamLifetimeMs !== undefined)
       positive(options.streamLifetimeMs, 'streamLifetimeMs');
-    const policy = op.retry ?? { maxAttempts: 1, statuses: [], transport: false, baseDelayMs: 100 };
-    const attempts = options.maxAttempts ?? this.options.maxAttempts ?? policy.maxAttempts;
-    if (!Number.isInteger(attempts) || attempts < 1 || attempts > policy.maxAttempts)
-      bad('maxAttempts', 'must be within the provider-declared retry limit');
+    const policy = op.retry;
+    const budget = options.maxAttempts ?? this.options.maxAttempts ?? policy.maxAttempts;
+    if (!Number.isSafeInteger(budget) || budget < 1)
+      bad('maxAttempts', 'must be a positive safe integer');
+    let attempts = Math.min(budget, policy.maxAttempts);
     const headers: Record<string, string> = Object.assign(Object.create(null), {
       accept:
         [
@@ -2056,13 +2057,9 @@ export class Runtime {
       setHeader(op.idempotency!.header, key);
     }
     const safe =
-      ['GET', 'HEAD', 'OPTIONS'].includes(op.verb) ||
+      op.replay === 'safe' ||
       Boolean(op.idempotency && headers[op.idempotency.header.toLowerCase()]);
-    if (attempts > 1 && !safe)
-      bad(
-        'idempotencyKey',
-        'persist and supply an idempotency key before enabling mutation retries',
-      );
+    if (!safe) attempts = 1;
     let body: string | undefined;
     if (Object.hasOwn(input, 'body') && input.body !== undefined) {
       if (!op.body) bad('body', 'operation does not accept a body');

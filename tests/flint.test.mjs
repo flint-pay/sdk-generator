@@ -310,7 +310,17 @@ test('README snippets run in both targets with per-action keys and actionable er
           );
           return true;
         });
-        assert.equal(seen.length, before + 1, 'the example must not blindly resubmit');
+        assert.equal(seen.length, before + 3, 'the example exhausts the declared retry budget');
+        assert.equal(
+          new Set(seen.slice(before).map((request) => request.key)).size,
+          1,
+          'retries preserve the action key',
+        );
+        assert.equal(
+          new Set(seen.slice(before).map((request) => request.body)).size,
+          1,
+          'retries preserve the encoded body',
+        );
         assert.match(seen.at(-1).key, /^[a-f0-9-]{32,36}$/);
       }
     }

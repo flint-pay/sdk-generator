@@ -154,9 +154,9 @@ export function assertCompiledSnapshot(value: unknown): asserts value is Compile
     !plan.targets.every((target) => target === 'node' || target === 'php')
   )
     throw new Error('Invalid compiled contract identity');
-  assertRuntimePlan(plan.runtime);
+  assertRuntimePlan(plan.runtime, true);
   const php = object(plan.php, 'php');
-  assertRuntimePlan(php.runtime);
+  assertRuntimePlan(php.runtime, true);
   if (plan.requestCalls !== undefined)
     for (const [id, value] of Object.entries(object(plan.requestCalls, 'requestCalls'))) {
       const call = object(value, 'requestCalls.' + id);
@@ -202,6 +202,7 @@ export function assertCompiledSnapshot(value: unknown): asserts value is Compile
   for (const [name, value] of Object.entries(object(node.operations, 'node.operations'))) {
     const op = object(value, name);
     fields(op, ['input', 'output', 'items'], 'string', name);
+    if (op.idempotencyKey !== undefined) fields(op, ['idempotencyKey'], 'boolean', name);
     if (op.requestOptions !== undefined) fields(op, ['requestOptions'], 'string', name);
     if (
       op.authModes !== undefined &&

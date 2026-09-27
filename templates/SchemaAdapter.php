@@ -70,12 +70,18 @@ final class SchemaAdapter
     {
         return self::node($schema, $schema, 0);
     }
+    private const RETRY_DEFAULTS = /* RETRY_DEFAULTS */ '{}';
+
     public static function runtimePlan(array $contract): array
     {
         $root = fn($schema) => self::compile(
             $schema + ['x-sdk-validation' => $contract['validation'] ?? 'schema'],
         );
+        $defaults = json_decode(self::RETRY_DEFAULTS, true, 512, JSON_THROW_ON_ERROR);
         foreach ($contract['operations'] as &$op) {
+            $safe = in_array($op['verb'], $defaults['safeMethods'], true);
+            $op['replay'] = $safe ? 'safe' : 'idempotency';
+            $op['retry'] ??= $defaults[$safe ? 'read' : 'mutation'];
             foreach ($op['parameters'] as &$parameter) {
                 $parameter['codec'] = $root($parameter['schema']);
                 unset($parameter['schema']);
@@ -117,6 +123,7 @@ final class SchemaAdapter
         }
         $contract['format'] = 1;
         $contract['semantics'] = '3';
+        $contract['retrySemantics'] = 'budgets-1';
         if (isset($contract['incoming'])) {
             foreach ($contract['incoming'] as &$entry) {
                 $entry['codec'] = $root($entry['schema']);

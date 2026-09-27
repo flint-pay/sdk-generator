@@ -20,7 +20,6 @@ const client = new Client({
 try {
   const result = await client.books.retrieveWithResponse('book/123', {
     headers: { 'X-Tenant': 'tenant-example' },
-    maxAttempts: 1,
   });
   console.log(result.body.title, result.meta.requestId);
 } catch (error) {
@@ -48,7 +47,7 @@ $client = new Client(new ClientOptions(baseUrl: 'https://your-api.example.com'))
 try {
   $result = $client->books->retrieve(
     'book/123',
-    new RequestOptions(headers: ['X-Tenant' => 'tenant-example'], maxAttempts: 1),
+    new RequestOptions(headers: ['X-Tenant' => 'tenant-example']),
   );
   echo $result->getTitle();
 } catch (SdkError $error) {
@@ -106,29 +105,29 @@ For a null-only schema, use `type: 'null'`. The existing Node behavior for `type
 
 ## Client and request options
 
-Pass client defaults to `new Client({...})` in Node or `new Client(new ClientOptions(...))` in PHP. Pass request overrides as the second method argument: a plain object in Node or `new RequestOptions(...)` in PHP.
+Pass client defaults to `new Client({...})` in Node or `new Client(new ClientOptions(...))` in PHP. Pass request overrides as the last method argument: a plain object in Node or `new RequestOptions(...)` in PHP.
 
-| Option                    | Where             | Default and behavior                                                                                                               |
-| ------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `baseUrl`                 | Client            | Required. HTTPS API base, without credentials, query or fragment.                                                                  |
-| `token`                   | Client            | Absent. Used for the contract's selected bearer or header API-key scheme.                                                          |
-| `allowedOrigins`          | Client            | Only the base URL origin. Applies to every destination, including pagination links.                                                |
-| `allowInsecureHttp`       | Client            | `false`; enable only for deliberate local HTTP tests.                                                                              |
-| `timeoutMs`               | Client or request | `10000`; positive duration per attempt, including response body consumption.                                                       |
-| `deadlineMs`              | Client or request | `30000`; positive overall duration, not an absolute timestamp. Includes retry waits; pagination and polling share it across calls. |
-| `maxAttempts`             | Client or request | The operation's declared limit, or `1` without a retry declaration. Overrides must be within the declared limit.                   |
-| `transport`               | Client            | Native fetch in Node, reusable cURL in PHP. Injected transports are caller-owned.                                                  |
-| `diagnostics`             | Client            | Optional callback receiving operation, attempt, status, request ID, timing and error kind, without bodies or credentials.          |
-| `redactFields`            | Client            | Additional field names to redact in model inspection, error messages and parsed error details. Does not change response data.      |
-| `headers`                 | Request           | Request-local header map; includes tenant context and optional User-Agent override. A configured API-version pin takes precedence. |
-| `idempotencyKey`          | Request           | Caller-owned stable key for a declared idempotent operation. Persist across retries and process restarts.                          |
-| `ifMatch`                 | Request           | Value for the declared conditional header, including when that header is `If-None-Match`.                                          |
-| `signal` / `cancellation` | Request           | Node `AbortSignal` / PHP `Cancellation` token. Stops local work, not a remote mutation.                                            |
-| `maxPages`, `maxItems`    | Request           | Optional positive limits for generated iterators; the overall deadline always applies.                                             |
+| Option                    | Where             | Default and behavior                                                                                                                                           |
+| ------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `baseUrl`                 | Client            | Required. HTTPS API base, without credentials, query or fragment.                                                                                              |
+| `token`                   | Client            | Absent. Used for the contract's selected bearer or header API-key scheme.                                                                                      |
+| `allowedOrigins`          | Client            | Only the base URL origin. Applies to every destination, including pagination links.                                                                            |
+| `allowInsecureHttp`       | Client            | `false`; enable only for deliberate local HTTP tests.                                                                                                          |
+| `timeoutMs`               | Client or request | `10000`; positive duration per attempt, including response body consumption.                                                                                   |
+| `deadlineMs`              | Client or request | `30000`; positive overall duration, not an absolute timestamp. Includes retry waits; pagination and polling share it across calls.                             |
+| `maxAttempts`             | Client or request | A positive safe integer budget capped at the operation limit. Defaults: 3 for GET/HEAD/OPTIONS, 1 for other methods; explicit policies replace these defaults. |
+| `transport`               | Client            | Native fetch in Node, reusable cURL in PHP. Injected transports are caller-owned.                                                                              |
+| `diagnostics`             | Client            | Optional callback receiving operation, attempt, status, request ID, timing and error kind, without bodies or credentials.                                      |
+| `redactFields`            | Client            | Additional field names to redact in model inspection, error messages and parsed error details. Does not change response data.                                  |
+| `headers`                 | Request           | Request-local header map; includes tenant context and optional User-Agent override. A configured API-version pin takes precedence.                             |
+| `idempotencyKey`          | Request           | Caller-owned stable key for a declared idempotent operation. Persist across retries and process restarts.                                                      |
+| `ifMatch`                 | Request           | Value for the declared conditional header, including when that header is `If-None-Match`.                                                                      |
+| `signal` / `cancellation` | Request           | Node `AbortSignal` / PHP `Cancellation` token. Stops local work, not a remote mutation.                                                                        |
+| `maxPages`, `maxItems`    | Request           | Optional positive limits for generated iterators; the overall deadline always applies.                                                                         |
 
 Required conditional headers can be supplied through `ifMatch` or request headers; configured API-version pins also satisfy required headers without duplicate input fields. Effective managed values are validated before dispatch. With `idempotency.auto: true`, required idempotency headers receive an automatic key when none is supplied; provide an explicit compatible key when the generated format fails the declared schema.
 
-Request timeout, deadline and attempt settings take precedence over client defaults. Increasing `maxAttempts` cannot enable an undeclared retry policy. Avoid setting a client-wide retry count greater than the limit of any operation you call. No mutable client-wide tenant headers are shared between calls.
+Request timeout, deadline and attempt settings take precedence over client defaults. Client and request `maxAttempts` budgets are capped at the operation limit, so a shared client budget is safe across operations. A request budget overrides the client budget. Set `maxAttempts: 1` to disable retries. A budget cannot enable undeclared mutation retries. No mutable client-wide tenant headers are shared between calls.
 
 Node clients can serve concurrent calls within an event loop. PHP clients support sequential calls within one execution context; do not share a client concurrently across threads or fibers. Close PHP clients to release their owned cURL handle. Injected transports must honor cancellation/timeouts and disable their own redirects and retries; they receive credentials and bodies. Node clients with streaming operations expose `close()` to release owned streams. Non-streaming Node clients need no cleanup and do not expose `close()`. The default fetch pool belongs to the runtime, and a custom transport's cleanup belongs to its caller.
 
@@ -144,7 +143,7 @@ The exception message contains the server explanation selected by `errors.messag
 | `response` | A response was received. Inspect status and provider error code; a response alone does not establish a successful business effect.                        |
 | `unknown`  | The remote effect is uncertain. Reconcile with the provider, or recover using the same persisted idempotency key within its declared retention and scope. |
 
-The SDK applies only declared bounded retries. `retryAllowed` reports retry eligibility; it does not grant permission to create a new business operation or exceed the provider policy. A lost response must not cause a fresh mutation with a different key. Automatic idempotency keys last for one SDK call; application resubmission requires a persisted caller key. Conflicting keys across operation headers, request headers and `idempotencyKey` fail before dispatch.
+Without an explicit operation policy, GET/HEAD/OPTIONS retry transport failures and HTTP 408, 429, 500, 502, 503 and 504, with three total attempts and exponential jitter starting at a 100 ms base. Explicit policies replace these defaults. Mutations require declared retry and idempotency support and a valid key to retry. Without an optional key they send once; required keys remain required. TypeScript exposes `idempotencyKey` only on supported method options; PHP retains shared `RequestOptions` and rejects unsupported keys at runtime. `retryAllowed` reports retry eligibility; it does not grant permission to create a new business operation or exceed the provider policy. A lost response must not cause a fresh mutation with a different key. Automatic idempotency keys last for one SDK call; application resubmission requires a persisted caller key. Conflicting keys across operation headers, request headers and `idempotencyKey` fail before dispatch.
 
 Ordinary error inspection includes the message, status, provider code, redacted details and stack frames. Message extraction, provider codes and details apply schema and `redactFields` redaction. PHP debug traces omit call arguments. Diagnostics report status and kind without messages, details or stack traces. `raw`, response headers, arbitrary `data` logging and injected transports require application-level handling of sensitive information.
 

@@ -1,3 +1,4 @@
+import { compileRetry } from './runtime-plan.js';
 import type { Contract, Operation, Schema } from './contract.js';
 import { schemaNotes } from './schema-documentation.js';
 
@@ -102,6 +103,7 @@ export function authenticationGuide(c: Contract): string {
   );
 }
 export function operationGuidance(c: Contract, op: Operation): string {
+  const { retry, replay } = compileRetry(op);
   return (
     (op.response?.return === 'payload'
       ? `Returns ${op.response.payloadPath ? 'the payload at `' + cell(op.response.payloadPath) + '`' : 'the complete decoded body'} directly. Use \`${op.method}WithResponse\` for \`body\`, \`meta\` and \`raw\` without unwrapping.\n\n`
@@ -109,10 +111,19 @@ export function operationGuidance(c: Contract, op: Operation): string {
     (c.authentication
       ? `Authentication modes: ${op.authModes?.map((m) => '`' + m + '`').join(', ') || 'none (unauthenticated)'}. See [credential setup](RUNTIME.md#authentication).\n\n`
       : '') +
-    `Request options are the second argument. Default attempts: ${op.retry?.maxAttempts ?? 1}; maximum: ${op.retry?.maxAttempts ?? 1}. ` +
-    (op.idempotency
-      ? 'For mutation retries, supply a stable idempotency key and reuse it for the same business action. '
+    `Pass request options as the last argument. Attempt limit: ${retry.maxAttempts}. Client and request maxAttempts are capped at this limit. ` +
+    (retry.maxAttempts > 1
+      ? `Retry statuses: ${retry.statuses.join(', ') || 'none'}; transport retries: ${retry.transport ? 'enabled' : 'disabled'}. `
+      : 'The SDK sends at most one attempt. ') +
+    (retry.maxAttempts > 1 && retry.errors?.length
+      ? `Code-specific retries: ${retry.errors.map((rule) => `HTTP ${rule.status} (${rule.codes.map((code) => '`' + cell(code) + '`').join(', ')})`).join('; ')}. `
       : '') +
+    (replay === 'idempotency' && op.idempotency && !op.idempotency.auto
+      ? 'Without an optional idempotency key, mutations send once; required keys remain required. '
+      : '') +
+    (op.idempotency
+      ? `Supports idempotencyKey for the declared ${op.idempotency.header} header. Persist and reuse the key for the same business action. ${op.idempotency.auto ? 'When no key is supplied, the SDK generates one for this call; automatic keys cover one SDK call only. ' : ''}`
+      : 'idempotencyKey is not supported on this operation. ') +
     (op.conditional
       ? `Use \`ifMatch\` to send the declared \`${op.conditional.header}\` header. `
       : '') +

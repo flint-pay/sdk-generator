@@ -1,31 +1,31 @@
 # Support matrix (generator 0.1.0)
 
-A capability must be declared to generate its public helper. Both targets implement the declared contract through bundled compiled codecs, with the target differences described below. A missing capability is not inferred from a payment resource name, HTTP verb, or field name.
+A capability must be declared to generate its public helper. Both targets implement the declared contract through bundled compiled codecs, with the target differences described below. A missing provider capability is not inferred from a payment resource name or field name. GET/HEAD/OPTIONS have bounded default retries; mutation retries and idempotency still require declarations.
 
-| Capability                 | Node.js/TypeScript                                                   | PHP                                                                          |
-| -------------------------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Runtime/package            | Node 22+, ESM; TypeScript 5.9+ for TypeScript consumers              | PHP 8.2+, Composer, ext-json/ext-curl                                        |
-| Authentication             | Named complete bearer/header API-key modes                           | Same                                                                         |
-| Credential destinations    | Allowed origins; return declared redirects; reject unsafe links      | Same                                                                         |
-| Per-request tenant headers | Concurrent calls with isolated options                               | Isolated sequential calls; no cross-thread sharing                           |
-| Exact integers/decimals    | Numeric strings, exact JSON token serializer/parser                  | Same shared safe integer boundary                                            |
-| Omission/null              | Optional properties, nullable unions                                 | Presence-aware input classes and typed accessors                             |
-| Structured errors          | Server message, status, kind/code/details/cause/outcome, debug stack | Server message, status, kind/errorCode/details/previous/outcome, debug stack |
-| Response compatibility     | Unknown fields/enums/tags preserved                                  | Same, with typed object response accessors                                   |
-| Retries/idempotency        | Declared policies, jitter, Retry-After, stable key                   | Same                                                                         |
-| Timeout/deadline           | Per attempt and overall; AbortSignal                                 | cURL timeout/progress; Cancellation token                                    |
-| Pagination                 | Async page/item generators, limits                                   | PHP generators, limits                                                       |
-| Polling                    | Declared states, deadline, local cancellation                        | Same                                                                         |
-| Conditional requests       | Declared precondition header; distinct 409/412, declared 304         | Same                                                                         |
-| HMAC webhook verification  | Raw bytes, timestamp tolerance, rotating secrets, unknown events     | Same                                                                         |
-| Durable webhook example    | SQLite inbox/outbox workers, Node 22.16+                             | PDO SQLite inbox/outbox workers                                              |
-| Money helpers              | Optional explicit currency precision; no implicit rounding           | Same                                                                         |
-| Diagnostics                | Every HTTP attempt, including failures, no credentials/bodies        | Same                                                                         |
-| Schema-taking helpers      | `serialize`, `Model`, `redact`; bundled local schema adapter         | Base `Model` and `Codec` helpers; local schema adapter                       |
-| Custom runtime             | Caller-owned fetch-compatible function                               | Caller-owned Closure transport                                               |
-| Client lifetime            | Reusable per event loop; default fetch connection pool               | Reusable owned cURL handle; explicit close                                   |
-| Package/docs/examples      | npm, JS and TS examples/reference                                    | Composer, PHP examples/reference                                             |
-| Validation                 | Typecheck, syntax, package, shared HTTP fixtures, install tests      | Syntax, Composer validation, shared fixtures, install tests                  |
+| Capability                 | Node.js/TypeScript                                                    | PHP                                                                          |
+| -------------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Runtime/package            | Node 22+, ESM; TypeScript 5.9+ for TypeScript consumers               | PHP 8.2+, Composer, ext-json/ext-curl                                        |
+| Authentication             | Named complete bearer/header API-key modes                            | Same                                                                         |
+| Credential destinations    | Allowed origins; return declared redirects; reject unsafe links       | Same                                                                         |
+| Per-request tenant headers | Concurrent calls with isolated options                                | Isolated sequential calls; no cross-thread sharing                           |
+| Exact integers/decimals    | Numeric strings, exact JSON token serializer/parser                   | Same shared safe integer boundary                                            |
+| Omission/null              | Optional properties, nullable unions                                  | Presence-aware input classes and typed accessors                             |
+| Structured errors          | Server message, status, kind/code/details/cause/outcome, debug stack  | Server message, status, kind/errorCode/details/previous/outcome, debug stack |
+| Response compatibility     | Unknown fields/enums/tags preserved                                   | Same, with typed object response accessors                                   |
+| Retries/idempotency        | Read defaults, capped budgets, declared mutation policies, stable key | Same                                                                         |
+| Timeout/deadline           | Per attempt and overall; AbortSignal                                  | cURL timeout/progress; Cancellation token                                    |
+| Pagination                 | Async page/item generators, limits                                    | PHP generators, limits                                                       |
+| Polling                    | Declared states, deadline, local cancellation                         | Same                                                                         |
+| Conditional requests       | Declared precondition header; distinct 409/412, declared 304          | Same                                                                         |
+| HMAC webhook verification  | Raw bytes, timestamp tolerance, rotating secrets, unknown events      | Same                                                                         |
+| Durable webhook example    | SQLite inbox/outbox workers, Node 22.16+                              | PDO SQLite inbox/outbox workers                                              |
+| Money helpers              | Optional explicit currency precision; no implicit rounding            | Same                                                                         |
+| Diagnostics                | Every HTTP attempt, including failures, no credentials/bodies         | Same                                                                         |
+| Schema-taking helpers      | `serialize`, `Model`, `redact`; bundled local schema adapter          | Base `Model` and `Codec` helpers; local schema adapter                       |
+| Custom runtime             | Caller-owned fetch-compatible function                                | Caller-owned Closure transport                                               |
+| Client lifetime            | Reusable per event loop; default fetch connection pool                | Reusable owned cURL handle; explicit close                                   |
+| Package/docs/examples      | npm, JS and TS examples/reference                                     | Composer, PHP examples/reference                                             |
+| Validation                 | Typecheck, syntax, package, shared HTTP fixtures, install tests       | Syntax, Composer validation, shared fixtures, install tests                  |
 
 ## Exact OpenAPI subset
 
@@ -73,7 +73,7 @@ Nested constraint changes in `allOf`, `anyOf`, and `not` can receive only a `rev
 - OAuth refresh and token cache coordination. Obtain the bearer token in your application and pass it as `token`.
 - Bulk helpers, additional protocols and languages, adaptive throttling, caching and dirty tracking, framework packages, checkout UI, portals, forwarding and replay services, and time simulation.
 
-The schema can still express per-item bulk results, resource relationships, next actions and exports as ordinary data. Automatic behavior requires a declared provider capability; a resource property alone never triggers network activity.
+The schema can still express per-item bulk results, resource relationships, next actions and exports as ordinary data. Automatic provider behavior requires a declared capability, except for bounded default retries on GET/HEAD/OPTIONS; a resource property alone never triggers network activity.
 
 Undeclared optional capabilities produce no helper. Unsupported or incomplete capability declarations produce diagnostics. An operation with unsupported wire semantics fails generation rather than shipping as a working SDK.
 
