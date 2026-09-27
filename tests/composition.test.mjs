@@ -327,9 +327,7 @@ test('generated quickstart inputs satisfy composed request schemas', async () =>
     file.endsWith('.mjs'),
   )) {
     const source = readFileSync(join(output, 'node/examples', file), 'utf8');
-    const match = source.match(
-      /const result = await client\.api\.([^(]+)\(\s*([\s\S]*?),\s*\{ maxAttempts: 1 \},?\s*\);/,
-    );
+    const match = source.match(/const result = await client\.api\.([^(]+)\(\s*([\s\S]*?)\s*\);/);
     assert.ok(match, file);
     let dispatched = false;
     const client = new Client({

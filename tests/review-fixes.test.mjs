@@ -807,6 +807,7 @@ test('diagnosis rejects TypeScript built-ins and forbidden aliases with model re
     'Promise',
     'AsyncGenerator',
     'Record',
+    'Omit',
     'Exclude',
     'unknown',
     'any',

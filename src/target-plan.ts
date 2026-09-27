@@ -25,7 +25,7 @@ import {
 import { compileRuntimePlan, successStatus, type CompiledRuntimePlan } from './runtime-plan.js';
 import { compileResultPlan, type ResponsePlan } from './response-plan.js';
 import { compileSchemaPolicy, type SchemaPolicy } from './schema-policy.js';
-export { successStatus };
+export { successStatus, RETRY_DEFAULTS } from './runtime-plan.js';
 const pascal = (s: string) => s[0]!.toUpperCase() + s.slice(1);
 
 export function inputSchema(op: Operation, apiVersion?: Contract['config']['apiVersion']): Schema {
@@ -331,6 +331,22 @@ function compileAuthentication(c: Contract): NodeAuthenticationPlan | undefined 
   return { declarations, modes };
 }
 
+function operationOptions(
+  op: Operation,
+  authentication: NodeAuthenticationPlan | undefined,
+): string {
+  const base = authentication
+    ? `RequestOptions<${
+        op.authModes
+          ?.slice()
+          .sort()
+          .map((mode) => JSON.stringify(mode))
+          .join(' | ') || 'never'
+      }>`
+    : 'RequestOptions';
+  return op.idempotency ? base : `_SdkWithoutIdempotency<${base}>`;
+}
+
 const js = (v: unknown) => JSON.stringify(v, null, 2)?.replaceAll('"__proto__":', '["__proto__"]:');
 const php = (s: string) => "'" + s.replaceAll('\\', '\\\\').replaceAll("'", "\\'") + "'";
 function compileRequestCall(op: Operation, c: Contract, optionsType: string) {
@@ -462,6 +478,7 @@ export interface CompiledSdkContract {
         documentedOutput?: string;
         inputRequired: boolean;
         requestOptions?: string;
+        idempotencyKey?: boolean;
         authModes?: string[];
         items: string;
         known?: { type: string; codecs: CodecPlan[] };
@@ -573,19 +590,7 @@ export function compileSdkContract(source: Contract): {
             c.operations.filter(positional).map((op) => [
               op.id,
               {
-                ...compileRequestCall(
-                  op,
-                  c,
-                  authentication
-                    ? `RequestOptions<${
-                        op.authModes
-                          ?.slice()
-                          .sort()
-                          .map((mode) => JSON.stringify(mode))
-                          .join(' | ') || 'never'
-                      }>`
-                    : 'RequestOptions',
-                ),
+                ...compileRequestCall(op, c, operationOptions(op, authentication)),
                 paths: pathParameters(op).map((p) => p.name),
                 params: hasParams(op),
               },
@@ -647,15 +652,8 @@ export function compileSdkContract(source: Contract): {
               documentedInput: operationInputType(op, models, true, c.config.apiVersion),
               output: resultType(op, models),
               inputRequired: Boolean(inputSchema(op, c.config.apiVersion).required?.length),
-              requestOptions: authentication
-                ? `RequestOptions<${
-                    op.authModes
-                      ?.slice()
-                      .sort()
-                      .map((mode) => JSON.stringify(mode))
-                      .join(' | ') || 'never'
-                  }>`
-                : 'RequestOptions',
+              requestOptions: operationOptions(op, authentication),
+              idempotencyKey: Boolean(op.idempotency),
               ...(authentication ? { authModes: op.authModes?.slice().sort() ?? [] } : {}),
               items: op.pagination
                 ? [...new Set(itemSchemas(op).map((s) => namedType(s, models, true)))].join(

@@ -141,7 +141,7 @@ for (const [name, header, key, components] of [
       runExample(f, target, readme, key);
     }
     const hover = f.read('node/index.d.ts');
-    assert.match(hover, /@example .*API_IDEMPOTENCY_KEY/);
+    assert.match(hover, /@example[\s\S]*?API_IDEMPOTENCY_KEY/);
   });
 
 test('bounded ordinary string keys retain automatic generation when their lengths permit it', () => {
@@ -192,6 +192,7 @@ test('historical unrestricted authentication options cannot migrate in a semver 
   for (const op of Object.values(historical.node.operations)) {
     delete op.requestOptions;
     delete op.authModes;
+    delete op.idempotencyKey;
   }
   const roundtrip = restoreCompiledSnapshot(
     storeCompiledSnapshot({
@@ -258,7 +259,8 @@ export function create(options:RequestOptions={}) { return client.api.createValu
       /export type RequestOptions<M extends AuthMode = AuthMode> =[^\n]+\n/,
       'export type RequestOptions = RuntimeRequestOptions;\n',
     )
-    .replace(/RequestOptions<[^>]+>/g, 'RequestOptions');
+    .replace(/RequestOptions<[^>]+>/g, 'RequestOptions')
+    .replace(/_SdkWithoutIdempotency<RequestOptions>/g, 'RequestOptions');
   writeFileSync(declarationPath, legacy);
   execFileSync(process.execPath, tsc, { stdio: 'pipe' });
   writeFileSync(declarationPath, declarations);

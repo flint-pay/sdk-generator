@@ -75,7 +75,7 @@ Generated Node packages require Node.js 22+ and support ESM JavaScript. TypeScri
 
 - Diagnostics that point at the contract or configuration location that needs attention. Local references, explicit semantic overrides, naming, audience and operation selection, and automatic inclusion of the models a selected operation needs.
 - Typed interfaces and examples in both targets. Exact integer and decimal encoding, a distinction between an omitted field and an explicit null, and responses that keep unknown fields, enum values and tagged alternatives instead of failing on them.
-- Explicit credential destinations, per-request headers, structured errors, request metadata, redacted diagnostics, injectable transports, cancellation, deadlines, and retries and idempotency bounded by what the contract declares.
+- Explicit credential destinations, per-request headers, structured errors, request metadata, redacted diagnostics, injectable transports, cancellation, deadlines, and bounded read retries and provider-declared mutation retries and idempotency.
 - Declared cursor, offset and link pagination, conditional requests, bounded polling, HMAC webhook verification and optional money conversion.
 - Deterministic regeneration that detects hand edits, previews without writing, compares public interfaces and runtime guarantees against saved compiled contracts, validates packages, and prepares release archives, reference documentation and migration notes.
 - Provider narrative guides, npm publication, and coordinated deployment of versioned documentation and a Composer repository with artifact checksums and immutable releases.

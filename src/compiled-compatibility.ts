@@ -57,16 +57,41 @@ export function compareCompiledContracts(
         (old.requestOptions ?? 'RequestOptions') === (current.requestOptions ?? 'RequestOptions')
       )
         continue;
+      const keyNarrowed = old.idempotencyKey !== false && current.idempotencyKey === false;
+      const keyWidened = old.idempotencyKey === false && current.idempotencyKey === true;
+      const authUnchanged = stable(old.authModes) === stable(current.authModes);
       const widened =
-        old.authModes !== undefined &&
-        current.authModes !== undefined &&
-        old.authModes.every((mode) => current.authModes!.includes(mode));
+        !keyNarrowed &&
+        ((keyWidened && authUnchanged) ||
+          (old.authModes !== undefined &&
+            current.authModes !== undefined &&
+            old.authModes.every((mode) => current.authModes!.includes(mode))));
       findings.push({
         severity: widened ? 'additive' : 'breaking',
         subject: id + '.options',
         message: widened
-          ? 'Operation authentication option types accept additional modes.'
+          ? 'Operation request option types accept additional capabilities or authentication modes.'
           : 'Operation RequestOptions were narrowed; update callers that forward shared options.',
+      });
+    }
+  }
+  for (const old of previous.runtime.operations) {
+    const current = next.runtime.operations.find((op) => op.id === old.id);
+    if (
+      current &&
+      (previous.runtime.retrySemantics !== next.runtime.retrySemantics ||
+        stable({ retry: old.retry, replay: old.replay, idempotency: old.idempotency }) !==
+          stable({
+            retry: current.retry,
+            replay: current.replay,
+            idempotency: current.idempotency,
+          }))
+    ) {
+      findings.push({
+        severity: 'review',
+        subject: old.id + '.retry',
+        message:
+          'Effective retry or idempotency behavior changed; review attempt budgets, automatic read retries, and mutation key requirements in both targets.',
       });
     }
   }

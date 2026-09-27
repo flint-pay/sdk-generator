@@ -85,7 +85,8 @@ final class RequestOptions
         public readonly ?string $ifMatch = null,
         public readonly ?int $timeoutMs = null,
         public readonly ?int $deadlineMs = null,
-        public readonly ?int $maxAttempts = null,
+        // Keep fractions intact in weak-mode PHP so request validation can reject them.
+        public readonly int|float|null $maxAttempts = null,
         public readonly ?Cancellation $cancellation = null,
         public readonly ?int $maxPages = null,
         public readonly ?int $maxItems = null,
@@ -133,7 +134,8 @@ final class ClientOptions
         public readonly bool $allowInsecureHttp = false,
         public readonly int $timeoutMs = 10000,
         public readonly int $deadlineMs = 30000,
-        public readonly ?int $maxAttempts = null,
+        // Keep fractions intact in weak-mode PHP so request validation can reject them.
+        public readonly int|float|null $maxAttempts = null,
         public readonly ?\Closure $transport = null,
         public readonly ?\Closure $diagnostics = null,
         public readonly array $redactFields = [],
@@ -2888,7 +2890,8 @@ class Runtime
             : \SdkNamespace\Internal\SchemaAdapter::runtimePlan($contract);
         if (
             ($this->contract['format'] ?? null) !== 1 ||
-            !is_string($this->contract['semantics'] ?? null)
+            !is_string($this->contract['semantics'] ?? null) ||
+            ($this->contract['retrySemantics'] ?? null) !== 'budgets-1'
         ) {
             throw new \InvalidArgumentException('Unsupported compiled runtime format');
         }
@@ -2970,6 +2973,62 @@ class Runtime
                 !is_array($op['responses'] ?? null)
             ) {
                 throw new \InvalidArgumentException('Invalid compiled operation');
+            }
+            $policy = $op['retry'] ?? null;
+            if (
+                !is_array($policy) ||
+                !in_array($op['replay'] ?? null, ['safe', 'idempotency'], true) ||
+                !is_int($policy['maxAttempts'] ?? null) ||
+                $policy['maxAttempts'] < 1 ||
+                $policy['maxAttempts'] > 10 ||
+                !is_array($policy['statuses'] ?? null) ||
+                !array_is_list($policy['statuses']) ||
+                !is_bool($policy['transport'] ?? null) ||
+                (!is_int($policy['baseDelayMs'] ?? null) &&
+                    !is_float($policy['baseDelayMs'] ?? null)) ||
+                !is_finite((float) $policy['baseDelayMs']) ||
+                $policy['baseDelayMs'] < 0 ||
+                ($op['replay'] === 'idempotency' &&
+                    $policy['maxAttempts'] > 1 &&
+                    !isset($op['idempotency']))
+            ) {
+                throw new \InvalidArgumentException('Invalid compiled retry policy');
+            }
+            foreach ($policy['statuses'] as $status) {
+                if (
+                    !is_int($status) ||
+                    $status < 400 ||
+                    $status > 599 ||
+                    in_array($status, [409, 412], true)
+                ) {
+                    throw new \InvalidArgumentException('Invalid compiled retry status');
+                }
+            }
+            if (array_key_exists('errors', $policy)) {
+                if (!is_array($policy['errors']) || !array_is_list($policy['errors'])) {
+                    throw new \InvalidArgumentException('Invalid compiled retry errors');
+                }
+                foreach ($policy['errors'] as $rule) {
+                    if (
+                        !is_array($rule) ||
+                        !is_int($rule['status'] ?? null) ||
+                        $rule['status'] < 400 ||
+                        $rule['status'] > 599 ||
+                        $rule['status'] === 412 ||
+                        !is_array($rule['codes'] ?? null) ||
+                        !array_is_list($rule['codes']) ||
+                        !$rule['codes'] ||
+                        ($rule['status'] === 409 &&
+                            (!isset($op['idempotency']) || isset($op['conditional'])))
+                    ) {
+                        throw new \InvalidArgumentException('Invalid compiled retry errors');
+                    }
+                    foreach ($rule['codes'] as $code) {
+                        if (!is_string($code) || trim($code) === '') {
+                            throw new \InvalidArgumentException('Invalid compiled retry code');
+                        }
+                    }
+                }
             }
             foreach ($op['parameters'] as $parameter) {
                 Codec::assertPlan($parameter['codec'], $op['id'] . '.parameter');
@@ -3165,16 +3224,17 @@ class Runtime
             Codec::fail('options', 'timeouts must be positive');
         }
         $deadline = $start + $duration;
-        $policy = $op['retry'] ?? [
-            'maxAttempts' => 1,
-            'statuses' => [],
-            'transport' => false,
-            'baseDelayMs' => 100,
-        ];
-        $attempts = $o->maxAttempts ?? ($this->options->maxAttempts ?? $policy['maxAttempts']);
-        if ($attempts < 1 || $attempts > $policy['maxAttempts']) {
-            Codec::fail('maxAttempts', 'must be within the provider-declared retry limit');
+        $policy = $op['retry'];
+        $budget = $o->maxAttempts ?? ($this->options->maxAttempts ?? $policy['maxAttempts']);
+        if (
+            !is_finite((float) $budget) ||
+            $budget < 1 ||
+            $budget > 9007199254740991 ||
+            floor($budget) != $budget
+        ) {
+            Codec::fail('maxAttempts', 'must be a positive safe integer');
         }
+        $attempts = min((int) $budget, $policy['maxAttempts']);
         $headers = [
             'accept' =>
                 implode(
@@ -3479,13 +3539,10 @@ class Runtime
             $set($op['idempotency']['header'], $key);
         }
         $safe =
-            in_array($op['verb'], ['GET', 'HEAD', 'OPTIONS'], true) ||
+            $op['replay'] === 'safe' ||
             isset($headers[strtolower($op['idempotency']['header'] ?? '')]);
-        if ($attempts > 1 && !$safe) {
-            Codec::fail(
-                'idempotencyKey',
-                'persist and supply a key before enabling mutation retries',
-            );
+        if (!$safe) {
+            $attempts = 1;
         }
         $body = null;
         if (array_key_exists('body', $input)) {

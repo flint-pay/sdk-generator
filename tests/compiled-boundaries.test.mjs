@@ -211,7 +211,12 @@ test('new compiled assertions and stream descriptors reject malformed serialized
     { checks: { maxProperties: 0.1 } },
   ])
     assert.throws(() => assertCodecPlan({ ...codec, ...patch }), /invalid compiled codec/);
-  const runtime = { format: CODEC_FORMAT, semantics: CODEC_SEMANTICS, operations: [] };
+  const runtime = {
+    format: CODEC_FORMAT,
+    semantics: CODEC_SEMANTICS,
+    retrySemantics: 'budgets-1',
+    operations: [],
+  };
   assert.doesNotThrow(() => assertRuntimePlan(runtime));
   for (const patch of [
     { streamEventSchemas: {} },

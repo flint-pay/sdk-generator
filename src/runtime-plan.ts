@@ -5,6 +5,7 @@ export const AUTH_SHORTCUT_RESERVED = new Set(
 );
 import type {
   Operation,
+  Retry,
   Schema,
   Auth,
   Webhook,
@@ -41,8 +42,41 @@ export interface RuntimeContract {
   errors?: Config['errors'];
 }
 
+/** Shared defaults also rendered into the PHP dynamic-contract adapter. */
+export const RETRY_DEFAULTS = {
+  safeMethods: ['GET', 'HEAD', 'OPTIONS'],
+  read: {
+    maxAttempts: 3,
+    statuses: [408, 429, 500, 502, 503, 504],
+    transport: true,
+    baseDelayMs: 100,
+  },
+  mutation: { maxAttempts: 1, statuses: [], transport: false, baseDelayMs: 100 },
+};
+export const RETRY_SEMANTICS = 'budgets-1';
+
+export function compileRetry(op: Pick<Operation, 'verb' | 'retry'>): {
+  retry: Retry;
+  replay: 'safe' | 'idempotency';
+} {
+  const safe = RETRY_DEFAULTS.safeMethods.includes(op.verb);
+  const policy: Retry = op.retry ?? (safe ? RETRY_DEFAULTS.read : RETRY_DEFAULTS.mutation);
+  return {
+    replay: safe ? 'safe' : 'idempotency',
+    retry: {
+      ...policy,
+      statuses: [...policy.statuses],
+      ...(policy.errors
+        ? { errors: policy.errors.map((rule) => ({ ...rule, codes: [...rule.codes] })) }
+        : {}),
+    },
+  };
+}
+
 export interface CompiledOperation
-  extends Omit<Operation, 'parameters' | 'body' | 'responses' | 'streamEventSchemas'> {
+  extends Omit<Operation, 'parameters' | 'body' | 'responses' | 'streamEventSchemas' | 'retry'> {
+  retry: Retry;
+  replay: 'safe' | 'idempotency';
   streamEventCodecs?: Record<string, CodecPlan>;
   parameters: (Omit<Operation['parameters'][number], 'schema'> & { codec: CodecPlan })[];
   body?: CodecPlan;
@@ -62,6 +96,7 @@ export interface CompiledRuntimePlan
   extends Omit<RuntimeContract, 'operations' | 'definitions' | 'webhook' | 'incoming'> {
   format: typeof CODEC_FORMAT;
   semantics: string;
+  retrySemantics?: typeof RETRY_SEMANTICS;
   operations: CompiledOperation[];
   incoming?: (Omit<IncomingWebhook, 'schema'> & { codec: CodecPlan })[];
   definitions?: Record<string, CodecPlan>;
@@ -82,6 +117,7 @@ export function compileRuntimePlan(contract: RuntimeContract): CompiledRuntimePl
     ...settings,
     format: CODEC_FORMAT,
     semantics: CODEC_SEMANTICS,
+    retrySemantics: RETRY_SEMANTICS,
     ...(incoming
       ? {
           incoming: incoming.map(({ schema, ...declaration }) => ({
@@ -101,6 +137,7 @@ export function compileRuntimePlan(contract: RuntimeContract): CompiledRuntimePl
       const successJsonFallback = jsonSuccesses.length === 1 ? jsonSuccesses[0]?.[0] : undefined;
       return {
         ...operation,
+        ...compileRetry(op),
         ...(successJsonFallback === undefined ? {} : { successJsonFallback }),
         ...(streamEventSchemas
           ? {
@@ -153,7 +190,10 @@ export function compileRuntimePlan(contract: RuntimeContract): CompiledRuntimePl
   };
 }
 
-export function assertRuntimePlan(value: unknown): asserts value is CompiledRuntimePlan {
+export function assertRuntimePlan(
+  value: unknown,
+  historical = false,
+): asserts value is CompiledRuntimePlan {
   function record(value: unknown, path: string): Record<string, unknown> {
     if (!value || typeof value !== 'object' || Array.isArray(value))
       throw new Error(path + ': invalid compiled runtime record');
@@ -162,6 +202,9 @@ export function assertRuntimePlan(value: unknown): asserts value is CompiledRunt
   const plan = record(value, 'runtime');
   if (plan.format !== CODEC_FORMAT || typeof plan.semantics !== 'string')
     throw new Error('Unsupported compiled runtime format');
+  const legacyRetry = historical && plan.retrySemantics === undefined;
+  if (!legacyRetry && plan.retrySemantics !== RETRY_SEMANTICS)
+    throw new Error('Unsupported compiled retry semantics');
   if (!Array.isArray(plan.operations)) throw new Error('Missing compiled operations');
   if (plan.authentication !== undefined)
     for (const [name, value] of Object.entries(record(plan.authentication, 'authentication'))) {
@@ -230,6 +273,46 @@ export function assertRuntimePlan(value: unknown): asserts value is CompiledRunt
       !Array.isArray(op.parameters)
     )
       throw new Error('Invalid compiled operation');
+    if (!legacyRetry || op.retry !== undefined) {
+      const retry = record(op.retry, `${op.id}.retry`);
+      if (
+        (!legacyRetry && op.replay !== 'safe' && op.replay !== 'idempotency') ||
+        !Number.isInteger(retry.maxAttempts) ||
+        Number(retry.maxAttempts) < 1 ||
+        Number(retry.maxAttempts) > 10 ||
+        !Array.isArray(retry.statuses) ||
+        retry.statuses.some(
+          (status) =>
+            !Number.isInteger(status) ||
+            status < 400 ||
+            status > 599 ||
+            [409, 412].includes(status),
+        ) ||
+        typeof retry.transport !== 'boolean' ||
+        typeof retry.baseDelayMs !== 'number' ||
+        !Number.isFinite(retry.baseDelayMs) ||
+        retry.baseDelayMs < 0 ||
+        (op.replay === 'idempotency' && Number(retry.maxAttempts) > 1 && !op.idempotency)
+      )
+        throw new Error(`${op.id}: invalid compiled retry policy`);
+      if (retry.errors !== undefined) {
+        if (!Array.isArray(retry.errors)) throw new Error('Invalid compiled retry errors');
+        for (const item of retry.errors) {
+          const rule = record(item, 'retry.errors');
+          if (
+            !Number.isInteger(rule.status) ||
+            Number(rule.status) < 400 ||
+            Number(rule.status) > 599 ||
+            rule.status === 412 ||
+            !Array.isArray(rule.codes) ||
+            !rule.codes.length ||
+            rule.codes.some((code) => typeof code !== 'string' || !code.trim()) ||
+            (rule.status === 409 && (!op.idempotency || op.conditional))
+          )
+            throw new Error('Invalid compiled retry errors');
+        }
+      }
+    }
     for (const parameter of op.parameters) {
       const field = record(parameter, `${op.id}.parameter`);
       if (

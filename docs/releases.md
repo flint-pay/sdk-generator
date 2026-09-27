@@ -86,3 +86,11 @@ The destination is a dedicated provider-owned web root or hosting checkout. Depl
 Consumers add `{ "type": "composer", "url": "https://sdk.example.com/" }` to their Composer repositories and install the generated package normally. The test suite installs from a generated repository served locally over HTTP.
 
 Publish npm and the site as separate reviewed steps. `publication.json` and `site-publication.json` record the respective outcomes. If one destination succeeds and the other fails, preserve the successful immutable version and retry only the failed step after checking its state; do not rebuild different contents under an already published version. The two destinations cannot be committed atomically.
+
+## Retry defaults migration
+
+Regenerated Node and PHP SDKs retry GET/HEAD/OPTIONS without per-operation configuration: up to three attempts for transport failures and HTTP 408, 429, 500, 502, 503 and 504, with Retry-After and exponential jitter from a 100 ms base. Explicit policies replace defaults. Set client or request `maxAttempts: 1` to retain single-attempt behavior. Request budgets override client budgets, and valid budgets above an operation limit are capped instead of rejected.
+
+Mutations with optional missing keys now send once instead of failing because retries were declared. Required keys remain required; a key alone does not enable an undeclared mutation retry policy. Persist and reuse keys across application resubmissions. Automatic key generation remains opt-in and covers one SDK call.
+
+TypeScript method options now reject `idempotencyKey` on unsupported operations. Wrappers forwarding a broad `RequestOptions` variable must narrow or omit its key property before forwarding to those methods. Authentication restrictions remain in effect. PHP retains its shared options constructor and runtime capability checks. Generated examples use the effective retry policy instead of disabling retries. Compatibility reports identify the type narrowing and flag changed retry behavior for review in both targets.

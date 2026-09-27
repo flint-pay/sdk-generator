@@ -104,8 +104,14 @@ test('hover and standalone mutation examples send a fresh idempotency key and va
       return new Response('{"id":"p_1","amount":100,"status":"pending"}', { status: 201 });
     },
   });
-  const example = read('node/index.d.ts').match(/@example (client\.payments\.create\([^\n]+)/)[1];
-  await new Function('client', `return ${example}`)(client);
+  const block = [...read('node/index.d.ts').matchAll(/\/\*\*([\s\S]*?)\*\//g)].find((match) =>
+    match[1].includes('client.payments.create('),
+  )[1];
+  const example = block.split('@example')[1].replace(/^\s*\* ?/gm, '');
+  await new Function(
+    'client',
+    example.replace('client.payments.create(', 'return client.payments.create('),
+  )(client);
   assert.match(requests[0].headers['idempotency-key'], /^[\da-f-]{36}$/);
   const standalone = read('node/examples/payments-create.mjs');
   assert.match(standalone, /const idempotencyKey = crypto.randomUUID\(\)/);
