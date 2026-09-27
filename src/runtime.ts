@@ -17,6 +17,8 @@ export type ErrorKind =
   | 'authentication'
   | 'validation'
   | 'rate_limit'
+  | 'not_found'
+  | 'server'
   | 'api'
   | 'conflict'
   | 'protocol'
@@ -51,6 +53,9 @@ export class SdkError extends Error {
     super(message, options);
     this.name = 'SdkError';
   }
+  get status(): number | undefined {
+    return this.meta?.status;
+  }
   [inspect.custom]() {
     return {
       name: this.name,
@@ -59,7 +64,10 @@ export class SdkError extends Error {
       outcome: this.outcome,
       retryAllowed: this.retryAllowed,
       requestId: this.meta?.requestId,
-      status: this.meta?.status,
+      status: this.status,
+      code: this.code,
+      details: this.details,
+      stack: this.stack,
     };
   }
 }
@@ -2293,8 +2301,24 @@ export class Runtime {
               ? 'validation'
               : [409, 412].includes(response.status)
                 ? 'conflict'
-                : 'api';
+                : response.status === 404
+                  ? 'not_found'
+                  : response.status >= 500 && response.status < 600
+                    ? 'server'
+                    : 'api';
         const code = field(data, this.contract.errors?.codePath ?? 'code');
+        const redacted = redactCodec(
+          data,
+          (op.responses[String(response.status)] ?? op.responses.default)?.codec,
+          this.options.redactFields,
+          this.contract.definitions,
+        );
+        const publicCode: unknown = field(redacted, this.contract.errors?.codePath ?? 'code');
+        const originalMessage: unknown = field(
+          data,
+          this.contract.errors?.messagePath ?? 'message',
+        );
+        const message: unknown = field(redacted, this.contract.errors?.messagePath ?? 'message');
         const eligible =
           safe &&
           (policy.statuses.includes(response.status) ||
@@ -2304,27 +2328,18 @@ export class Runtime {
               )));
         error = new SdkError(
           kind,
-          `API returned HTTP ${response.status}`,
+          typeof originalMessage === 'string' &&
+          originalMessage.trim() &&
+          typeof message === 'string'
+            ? message
+            : `API returned HTTP ${response.status}`,
           'response',
           eligible,
           meta,
-          typeof code === 'string' ? code : undefined,
+          typeof code === 'string' && typeof publicCode === 'string' ? publicCode : undefined,
           this.contract.errors?.detailsPath
-            ? field(
-                redactCodec(
-                  data,
-                  (op.responses[String(response.status)] ?? op.responses.default)?.codec,
-                  this.options.redactFields,
-                  this.contract.definitions,
-                ),
-                this.contract.errors.detailsPath,
-              )
-            : redactCodec(
-                data,
-                (op.responses[String(response.status)] ?? op.responses.default)?.codec,
-                this.options.redactFields,
-                this.contract.definitions,
-              ),
+            ? field(redacted, this.contract.errors.detailsPath)
+            : redacted,
           undefined,
           raw,
         );

@@ -167,7 +167,12 @@ export interface Config {
   money?: { currencies: Record<string, number> };
   apiVersion?: { value: string; header: string };
   license?: string;
-  errors?: { codePath?: string; detailsPath?: string; requestIdHeader?: string };
+  errors?: {
+    codePath?: string;
+    messagePath?: string;
+    detailsPath?: string;
+    requestIdHeader?: string;
+  };
   documentation?: { overview?: string; guides?: Record<string, string>; examples?: string[] };
   release?: { baseUrl?: string; policy?: 'review' | 'semver' };
 }
@@ -1456,10 +1461,14 @@ export function loadContract(
   checkConfig(['errors'], () => {
     if (config.errors !== undefined) {
       diagnostics.check(() =>
-        keys(config.errors!, ['codePath', 'detailsPath', 'requestIdHeader'], 'config/errors'),
+        keys(
+          config.errors!,
+          ['codePath', 'messagePath', 'detailsPath', 'requestIdHeader'],
+          'config/errors',
+        ),
       );
       diagnostics.check(() => {
-        for (const key of ['codePath', 'detailsPath'] as const)
+        for (const key of ['codePath', 'messagePath', 'detailsPath'] as const)
           diagnostics.check(() => {
             if (
               config.errors![key] !== undefined &&

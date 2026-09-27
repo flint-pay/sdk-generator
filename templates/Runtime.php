@@ -5,6 +5,8 @@ require_once __DIR__ . '/SchemaAdapter.php';
 
 final class SdkError extends \RuntimeException
 {
+    public readonly ?int $status;
+
     public function __construct(
         public readonly string $kind,
         string $message,
@@ -17,6 +19,7 @@ final class SdkError extends \RuntimeException
         public readonly ?string $raw = null,
     ) {
         parent::__construct($message, 0, $previous);
+        $this->status = $meta['status'] ?? null;
     }
     public function __debugInfo(): array
     {
@@ -25,6 +28,20 @@ final class SdkError extends \RuntimeException
             'message' => $this->message,
             'outcome' => $this->outcome,
             'requestId' => $this->meta['requestId'] ?? null,
+            'status' => $this->status,
+            'retryAllowed' => $this->retryAllowed,
+            'errorCode' => $this->errorCode,
+            'details' => $this->details,
+            'file' => $this->getFile(),
+            'line' => $this->getLine(),
+            // Trace arguments can contain raw response bodies and credentials.
+            'stack' => array_map(
+                fn($frame) => array_intersect_key(
+                    $frame,
+                    array_flip(['file', 'line', 'class', 'type', 'function']),
+                ),
+                $this->getTrace(),
+            ),
         ];
     }
 }
@@ -3715,6 +3732,8 @@ class Runtime
                     $status === 429 => 'rate_limit',
                     in_array($status, [400, 422], true) => 'validation',
                     in_array($status, [409, 412], true) => 'conflict',
+                    $status === 404 => 'not_found',
+                    $status >= 500 && $status < 600 => 'server',
                     default => 'api',
                 };
                 $code = self::field($data, $this->contract['errors']['codePath'] ?? 'code');
@@ -3725,13 +3744,30 @@ class Runtime
                     $this->options->redactFields,
                     $this->contract['definitions'] ?? [],
                 );
+                $message = self::field(
+                    $details,
+                    $this->contract['errors']['messagePath'] ?? 'message',
+                );
+                $originalMessage = self::field(
+                    $data,
+                    $this->contract['errors']['messagePath'] ?? 'message',
+                );
+                $publicCode = self::field(
+                    $details,
+                    $this->contract['errors']['codePath'] ?? 'code',
+                );
                 if (isset($this->contract['errors']['detailsPath'])) {
                     $details = self::field($details, $this->contract['errors']['detailsPath']);
                 }
                 $diagnosticError = $kind;
                 $error = new SdkError(
                     $kind,
-                    "API returned HTTP $status",
+                    // Match JavaScript trim's Unicode whitespace without changing the message.
+                    is_string($message) &&
+                    is_string($originalMessage) &&
+                    preg_match('/[^\p{Z}\x{0009}-\x{000D}\x{FEFF}]/u', $originalMessage)
+                        ? $message
+                        : "API returned HTTP $status",
                     'response',
                     $safe &&
                         (in_array($status, $policy['statuses'], true) ||
@@ -3744,7 +3780,7 @@ class Runtime
                                     ),
                                 ) > 0)),
                     $meta,
-                    is_string($code) ? $code : null,
+                    is_string($code) && is_string($publicCode) ? $publicCode : null,
                     $details,
                     raw: $raw,
                 );
