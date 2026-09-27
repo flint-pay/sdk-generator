@@ -36,7 +36,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test tests/*.test.mjs",
+    "test": "npm run build && node tests/run.mjs",
     "prepack": "npm run build",
     "format": "prettier --write src templates tests examples README.md CONTRIBUTING.md SECURITY.md docs .github tsconfig.json package.json"
   },
