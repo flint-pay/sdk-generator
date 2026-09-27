@@ -4,6 +4,8 @@ Generator releases and generated SDK package versions are independent. Generator
 
 Release commands use the installed `sdk-generator` executable. From a source checkout, substitute `node dist/cli.js` after running `npm ci` and `npm run build`. See the [CLI reference](cli.md) for complete positional arguments. Package preparation and tests do not establish that a version has been published.
 
+API error reporting now supports `errors.messagePath` (default `message`) and exposes HTTP `status` directly in both targets. Messages use the redacted server explanation when available. Node inspection and PHP debug output include provider codes, redacted details and stack frames. HTTP 404 errors now use kind `not_found`, and HTTP 500–599 errors use `server`, replacing `api` for those statuses. Update kind switches when regenerating existing SDKs; retry eligibility continues to follow the declared policy.
+
 Before publication:
 
 1. Keep pinned inputs, referenced local files, SDK configuration and generator revision in the provider's private or public source repository as appropriate.

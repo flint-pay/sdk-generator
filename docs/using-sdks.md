@@ -25,7 +25,14 @@ try {
   console.log(result.body.title, result.meta.requestId);
 } catch (error) {
   if (!(error instanceof SdkError)) throw error;
-  console.error(error.kind, error.code, error.meta?.requestId, error.outcome);
+  console.error(
+    error.message,
+    error.status,
+    error.kind,
+    error.code,
+    error.meta?.requestId,
+    error.outcome,
+  );
 }
 ```
 
@@ -45,7 +52,13 @@ try {
   );
   echo $result->getTitle();
 } catch (SdkError $error) {
-  error_log($error->kind . ': ' . ($error->meta['requestId'] ?? 'no request ID'));
+  error_log(
+    $error->getMessage() .
+      ' status=' .
+      ($error->status ?? 'none') .
+      ' request=' .
+      ($error->meta['requestId'] ?? 'no request ID'),
+  );
 } finally {
   $client->close();
 }
@@ -106,7 +119,7 @@ Pass client defaults to `new Client({...})` in Node or `new Client(new ClientOpt
 | `maxAttempts`             | Client or request | The operation's declared limit, or `1` without a retry declaration. Overrides must be within the declared limit.                   |
 | `transport`               | Client            | Native fetch in Node, reusable cURL in PHP. Injected transports are caller-owned.                                                  |
 | `diagnostics`             | Client            | Optional callback receiving operation, attempt, status, request ID, timing and error kind, without bodies or credentials.          |
-| `redactFields`            | Client            | Additional field names to redact in model inspection and parsed error details. Does not change response data.                      |
+| `redactFields`            | Client            | Additional field names to redact in model inspection, error messages and parsed error details. Does not change response data.      |
 | `headers`                 | Request           | Request-local header map; includes tenant context and optional User-Agent override. A configured API-version pin takes precedence. |
 | `idempotencyKey`          | Request           | Caller-owned stable key for a declared idempotent operation. Persist across retries and process restarts.                          |
 | `ifMatch`                 | Request           | Value for the declared conditional header, including when that header is `If-None-Match`.                                          |
@@ -121,7 +134,9 @@ Node clients can serve concurrent calls within an event loop. PHP clients suppor
 
 ## Errors and recovery
 
-Both targets expose `SdkError`. Node uses `code`, `cause` and `meta?.requestId`; PHP uses `errorCode`, `getPrevious()` and `$error->meta['requestId']`. Shared `kind` values are `transport`, `authentication`, `validation`, `rate_limit`, `api`, `conflict`, `protocol`, `cancelled`, `deadline` and `destination`. <!-- copy-ok: `cancelled` is the literal SdkError kind -->
+Both targets expose `SdkError`. Node uses `code`, `cause` and `meta?.requestId`; PHP uses `errorCode`, `getPrevious()` and `$error->meta['requestId']`. Shared `kind` values are `transport`, `authentication`, `validation`, `rate_limit`, `not_found`, `server`, `api`, `conflict`, `protocol`, `cancelled`, `deadline` and `destination`. <!-- copy-ok: `cancelled` is the literal SdkError kind -->
+
+The exception message contains the server explanation selected by `errors.messagePath` (default `message`), with `API returned HTTP <status>` as the fallback. Both targets expose `status` directly (`undefined` in Node or `null` in PHP when no response is available). HTTP 404 maps to `not_found`; HTTP 500–599 maps to `server`. Other existing classifications and retry policies are unchanged. Provider-specific `details` remain `unknown` in TypeScript; the message, status and code can be read without narrowing that payload.
 
 | `outcome`  | Meaning for recovery                                                                                                                                      |
 | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -131,7 +146,7 @@ Both targets expose `SdkError`. Node uses `code`, `cause` and `meta?.requestId`;
 
 The SDK applies only declared bounded retries. `retryAllowed` reports retry eligibility; it does not grant permission to create a new business operation or exceed the provider policy. A lost response must not cause a fresh mutation with a different key. Automatic idempotency keys last for one SDK call; application resubmission requires a persisted caller key. Conflicting keys across operation headers, request headers and `idempotencyKey` fail before dispatch.
 
-Ordinary error inspection and diagnostics omit sensitive bodies and credentials. `raw`, response headers, arbitrary `data` logging and injected transports require application-level handling of sensitive information.
+Ordinary error inspection includes the message, status, provider code, redacted details and stack frames. Message extraction, provider codes and details apply schema and `redactFields` redaction. PHP debug traces omit call arguments. Diagnostics report status and kind without messages, details or stack traces. `raw`, response headers, arbitrary `data` logging and injected transports require application-level handling of sensitive information.
 
 ## Optional capabilities
 

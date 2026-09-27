@@ -59,6 +59,7 @@
   },
   "errors": {
     "codePath": "error.code",
+    "messagePath": "error.message",
     "detailsPath": "error",
     "requestIdHeader": "X-Request-Id"
   },

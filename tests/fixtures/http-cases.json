@@ -279,7 +279,7 @@
       }
     ],
     "error": {
-      "kind": "api",
+      "kind": "server",
       "outcome": "response",
       "status": 503,
       "requestId": "req-html"

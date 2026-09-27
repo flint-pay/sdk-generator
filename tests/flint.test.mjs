@@ -485,3 +485,37 @@ test('automatic idempotency respects every explicit header source and rejects co
     [5, 5],
   );
 });
+
+test('Flint error profiles surface the payment intent explanation in both generated clients', async () => {
+  const { Client } = await import(pathToFileURL(join(output, 'node/index.js')));
+  const body = JSON.stringify({
+    error: { code: 'NOT_FOUND', message: 'Payment intent pi_1 not found' },
+  });
+  const client = new Client({
+    baseUrl: 'https://example.invalid',
+    token: 'fixture-key',
+    transport: async () => new Response(body, { status: 404 }),
+  });
+  await assert.rejects(client.paymentIntents.get({ payment_intent_id: 'pi_1' }), (error) => {
+    assert.equal(error.message, 'Payment intent pi_1 not found');
+    assert.equal(error.status, 404);
+    assert.equal(error.kind, 'not_found');
+    assert.equal(error.code, 'NOT_FOUND');
+    return true;
+  });
+  const php = String.raw`
+require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
+$c=new Example\Flint\Client(new Example\Flint\ClientOptions('https://example.invalid',token:'fixture-key',transport:fn($r)=>['status'=>404,'headers'=>[],'body'=>$argv[2]]));
+try{$c->paymentIntents->get(['payment_intent_id'=>'pi_1']);exit(1);}catch(Example\Flint\SdkError $e){echo json_encode([$e->getMessage(),$e->status,$e->kind,$e->errorCode]);}
+`;
+  assert.deepEqual(JSON.parse(run('php', ['-r', php, join(output, 'php'), body], dir)), [
+    'Payment intent pi_1 not found',
+    404,
+    'not_found',
+    'NOT_FOUND',
+  ]);
+  assert.equal(
+    JSON.parse(readFileSync(join(root, 'full-common-sdk.json'))).errors.messagePath,
+    'error.message',
+  );
+});
