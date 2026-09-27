@@ -39,6 +39,7 @@ final class SdkResponse
                     'response',
                     false,
                     $result->meta,
+                    raw: $result->raw,
                 );
             }
         }
