@@ -9,6 +9,24 @@ import { compareSchemas } from '../dist/compatibility.js';
 const dir = mkdtempSync(join(tmpdir(), 'sdk-constraints-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
 const properties = {
+  dependent: {
+    type: 'object',
+    properties: {
+      token: { type: 'string' },
+      context: { type: 'string' },
+      expires: { type: 'string' },
+      server_token: { type: 'string', readOnly: true },
+      server_context: { type: 'string' },
+      client_token: { type: 'string', writeOnly: true },
+      client_context: { type: 'string' },
+    },
+    dependentRequired: {
+      token: ['context'],
+      context: ['expires'],
+      server_token: ['server_context'],
+      client_token: ['client_context'],
+    },
+  },
   conditional: {
     type: 'object',
     properties: {
@@ -123,6 +141,10 @@ const success = (name, body, wire, responseBody = wire, data = body) => ({
 });
 test('both public clients enforce exact numeric, Unicode and array constraints before dispatch', async () => {
   const invalid = [
+    { dependent: { token: 'abc' } },
+    { dependent: { token: 'abc', context: 'test' } },
+    { dependent: { context: 'test' } },
+    { dependent: { client_token: 'request' } },
     { conditional: { method: 'ach' } },
     { conditional: {} },
     { conditional: { method: 'affirm' } },
@@ -194,6 +216,19 @@ test('both public clients enforce exact numeric, Unicode and array constraints b
     })),
   );
   await fixtures('valid', [
+    success(
+      'dependent chain',
+      { dependent: { token: 'abc', context: 'test', expires: 'tomorrow' } },
+      '{"dependent":{"token":"abc","context":"test","expires":"tomorrow"}}',
+    ),
+    success('dependencies and directional triggers absent', { dependent: {} }, '{"dependent":{}}'),
+    success(
+      'directional dependency triggers',
+      { dependent: { client_token: 'request', client_context: 'present' } },
+      '{"dependent":{"client_token":"request","client_context":"present"}}',
+      '{"dependent":{"server_token":"response","server_context":"present"}}',
+      { dependent: { server_token: 'response', server_context: 'present' } },
+    ),
     success(
       'ACH conditional dependent field',
       { conditional: { method: 'ach', purpose: 'purchase' } },
@@ -491,5 +526,19 @@ test('diagnosis rejects simple nested unbounded repetition without rejecting del
     const d = structuredClone(doc);
     d.components.schemas.Value.properties.value = { type: 'string', pattern };
     assert.doesNotThrow(() => load(d), pattern);
+  }
+});
+
+test('dependentRequired rejects malformed dependency maps', () => {
+  for (const dependencies of [
+    null,
+    [],
+    { token: 'context' },
+    { token: [1] },
+    { token: ['context', 'context'] },
+  ]) {
+    const bad = structuredClone(doc);
+    bad.components.schemas.Value.properties.dependent.dependentRequired = dependencies;
+    assert.throws(() => load(bad), /dependentRequired/);
   }
 });
