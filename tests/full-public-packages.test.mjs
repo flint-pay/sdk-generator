@@ -132,6 +132,48 @@ writeFileSync(${JSON.stringify(join(dir, 'summary.json'))},JSON.stringify({opera
       run('composer', ['install', '--no-interaction', '--no-dev', '--no-progress'], {
         cwd: consumer,
       });
+      const webhookTypes = join(consumer, 'webhook-types.ts');
+      writeFileSync(
+        webhookTypes,
+        `import {Client} from '@example/flint-full-sdk';
+import type {IncomingHttpHeaders} from 'node:http';
+const client=new Client({token:'synthetic'});
+declare const headers: IncomingHttpHeaders;
+const secrets: readonly string[]=['synthetic'];
+client.verifyWebhook(new Uint8Array(),headers,secrets);
+const result=client.verifyWebhook(new Uint8Array(),new Headers(),'synthetic');
+if(result.known) {
+  const name: string=result.event.event_type;
+  if(result.event.event_type==='balance_transaction.created') {
+    const amount: string=result.event.data.amount_money.amount;
+  }
+  if(result.event.event_type==='payment_intent.succeeded') {
+    const id: string=result.event.data.payment_intent_id;
+  }
+} else {
+  // @ts-expect-error Unknown events must be validated by the application.
+  result.event.data;
+}
+`,
+      );
+      run(process.execPath, [
+        resolve('node_modules/typescript/bin/tsc'),
+        '--noEmit',
+        '--strict',
+        '--target',
+        'es2022',
+        '--module',
+        'nodenext',
+        webhookTypes,
+      ]);
+      const clientDeclarations = readFileSync(
+        join(output, 'node/declarations/Client.d.ts'),
+        'utf8',
+      );
+      assert.ok(
+        clientDeclarations.length < 100000,
+        'webhook signature must reference compact aliases',
+      );
       const nodeAdapter = join(consumer, 'node_modules/@example/flint-full-sdk/codec-plan.js');
       writeFileSync(
         nodeAdapter,

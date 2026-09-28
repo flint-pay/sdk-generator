@@ -242,7 +242,10 @@ export function compareCompiledContracts(
         });
     }
   if (node) {
-    if (previous.node.eventType !== next.node.eventType)
+    if (
+      previous.node.eventType !== next.node.eventType ||
+      (previous.node.eventDeclarations ?? '') !== (next.node.eventDeclarations ?? '')
+    )
       findings.push({
         severity: 'review',
         subject: 'webhook',

@@ -212,6 +212,85 @@ Keep handwritten domain helpers in the generated package's `custom/` directory s
 
 With schema validation enabled, object property bounds count the encoded keys, including explicit null fields and additional properties; omitted optional fields do not count. Ordinary response decoding remains tolerant of these business bounds.
 
+## Webhook verification
+
+When the provider declares signing, the client exposes `verifyWebhook(rawBody, headers, secrets, nowSeconds?)`. The last argument is a Unix timestamp override for deterministic tests; normally omit it. Use a separate webhook signing secret from application configuration. One string and an array of active rotation secrets are both accepted.
+
+Node accepts `Buffer`/`Uint8Array`, Express/Node `req.headers`, and Fetch `Headers`. Preserve the original bytes before JSON parsing. For a Fetch request:
+
+```js
+const rawBody = new Uint8Array(await request.arrayBuffer());
+const verified = client.verifyWebhook(rawBody, request.headers, webhookSecret);
+```
+
+Register an Express webhook route **before** JSON middleware. `receiveVerified` below represents your application's durable ingestion handler:
+
+```js
+app.post('/webhooks', express.raw({ type: 'application/json' }), (req, res, next) => {
+  try {
+    const verified = client.verifyWebhook(req.body, req.headers, webhookSecret);
+    // Persist the event ID, event, and known flag before acknowledging delivery.
+    receiveVerified(verified, req, res, next);
+  } catch (error) {
+    next(error);
+  }
+});
+app.use(express.json());
+```
+
+PHP accepts binary-safe body strings and header maps with strings or PSR-7 string arrays:
+
+```php
+$verified = $client->verifyWebhook(
+  (string) $request->getBody(),
+  $request->getHeaders(),
+  $webhookSecret,
+);
+// A native PHP handler can instead use file_get_contents('php://input') and getallheaders().
+```
+
+Pass rotation secrets as `[currentSecret, previousSecret]` in Node or `[$currentSecret, $previousSecret]` in PHP. For Standard Webhooks, each usable secret must start with `whsec_` and contain canonical base64 encoding of exactly 32 bytes. Invalid/empty entries are skipped when another correctly formatted string remains usable; non-string entries and lists with no usable secret are validation errors. Header names are case insensitive. Repeated signatures are supported, but timestamp and event ID headers must each have one value. The generated runtime guide lists the configured header names, format, and tolerance.
+
+`known` requires a registered event name and a matching declared envelope. Checking it narrows the Node event type; checking the event-name field then selects the relevant payload. For an illustrative provider using `event_type`:
+
+```ts
+const verified = client.verifyWebhook(rawBody, headers, [currentSecret, previousSecret]);
+if (verified.known) {
+  const event = verified.event; // Declared event union.
+  // Switch on event.event_type for this provider's individual event payloads.
+} else {
+  const event = verified.event; // unknown: validate before accessing fields.
+}
+```
+
+Authenticated unknown names and unmatched envelope variants return `known: false` and remain available for review. Malformed declared payloads produce a `protocol` error. Nested response types retain their documented uncertainty; `known` does not make every future nested enum or variant statically known.
+
+Never reconstruct the input with `JSON.stringify` or `json_encode`: whitespace, property ordering and numeric spelling affect the signature. A parsed JSON object produces an SDK validation error. Reserialization can change the bytes and cause a signature mismatch. A mismatch cannot identify whether the secret or body bytes are wrong.
+
+Import `SdkError` from the generated package. Its `code` in Node and `errorCode` in PHP distinguish these failures:
+
+| Kind             | Code                                 | Action                                                        |
+| ---------------- | ------------------------------------ | ------------------------------------------------------------- |
+| `validation`     | `webhook_invalid_input`              | Supply original body bytes and supported headers/time values. |
+| `validation`     | `webhook_invalid_secret`             | Supply at least one correctly formatted nonempty secret.      |
+| `authentication` | `webhook_missing_header`             | Forward the configured signing headers.                       |
+| `authentication` | `webhook_invalid_timestamp`          | Supply one integer timestamp in seconds.                      |
+| `authentication` | `webhook_timestamp_out_of_tolerance` | Check the server clock and delivery age.                      |
+| `authentication` | `webhook_invalid_signature`          | Check the signing secret and original request bytes.          |
+| `protocol`       | `webhook_invalid_json`               | The authenticated bytes are not valid UTF-8 JSON.             |
+
+```js
+try {
+  const verified = client.verifyWebhook(rawBody, headers, webhookSecret);
+} catch (error) {
+  if (!(error instanceof SdkError)) throw error;
+  // Record error.kind and error.code without logging bodies or secrets.
+  throw error; // Let the HTTP adapter choose the failure response.
+}
+```
+
+Verification does not deduplicate delivery. Commit a unique event ID and durable work before acknowledging, process effects idempotently, and leave unknown names or unmatched envelopes pending for review. The optional generated SQLite inbox/outbox examples demonstrate this flow.
+
 ## Authentication modes
 
 For a composed client, prefer its configured credential shortcuts. Explicit `credentials` keyed by mode and security scheme remain available; select `authMode` on the client or request. Per-request `credentials` contains only that mode's scheme keys. Credentials and headers stay request-local.

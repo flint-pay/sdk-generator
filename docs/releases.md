@@ -1,5 +1,13 @@
 # Releases and compatibility
 
+## Webhook verification changes
+
+Regenerated Node and PHP verifiers accept either one signing secret or an array for rotation. Node now accepts Fetch `Headers` and Node/Express header records; PHP accepts PSR-7 header arrays. Original body bytes remain required: Node rejects plain strings as well as parsed objects, consistent with its Buffer/Uint8Array declaration. Parsed JSON and malformed inputs produce SDK errors instead of native type errors.
+
+Webhook errors expose stable `webhook_*` reasons through Node `code` and PHP `errorCode`. Invalid caller inputs and unusable secrets now use `validation`; missing/malformed signing headers, timestamps outside tolerance, and signature mismatches use `authentication`. Authenticated JSON and payload failures use `protocol`. Update error-kind switches; see the [complete code table](using-sdks.md#webhook-verification).
+
+`known: true` now requires a registered event name and a matching declared envelope, instead of name recognition alone. Authenticated unmatched variants return `known: false` and must remain pending for application review. Known-event TypeScript declarations use shared aliases and preserve event-name narrowing; nested response uncertainty remains explicit. Existing valid calls, signing formats and configuration remain supported. Review these behavior changes before regenerating an SDK; no provider configuration migration is required.
+
 ## Client setup changes
 
 Regenerated Node and PHP packages use the first declared top-level server as their default base URL. Existing explicit `baseUrl` values retain precedence. Adding a default is additive; changing or removing an existing default is breaking because callers may omit their URL. Unsupported relative/templated servers and path-level overrides now fail diagnosis rather than being ignored. APIs without servers continue to require `baseUrl`, with structured setup errors.

@@ -378,7 +378,7 @@ test('Flint reference verifies its declared payment event envelope in both publi
         .digest('base64'),
   };
   const client = new Client({ baseUrl: 'https://example.invalid' });
-  const verified = client.verifyWebhook(raw, headers, [secret]);
+  const verified = client.verifyWebhook(Buffer.from(raw), headers, [secret]);
   assert.equal(verified.known, true);
   assert.deepEqual(JSON.parse(JSON.stringify(verified.event)), event);
   const fixture = join(dir, 'signed-payment-event.json');

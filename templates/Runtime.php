@@ -4251,11 +4251,70 @@ class Runtime
             $interval = min($interval * 1.5, 10000);
         }
     }
-    public function verifyWebhook(
-        string $rawBody,
+    private static function webhookError(string $kind, string $code, string $message): never
+    {
+        throw new SdkError($kind, $message, errorCode: 'webhook_' . $code);
+    }
+    private static function webhookHeaderValues(array $headers, string $name): array
+    {
+        $values = [];
+        foreach ($headers as $key => $value) {
+            if (!is_string($key) || strtolower($key) !== strtolower($name)) {
+                continue;
+            }
+            $parts = is_array($value) ? $value : [$value];
+            if (!array_is_list($parts)) {
+                self::webhookError(
+                    'validation',
+                    'invalid_input',
+                    'Webhook signing header values must be strings',
+                );
+            }
+            foreach ($parts as $part) {
+                if (!is_string($part)) {
+                    self::webhookError(
+                        'validation',
+                        'invalid_input',
+                        'Webhook signing header values must be strings',
+                    );
+                }
+                $values[] = $part;
+            }
+        }
+        if (!$values || !array_filter($values, fn($value) => trim($value) !== '')) {
+            self::webhookError(
+                'authentication',
+                'missing_header',
+                'Missing webhook signing header: ' . $name,
+            );
+        }
+        return $values;
+    }
+    private static function webhookScalarHeader(
         array $headers,
-        array $secrets,
-        ?int $nowSeconds = null,
+        string $name,
+        bool $timestamp = false,
+    ): string {
+        $values = self::webhookHeaderValues($headers, $name);
+        if (count($values) !== 1 || str_contains($values[0], ',')) {
+            self::webhookError(
+                'authentication',
+                $timestamp ? 'invalid_timestamp' : 'invalid_signature',
+                'Webhook signing header must have exactly one value: ' . $name,
+            );
+        }
+        return trim($values[0]);
+    }
+    /** @param string $rawBody Original request bytes.
+     * @param array<string, string|list<string>> $headers
+     * @param string|array<array-key, string> $secrets
+     * @param int|null $nowSeconds
+     */
+    public function verifyWebhook(
+        mixed $rawBody,
+        mixed $headers,
+        mixed $secrets,
+        mixed $nowSeconds = null,
     ): array {
         $w = $this->descriptors
             ? $this->descriptors->webhook()
@@ -4263,99 +4322,223 @@ class Runtime
         if (!$w) {
             Codec::fail('webhook', 'capability is not declared');
         }
-        $headers = array_change_key_case($headers, CASE_LOWER);
-        $timestamp = $headers[strtolower($w['timestampHeader'] ?? '')] ?? '';
-        $signature = $headers[strtolower($w['header'])] ?? '';
+        if (!is_string($rawBody)) {
+            self::webhookError(
+                'validation',
+                'invalid_input',
+                'Webhook body must be original request bytes; capture it before JSON parsing',
+            );
+        }
+        if (!is_array($headers)) {
+            self::webhookError(
+                'validation',
+                'invalid_input',
+                'Webhook headers must be a header map',
+            );
+        }
+        if ($nowSeconds !== null && !is_int($nowSeconds)) {
+            self::webhookError(
+                'validation',
+                'invalid_input',
+                'Webhook nowSeconds must be an integer Unix timestamp in seconds',
+            );
+        }
+        $supplied = is_string($secrets) ? [$secrets] : $secrets;
+        if (!is_array($supplied) || !$supplied) {
+            self::webhookError(
+                'validation',
+                'invalid_secret',
+                'Webhook secrets must be a nonempty string or array of strings',
+            );
+        }
         $format = $w['format'] ?? 'hex';
-        $candidates = [$signature];
+        $keys = [];
+        foreach ($supplied as $secret) {
+            if (!is_string($secret)) {
+                self::webhookError(
+                    'validation',
+                    'invalid_secret',
+                    'Webhook secrets must be a nonempty string or array of strings',
+                );
+            }
+            if ($secret === '') {
+                continue;
+            }
+            if ($format !== 'standard-webhooks') {
+                $keys[] = $secret;
+            } elseif (preg_match('/^whsec_[A-Za-z0-9+\/]{43}=$/D', $secret)) {
+                $key = base64_decode(substr($secret, 6), true);
+                if (
+                    $key !== false &&
+                    strlen($key) === 32 &&
+                    base64_encode($key) === substr($secret, 6)
+                ) {
+                    $keys[] = $key;
+                }
+            }
+        }
+        if (!$keys) {
+            self::webhookError(
+                'validation',
+                'invalid_secret',
+                $format === 'standard-webhooks'
+                    ? 'Webhook secret must be whsec_ followed by canonical base64 encoding of 32 bytes'
+                    : 'Provide at least one nonempty webhook signing secret',
+            );
+        }
+        $signatures = self::webhookHeaderValues($headers, $w['header']);
+        $timestamp = '';
+        $candidates = [];
         $prefix = '';
         if ($format === 'timestamped-hex') {
-            $parts = array_map('trim', explode(',', $signature));
+            $parts = [];
+            foreach ($signatures as $signature) {
+                $parts = array_merge($parts, array_map('trim', explode(',', $signature)));
+            }
             $timestamps = array_values(
                 array_filter($parts, fn($part) => str_starts_with($part, 't=')),
             );
-            $timestamp = count($timestamps) === 1 ? substr($timestamps[0], 2) : '';
+            if (count($timestamps) !== 1) {
+                self::webhookError(
+                    'authentication',
+                    'invalid_timestamp',
+                    'Webhook signature must contain exactly one t= timestamp',
+                );
+            }
+            $timestamp = substr($timestamps[0], 2);
             $candidates = array_map(
                 fn($part) => substr($part, 3),
                 array_filter($parts, fn($part) => str_starts_with($part, 'v1=')),
             );
-        } elseif ($format === 'standard-webhooks') {
-            $id = trim($headers[strtolower($w['idHeader'])] ?? '');
-            if ($id === '') {
-                throw new SdkError('authentication', 'Invalid webhook signature or timestamp');
+        } else {
+            $timestamp = self::webhookScalarHeader($headers, $w['timestampHeader'], true);
+            if ($format === 'standard-webhooks') {
+                $prefix = self::webhookScalarHeader($headers, $w['idHeader']) . '.';
+                foreach ($signatures as $signature) {
+                    foreach (preg_split('/(?:\s+|,\s*(?=v\d+,))/', trim($signature)) as $part) {
+                        if (str_starts_with($part, 'v1,')) {
+                            $candidates[] = substr($part, 3);
+                        }
+                    }
+                }
+            } else {
+                foreach ($signatures as $signature) {
+                    $candidates = array_merge(
+                        $candidates,
+                        array_map('trim', explode(',', $signature)),
+                    );
+                }
             }
-            $prefix = $id . '.';
-            $candidates = array_map(
-                fn($part) => substr($part, 3),
-                array_filter(
-                    preg_split('/\s+/', trim($signature)),
-                    fn($part) => str_starts_with($part, 'v1,'),
-                ),
+        }
+        if (!preg_match('/^\d+$/D', $timestamp) || (float) $timestamp > 9007199254740991) {
+            self::webhookError(
+                'authentication',
+                'invalid_timestamp',
+                'Webhook timestamp must be an integer Unix timestamp in seconds',
             );
         }
-        if (
-            !preg_match('/^\d+$/', $timestamp) ||
-            (float) $timestamp > 9007199254740991 ||
-            abs(($nowSeconds ?? time()) - (float) $timestamp) > $w['toleranceSeconds'] ||
-            !$secrets
-        ) {
-            throw new SdkError('authentication', 'Invalid webhook signature or timestamp');
+        if (abs(($nowSeconds ?? time()) - (float) $timestamp) > $w['toleranceSeconds']) {
+            self::webhookError(
+                'authentication',
+                'timestamp_out_of_tolerance',
+                'Webhook timestamp is outside the allowed tolerance; check the server clock and delivery age',
+            );
         }
         $valid = false;
-        foreach ($secrets as $secret) {
-            if ($secret === '') {
-                continue;
-            }
-            $key = $secret;
-            if ($format === 'standard-webhooks') {
-                if (!preg_match('/^whsec_[A-Za-z0-9+\/]{43}=$/D', $secret)) {
-                    continue;
-                }
-                $key = base64_decode(substr($secret, 6), true);
-                if (
-                    $key === false ||
-                    strlen($key) !== 32 ||
-                    base64_encode($key) !== substr($secret, 6)
-                ) {
-                    continue;
-                }
-            }
+        foreach ($keys as $key) {
             $digest = hash_hmac(
                 'sha256',
                 $prefix . $timestamp . $w['separator'] . $rawBody,
                 $key,
                 true,
             );
-            $expected = $format === 'standard-webhooks' ? base64_encode($digest) : bin2hex($digest);
             foreach ($candidates as $candidate) {
-                $valid =
-                    hash_equals(
-                        $expected,
-                        $format === 'standard-webhooks' ? $candidate : strtolower($candidate),
-                    ) || $valid;
+                if ($format === 'standard-webhooks') {
+                    if (!preg_match('/^[A-Za-z0-9+\/]{43}=$/D', $candidate)) {
+                        continue;
+                    }
+                    $actual = base64_decode($candidate, true);
+                    if ($actual === false || base64_encode($actual) !== $candidate) {
+                        continue;
+                    }
+                } else {
+                    if (!preg_match('/^[a-fA-F0-9]{64}$/D', $candidate)) {
+                        continue;
+                    }
+                    $actual = hex2bin($candidate);
+                }
+                $valid = hash_equals($digest, $actual) || $valid;
             }
         }
         if (!$valid) {
-            throw new SdkError('authentication', 'Invalid webhook signature or timestamp');
+            self::webhookError(
+                'authentication',
+                'invalid_signature',
+                'Invalid webhook signature; check the signing secret and preserve the original request body bytes without reserializing JSON',
+            );
         }
         try {
             $event = Codec::parse($rawBody, true);
         } catch (\Throwable $cause) {
-            throw new SdkError('protocol', 'Invalid webhook JSON', 'response', previous: $cause);
+            throw new SdkError(
+                'protocol',
+                'Invalid webhook JSON',
+                'response',
+                errorCode: 'webhook_invalid_json',
+                previous: $cause,
+            );
         }
         $eventType = self::field($event, $w['typeField']);
         $schema = is_string($eventType) ? $w['events'][$eventType] ?? null : null;
+        $known = false;
         if ($schema) {
-            $event = $this->decode($event, $schema, ['mode' => 'response', 'path' => 'event']);
+            try {
+                $decoded = $this->decode($event, $schema, [
+                    'mode' => 'response',
+                    'path' => 'event',
+                ]);
+            } catch (SdkError $cause) {
+                if ($cause->kind !== 'validation') {
+                    throw $cause;
+                }
+                throw new SdkError(
+                    'protocol',
+                    'Invalid webhook payload' .
+                        (($reason = Codec::validationFailureMessage($cause)) !== null
+                            ? ': ' . $reason
+                            : ''),
+                    'response',
+                    previous: $cause,
+                );
+            }
+            try {
+                $this->decode($event, $schema, [
+                    'mode' => 'match',
+                    'direction' => 'response',
+                    'path' => 'event',
+                    'allowUnknownResponseFields' => true,
+                ]);
+                $known = true;
+            } catch (SdkError $error) {
+                if ($error->kind !== 'validation') {
+                    throw $error;
+                }
+            }
+            $event = $decoded;
         }
         $event = Codec::plainNumbers($event);
-        if (is_string($eventType) && isset($w['eventModels'][$eventType]) && is_object($event)) {
+        if (
+            $known &&
+            is_string($eventType) &&
+            isset($w['eventModels'][$eventType]) &&
+            is_object($event)
+        ) {
             $class = __NAMESPACE__ . '\\' . $w['eventModels'][$eventType];
             $event = new $class((array) $event, $this->options->redactFields);
         }
         return [
             'event' => $event,
-            'known' => $schema !== null,
+            'known' => $known,
         ];
     }
     public function money(string $currency, string $major): array

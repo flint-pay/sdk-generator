@@ -183,13 +183,13 @@ export function typescriptType(
   arrayContext = arrayContext === 'array' || array === 'array' ? 'array' : (arrayContext ?? array);
   if (s.oneOf || s.anyOf || s.allOf || s.not) {
     const { oneOf, anyOf, allOf, not, discriminator: tag, ...base } = s;
-    const parts = [render(base, response, discriminator, false, objectContext, arrayContext)];
+    const parts = [render(base, response, discriminator, known, objectContext, arrayContext)];
     for (const branch of allOf ?? [])
-      parts.push(render(branch, response, discriminator, false, objectContext, arrayContext));
+      parts.push(render(branch, response, discriminator, known, objectContext, arrayContext));
     for (const branches of [oneOf, anyOf])
       if (branches) {
         const alternatives = branches.map((branch) =>
-          render(branch, response, tag?.propertyName, false, objectContext, arrayContext),
+          render(branch, response, tag?.propertyName, known, objectContext, arrayContext),
         );
         if (response && !known)
           alternatives.push(
