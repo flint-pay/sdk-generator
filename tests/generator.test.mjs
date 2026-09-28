@@ -1,3 +1,4 @@
+import { renderedDeclarations } from './helpers/generated-source.mjs';
 import ts from 'typescript';
 import { localExampleFile } from './local-example.mjs';
 import { test, before, after } from 'node:test';
@@ -235,8 +236,8 @@ test('local references and semantic overrides affect both targets', () => {
   const op = c.operations.find((o) => o.id === 'createPayment');
   assert.equal(op.body.properties.description.type, 'string');
   const rendered = render(c);
-  assert.ok(rendered.get('node/index.d.ts').includes('"description"?: string;'));
-  assert.ok(rendered.get('php/src/Client.php').includes('description'));
+  assert.ok(renderedDeclarations(rendered).includes('"description"?: string;'));
+  assert.ok(rendered.get('php/src/classes/CreatePaymentInput.php').includes('description'));
 });
 test('non-payment provider excludes domain APIs and unselected private models', async () => {
   const library = loadContract('examples/library.openapi.json', 'examples/library.sdk.json');
@@ -605,7 +606,8 @@ test('release PHP archive excludes neighboring handwritten/private files', () =>
   const listing = spawnSync('unzip', ['-l', join(dest, archive)], { encoding: 'utf8' });
   assert.equal(listing.status, 0, listing.stderr);
   assert.ok(!listing.stdout.includes('private-definition'));
-  assert.ok(listing.stdout.includes('src/contract.json'));
+  assert.ok(listing.stdout.includes('src/descriptors/settings.json'));
+  assert.ok(listing.stdout.includes('src/classes/Client.php'));
 });
 test('compatibility findings persist into release migrations', () => {
   const out = join(temporary, 'migration');

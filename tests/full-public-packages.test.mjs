@@ -1,3 +1,4 @@
+import { measureSdkWeight } from './helpers/sdk-weight.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -84,7 +85,6 @@ writeFileSync(${JSON.stringify(join(dir, 'summary.json'))},JSON.stringify({opera
         summary.maxRSS < 4 * 1024 * 1024,
         `full generation peak RSS ${summary.maxRSS} KiB exceeds 4 GiB budget`,
       );
-      assert.ok(summary.elapsedMs < 180000, `full generation took ${summary.elapsedMs} ms`);
       assert.ok(size(output) < 300 * 1024 * 1024, 'full package/record size budget exceeded');
       const preview = JSON.parse(
         run(process.execPath, ['dist/cli.js', 'preview', api, config, output]),
@@ -236,7 +236,46 @@ if($frames[0]->data->cursor!=='whev_resume')throw new Exception('stream payload'
 $streaming->close();
 `,
       );
-      run('php', ['check.php'], { cwd: consumer });
+      for (const opcache of ['0', '1'])
+        run(
+          'php',
+          ['-d', 'memory_limit=128M', '-d', 'opcache.enable_cli=' + opcache, 'check.php'],
+          { cwd: consumer },
+        );
+      run('composer', ['install', '--no-interaction', '--no-progress'], {
+        cwd: join(output, 'php'),
+      });
+      const weight = measureSdkWeight(output);
+      console.log('SDK consumer budget ' + JSON.stringify(weight));
+      assert.equal(weight.node.failed, undefined, JSON.stringify(weight.node));
+      assert.ok(weight.sizes.node['.js'] < 15 * 1024 * 1024, 'Node source size budget exceeded');
+      assert.ok(weight.sizes.node['.d.ts'] < 13 * 1024 * 1024, 'declaration size budget exceeded');
+      assert.ok(
+        weight.sizes.php['.json'] < 24 * 1024 * 1024,
+        'PHP descriptor size budget exceeded',
+      );
+      assert.ok(weight.node.importRss < 128 * 1024 * 1024, 'root import RSS budget exceeded');
+      assert.ok(weight.node.repeatedClientMs < 10, 'repeated Node construction budget exceeded');
+      assert.ok(
+        weight.bundles['resources/invoices'] < weight.bundles.index / 2,
+        'selective bundle must exclude most of the full contract',
+      );
+      assert.ok(weight.sizes.php.largestSource < 512 * 1024, 'PHP source exceeds indexing budget');
+      assert.ok(
+        weight.bundles['resources/invoices'] < 1024 * 1024,
+        'selective bundle exceeds 1 MiB',
+      );
+      for (const [target, bytes] of Object.entries(weight.archives))
+        assert.ok(typeof bytes === 'number' && bytes > 0, 'archive measurement failed: ' + target);
+      for (const result of weight.php) {
+        assert.equal(result.failed, undefined, JSON.stringify(result));
+        assert.ok(result.autoloadMemory < 4 * 1024 * 1024, 'Composer eagerly loaded SDK code');
+        assert.ok(result.peakMemory < 128 * 1024 * 1024, 'PHP consumer memory budget exceeded');
+        assert.ok(result.repeatedClientMs < 10, 'repeated PHP construction budget exceeded');
+      }
+      // Report consumer measurements and exercise installed packages before a
+      // generation timing failure (for example on a contended CI worker).
+      assert.ok(summary.elapsedMs < 180000, `full generation took ${summary.elapsedMs} ms`);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

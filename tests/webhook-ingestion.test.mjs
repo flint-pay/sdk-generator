@@ -68,7 +68,9 @@ test('incoming contracts remain separate and reach both signed verifier APIs wit
   assert.deepEqual(Object.keys(contract.config.webhook.events), ['balance.changed']);
   const out = join(dir, 'out');
   generate(contract, out);
-  const plan = JSON.parse(readFileSync(join(out, 'php/src/contract.json'), 'utf8'));
+  const plan = JSON.parse(
+    readFileSync(join(out, 'php/src/descriptors/compatibility.json'), 'utf8'),
+  );
   assert.equal(plan.incoming.length, 1);
   assert.equal(plan.incoming[0].schema, undefined);
   assert.ok(plan.incoming[0].codec);

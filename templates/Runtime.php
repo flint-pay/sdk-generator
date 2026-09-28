@@ -2873,39 +2873,22 @@ class Runtime
     private array $allowed;
     private readonly string $baseUrl;
     protected readonly array $contract;
+    private readonly ?Internal\DescriptorSource $descriptors;
     private mixed $curl = null;
     private array $streams = [];
     public function __construct(
-        array $contract,
+        array|Internal\DescriptorSource $contract,
         private readonly ClientOptions $options,
         bool $compiled = false,
     ) {
-        $this->contract = $compiled
-            ? $contract
-            : \SdkNamespace\Internal\SchemaAdapter::runtimePlan($contract);
-        if (
-            ($this->contract['format'] ?? null) !== 1 ||
-            !is_string($this->contract['semantics'] ?? null) ||
-            ($this->contract['retrySemantics'] ?? null) !== 'budgets-1'
-        ) {
-            throw new \InvalidArgumentException('Unsupported compiled runtime format');
-        }
-        if (!is_array($this->contract['operations'] ?? null)) {
-            throw new \InvalidArgumentException('Missing compiled operations');
-        }
-        if (array_key_exists('defaultBaseUrl', $this->contract)) {
-            $default = $this->contract['defaultBaseUrl'];
-            if (
-                !is_string($default) ||
-                !self::validBaseUrl($default) ||
-                !in_array(
-                    strtolower(parse_url($default, PHP_URL_SCHEME) ?? ''),
-                    ['http', 'https'],
-                    true,
-                )
-            ) {
-                throw new \InvalidArgumentException('Invalid defaultBaseUrl in compiled runtime');
-            }
+        $this->descriptors = $contract instanceof Internal\DescriptorSource ? $contract : null;
+        $this->contract = $this->descriptors
+            ? $this->descriptors->settings()
+            : ($compiled
+                ? $contract
+                : \SdkNamespace\Internal\SchemaAdapter::runtimePlan($contract));
+        if (!$this->descriptors) {
+            self::assertCompiledPlan($this->contract);
         }
         $baseUrl = $options->baseUrl ?? ($this->contract['defaultBaseUrl'] ?? null);
         if ($baseUrl === null) {
@@ -2931,8 +2914,40 @@ class Runtime
                     ($shortcuts ? implode(', ', $shortcuts) : 'authMode and credentials'),
             );
         }
-        foreach ($this->contract['authShortcuts'] ?? [] as $name => $shortcut) {
-            $schemes = $this->contract['authentication'][$shortcut['mode'] ?? '']['schemes'] ?? [];
+        $this->allowed = $options->allowedOrigins ?? [self::origin($this->baseUrl)];
+        $this->checkUrl($this->baseUrl);
+        if ($options->timeoutMs <= 0 || $options->deadlineMs <= 0) {
+            Codec::fail('options', 'timeouts must be positive');
+        }
+    }
+    public static function assertCompiledPlan(array $contract): void
+    {
+        if (
+            ($contract['format'] ?? null) !== 1 ||
+            !is_string($contract['semantics'] ?? null) ||
+            ($contract['retrySemantics'] ?? null) !== 'budgets-1'
+        ) {
+            throw new \InvalidArgumentException('Unsupported compiled runtime format');
+        }
+        if (!is_array($contract['operations'] ?? null)) {
+            throw new \InvalidArgumentException('Missing compiled operations');
+        }
+        if (array_key_exists('defaultBaseUrl', $contract)) {
+            $default = $contract['defaultBaseUrl'];
+            if (
+                !is_string($default) ||
+                !self::validBaseUrl($default) ||
+                !in_array(
+                    strtolower(parse_url($default, PHP_URL_SCHEME) ?? ''),
+                    ['http', 'https'],
+                    true,
+                )
+            ) {
+                throw new \InvalidArgumentException('Invalid defaultBaseUrl in compiled runtime');
+            }
+        }
+        foreach ($contract['authShortcuts'] ?? [] as $name => $shortcut) {
+            $schemes = $contract['authentication'][$shortcut['mode'] ?? '']['schemes'] ?? [];
             if (
                 !preg_match('/^[a-z][a-zA-Z0-9]*$/', $name) ||
                 ($name !== 'token' &&
@@ -2943,11 +2958,11 @@ class Runtime
                 throw new \InvalidArgumentException('Invalid authentication shortcut');
             }
         }
-        if (isset($this->contract['authentication'])) {
-            if (!is_array($this->contract['authentication'])) {
+        if (isset($contract['authentication'])) {
+            if (!is_array($contract['authentication'])) {
                 throw new \InvalidArgumentException('Invalid authentication modes');
             }
-            foreach ($this->contract['authentication'] as $mode) {
+            foreach ($contract['authentication'] as $mode) {
                 if (!is_array($mode['schemes'] ?? null) || !$mode['schemes']) {
                     throw new \InvalidArgumentException('Invalid authentication mode');
                 }
@@ -2970,11 +2985,11 @@ class Runtime
                 }
             }
         }
-        if (isset($this->contract['incoming'])) {
-            if (!is_array($this->contract['incoming'])) {
+        if (isset($contract['incoming'])) {
+            if (!is_array($contract['incoming'])) {
                 throw new \InvalidArgumentException('Invalid incoming contracts');
             }
-            foreach ($this->contract['incoming'] as $entry) {
+            foreach ($contract['incoming'] as $entry) {
                 foreach (['name', 'method', 'pointer', 'model'] as $key) {
                     if (!is_string($entry[$key] ?? null)) {
                         throw new \InvalidArgumentException('Invalid incoming ' . $key);
@@ -2986,13 +3001,13 @@ class Runtime
                 Codec::assertPlan($entry['codec'] ?? null, 'incoming.' . $entry['name']);
             }
         }
-        foreach ($this->contract['operations'] as $op) {
+        foreach ($contract['operations'] as $op) {
             if (isset($op['authModes'])) {
                 if (!is_array($op['authModes'])) {
                     throw new \InvalidArgumentException('Invalid operation authentication modes');
                 }
                 foreach ($op['authModes'] as $name) {
-                    if (!is_string($name) || !isset($this->contract['authentication'][$name])) {
+                    if (!is_string($name) || !isset($contract['authentication'][$name])) {
                         throw new \InvalidArgumentException(
                             'Invalid operation authentication mode',
                         );
@@ -3151,25 +3166,20 @@ class Runtime
                 }
             }
         }
-        foreach ($this->contract['definitions'] ?? [] as $name => $codec) {
+        foreach ($contract['definitions'] ?? [] as $name => $codec) {
             Codec::assertPlan($codec, 'definitions.' . $name);
         }
-        foreach ($this->contract['webhook']['events'] ?? [] as $name => $codec) {
+        foreach ($contract['webhook']['events'] ?? [] as $name => $codec) {
             Codec::assertPlan($codec, 'events.' . $name);
         }
-        $this->allowed = $options->allowedOrigins ?? [self::origin($this->baseUrl)];
-        $this->checkUrl($this->baseUrl);
-        if ($options->timeoutMs <= 0 || $options->deadlineMs <= 0) {
-            Codec::fail('options', 'timeouts must be positive');
-        }
+    }
+    private function definitions(): array
+    {
+        return $this->descriptors?->definitions() ?? ($this->contract['definitions'] ?? []);
     }
     private function decode(mixed $value, array $codec, array $context = []): mixed
     {
-        return Codec::execute(
-            $value,
-            $codec,
-            $context + ['definitions' => $this->contract['definitions'] ?? []],
-        );
+        return Codec::execute($value, $codec, $context + ['definitions' => $this->definitions()]);
     }
     private static function now(): int
     {
@@ -3251,6 +3261,9 @@ class Runtime
     }
     private function operation(string $id): array
     {
+        if ($this->descriptors) {
+            return $this->descriptors->operation($id);
+        }
         foreach ($this->contract['operations'] as $op) {
             if ($op['id'] === $id) {
                 return $op;
@@ -3820,7 +3833,7 @@ class Runtime
                         $model = $declared['model'] ?? null;
                         if (isset($declared['variants']) && is_object($data)) {
                             $codec = $declared['codec'];
-                            $definitions = $this->contract['definitions'] ?? [];
+                            $definitions = $this->definitions();
                             for ($depth = 0; isset($codec['reference']); $depth++) {
                                 if ($depth > 256) {
                                     Codec::fail(
@@ -3887,7 +3900,7 @@ class Runtime
                     $op['responses'][(string) $status]['codec'] ??
                         ($op['responses']['default']['codec'] ?? []),
                     $this->options->redactFields,
-                    $this->contract['definitions'] ?? [],
+                    $this->definitions(),
                 );
                 $message = self::field(
                     $details,
@@ -4244,7 +4257,9 @@ class Runtime
         array $secrets,
         ?int $nowSeconds = null,
     ): array {
-        $w = $this->contract['webhook'] ?? null;
+        $w = $this->descriptors
+            ? $this->descriptors->webhook()
+            : $this->contract['webhook'] ?? null;
         if (!$w) {
             Codec::fail('webhook', 'capability is not declared');
         }

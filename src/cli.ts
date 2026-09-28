@@ -42,7 +42,8 @@ try {
       collectDiagnostics: command === 'diagnose',
       onWarning: (warning) => console.error(stable({ warning: warning.message })),
     });
-    render(contract);
+    // generate/preview already compile and render while inspecting the output.
+    if (command === 'diagnose' || command === 'effective') render(contract);
     if (command === 'diagnose')
       console.log(
         stable({

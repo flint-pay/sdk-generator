@@ -230,7 +230,7 @@ assert.equal((await c.api.sendValue({}, {deadlineMs:1000})).data,'ok');
 `,
   );
   run(process.execPath, [node]);
-  const phpRuntime = join(out, 'php/src/Runtime.php');
+  const phpRuntime = join(out, 'php/src/classes/Codec.php');
   const phpSource = readFileSync(phpRuntime, 'utf8');
   const slow = phpSource.replace(
     /(public static function execute\([^)]*\): mixed\s*\{)/,

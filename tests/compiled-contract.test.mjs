@@ -172,7 +172,13 @@ for (const policy of ['semver', 'review'])
 test('generated calls in both languages execute with dynamic schema compilation disabled', () => {
   const f = fixture('execution-boundary');
   generate(f.contract, f.output);
-  const phpPlan = JSON.parse(readFileSync(join(f.output, 'php/src/contract.json')));
+  const phpPlan = JSON.parse(
+    run('php', [
+      '-r',
+      String.raw`require $argv[1].'/src/Runtime.php';echo json_encode(Example\Compiled\SchemaRegistry::contract(),JSON_THROW_ON_ERROR);`,
+      join(f.output, 'php'),
+    ]),
+  );
   assert.equal(phpPlan.format, 1);
   assert.ok(phpPlan.operations[0].responses['200'].codec);
   assert.equal(phpPlan.operations[0].responses['200'].schema, undefined);

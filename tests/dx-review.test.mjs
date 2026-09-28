@@ -1,3 +1,4 @@
+import { declarations as allDeclarations } from './helpers/generated-source.mjs';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
@@ -140,7 +141,7 @@ for (const [name, header, key, components] of [
       const readme = f.read(`${target}/README.md`).match(/```(?:typescript|php)\n([\s\S]*?)```/)[1];
       runExample(f, target, readme, key);
     }
-    const hover = f.read('node/index.d.ts');
+    const hover = allDeclarations(join(f.output, 'node'));
     assert.match(hover, /@example[\s\S]*?API_IDEMPOTENCY_KEY/);
   });
 
@@ -184,7 +185,7 @@ echo 'ok';`;
   );
 });
 
-test('historical unrestricted authentication options cannot migrate in a semver patch release', () => {
+test('historical unrestricted authentication options cannot migrate in a semver patch release', async () => {
   const f = fixture('auth', { auth: true });
   const current = compileSdkContract(f.contract).plan;
   const historical = structuredClone(current);
@@ -252,18 +253,27 @@ export function create(options:RequestOptions={}) { return client.api.createValu
     () => execFileSync(process.execPath, tsc, { stdio: 'pipe' }),
     (error) => error.stdout.toString().includes('TS2345'),
   );
-  const declarationPath = join(f.output, 'node/index.d.ts');
-  const declarations = f.read('node/index.d.ts');
-  const legacy = declarations
-    .replace(
-      /export type RequestOptions<M extends AuthMode = AuthMode> =[^\n]+\n/,
-      'export type RequestOptions = RuntimeRequestOptions;\n',
-    )
-    .replace(/RequestOptions<[^>]+>/g, 'RequestOptions')
-    .replace(/_SdkWithoutIdempotency<RequestOptions>/g, 'RequestOptions');
-  writeFileSync(declarationPath, legacy);
+  const { readdirSync } = await import('node:fs');
+  const saved = [];
+  for (const folder of ['declarations', 'resources'])
+    for (const name of readdirSync(join(f.output, 'node', folder))) {
+      if (!name.endsWith('.d.ts')) continue;
+      const path = join(f.output, 'node', folder, name);
+      const text = readFileSync(path, 'utf8');
+      saved.push([path, text]);
+      writeFileSync(
+        path,
+        text
+          .replace(
+            /export type RequestOptions<M extends AuthMode = AuthMode> =[^\n]+\n/,
+            'export type RequestOptions = RuntimeRequestOptions;\n',
+          )
+          .replace(/RequestOptions<[^>]+>/g, 'RequestOptions')
+          .replace(/_SdkWithoutIdempotency<RequestOptions>/g, 'RequestOptions'),
+      );
+    }
   execFileSync(process.execPath, tsc, { stdio: 'pipe' });
-  writeFileSync(declarationPath, declarations);
+  for (const [path, text] of saved) writeFileSync(path, text);
 
   // The same classification must reach preview, rather than remaining only
   // a direct comparison result disconnected from release/version policy.

@@ -1,3 +1,4 @@
+import { declarations } from './helpers/generated-source.mjs';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
@@ -104,8 +105,8 @@ test('hover and standalone mutation examples send a fresh idempotency key and va
       return new Response('{"id":"p_1","amount":100,"status":"pending"}', { status: 201 });
     },
   });
-  const block = [...read('node/index.d.ts').matchAll(/\/\*\*([\s\S]*?)\*\//g)].find((match) =>
-    match[1].includes('client.payments.create('),
+  const block = [...declarations(join(output, 'node')).matchAll(/\/\*\*([\s\S]*?)\*\//g)].find(
+    (match) => match[1].includes('client.payments.create('),
   )[1];
   const example = block.split('@example')[1].replace(/^\s*\* ?/gm, '');
   await new Function(
@@ -121,7 +122,7 @@ test('hover and standalone mutation examples send a fresh idempotency key and va
 
 test('reference explains response envelopes, numeric units, models and every convenience method', () => {
   assert.match(
-    read('node/index.d.ts'),
+    declarations(join(output, 'node')),
     /\/\*\* Amount in the currency's minor unit[^\n]+\*\/ "amount": string/,
   );
   assert.match(read('node/MODELS.md'), /minor unit/);

@@ -8,6 +8,7 @@ const semantic = new Set([
   'diagnostic',
   'codec-plan',
   'codec-sharing',
+  'package-plan',
   'runtime-plan',
   'schema-policy',
   'schema-intersections',

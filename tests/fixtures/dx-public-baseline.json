@@ -1,33 +1,33 @@
 {
   "predecessor": "compiled-public-baseline.json",
-  "description": "Reviewed DX interface: field documentation and complete examples; PHP array inputs and presence/fallback helpers. Historical migration hashes remain in the predecessor file. The library fixture now uses default positional requests; payment and Flint retain explicit object-style coverage. Automatic named sharing replaces repeated inline types with equivalent named references, ExactNumber is exported automatically, and the library fixture exercises default payload returns with WithResponse companions. Existing payment and Flint profiles explicitly retain Result returns. Retry budgets narrow TypeScript idempotency options per operation and remove forced single-attempt examples; mutation examples use persisted key variables. PHP resource signatures are unchanged. Client setup now wraps runtime options in a package-specific ClientOptions alias so baseUrl is optional only with a declared server. These four fixtures declare no server and still require baseUrl; their PHP resource signatures are unchanged.",
+  "description": "Reviewed DX interface: field documentation and complete examples; PHP array inputs and presence/fallback helpers. Historical migration hashes remain in the predecessor file. The library fixture now uses default positional requests; payment and Flint retain explicit object-style coverage. Automatic named sharing replaces repeated inline types with equivalent named references, ExactNumber is exported automatically, and the library fixture exercises default payload returns with WithResponse companions. Existing payment and Flint profiles explicitly retain Result returns. Retry budgets narrow TypeScript idempotency options per operation and remove forced single-attempt examples; mutation examples use persisted key variables. PHP resource signatures are unchanged. Client setup now wraps runtime options in a package-specific ClientOptions alias so baseUrl is optional only with a declared server. These four fixtures declare no server and still require baseUrl; their PHP resource signatures are unchanged. Modular output hashes the sorted declaration modules and resource interfaces. Consumer typechecks retain the existing API; PHP reflection explicitly autoloads generated classes and retains the previous public-signature hashes. Identical nongeneric type expressions now share declarations through aliases, retaining symbol and field documentation. Selective declarations now re-export the same runtime helpers and supporting types as their JavaScript entry points; root declarations are unchanged by this correction.",
   "fixtures": [
     {
       "name": "library",
       "api": "examples/library.openapi.json",
       "config": "examples/library.sdk.json",
-      "nodeDeclarationsSha256": "00340c66de95e394ee4bbb6c3fe083cdf57e21841f7a53e9cfa0583f41ee40b6",
+      "nodeDeclarationsSha256": "ad15cc935f8a7a1842679100d2c27c11ca385e674ecb6d42d72bfb9c10e35b7d",
       "phpDeclarationsSha256": "8956d33a1e3536cc08149380e44294b03174774d608a7e8f808f36f2690c8c87"
     },
     {
       "name": "payment",
       "api": "tests/fixtures/payment-api.json",
       "config": "tests/fixtures/payment-sdk.json",
-      "nodeDeclarationsSha256": "49cd4240849cefc5ad300bb2aaa69811c2e9d1d9d888e8d4f5d7111634c2b3d8",
+      "nodeDeclarationsSha256": "53daa9a44cede1081e8f7c5e4a138187c0e1da4f27a34bbbb60817ab5655afd3",
       "phpDeclarationsSha256": "8e1a5d93afbc3ebbe7b41166eca3237f63087fc8bfe8012dec27677fe230a120"
     },
     {
       "name": "flint",
       "api": "tests/providers/flint/openapi.json",
       "config": "tests/providers/flint/sdk.json",
-      "nodeDeclarationsSha256": "187477c0906eedf461d5319eaa1342b657957d93683a5da16dc99057514eae41",
+      "nodeDeclarationsSha256": "56bf7e4153915b0044a8151a230f181fc5ab5e3ab3224299217eef11f8af640d",
       "phpDeclarationsSha256": "3bb757c77bc3bd52495432141c4a95b9dd1334ac3f7153f882d738dc3d6c9276"
     },
     {
       "name": "risk",
       "api": "tests/providers/flint/risk-openapi.json",
       "config": "tests/providers/flint/risk-sdk.json",
-      "nodeDeclarationsSha256": "3b86a6f3c3ccd434b5ec8d3995cf43eb1d100d15d11f1d2ed82b3a98f47b2074",
+      "nodeDeclarationsSha256": "73396e29d008c4dd85aa68f0cace563d230bf5300fcb7a924ab619ae7e4397e4",
       "phpDeclarationsSha256": "a8beb38e92952a311fd12ec51cb58289332267878082de41120d69a9c1317523"
     }
   ]

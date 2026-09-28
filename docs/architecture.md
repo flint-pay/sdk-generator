@@ -17,6 +17,14 @@ Start with the [CLI and library reference](cli.md) for invocation, [configuratio
 
 Compilation and comparison take explicit inputs and perform no filesystem, network, clock or environment access; generation owns file reads and writes. Compiler dependency checks inspect TypeScript imports and PHP tokens to block forbidden edges and cycles.
 
+A pure packaging pass computes resource groups and transitive codec dependencies after semantic compilation and codec sharing. Recursive dependencies remain references. This layout does not change the compiled snapshots used for compatibility comparisons.
+
+Generated clients share prepared descriptors, not credentials, transports or request state. Construction reads only client settings. Operations, model factories and webhook verification load and validate their dependency groups on first use. Node owns and freezes validated data; PHP returns arrays with copy-on-write isolation. Package validation traverses every group even when no example uses it. Explicit dynamic-schema APIs keep their validation boundary.
+
+Node's root entry point preserves the complete client API. Resource subpaths provide scoped clients and declarations; their descriptor exports can be removed independently by bundlers. A shared data module avoids thousands of eager ESM imports, while JSON decoding remains deferred. Descriptor import fingerprints prevent a regenerated entry point from reusing stale data modules in the same process.
+
+PHP uses Composer classmaps/PSR-4 rather than `autoload.files`. Generated classes have individual files, so including Composer's autoloader does not include SDK implementation files. The historical source entry points register a small compatibility autoloader. Resource properties remain eager lightweight wrappers; model classes and JSON descriptors load on demand. `SchemaRegistry::contract()` and `codecs()` retain explicit complete-plan access for existing callers.
+
 Generated packages carry their compiled descriptors and execute them with their own language's JSON and transport primitives. Ordinary generated calls do not compile schemas. Public schema-taking helpers remain available for application-supplied schemas: Node bundles the same pure codec compiler used during generation, and PHP's isolated `Internal\SchemaAdapter` translates schemas into the same descriptor format. Neither is a fallback path for generated operations, and generated-client tests disable the adapters to enforce that boundary.
 
 Public declarations and runtime guarantees remain separate facts in the compiled contract. A target exposing `unknown` or `mixed` does not discard guarantees enforced by its codec.

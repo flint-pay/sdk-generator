@@ -3,9 +3,44 @@ declare(strict_types=1);
 require $argv[1] . '/Runtime.php';
 require $argv[1] . '/Client.php';
 $api = [];
+$generated = [];
+foreach (glob($argv[1] . '/classes/*.php') as $file) {
+    $source = file_get_contents($file);
+    preg_match('/namespace ([^;]+);/', $source, $namespace);
+    $short = basename($file, '.php');
+    if (
+        in_array(
+            $short,
+            [
+                'SdkError',
+                'Result',
+                'Cancellation',
+                'RequestOptions',
+                'ClientOptions',
+                'ByteStream',
+                'CurlByteStream',
+                'ServerSentEvent',
+                'EventStream',
+                'Model',
+                'RawNumber',
+                'ParsedNumber',
+                'ExactNumber',
+                'Codec',
+                'Runtime',
+                'SdkResponse',
+            ],
+            true,
+        )
+    ) {
+        continue;
+    }
+    $name = $namespace[1] . '\\' . $short;
+    class_exists($name);
+    $generated[$name] = true;
+}
 foreach (get_declared_classes() as $name) {
     $class = new ReflectionClass($name);
-    if ($class->getFileName() !== realpath($argv[1] . '/Client.php')) {
+    if (!isset($generated[$name])) {
         continue;
     }
     $methods = [];
@@ -14,7 +49,10 @@ foreach (get_declared_classes() as $name) {
             continue;
         }
         // Added internal accessor; the legacy definitions() remains inventoried.
-        if ($class->getShortName() === 'SchemaRegistry' && $method->name === 'codecs') {
+        if (
+            $class->getShortName() === 'SchemaRegistry' &&
+            in_array($method->name, ['codecs', 'source'], true)
+        ) {
             continue;
         }
         $parameters = [];
