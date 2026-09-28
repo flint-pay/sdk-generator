@@ -1,3 +1,4 @@
+import { renderedDeclarations } from './helpers/generated-source.mjs';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, cpSync } from 'node:fs';
@@ -725,8 +726,8 @@ test('pagination and polling recognize types supplied by referenced conjuncts', 
     },
   });
   const artifacts = render(i.load());
-  assert.ok(artifacts.get('node/index.d.ts').includes('readValuePages'));
-  assert.ok(artifacts.get('php/src/Client.php').includes('readValueWait'));
+  assert.ok(renderedDeclarations(artifacts).includes('readValuePages'));
+  assert.ok(artifacts.get('php/src/classes/ApiResource.php').includes('readValueWait'));
 });
 
 test('exact array items and dictionary values enforce composed numeric constraints in both targets', async () => {

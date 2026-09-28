@@ -102,3 +102,11 @@ Regenerated Node and PHP SDKs retry GET/HEAD/OPTIONS without per-operation confi
 Mutations with optional missing keys now send once instead of failing because retries were declared. Required keys remain required; a key alone does not enable an undeclared mutation retry policy. Persist and reuse keys across application resubmissions. Automatic key generation remains opt-in and covers one SDK call.
 
 TypeScript method options now reject `idempotencyKey` on unsupported operations. Wrappers forwarding a broad `RequestOptions` variable must narrow or omit its key property before forwarding to those methods. Authentication restrictions remain in effect. PHP retains its shared options constructor and runtime capability checks. Generated examples use the effective retry policy instead of disabling retries. Compatibility reports identify the type narrowing and flag changed retry behavior for review in both targets.
+
+## Modular generated packages
+
+Generated Node packages now include resource subpaths and split declaration files. Existing root imports, constructors, factories and method signatures remain supported. PHP emits individual class files and uses class-based Composer autoloading; direct includes of the historical `src/Runtime.php` and `src/Client.php` entry points retain a compatibility loader.
+
+Heavy descriptors are decoded and validated on first use and shared across clients independently of credentials and transports. The first call can pay a dependency-loading cost. Package validation checks all descriptor groups before release. The PHP `contract.json` implementation artifact is replaced by descriptor groups; callers needing the complete plan can continue using `SchemaRegistry::contract()`.
+
+Regenerate packages as a complete unit and refresh Composer autoload metadata on installation. Do not copy individual generated files between versions. Normal regeneration removes obsolete owned files and preserves handwritten helpers. Compiled compatibility snapshots retain their previous semantic representation.

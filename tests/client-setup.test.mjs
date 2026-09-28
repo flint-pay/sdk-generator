@@ -532,7 +532,7 @@ test('PHP rejects malformed serialized server defaults and reserved shortcut nam
   const script = String.raw`
 require $argv[1].'/src/Runtime.php';
 use Example\Setup\{Runtime,ClientOptions};
-$plan=json_decode(file_get_contents($argv[1].'/src/contract.json'),true);
+$plan=Example\Setup\SchemaRegistry::contract();
 foreach([null,123,'/relative','https://{host}','http://user:password@example.invalid','https://example.invalid/'.chr(255)] as $url){
  $bad=$plan;$bad['defaultBaseUrl']=$url;
  try{new Runtime($bad,new ClientOptions(),true);throw new Exception('accepted invalid default');}

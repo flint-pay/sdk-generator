@@ -428,7 +428,7 @@ class ExplodingResponse {
         throw new SdkError('validation', 'synthetic-private-constructor-message');
     }
 }
-$plan=json_decode(file_get_contents($argv[1].'/php/src/contract.json'),true);
+$plan=SchemaRegistry::contract();
 foreach($plan['operations'] as &$op)if($op['id']==='create')$op['responses']['201']['model']='ExplodingResponse';
 unset($op);
 $calls=0;$events=[];

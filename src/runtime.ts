@@ -1,3 +1,4 @@
+import { DescriptorSource } from './descriptor-source.js';
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { inspect } from 'node:util';
 import type { Schema } from './contract.js';
@@ -437,7 +438,7 @@ function denseArray(value: unknown[], path: string): void {
 }
 function encode(value: unknown, depth = 0): string {
   if (depth > 256) bad('value', 'value exceeds the supported nesting depth or contains a cycle');
-  if (value instanceof Model) return encode(value.toJSON(), depth + 1);
+  if (value instanceof CompiledModel) return encode(value.toJSON(), depth + 1);
   if (value instanceof RawNumber) return value.value;
   if (value === null) return 'null';
   if (typeof value === 'string' || typeof value === 'boolean') return JSON.stringify(value);
@@ -764,7 +765,7 @@ function jointNumericView(
       bad(context.path ?? 'input', 'value exceeds supported nesting depth or contains a cycle');
     if (typeof child === 'string') return exactDecimal.test(child);
     if (child instanceof ParsedNumber || child instanceof RawNumber) return false;
-    if (child instanceof Model) child = modelInputs.get(child) ?? child.toJSON();
+    if (child instanceof CompiledModel) child = modelInputs.get(child) ?? child.toJSON();
     return Boolean(
       child &&
         typeof child === 'object' &&
@@ -889,8 +890,8 @@ function mergeNumericViews(left: any, right: any, depth = 0): any {
     bad('value', 'value exceeds the supported nesting depth (256) or contains a cycle');
   if (left === right || left instanceof ParsedNumber) return left;
   if (right instanceof ParsedNumber) return right;
-  if (left instanceof Model) left = left.toJSON();
-  if (right instanceof Model) right = right.toJSON();
+  if (left instanceof CompiledModel) left = left.toJSON();
+  if (right instanceof CompiledModel) right = right.toJSON();
   if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return left;
   if (Array.isArray(left)) {
     const children = left.map((child, index) => mergeNumericViews(child, right[index], depth + 1));
@@ -944,7 +945,7 @@ function assertNumericSources(
   scopes: readonly CodecScope[],
   context: CodecContext,
 ): void {
-  if (source instanceof Model) source = source.toJSON();
+  if (source instanceof CompiledModel) source = source.toJSON();
   if (!numericViewChanged(source, value)) return;
   const path = context.path ?? 'input';
   const depth = context.depth ?? 0;
@@ -1029,7 +1030,7 @@ function numericView(
   if (context.search.exhausted)
     bad(path, 'numeric interpretation exceeds 256 alternative combinations');
   if (depth > 256) bad(path, 'value exceeds the supported nesting depth (256) or contains a cycle');
-  if (value instanceof Model) value = modelInputs.get(value) ?? value.toJSON();
+  if (value instanceof CompiledModel) value = modelInputs.get(value) ?? value.toJSON();
   const shapes = codecShapes(scopes, path, depth);
   if (
     typeof value === 'string' &&
@@ -1252,7 +1253,7 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
       allowUnknownResponseFields: allowUnknownResponseFields,
     });
   }
-  if (value instanceof Model) value = modelInputs.get(value) ?? value.toJSON();
+  if (value instanceof CompiledModel) value = modelInputs.get(value) ?? value.toJSON();
   wireKind(s.value); // Exhaustively reject unknown instruction kinds.
   if (s.every || s.some || s.exactlyOne || s.exclude || s.when) {
     const {
@@ -1688,18 +1689,19 @@ export type InputValue<T> =
         ? { [Key in keyof T]: InputValue<T[Key]> }
         : never);
 const modelInputs = new WeakMap<object, unknown>();
-export class Model<T = unknown> {
+class CompiledModel<T = unknown> {
   private readonly value: T;
   private readonly codec: CodecPlan;
-  private readonly dynamicSchema: Schema | undefined;
-  constructor(value: InputValue<T>, schema: Schema);
-  constructor(value: InputValue<T>, schema: Schema, compiled?: CodecPlan) {
-    this.dynamicSchema = compiled ? undefined : schema;
-    this.codec = compiled ?? compileCodec(schema);
+  constructor(
+    value: InputValue<T>,
+    codec: CodecPlan,
+    private readonly dynamicCodec?: () => CodecPlan,
+  ) {
+    this.codec = codec;
     const unwrap = (v: any, depth = 0): any => {
       if (depth > 256)
         bad('value', 'value exceeds the supported nesting depth or contains a cycle');
-      if (v instanceof Model) return unwrap(v.toJSON(), depth + 1);
+      if (v instanceof CompiledModel) return unwrap(v.toJSON(), depth + 1);
       if (v instanceof RawNumber) return v.value;
       if (Array.isArray(v)) return v.map((child) => unwrap(child, depth + 1));
       if (v && typeof v === 'object')
@@ -1719,11 +1721,27 @@ export class Model<T = unknown> {
     return structuredClone(this.value);
   }
   [inspect.custom]() {
-    return redactCodec(
-      this.value,
-      this.dynamicSchema ? compileCodec(this.dynamicSchema) : this.codec,
+    return redactCodec(this.value, this.dynamicCodec ? this.dynamicCodec() : this.codec);
+  }
+}
+/** Public schema adapter; compiled factories use the same model executor. */
+export class Model<T = unknown> extends CompiledModel<T> {
+  constructor(value: InputValue<T>, schema: Schema);
+  constructor(value: InputValue<T>, schema: Schema, compiled?: CodecPlan) {
+    super(
+      value,
+      compiled ?? compileCodec(schema),
+      compiled ? undefined : () => compileCodec(schema),
     );
   }
+  static [Symbol.hasInstance](value: unknown): boolean {
+    return this === Model
+      ? value instanceof CompiledModel
+      : Function.prototype[Symbol.hasInstance].call(this, value);
+  }
+}
+export function isModel(value: unknown): value is Model {
+  return value instanceof CompiledModel;
 }
 /** Internal input copy for argument adapters; not exported by the SDK entrypoint. */
 export function modelInputValue(model: Model): unknown {
@@ -1740,8 +1758,7 @@ export function modelInputValue(model: Model): unknown {
 }
 /** Internal factory; does not expand the public Model class method surface. */
 export function modelFromCodec<T>(value: InputValue<T>, codec: CodecPlan): Model<T> {
-  // Reflect invokes the implementation-only third argument on the known Model constructor.
-  return Reflect.construct(Model, [value, {}, codec]) as Model<T>;
+  return new CompiledModel(value, codec);
 }
 const field = (value: any, path: string): any =>
   path
@@ -1825,7 +1842,7 @@ function destinationUrl(value: string, base?: string | URL): URL {
   }
 }
 
-export class Runtime {
+class CompiledRuntime {
   private readonly streams = new Set<EventStream>();
   async close(): Promise<void> {
     await Promise.all([...this.streams].map((stream) => stream.close()));
@@ -1834,17 +1851,28 @@ export class Runtime {
   private readonly base: URL;
   private readonly allowed: Set<string>;
   private readonly compiledContract: CompiledRuntimePlan;
-  private readonly dynamicContract: RuntimeContract | undefined;
+  private readonly descriptors: DescriptorSource | undefined;
+  private operation(id: string) {
+    return this.descriptors
+      ? this.descriptors.operation(id)
+      : this.contract.operations.find((op) => op.id === id);
+  }
+  private definitions() {
+    return this.descriptors?.definitions() ?? this.contract.definitions ?? {};
+  }
   private get contract(): CompiledRuntimePlan {
     // Public source-taking Runtime construction retains caller-owned schemas.
     // Generated clients always supply compiledContract and never enter this adapter.
-    return this.dynamicContract ? compileRuntimePlan(this.dynamicContract) : this.compiledContract;
+    return this.dynamicPlan ? this.dynamicPlan() : this.compiledContract;
   }
-  constructor(contract: RuntimeContract, options: ClientOptions);
-  constructor(contract: RuntimeContract, options: ClientOptions, compiled?: CompiledRuntimePlan) {
-    this.dynamicContract = compiled ? undefined : contract;
-    this.compiledContract = compiled ?? compileRuntimePlan(contract);
-    assertRuntimePlan(this.compiledContract);
+  constructor(
+    compiled: CompiledRuntimePlan | DescriptorSource,
+    options: ClientOptions,
+    private readonly dynamicPlan?: () => CompiledRuntimePlan,
+  ) {
+    this.descriptors = compiled instanceof DescriptorSource ? compiled : undefined;
+    this.compiledContract = compiled instanceof DescriptorSource ? compiled.settings : compiled;
+    if (!this.descriptors) assertRuntimePlan(this.compiledContract);
     if (!options || typeof options !== 'object' || Array.isArray(options))
       bad('options', 'expected a client options object');
     this.options = { ...options };
@@ -1875,7 +1903,7 @@ export class Runtime {
     return { baseUrl: this.base.origin, credentials: '[REDACTED]' };
   }
   private decode(value: unknown, codec: CodecPlan, context: CodecContext): unknown {
-    return executeCodec(value, codec, { ...context, definitions: this.contract.definitions ?? {} });
+    return executeCodec(value, codec, { ...context, definitions: this.definitions() });
   }
   private checkUrl(url: URL) {
     if (!url.hostname || url.username || url.password || url.hash)
@@ -1903,8 +1931,8 @@ export class Runtime {
       bad('input', 'expected an object');
     if (!options || typeof options !== 'object' || Array.isArray(options))
       bad('options', 'expected an object');
-    const { operations, apiVersion } = this.contract;
-    const op = operations.find((v) => v.id === id);
+    const { apiVersion } = this.contract;
+    const op = this.operation(id);
     if (!op) return bad('operation', 'operation is not included in this SDK');
     const start = performance.now();
     const deadline =
@@ -2356,7 +2384,7 @@ export class Runtime {
                 data,
                 declared.codec,
                 this.options.redactFields,
-                this.contract.definitions,
+                this.definitions(),
               ),
               meta: inspectedMetadata(meta),
             }),
@@ -2381,7 +2409,7 @@ export class Runtime {
           data,
           (op.responses[String(response.status)] ?? op.responses.default)?.codec,
           this.options.redactFields,
-          this.contract.definitions,
+          this.definitions(),
         );
         const publicCode: unknown = field(redacted, this.contract.errors?.codePath ?? 'code');
         const originalMessage: unknown = field(
@@ -2481,7 +2509,7 @@ export class Runtime {
     input: Record<string, unknown> = {},
     options: RequestOptions = {},
   ): AsyncGenerator<Result<T>> {
-    const op = this.contract.operations.find((v) => v.id === id);
+    const op = this.operation(id);
     if (!op?.pagination) return bad('pagination', 'capability is not declared');
     const p = op.pagination;
     let next: unknown;
@@ -2504,7 +2532,7 @@ export class Runtime {
       );
       yield result;
       const sent = p.kind === 'link' ? next : request[p.parameter!];
-      const previous = sent instanceof Model ? sent.toJSON() : sent;
+      const previous = sent instanceof CompiledModel ? sent.toJSON() : sent;
       next = field(result.data, p.next);
       if (next === undefined || next === null || next === '') return;
       if (p.kind === 'link' && typeof next !== 'string')
@@ -2529,7 +2557,7 @@ export class Runtime {
     input: Record<string, unknown> = {},
     options: RequestOptions = {},
   ): AsyncGenerator<T> {
-    const p = this.contract.operations.find((v) => v.id === id)?.pagination;
+    const p = this.operation(id)?.pagination;
     if (!p) return bad('pagination', 'capability is not declared');
     const limit = options.maxItems ?? Number.MAX_SAFE_INTEGER;
     if (!Number.isSafeInteger(limit) || limit < 1)
@@ -2551,7 +2579,7 @@ export class Runtime {
     input: Record<string, unknown>,
     options: RequestOptions = {},
   ): Promise<Result<T>> {
-    const p = this.contract.operations.find((v) => v.id === id)?.polling;
+    const p = this.operation(id)?.polling;
     if (!p) return bad('polling', 'capability is not declared');
     const deadline =
       performance.now() +
@@ -2586,7 +2614,7 @@ export class Runtime {
     secrets: string[],
     nowSeconds = Date.now() / 1000,
   ): { event: unknown; known: boolean } {
-    const w = this.contract.webhook;
+    const w = this.descriptors ? this.descriptors.webhook() : this.contract.webhook;
     if (!w) return bad('webhook', 'capability is not declared');
     const normalized = Object.fromEntries(
       Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]),
@@ -2698,7 +2726,31 @@ export class Runtime {
   }
 }
 
+/** Public dynamic-contract adapter; generated clients never retain this compiler path. */
+export class Runtime extends CompiledRuntime {
+  static [Symbol.hasInstance](value: unknown): boolean {
+    return this === Runtime
+      ? value instanceof CompiledRuntime
+      : Function.prototype[Symbol.hasInstance].call(this, value);
+  }
+
+  constructor(contract: RuntimeContract, options: ClientOptions);
+  constructor(
+    contract: RuntimeContract,
+    options: ClientOptions,
+    compiled?: CompiledRuntimePlan | DescriptorSource,
+  ) {
+    super(
+      compiled ?? compileRuntimePlan(contract),
+      options,
+      compiled ? undefined : () => compileRuntimePlan(contract),
+    );
+  }
+}
 /** Internal factory for generated clients; public Runtime construction remains schema-based. */
-export function runtimeFromPlan(contract: CompiledRuntimePlan, options: ClientOptions): Runtime {
-  return Reflect.construct(Runtime, [{ operations: [] }, options, contract]) as Runtime;
+export function runtimeFromPlan(
+  contract: CompiledRuntimePlan | DescriptorSource,
+  options: ClientOptions,
+): Runtime {
+  return new CompiledRuntime(contract, options);
 }

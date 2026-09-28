@@ -1,3 +1,4 @@
+import { declarations } from './helpers/generated-source.mjs';
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
@@ -363,7 +364,7 @@ if(count($seen)!==5)throw new Exception('dispatched invalid request');
 $c->close();echo 'ok';`,
   );
   assert.equal(execFileSync('php', [phpFile], { encoding: 'utf8' }), 'ok');
-  assert.match(readFileSync(join(output, 'node/index.d.ts'), 'utf8'), /"apiKey"\?: string/);
+  assert.match(declarations(join(output, 'node')), /"apiKey"\?: string/);
   const types = join(output, 'node/shortcuts.mts');
   writeFileSync(
     types,

@@ -23,6 +23,7 @@ A capability must be declared to generate its public helper. Both targets implem
 | Diagnostics                | Every HTTP attempt, including failures, no credentials/bodies               | Same                                                                         |
 | Schema-taking helpers      | `serialize`, `Model`, `redact`; bundled local schema adapter                | Base `Model` and `Codec` helpers; local schema adapter                       |
 | Custom runtime             | Caller-owned fetch-compatible function                                      | Caller-owned Closure transport                                               |
+| Package loading            | Deferred descriptor decoding; optional `resources/<resource>` imports       | Composer class loading; deferred resource/model descriptors                  |
 | Client lifetime            | Reusable per event loop; default fetch connection pool                      | Reusable owned cURL handle; explicit close                                   |
 | Package/docs/examples      | npm, JS and TS examples/reference                                           | Composer, PHP examples/reference                                             |
 | Validation                 | Typecheck, syntax, package, shared HTTP fixtures, install tests             | Syntax, Composer validation, shared fixtures, install tests                  |

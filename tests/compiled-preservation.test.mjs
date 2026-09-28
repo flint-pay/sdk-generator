@@ -1,3 +1,4 @@
+import { renderedDeclarations } from './helpers/generated-source.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
@@ -18,7 +19,7 @@ test('Node declarations and PHP public signatures match the reviewed DX baseline
       const contract = loadContract(fixture.api, fixture.config);
       const files = render(contract);
       assert.equal(
-        digest(files.get('node/index.d.ts')),
+        digest(renderedDeclarations(files)),
         fixture.nodeDeclarationsSha256,
         fixture.name + ' Node interface changed',
       );
