@@ -1,5 +1,9 @@
 # Releases and compatibility
 
+## Pagination deadline correction
+
+Regenerated Node and PHP page/item iterators apply `deadlineMs` separately to each page request, including retries and decoding. The default 30-second budget no longer expires across a backfill or counts time spent processing yielded values. Explicit client and request deadlines also apply per page. Callers relying on an overall iteration bound should use cancellation or `maxPages`/`maxItems`. Polling retains its overall deadline.
+
 ## Webhook verification changes
 
 Regenerated Node and PHP verifiers accept either one signing secret or an array for rotation. Node now accepts Fetch `Headers` and Node/Express header records; PHP accepts PSR-7 header arrays. Original body bytes remain required: Node rejects plain strings as well as parsed objects, consistent with its Buffer/Uint8Array declaration. Parsed JSON and malformed inputs produce SDK errors instead of native type errors.

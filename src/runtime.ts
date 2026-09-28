@@ -2568,20 +2568,16 @@ class CompiledRuntime {
     const p = op.pagination;
     let next: unknown;
     const request = { ...input };
-    const deadline =
-      performance.now() +
-      positive(options.deadlineMs ?? this.options.deadlineMs ?? 30000, 'deadlineMs');
     const limit = options.maxPages ?? Number.MAX_SAFE_INTEGER;
     if (!Number.isSafeInteger(limit) || limit < 1)
       bad('maxPages', 'must be a positive safe integer');
     for (let page = 0; page < limit; page++) {
       stopped(options.signal);
-      const remaining = deadline - performance.now();
-      if (remaining <= 0) throw new SdkError('deadline', 'Pagination deadline exceeded', 'unknown');
+      // Each page owns its request deadline; time spent consuming yields is unbounded.
       const result = await this.request<T>(
         id,
         request,
-        { ...options, deadlineMs: remaining },
+        options,
         p.kind === 'link' && typeof next === 'string' ? next : undefined,
       );
       yield result;

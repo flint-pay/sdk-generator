@@ -14,7 +14,7 @@ A capability must be declared to generate its public helper. Both targets implem
 | Response compatibility     | Unknown fields/enums/tags preserved                                                  | Same, with typed object response accessors                                   |
 | Retries/idempotency        | Read defaults, capped budgets, declared mutation policies, stable key                | Same                                                                         |
 | Timeout/deadline           | Per attempt and overall; AbortSignal                                                 | cURL timeout/progress; Cancellation token                                    |
-| Pagination                 | Async page/item generators, limits                                                   | PHP generators, limits                                                       |
+| Pagination                 | Async page/item generators, limits, per-page deadlines                               | PHP generators, limits, per-page deadlines                                   |
 | Polling                    | Declared states, deadline, local cancellation                                        | Same                                                                         |
 | Conditional requests       | Declared precondition header; distinct 409/412, declared 304                         | Same                                                                         |
 | HMAC webhook verification  | Raw bytes; Node/Express or Fetch headers; single/rotating secrets; matched envelopes | Raw strings; scalar/PSR-7 headers; same signing, errors and recognition      |
