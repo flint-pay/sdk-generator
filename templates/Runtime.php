@@ -4132,7 +4132,6 @@ class Runtime
         if (!$p) {
             Codec::fail('pagination', 'capability is not declared');
         }
-        $deadline = self::now() + ($o->deadlineMs ?? $this->options->deadlineMs);
         $next = null;
         $limit = $o->maxPages ?? PHP_INT_MAX;
         if ($limit < 1) {
@@ -4140,16 +4139,8 @@ class Runtime
         }
         for ($i = 0; $i < $limit; $i++) {
             self::checkCancel($o->cancellation);
-            $remaining = $deadline - self::now();
-            if ($remaining <= 0) {
-                throw new SdkError('deadline', 'Pagination deadline exceeded', 'unknown');
-            }
-            $result = $this->request(
-                $id,
-                $input,
-                $o->withDeadline($remaining),
-                $p['kind'] === 'link' ? $next : null,
-            );
+            // Each page owns its request deadline; time spent consuming yields is unbounded.
+            $result = $this->request($id, $input, $o, $p['kind'] === 'link' ? $next : null);
             yield $result;
             $previous = $p['kind'] === 'link' ? $next : $input[$p['parameter']] ?? null;
             if ($previous instanceof ParsedNumber) {

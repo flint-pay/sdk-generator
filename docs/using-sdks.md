@@ -107,23 +107,23 @@ For a null-only schema, use `type: 'null'`. The existing Node behavior for `type
 
 Pass client defaults to `new Client({...})` in Node or `new Client(new ClientOptions(...))` in PHP. Pass request overrides as the last method argument: a plain object in Node or `new RequestOptions(...)` in PHP.
 
-| Option                    | Where             | Default and behavior                                                                                                                                           |
-| ------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `baseUrl`                 | Client            | First declared server, if present; otherwise required. Explicit values override the default. No credentials, query or fragment.                                |
-| `token`                   | Client            | Absent. Legacy selected scheme, or an explicitly configured composed-client shortcut; otherwise rejected on composed clients.                                  |
-| `allowedOrigins`          | Client            | Only the base URL origin. Applies to every destination, including pagination links.                                                                            |
-| `allowInsecureHttp`       | Client            | `false`; enable only for deliberate local HTTP tests.                                                                                                          |
-| `timeoutMs`               | Client or request | `10000`; positive duration per attempt, including response body consumption.                                                                                   |
-| `deadlineMs`              | Client or request | `30000`; positive overall duration, not an absolute timestamp. Includes retry waits; pagination and polling share it across calls.                             |
-| `maxAttempts`             | Client or request | A positive safe integer budget capped at the operation limit. Defaults: 3 for GET/HEAD/OPTIONS, 1 for other methods; explicit policies replace these defaults. |
-| `transport`               | Client            | Native fetch in Node, reusable cURL in PHP. Injected transports are caller-owned.                                                                              |
-| `diagnostics`             | Client            | Optional callback receiving operation, attempt, status, request ID, timing and error kind, without bodies or credentials.                                      |
-| `redactFields`            | Client            | Additional field names to redact in model inspection, error messages and parsed error details. Does not change response data.                                  |
-| `headers`                 | Request           | Request-local header map; includes tenant context and optional User-Agent override. A configured API-version pin takes precedence.                             |
-| `idempotencyKey`          | Request           | Caller-owned stable key for a declared idempotent operation. Persist across retries and process restarts.                                                      |
-| `ifMatch`                 | Request           | Value for the declared conditional header, including when that header is `If-None-Match`.                                                                      |
-| `signal` / `cancellation` | Request           | Node `AbortSignal` / PHP `Cancellation` token. Stops local work, not a remote mutation.                                                                        |
-| `maxPages`, `maxItems`    | Request           | Optional positive limits for generated iterators; the overall deadline always applies.                                                                         |
+| Option                    | Where             | Default and behavior                                                                                                                                                |
+| ------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `baseUrl`                 | Client            | First declared server, if present; otherwise required. Explicit values override the default. No credentials, query or fragment.                                     |
+| `token`                   | Client            | Absent. Legacy selected scheme, or an explicitly configured composed-client shortcut; otherwise rejected on composed clients.                                       |
+| `allowedOrigins`          | Client            | Only the base URL origin. Applies to every destination, including pagination links.                                                                                 |
+| `allowInsecureHttp`       | Client            | `false`; enable only for deliberate local HTTP tests.                                                                                                               |
+| `timeoutMs`               | Client or request | `10000`; positive duration per attempt, including response body consumption.                                                                                        |
+| `deadlineMs`              | Client or request | `30000`; positive overall duration, not an absolute timestamp. Includes retry waits; applies separately to each pagination page and across the entire polling wait. |
+| `maxAttempts`             | Client or request | A positive safe integer budget capped at the operation limit. Defaults: 3 for GET/HEAD/OPTIONS, 1 for other methods; explicit policies replace these defaults.      |
+| `transport`               | Client            | Native fetch in Node, reusable cURL in PHP. Injected transports are caller-owned.                                                                                   |
+| `diagnostics`             | Client            | Optional callback receiving operation, attempt, status, request ID, timing and error kind, without bodies or credentials.                                           |
+| `redactFields`            | Client            | Additional field names to redact in model inspection, error messages and parsed error details. Does not change response data.                                       |
+| `headers`                 | Request           | Request-local header map; includes tenant context and optional User-Agent override. A configured API-version pin takes precedence.                                  |
+| `idempotencyKey`          | Request           | Caller-owned stable key for a declared idempotent operation. Persist across retries and process restarts.                                                           |
+| `ifMatch`                 | Request           | Value for the declared conditional header, including when that header is `If-None-Match`.                                                                           |
+| `signal` / `cancellation` | Request           | Node `AbortSignal` / PHP `Cancellation` token. Stops local work, not a remote mutation.                                                                             |
+| `maxPages`, `maxItems`    | Request           | Optional positive limits for generated iterators; each page request has its own deadline.                                                                           |
 
 Required conditional headers can be supplied through `ifMatch` or request headers; configured API-version pins also satisfy required headers without duplicate input fields. Effective managed values are validated before dispatch. With `idempotency.auto: true`, required idempotency headers receive an automatic key when none is supplied; provide an explicit compatible key when the generated format fails the declared schema.
 
@@ -202,7 +202,7 @@ if (
 
 ## Optional capabilities
 
-Only declared capabilities generate convenience methods. An operation named `list` with pagination exposes `listPages(input, options)` and `listItems(input, options)` on its resource. Node uses `for await ... of`; PHP uses `foreach`. Pages yield results with metadata; items yield individual values. Pagination is lazy, bounded by deadline and caller limits, and does not promise a stable snapshot. Providers must configure compatible continuation and query representations; generation rejects an exact integer continuation paired with an ordinary integer query parameter.
+Only declared capabilities generate convenience methods. An operation named `list` with pagination exposes `listPages(input, options)` and `listItems(input, options)` on its resource. Node uses `for await ... of`; PHP uses `foreach`. Pages yield results with metadata; items yield individual values. Pagination is lazy and bounded by optional caller limits. Each page request gets a fresh `deadlineMs` budget, including its retries and decoding; time spent processing yielded pages or items does not consume it. There is no overall iterator deadline. Use cancellation or `maxPages`/`maxItems` to bound a backfill. Pagination does not promise a stable snapshot. Providers must configure compatible continuation and query representations; generation rejects an exact integer continuation paired with an ordinary integer query parameter.
 
 A polling operation named `get` exposes `getWait(input, options)`. Unknown states keep waiting until a declared terminal state or deadline; canceling the waiter does not cancel the remote job. Conditional calls retain the declared header and surface conflicts without silently retrying an unconditional write.
 

@@ -1,0 +1,31 @@
+[
+  { "name": "default deadline excludes consumer work", "pageMs": 1, "consumerMs": 31000 },
+  { "name": "default deadline resets for every page", "pageMs": 6000, "consumerMs": 0, "pages": 6 },
+  {
+    "name": "client deadline resets for every page",
+    "pageMs": 60,
+    "consumerMs": 101,
+    "client": { "deadlineMs": 100 }
+  },
+  {
+    "name": "request deadline overrides client deadline",
+    "pageMs": 60,
+    "consumerMs": 101,
+    "client": { "deadlineMs": 10 },
+    "request": { "deadlineMs": 100 }
+  },
+  {
+    "name": "slow page still exceeds default deadline",
+    "pageMs": 30001,
+    "consumerMs": 0,
+    "client": { "timeoutMs": 60000 },
+    "error": "deadline"
+  },
+  {
+    "name": "slow page still exceeds request deadline",
+    "pageMs": 101,
+    "consumerMs": 0,
+    "request": { "deadlineMs": 100 },
+    "error": "deadline"
+  }
+]
