@@ -184,6 +184,7 @@ export function assertCompiledSnapshot(value: unknown): asserts value is Compile
   }
   for (const target of [node, php]) object(target.operations, 'target.operations');
   fields(node, ['eventType'], 'string', 'node');
+  if (node.eventDeclarations !== undefined) fields(node, ['eventDeclarations'], 'string', 'node');
   if (node.responseReturnDeclarations !== undefined)
     fields(node, ['responseReturnDeclarations'], 'string', 'node');
   if (node.authentication !== undefined) {

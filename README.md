@@ -101,6 +101,7 @@ Write fixtures that state the expected wire behavior independently of the schema
 | Run or automate the generator                    | [CLI and library reference](docs/cli.md)                              |
 | Select operations and configure capabilities     | [Configuration](docs/configuration.md)                                |
 | Integrate a generated Node or PHP package        | [Using generated SDKs](docs/using-sdks.md)                            |
+| Verify incoming webhook deliveries               | [Webhook verification](docs/using-sdks.md#webhook-verification)       |
 | Check supported schemas and runtime requirements | [Support matrix](docs/support-matrix.md)                              |
 | Prepare, publish and upgrade packages            | [Releases and compatibility](docs/releases.md)                        |
 | Understand or extend the implementation          | [Architecture](docs/architecture.md), [contributing](CONTRIBUTING.md) |

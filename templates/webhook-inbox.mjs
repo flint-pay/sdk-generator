@@ -19,7 +19,7 @@ export function receiveWebhook(client, db, rawBody, headers, secrets, eventId) {
     .run(id, rawBody, verified.known ? 1 : 0);
   return { queued: Number(result.changes) === 1, known: verified.known };
 }
-/** Process one known event. Unknown events remain pending for explicit operator review.
+/** Process one known event. Unknown names and unmatched envelopes remain pending for explicit operator review.
  * loadCurrent must fetch authoritative resource state; apply must be synchronous and perform
  * only database writes. Apply provider version checks inside apply when state can race.
  */

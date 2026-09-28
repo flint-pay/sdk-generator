@@ -17,7 +17,7 @@ function receiveWebhook(
     \PDO $db,
     string $rawBody,
     array $headers,
-    array $secrets,
+    string|array $secrets,
     \Closure $eventId,
 ): array {
     $verified = $client->verifyWebhook($rawBody, $headers, $secrets);
@@ -32,7 +32,7 @@ function receiveWebhook(
     return ['queued' => $statement->rowCount() === 1, 'known' => $verified['known']];
 }
 /** Fetch current authoritative state before applying transactional database effects.
- * Unknown events remain pending for operator review. Apply must not perform external I/O.
+ * Unknown names and unmatched envelopes remain pending for operator review. Apply must not perform external I/O.
  * If resource state can race, enforce provider version checks inside apply.
  */
 function processInbox(\PDO $db, \Closure $loadCurrent, \Closure $apply): bool

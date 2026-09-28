@@ -494,6 +494,7 @@ export interface CompiledSdkContract {
       }
     >;
     eventType: string;
+    eventDeclarations?: string;
   };
   php: {
     runtime: CompiledRuntimePlan;
@@ -517,6 +518,69 @@ export interface CompiledSdkContract {
     definitions: Record<string, { input: SchemaPolicy; response: SchemaPolicy }>;
     operations: Record<string, { input: SchemaPolicy; responses: Record<string, SchemaPolicy> }>;
   };
+}
+
+/** Close alternatives only at the envelope value. Nested payloads keep response
+ * tolerance and references. Private aliases avoid re-expanding shared envelopes. */
+function webhookDeclarations(
+  c: Contract,
+  models: Record<string, Schema>,
+): {
+  eventType: string;
+  eventDeclarations?: string;
+} {
+  const webhook = c.config.webhook;
+  if (!webhook) return { eventType: 'never' };
+  const names = new Set(Object.keys(models));
+  const aliases = new Map<string, string>();
+  const pending: { name: string; schema: Schema }[] = [];
+  let sequence = 0;
+  const alias = (schema: Schema): string => {
+    const key = stable(schema);
+    const found = aliases.get(key);
+    if (found) return found;
+    let name: string;
+    do {
+      name = '_SdkWebhookEnvelope' + sequence++;
+    } while (names.has(name));
+    names.add(name);
+    aliases.set(key, name);
+    pending.push({ name, schema });
+    return name;
+  };
+  const close = (schema: Schema): Schema => {
+    const ref = schema['x-sdk-ref'];
+    if (ref) {
+      const target = models[ref];
+      if (!target) throw new Error('Missing webhook declaration reference ' + ref);
+      return { ...schema, 'x-sdk-ref': alias(target) };
+    }
+    const result = { ...schema };
+    for (const keyword of ['allOf', 'oneOf', 'anyOf'] as const)
+      if (schema[keyword]) result[keyword] = schema[keyword].map(close);
+    return result;
+  };
+  const eventType =
+    Object.entries(webhook.events)
+      .map(([event, schema]) => {
+        const tag = webhook.typeField
+          .split('.')
+          .reduceRight(
+            (value, field) => `{ ${JSON.stringify(field)}: ${value} }`,
+            JSON.stringify(event),
+          );
+        // Runtime lookup proves the event-name literal independently of schema tolerance.
+        return `(${alias(schema)} & ${tag})`;
+      })
+      .join(' | ') || 'never';
+  const declarations: string[] = [];
+  // Array iteration includes reference aliases appended while closing each declaration.
+  for (const entry of pending) {
+    declarations.push(
+      `type ${entry.name} = ${typescriptType(close(entry.schema), true, undefined, true, undefined, undefined, models)};\n`,
+    );
+  }
+  return { eventType, eventDeclarations: declarations.join('') };
 }
 
 /** Compile language interfaces and response class routing before any source rendering. */
@@ -697,10 +761,7 @@ export function compileSdkContract(source: Contract): {
           ];
         }),
       ),
-      eventType:
-        Object.values(c.config.webhook?.events ?? {})
-          .map((s) => typescriptType(s, true))
-          .join(' | ') || 'never',
+      ...webhookDeclarations(c, models),
     },
     php: {
       runtime: phpRuntime,

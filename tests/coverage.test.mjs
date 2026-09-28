@@ -782,7 +782,14 @@ test('generated webhook verifiers match the local Flint Go signing implementatio
         now: vector.timestamp - 301,
         valid: false,
       },
-      { headers, body: vector.body, secrets: ['whsec_YQ=='], now: vector.timestamp, valid: false },
+      {
+        headers,
+        body: vector.body,
+        secrets: ['whsec_YQ=='],
+        now: vector.timestamp,
+        valid: false,
+        kind: format === 'standard-webhooks' ? 'validation' : 'authentication',
+      },
       {
         headers: {},
         body: vector.body,
@@ -802,9 +809,9 @@ test('generated webhook verifiers match the local Flint Go signing implementatio
     for (const c of cases) {
       const verify = () => client.verifyWebhook(Buffer.from(c.body), c.headers, c.secrets, c.now);
       if (c.valid) assert.deepEqual(verify(), { event: JSON.parse(vector.body), known: false });
-      else assert.throws(verify, (e) => e.kind === 'authentication');
+      else assert.throws(verify, (e) => e.kind === (c.kind ?? 'authentication'));
     }
-    const php = `require $argv[1].'/src/Runtime.php'; require $argv[1].'/src/Client.php'; $client=new Example\\Payments\\Client(new Example\\Payments\\ClientOptions('https://example.invalid')); $results=[]; foreach(json_decode($argv[2],true) as $c){try{$r=$client->verifyWebhook($c['body'],$c['headers'],$c['secrets'],$c['now']);$results[]=$r['known']===false;}catch(Example\\Payments\\SdkError $e){if($e->kind!=='authentication')throw $e;$results[]=false;}}echo json_encode($results);`;
+    const php = `require $argv[1].'/src/Runtime.php'; require $argv[1].'/src/Client.php'; $client=new Example\\Payments\\Client(new Example\\Payments\\ClientOptions('https://example.invalid')); $results=[]; foreach(json_decode($argv[2],true) as $c){try{$r=$client->verifyWebhook($c['body'],$c['headers'],$c['secrets'],$c['now']);$results[]=$r['known']===false;}catch(Example\\Payments\\SdkError $e){if($e->kind!==($c['kind']??'authentication'))throw $e;$results[]=false;}}echo json_encode($results);`;
     const result = spawnSync('php', ['-r', php, join(path, 'php'), JSON.stringify(cases)], {
       encoding: 'utf8',
     });

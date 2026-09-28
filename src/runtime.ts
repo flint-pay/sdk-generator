@@ -81,6 +81,60 @@ export interface DiagnosticEvent {
   durationMs: number;
   errorKind?: ErrorKind;
 }
+/** Incoming Node/Express headers or Fetch Headers; only signing headers are inspected. */
+export type WebhookHeaders =
+  | Headers
+  | Readonly<Record<string, string | readonly string[] | undefined>>;
+
+const webhookError = (
+  kind: 'validation' | 'authentication',
+  code: string,
+  message: string,
+): never => {
+  throw new SdkError(kind, message, 'not_sent', false, undefined, 'webhook_' + code);
+};
+
+function webhookHeaderValues(headers: WebhookHeaders, name: string): string[] {
+  if (!headers || typeof headers !== 'object' || Array.isArray(headers))
+    return webhookError(
+      'validation',
+      'invalid_input',
+      'Webhook headers must be Headers or a header record',
+    );
+  const values: string[] = [];
+  const entries = headers instanceof Headers ? headers.entries() : Object.entries(headers);
+  for (const [key, value] of entries) {
+    if (key.toLowerCase() !== name.toLowerCase() || value === undefined) continue;
+    const parts = Array.isArray(value) ? value : [value];
+    if (!Array.from(parts).every((part): part is string => typeof part === 'string'))
+      return webhookError(
+        'validation',
+        'invalid_input',
+        'Webhook signing header values must be strings',
+      );
+    values.push(...parts);
+  }
+  if (!values.length || values.every((value) => !value.trim()))
+    return webhookError(
+      'authentication',
+      'missing_header',
+      'Missing webhook signing header: ' + name,
+    );
+  return values;
+}
+
+function webhookScalarHeader(headers: WebhookHeaders, name: string, timestamp = false): string {
+  const values = webhookHeaderValues(headers, name);
+  const value = values[0];
+  if (values.length !== 1 || value === undefined || value.includes(','))
+    return webhookError(
+      'authentication',
+      timestamp ? 'invalid_timestamp' : 'invalid_signature',
+      'Webhook signing header must have exactly one value: ' + name,
+    );
+  return value.trim();
+}
+
 export interface RequestOptions {
   streamIdleTimeoutMs?: number;
   streamLifetimeMs?: number;
@@ -2610,48 +2664,105 @@ class CompiledRuntime {
   }
   verifyWebhook(
     rawBody: Uint8Array,
-    headers: Record<string, string>,
-    secrets: string[],
+    headers: WebhookHeaders,
+    secrets: string | readonly string[],
     nowSeconds = Date.now() / 1000,
   ): { event: unknown; known: boolean } {
     const w = this.descriptors ? this.descriptors.webhook() : this.contract.webhook;
     if (!w) return bad('webhook', 'capability is not declared');
-    const normalized = Object.fromEntries(
-      Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]),
-    );
-    let timestamp = normalized[w.timestampHeader?.toLowerCase() ?? ''] ?? '';
-    const signature = normalized[w.header.toLowerCase()] ?? '';
+    if (!(rawBody instanceof Uint8Array))
+      return webhookError(
+        'validation',
+        'invalid_input',
+        'Webhook body must be original Buffer or Uint8Array bytes; capture it before JSON parsing',
+      );
+    if (typeof nowSeconds !== 'number' || !Number.isFinite(nowSeconds))
+      return webhookError(
+        'validation',
+        'invalid_input',
+        'Webhook nowSeconds must be a finite Unix timestamp in seconds',
+      );
+    const supplied: unknown[] =
+      typeof secrets === 'string' ? [secrets] : Array.isArray(secrets) ? Array.from(secrets) : [];
+    if (
+      !supplied.length ||
+      !supplied.every((secret): secret is string => typeof secret === 'string')
+    )
+      return webhookError(
+        'validation',
+        'invalid_secret',
+        'Webhook secrets must be a nonempty string or array of strings',
+      );
     const format = w.format ?? 'hex';
-    let candidates = [signature];
+    const keys: (string | Buffer)[] = [];
+    for (const secret of supplied) {
+      if (!secret) continue;
+      if (format !== 'standard-webhooks') keys.push(secret);
+      else if (/^whsec_[A-Za-z0-9+/]{43}=$/.test(secret)) {
+        const key = Buffer.from(secret.slice(6), 'base64');
+        if (key.length === 32 && key.toString('base64') === secret.slice(6)) keys.push(key);
+      }
+    }
+    if (!keys.length)
+      return webhookError(
+        'validation',
+        'invalid_secret',
+        format === 'standard-webhooks'
+          ? 'Webhook secret must be whsec_ followed by canonical base64 encoding of 32 bytes'
+          : 'Provide at least one nonempty webhook signing secret',
+      );
+    const signatures = webhookHeaderValues(headers, w.header);
+    let timestamp = '';
+    let candidates: string[] = [];
     let prefix = '';
     if (format === 'timestamped-hex') {
-      const parts = signature.split(',').map((part) => part.trim());
+      const parts = signatures.flatMap((signature) =>
+        signature.split(',').map((part) => part.trim()),
+      );
       const timestamps = parts.filter((part) => part.startsWith('t='));
-      timestamp = timestamps.length === 1 ? timestamps[0]!.slice(2) : '';
+      const signedTimestamp = timestamps[0];
+      if (timestamps.length !== 1 || signedTimestamp === undefined)
+        return webhookError(
+          'authentication',
+          'invalid_timestamp',
+          'Webhook signature must contain exactly one t= timestamp',
+        );
+      timestamp = signedTimestamp.slice(2);
       candidates = parts.filter((part) => part.startsWith('v1=')).map((part) => part.slice(3));
-    } else if (format === 'standard-webhooks') {
-      const id = normalized[w.idHeader!.toLowerCase()]?.trim();
-      if (!id) throw new SdkError('authentication', 'Invalid webhook signature or timestamp');
-      prefix = id + '.';
-      candidates = signature
-        .trim()
-        .split(/\s+/)
-        .filter((part) => part.startsWith('v1,'))
-        .map((part) => part.slice(3));
+    } else {
+      if (!w.timestampHeader) return bad('webhook', 'timestamp header is not declared');
+      timestamp = webhookScalarHeader(headers, w.timestampHeader, true);
+      if (format === 'standard-webhooks') {
+        if (!w.idHeader) return bad('webhook', 'ID header is not declared');
+        prefix = webhookScalarHeader(headers, w.idHeader) + '.';
+        // Fetch combines repeated header lines with commas. The comma inside v1,<digest>
+        // belongs to the signature token; commas between versioned tokens delimit values.
+        candidates = signatures
+          .flatMap((signature) => signature.trim().split(/(?:\s+|,\s*(?=v\d+,))/))
+          .filter((part) => part.startsWith('v1,'))
+          .map((part) => part.slice(3));
+      } else
+        candidates = signatures.flatMap((signature) =>
+          signature.split(',').map((part) => part.trim()),
+        );
     }
-    if (
-      !/^\d+$/.test(timestamp) ||
-      !Number.isSafeInteger(Number(timestamp)) ||
-      !Number.isFinite(nowSeconds) ||
-      Math.abs(nowSeconds - Number(timestamp)) > w.toleranceSeconds ||
-      !secrets.length
-    )
-      throw new SdkError('authentication', 'Invalid webhook signature or timestamp');
+    if (!/^\d+$/.test(timestamp) || !Number.isSafeInteger(Number(timestamp)))
+      return webhookError(
+        'authentication',
+        'invalid_timestamp',
+        'Webhook timestamp must be an integer Unix timestamp in seconds',
+      );
+    if (Math.abs(nowSeconds - Number(timestamp)) > w.toleranceSeconds)
+      return webhookError(
+        'authentication',
+        'timestamp_out_of_tolerance',
+        'Webhook timestamp is outside the allowed tolerance; check the server clock and delivery age',
+      );
     const signed = Buffer.concat([
       Buffer.from(prefix + timestamp + w.separator),
       Buffer.from(rawBody),
     ]);
-    const signatures = candidates
+    const digests = candidates
       .filter((candidate) =>
         format === 'standard-webhooks'
           ? /^[A-Za-z0-9+/]{43}=$/.test(candidate) &&
@@ -2662,19 +2773,17 @@ class CompiledRuntime {
         Buffer.from(candidate, format === 'standard-webhooks' ? 'base64' : 'hex'),
       );
     let valid = false;
-    for (const secret of secrets) {
-      if (!secret) continue;
-      let key: string | Buffer = secret;
-      if (format === 'standard-webhooks') {
-        if (!/^whsec_[A-Za-z0-9+/]{43}=$/.test(secret)) continue;
-        key = Buffer.from(secret.slice(6), 'base64');
-        if (key.length !== 32 || key.toString('base64') !== secret.slice(6)) continue;
-      }
+    for (const key of keys) {
       const expected = createHmac('sha256', key).update(signed).digest();
-      for (const actual of signatures) valid = timingSafeEqual(expected, actual) || valid;
+      for (const actual of digests) valid = timingSafeEqual(expected, actual) || valid;
     }
-    if (!valid) throw new SdkError('authentication', 'Invalid webhook signature or timestamp');
-    let event: any;
+    if (!valid)
+      return webhookError(
+        'authentication',
+        'invalid_signature',
+        'Invalid webhook signature; check the signing secret and preserve the original request body bytes without reserializing JSON',
+      );
+    let event: unknown;
     try {
       event = parseJson(
         new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(Buffer.from(rawBody)),
@@ -2687,7 +2796,7 @@ class CompiledRuntime {
         'response',
         false,
         undefined,
-        undefined,
+        'webhook_invalid_json',
         undefined,
         { cause },
       );
@@ -2697,19 +2806,48 @@ class CompiledRuntime {
       typeof eventType === 'string' && Object.hasOwn(w.events, eventType)
         ? w.events[eventType]
         : undefined;
-    return {
-      event: plainNumbers(
-        schema
-          ? this.decode(event, schema, {
-              mode: 'response',
-              path: 'event',
-              redactFields: this.options.redactFields ?? [],
-            })
-          : event,
-      ),
-      known: Boolean(schema),
-    };
+    // Decode first: malformed declared payloads remain protocol errors. Matching is
+    // a separate predicate over the original exact JSON values, not decoded strings.
+    let decoded = event;
+    if (schema) {
+      try {
+        decoded = this.decode(event, schema, {
+          mode: 'response',
+          path: 'event',
+          redactFields: this.options.redactFields ?? [],
+        });
+      } catch (cause) {
+        if (!(cause instanceof SdkError) || cause.kind !== 'validation') throw cause;
+        throw new SdkError(
+          'protocol',
+          'Invalid webhook payload' +
+            (validationFailures.has(cause) ? ': ' + validationFailures.get(cause) : ''),
+          'response',
+          false,
+          undefined,
+          undefined,
+          undefined,
+          { cause },
+        );
+      }
+    }
+    let known = false;
+    if (schema) {
+      try {
+        this.decode(event, schema, {
+          mode: 'match',
+          direction: 'response',
+          path: 'event',
+          allowUnknownResponseFields: true,
+        });
+        known = true;
+      } catch (error) {
+        if (!(error instanceof SdkError) || error.kind !== 'validation') throw error;
+      }
+    }
+    return { event: plainNumbers(decoded), known };
   }
+
   money(currency: string, major: string): { currency: string; amount: string } {
     const currencies = this.contract.money?.currencies;
     const digits =
