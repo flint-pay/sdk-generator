@@ -172,7 +172,7 @@ writeFileSync(${JSON.stringify(join(dir, 'summary.json'))},JSON.stringify({opera
         `import assert from 'node:assert/strict';
 import * as sdk from '@example/flint-full-sdk';
 const {Client,ExactNumber}=sdk;
-const c=new Client({baseUrl:'https://api.example.invalid'});
+const c=new Client({token:'synthetic'});
 const ids=${JSON.stringify(summary.operations)};
 const methods=${JSON.stringify(summary.methods)};
 assert.equal(methods.length,ids.length);
@@ -189,7 +189,9 @@ for(const scenario of ${JSON.stringify(modelCases)}) {
  const factory=()=>sdk['make'+scenario.model](scenario.value);
  if(scenario.valid) factory(); else assert.throws(factory,{kind:'validation'},scenario.name);
 }
-const streaming=new Client({baseUrl:'https://api.example.invalid',authMode:'merchant',credentials:{merchant:{BearerAuth:'synthetic'}},transport:async (_url,request)=>{
+const streaming=new Client({token:'synthetic',transport:async (url,request)=>{
+ assert.equal(url.origin,'https://api.withflintpay.com');
+ assert.equal(request.headers.authorization,'Bearer synthetic');
  assert.equal(request.headers['last-event-id'],'whev_previous');
  return new Response('event: ready\\ndata: {"cursor":"whev_resume"}\\n\\n',{headers:{'content-type':'text/event-stream'}});
 }});
@@ -206,7 +208,7 @@ await c.close();
         `<?php
 require __DIR__.'/vendor/autoload.php';
 use Example\\FlintFull\\{Client,ClientOptions,ExactNumber,ByteStream,SdkError,WebhookEventsStreamInput};
-$c=new Client(new ClientOptions(baseUrl:'https://api.example.invalid'));
+$c=new Client(new ClientOptions(token:'synthetic'));
 $ids=json_decode('${JSON.stringify(summary.operations)}',true,512,JSON_THROW_ON_ERROR);
 foreach(json_decode('${JSON.stringify(summary.methods)}',true) as $method) if(!method_exists($c->{$method['resource']},$method['method'])) throw new Exception('Missing method '.$method['method']);
 foreach(json_decode('${JSON.stringify(summary.incoming)}',true,512,JSON_THROW_ON_ERROR) as $incoming) if(!class_exists('Example'.chr(92).'FlintFull'.chr(92).$incoming['model'].'Input'))throw new Exception('Missing incoming model '.$incoming['name']);
@@ -219,7 +221,8 @@ foreach(json_decode(base64_decode('${Buffer.from(JSON.stringify(modelCases)).toS
  if($valid!==$scenario['valid'])throw new Exception($scenario['name']);
 }
 $c->close();
-$streaming=new Client(new ClientOptions(baseUrl:'https://api.example.invalid',authMode:'merchant',credentials:['merchant'=>['BearerAuth'=>'synthetic']],transport:function($request){
+$streaming=new Client(new ClientOptions(token:'synthetic',transport:function($request){
+ if(!str_starts_with($request['url'],'https://api.withflintpay.com/') || ($request['headers']['authorization']??null)!=='Bearer synthetic')throw new Exception('wrong default or token');
  if($request['headers']['last-event-id']!=='whev_previous')throw new Exception('resume header');
  return ['status'=>200,'headers'=>['content-type'=>'text/event-stream'],'stream'=>new class implements ByteStream {
   private bool $done=false;

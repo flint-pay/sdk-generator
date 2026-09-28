@@ -177,6 +177,11 @@ export function assertCompiledSnapshot(value: unknown): asserts value is Compile
         throw new Error('Invalid payload path for ' + id);
     }
   const node = object(plan.node, 'node');
+  if (node.clientOptions !== undefined) {
+    const options = object(node.clientOptions, 'node.clientOptions');
+    fields(options, ['declaration'], 'string', 'node.clientOptions');
+    fields(options, ['optional'], 'boolean', 'node.clientOptions');
+  }
   for (const target of [node, php]) object(target.operations, 'target.operations');
   fields(node, ['eventType'], 'string', 'node');
   if (node.responseReturnDeclarations !== undefined)

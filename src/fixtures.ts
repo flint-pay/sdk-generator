@@ -95,7 +95,7 @@ export async function validateFixtures(
         throw new Diagnostic(`${fixtures}/${scenario.name}`, 'operation is not included');
       const client = new Client({
         baseUrl: scenario.baseUrl ?? 'https://api.example.invalid/v1',
-        token: 'test-token',
+        ...(c.authentication ? {} : { token: 'test-token' }),
         transport: async (
           url: URL,
           init: { method: string; headers: Record<string, string>; body?: string },
@@ -171,6 +171,7 @@ export async function validateFixtures(
       writeFileSync(
         runtimePath,
         JSON.stringify({
+          composedAuthentication: c.authentication !== undefined,
           authShortcuts: contract.authShortcuts,
           operations: contract.operations.map((op) => ({
             id: op.id,

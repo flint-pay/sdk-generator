@@ -95,7 +95,7 @@ final class RequestOptions
         public readonly ?int $streamIdleTimeoutMs = null,
         public readonly ?int $streamLifetimeMs = null,
     ) {
-        /* AUTH_SHORTCUT_PARAMETERS */
+        /* AUTH_SHORTCUT_REQUEST_PARAMETERS */
     }
     public function __debugInfo(): array
     {
@@ -128,7 +128,7 @@ final class RequestOptions
 final class ClientOptions
 {
     public function __construct(
-        public readonly string $baseUrl,
+        public readonly ?string $baseUrl = null,
         public readonly ?string $token = null,
         public readonly ?array $allowedOrigins = null,
         public readonly bool $allowInsecureHttp = false,
@@ -142,7 +142,7 @@ final class ClientOptions
         public readonly ?string $authMode = null,
         public readonly array $credentials = [],
     ) {
-        /* AUTH_SHORTCUT_PARAMETERS */
+        /* AUTH_SHORTCUT_CLIENT_PARAMETERS */
     }
     public function __debugInfo(): array
     {
@@ -2871,6 +2871,7 @@ final class Codec
 class Runtime
 {
     private array $allowed;
+    private readonly string $baseUrl;
     protected readonly array $contract;
     private mixed $curl = null;
     private array $streams = [];
@@ -2879,12 +2880,6 @@ class Runtime
         private readonly ClientOptions $options,
         bool $compiled = false,
     ) {
-        if (
-            parse_url($options->baseUrl, PHP_URL_QUERY) !== null ||
-            preg_match('/[\\\\\r\n]/', $options->baseUrl)
-        ) {
-            Codec::fail('baseUrl', 'base URL must not contain a query or backslash');
-        }
         $this->contract = $compiled
             ? $contract
             : \SdkNamespace\Internal\SchemaAdapter::runtimePlan($contract);
@@ -2898,10 +2893,50 @@ class Runtime
         if (!is_array($this->contract['operations'] ?? null)) {
             throw new \InvalidArgumentException('Missing compiled operations');
         }
+        if (array_key_exists('defaultBaseUrl', $this->contract)) {
+            $default = $this->contract['defaultBaseUrl'];
+            if (
+                !is_string($default) ||
+                !self::validBaseUrl($default) ||
+                !in_array(
+                    strtolower(parse_url($default, PHP_URL_SCHEME) ?? ''),
+                    ['http', 'https'],
+                    true,
+                )
+            ) {
+                throw new \InvalidArgumentException('Invalid defaultBaseUrl in compiled runtime');
+            }
+        }
+        $baseUrl = $options->baseUrl ?? ($this->contract['defaultBaseUrl'] ?? null);
+        if ($baseUrl === null) {
+            Codec::fail('baseUrl', 'required: pass baseUrl because this SDK has no default server');
+        }
+        if (!self::validBaseUrl($baseUrl)) {
+            Codec::fail(
+                'baseUrl',
+                'expected an absolute URL without credentials, whitespace, backslash, query or fragment',
+            );
+        }
+        $this->baseUrl = $baseUrl;
+        if (
+            isset($this->contract['authentication']) &&
+            $options->token !== null &&
+            !isset($this->contract['authShortcuts']['token'])
+        ) {
+            $shortcuts = array_keys($this->contract['authShortcuts'] ?? []);
+            sort($shortcuts);
+            throw new SdkError(
+                'authentication',
+                'token is not configured for this SDK; use ' .
+                    ($shortcuts ? implode(', ', $shortcuts) : 'authMode and credentials'),
+            );
+        }
         foreach ($this->contract['authShortcuts'] ?? [] as $name => $shortcut) {
             $schemes = $this->contract['authentication'][$shortcut['mode'] ?? '']['schemes'] ?? [];
             if (
                 !preg_match('/^[a-z][a-zA-Z0-9]*$/', $name) ||
+                ($name !== 'token' &&
+                    in_array(strtolower($name), /* AUTH_SHORTCUT_RESERVED */ [], true)) ||
                 count($schemes) !== 1 ||
                 ($schemes[0]['name'] ?? null) !== ($shortcut['scheme'] ?? null)
             ) {
@@ -3122,8 +3157,8 @@ class Runtime
         foreach ($this->contract['webhook']['events'] ?? [] as $name => $codec) {
             Codec::assertPlan($codec, 'events.' . $name);
         }
-        $this->allowed = $options->allowedOrigins ?? [self::origin($options->baseUrl)];
-        $this->checkUrl($options->baseUrl);
+        $this->allowed = $options->allowedOrigins ?? [self::origin($this->baseUrl)];
+        $this->checkUrl($this->baseUrl);
         if ($options->timeoutMs <= 0 || $options->deadlineMs <= 0) {
             Codec::fail('options', 'timeouts must be positive');
         }
@@ -3152,26 +3187,45 @@ class Runtime
                 ? ':' . $p['port']
                 : '');
     }
+    private static function validBaseUrl(string $url): bool
+    {
+        $p = parse_url($url);
+        return $p !== false &&
+            !empty($p['host']) &&
+            !empty($p['scheme']) &&
+            preg_match('~^[a-z][a-z0-9+.-]*://~i', $url) &&
+            preg_match('/[\\\\\s\x00-\x1f\x7f{}?#]/u', $url) === 0 &&
+            !isset($p['user']) &&
+            !isset($p['pass']);
+    }
     private function checkUrl(string $url): void
     {
         $p = parse_url($url);
         if (
             !$p ||
+            empty($p['host']) ||
             preg_match('/[\\\\\x00-\x20]/', $url) ||
             isset($p['user']) ||
             isset($p['pass']) ||
-            isset($p['fragment']) ||
-            !in_array(
-                $p['scheme'] ?? '',
-                $this->options->allowInsecureHttp ? ['https', 'http'] : ['https'],
-                true,
-            ) ||
-            !in_array(self::origin($url), $this->allowed, true)
+            isset($p['fragment'])
         ) {
             throw new SdkError(
                 'destination',
-                'Destination is outside the explicit credential policy',
+                'Invalid destination: embedded credentials and fragments are not allowed',
             );
+        }
+        $scheme = strtolower($p['scheme'] ?? '');
+        if (!in_array($scheme, ['https', 'http'], true)) {
+            throw new SdkError('destination', 'Unsupported destination protocol; use HTTPS');
+        }
+        if ($scheme === 'http' && !$this->options->allowInsecureHttp) {
+            throw new SdkError(
+                'destination',
+                'HTTP is disabled; set allowInsecureHttp: true for deliberate local testing',
+            );
+        }
+        if (!in_array(self::origin($url), $this->allowed, true)) {
+            throw new SdkError('destination', 'Destination origin is not in allowedOrigins');
         }
     }
     private static function checkCancel(?Cancellation $c, string $outcome = 'unknown'): void
@@ -3374,22 +3428,16 @@ class Runtime
                 $set($p['name'], implode(',', $values));
             }
         }
-        $url =
-            rtrim($this->options->baseUrl, '/') .
-            $path .
-            ($query ? '?' . implode('&', $query) : '');
+        $url = rtrim($this->baseUrl, '/') . $path . ($query ? '?' . implode('&', $query) : '');
         if ($continuation !== null) {
             if (str_starts_with($continuation, '//')) {
-                $url =
-                    (parse_url($this->options->baseUrl, PHP_URL_SCHEME) ?: 'https') .
-                    ':' .
-                    $continuation;
+                $url = (parse_url($this->baseUrl, PHP_URL_SCHEME) ?: 'https') . ':' . $continuation;
             } elseif (preg_match('/^[a-z][a-z0-9+.-]*:/i', $continuation)) {
                 $url = $continuation;
             } elseif (str_starts_with($continuation, '/')) {
-                $url = self::origin($this->options->baseUrl) . $continuation;
+                $url = self::origin($this->baseUrl) . $continuation;
             } else {
-                $url = rtrim($this->options->baseUrl, '/') . '/' . $continuation;
+                $url = rtrim($this->baseUrl, '/') . '/' . $continuation;
             }
         }
         $this->checkUrl($url);

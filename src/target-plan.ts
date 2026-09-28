@@ -25,7 +25,7 @@ import {
 import { compileRuntimePlan, successStatus, type CompiledRuntimePlan } from './runtime-plan.js';
 import { compileResultPlan, type ResponsePlan } from './response-plan.js';
 import { compileSchemaPolicy, type SchemaPolicy } from './schema-policy.js';
-export { successStatus, RETRY_DEFAULTS } from './runtime-plan.js';
+export { successStatus, RETRY_DEFAULTS, AUTH_SHORTCUT_RESERVED } from './runtime-plan.js';
 const pascal = (s: string) => s[0]!.toUpperCase() + s.slice(1);
 
 export function inputSchema(op: Operation, apiVersion?: Contract['config']['apiVersion']): Schema {
@@ -145,6 +145,7 @@ export function itemSchemas(op: Operation): Schema[] {
 }
 export function runtimeContract(c: Contract) {
   return {
+    ...(c.defaultBaseUrl !== undefined ? { defaultBaseUrl: c.defaultBaseUrl } : {}),
     operations: c.operations,
     ...(c.incoming ? { incoming: c.incoming } : {}),
     validation: c.config.validation ?? 'encoding',
@@ -309,10 +310,6 @@ function compileAuthentication(c: Contract): NodeAuthenticationPlan | undefined 
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
       .map(([name, mode]) => [name, mode.schemes.map((s) => s.name).sort()]),
   );
-  const shortcuts = Object.keys(c.authShortcuts ?? {})
-    .sort()
-    .map((name) => `${JSON.stringify(name)}?: string;`)
-    .join(' ');
   const requestShortcuts = Object.entries(c.authShortcuts ?? {})
     .sort(([a], [b]) => a.localeCompare(b))
     .map(
@@ -327,7 +324,7 @@ function compileAuthentication(c: Contract): NodeAuthenticationPlan | undefined 
     )
     .join(
       '\n',
-    )}\n}\nexport type AuthMode = keyof Credentials;\nexport type ClientOptions = Omit<RuntimeClientOptions, 'authMode' | 'credentials'> & { ${shortcuts ? shortcuts + ' ' : ''}authMode?: AuthMode; credentials?: Partial<Credentials> };\nexport type RequestOptions<M extends AuthMode = AuthMode> = Omit<RuntimeRequestOptions, 'authMode' | 'credentials'> & ${requestShortcuts ? '{ ' + requestShortcuts + ' } & ' : ''}({ authMode?: undefined; credentials?: Credentials[M] } | { [K in M]: { authMode: K; credentials?: Credentials[K] } }[M]);\n`;
+    )}\n}\nexport type AuthMode = keyof Credentials;\nexport type RequestOptions<M extends AuthMode = AuthMode> = Omit<RuntimeRequestOptions, 'authMode' | 'credentials'> & ${requestShortcuts ? '{ ' + requestShortcuts + ' } & ' : ''}({ authMode?: undefined; credentials?: Credentials[M] } | { [K in M]: { authMode: K; credentials?: Credentials[K] } }[M]);\n`;
   return { declarations, modes };
 }
 
@@ -345,6 +342,17 @@ function operationOptions(
       }>`
     : 'RequestOptions';
   return op.idempotency ? base : `_SdkWithoutIdempotency<${base}>`;
+}
+
+function compileClientOptions(c: Contract): string {
+  const baseUrl = `baseUrl${c.defaultBaseUrl !== undefined ? '?' : ''}: string;`;
+  if (!c.authentication)
+    return `export type ClientOptions = Omit<RuntimeClientOptions, 'baseUrl'> & { ${baseUrl} };\n`;
+  const shortcuts = Object.keys(c.authShortcuts ?? {})
+    .sort()
+    .map((name) => `${JSON.stringify(name)}?: string;`)
+    .join(' ');
+  return `export type ClientOptions = Omit<RuntimeClientOptions, 'baseUrl' | 'token' | 'authMode' | 'credentials'> & { ${baseUrl} ${shortcuts} authMode?: AuthMode; credentials?: Partial<Credentials> };\n`;
 }
 
 const js = (v: unknown) => JSON.stringify(v, null, 2)?.replaceAll('"__proto__":', '["__proto__"]:');
@@ -456,6 +464,7 @@ export interface CompiledSdkContract {
   runtime: CompiledRuntimePlan;
   node: {
     authentication?: NodeAuthenticationPlan;
+    clientOptions?: { declaration: string; optional: boolean };
     responseReturnDeclarations?: string;
     models: Record<
       string,
@@ -603,6 +612,10 @@ export function compileSdkContract(source: Contract): {
     targets: [...(c.config.targets ?? ['node', 'php'])],
     runtime,
     node: {
+      clientOptions: {
+        declaration: compileClientOptions(c),
+        optional: c.defaultBaseUrl !== undefined,
+      },
       ...(authentication ? { authentication } : {}),
       models: Object.fromEntries(
         Object.entries(models).map(([name, s]) => [

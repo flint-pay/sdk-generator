@@ -3,6 +3,33 @@ export const AUTH_SHORTCUT_RESERVED = new Set(
     .toLowerCase()
     .split(' '),
 );
+/** token reuses the legacy client field, but may explicitly select a composed mode. */
+export function isAuthShortcutName(name: string): boolean {
+  return (
+    /^[a-z][a-zA-Z0-9]*$/.test(name) &&
+    (name === 'token' || !AUTH_SHORTCUT_RESERVED.has(name.toLowerCase()))
+  );
+}
+
+/** Reject malformed authorities before URL parsers can repair them. */
+export function isBaseUrlSyntax(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    /^[a-z][a-z0-9+.-]*:\/\/[^/@]+(?:\/|$)/i.test(value) &&
+    !/[\\\s\x00-\x1f\x7f{}?#]/.test(value)
+  );
+}
+
+/** Static server defaults must be usable without an input-document origin or variables. */
+export function isDefaultBaseUrl(value: unknown): value is string {
+  if (!isBaseUrlSyntax(value) || !/^https?:/i.test(value)) return false;
+  try {
+    const url = new URL(value);
+    return Boolean(url.hostname) && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
 import type {
   Operation,
   Retry,
@@ -28,6 +55,7 @@ export function successStatus(status: string): boolean {
 }
 
 export interface RuntimeContract {
+  defaultBaseUrl?: string;
   userAgent?: string;
   validation?: Config['validation'];
   operations: Operation[];
@@ -200,6 +228,8 @@ export function assertRuntimePlan(
     return value as Record<string, unknown>;
   }
   const plan = record(value, 'runtime');
+  if (plan.defaultBaseUrl !== undefined && !isDefaultBaseUrl(plan.defaultBaseUrl))
+    throw new Error('Invalid defaultBaseUrl in compiled runtime');
   if (plan.format !== CODEC_FORMAT || typeof plan.semantics !== 'string')
     throw new Error('Unsupported compiled runtime format');
   const legacyRetry = historical && plan.retrySemantics === undefined;
@@ -233,8 +263,7 @@ export function assertRuntimePlan(
       const mode = typeof shortcut.mode === 'string' ? modes[shortcut.mode] : undefined;
       const schemes = mode && record(mode, 'authentication mode').schemes;
       if (
-        !/^[a-z][a-zA-Z0-9]*$/.test(name) ||
-        AUTH_SHORTCUT_RESERVED.has(name.toLowerCase()) ||
+        !isAuthShortcutName(name) ||
         typeof shortcut.scheme !== 'string' ||
         !Array.isArray(schemes) ||
         schemes.length !== 1 ||

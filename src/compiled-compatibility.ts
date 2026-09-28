@@ -40,6 +40,12 @@ export function compareCompiledContracts(
   const node = previous.targets.includes('node') && next.targets.includes('node');
   const php = previous.targets.includes('php') && next.targets.includes('php');
   if (!node && !php) return findings;
+  if (previous.runtime.defaultBaseUrl !== next.runtime.defaultBaseUrl)
+    findings.push({
+      severity: previous.runtime.defaultBaseUrl === undefined ? 'additive' : 'breaking',
+      subject: 'defaultBaseUrl',
+      message: 'Default API destination changed; review clients that omit baseUrl in both targets.',
+    });
   if (node) {
     // Historical plans emitted unrestricted runtime options. Narrowing those
     // exports is breaking even when the API and its credential modes are unchanged.

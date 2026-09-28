@@ -674,7 +674,9 @@ test('generated examples retry transient failures without an explicit attempt ov
         'if($calls[0]["headers"]["idempotency-key"]!==$calls[1]["headers"]["idempotency-key"])throw new Exception("Unstable key");\n';
     const file = join(root, 'example-' + op + '.php');
     writeFileSync(file, php);
-    execFileSync('php', [file, join(output, 'php')]);
+    execFileSync('php', [file, join(output, 'php')], {
+      env: { ...process.env, API_BASE_URL: 'https://example.invalid' },
+    });
   }
 });
 

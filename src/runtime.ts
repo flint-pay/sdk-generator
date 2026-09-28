@@ -4,6 +4,7 @@ import type { Schema } from './contract.js';
 import {
   compileRuntimePlan,
   assertRuntimePlan,
+  isBaseUrlSyntax,
   type RuntimeContract,
   type CompiledRuntimePlan,
 } from './runtime-plan.js';
@@ -95,7 +96,7 @@ export interface RequestOptions {
   maxItems?: number;
 }
 export interface ClientOptions {
-  baseUrl: string;
+  baseUrl?: string;
   token?: string;
   authMode?: string;
   credentials?: Record<string, Record<string, string>>;
@@ -1800,6 +1801,30 @@ async function delay(ms: number, signal?: AbortSignal) {
     signal?.addEventListener('abort', cancel, { once: true });
   });
 }
+function clientBaseUrl(baseUrl: unknown): URL {
+  if (baseUrl === undefined)
+    return bad('baseUrl', 'required: pass baseUrl because this SDK has no default server');
+  if (!isBaseUrlSyntax(baseUrl))
+    return bad(
+      'baseUrl',
+      'expected an absolute URL without credentials, whitespace, backslash, query or fragment',
+    );
+  try {
+    return new URL(baseUrl.endsWith('/') ? baseUrl : baseUrl + '/');
+  } catch {
+    return bad('baseUrl', 'expected a valid absolute URL');
+  }
+}
+
+function destinationUrl(value: string, base?: string | URL): URL {
+  if (/[\\\x00-\x20]/.test(value)) throw new SdkError('destination', 'Invalid destination URL');
+  try {
+    return new URL(value, base);
+  } catch {
+    throw new SdkError('destination', 'Invalid destination URL');
+  }
+}
+
 export class Runtime {
   private readonly streams = new Set<EventStream>();
   async close(): Promise<void> {
@@ -1820,11 +1845,27 @@ export class Runtime {
     this.dynamicContract = compiled ? undefined : contract;
     this.compiledContract = compiled ?? compileRuntimePlan(contract);
     assertRuntimePlan(this.compiledContract);
+    if (!options || typeof options !== 'object' || Array.isArray(options))
+      bad('options', 'expected a client options object');
     this.options = { ...options };
-    if (/[\\\r\n]/.test(options.baseUrl)) bad('baseUrl', 'invalid URL');
-    this.base = new URL(options.baseUrl.endsWith('/') ? options.baseUrl : options.baseUrl + '/');
-    if (this.base.search || this.base.hash)
-      bad('baseUrl', 'base URL must not contain a query or fragment');
+    this.base = clientBaseUrl(
+      options.baseUrl === undefined ? this.compiledContract.defaultBaseUrl : options.baseUrl,
+    );
+    if (!this.base.hostname || this.base.username || this.base.password)
+      bad('baseUrl', 'expected an absolute URL without embedded credentials');
+    if (
+      this.compiledContract.authentication &&
+      options.token !== undefined &&
+      !this.compiledContract.authShortcuts?.token
+    )
+      throw new SdkError(
+        'authentication',
+        `token is not configured for this SDK; use ${
+          Object.keys(this.compiledContract.authShortcuts ?? {})
+            .sort()
+            .join(', ') || 'authMode and credentials'
+        }`,
+      );
     this.allowed = new Set(options.allowedOrigins ?? [this.base.origin]);
     this.checkUrl(this.base);
     positive(options.timeoutMs ?? 10000, 'timeoutMs');
@@ -1837,14 +1878,20 @@ export class Runtime {
     return executeCodec(value, codec, { ...context, definitions: this.contract.definitions ?? {} });
   }
   private checkUrl(url: URL) {
-    if (
-      url.username ||
-      url.password ||
-      url.hash ||
-      !['https:', ...(this.options.allowInsecureHttp ? ['http:'] : [])].includes(url.protocol) ||
-      !this.allowed.has(url.origin)
-    )
-      throw new SdkError('destination', 'Destination is outside the explicit credential policy');
+    if (!url.hostname || url.username || url.password || url.hash)
+      throw new SdkError(
+        'destination',
+        'Invalid destination: embedded credentials and fragments are not allowed',
+      );
+    if (!['https:', 'http:'].includes(url.protocol))
+      throw new SdkError('destination', 'Unsupported destination protocol; use HTTPS');
+    if (url.protocol === 'http:' && !this.options.allowInsecureHttp)
+      throw new SdkError(
+        'destination',
+        'HTTP is disabled; set allowInsecureHttp: true for deliberate local testing',
+      );
+    if (!this.allowed.has(url.origin))
+      throw new SdkError('destination', 'Destination origin is not in allowedOrigins');
   }
   async request<T = unknown>(
     id: string,
@@ -1950,8 +1997,8 @@ export class Runtime {
       if (p.in === 'header') setHeader(p.name, values.join(','));
     }
     const url = continuation
-      ? new URL(continuation, this.base)
-      : new URL(
+      ? destinationUrl(continuation, this.base)
+      : destinationUrl(
           this.base.href.replace(/\/$/, '') + path + (query.length ? '?' + query.join('&') : ''),
         );
     this.checkUrl(url);
@@ -2462,7 +2509,8 @@ export class Runtime {
       if (next === undefined || next === null || next === '') return;
       if (p.kind === 'link' && typeof next !== 'string')
         throw new SdkError('protocol', 'Expected a pagination URL', 'response');
-      if (p.kind === 'link') next = new URL(next as string, result.meta.url ?? this.base).href;
+      if (p.kind === 'link')
+        next = destinationUrl(next as string, result.meta.url ?? this.base).href;
       if (
         next === previous ||
         (p.kind === 'offset' && previous !== undefined && String(next) === String(previous)) ||

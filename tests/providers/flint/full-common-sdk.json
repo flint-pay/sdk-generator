@@ -79,7 +79,7 @@
     "value": "2026-09-07"
   },
   "documentation": {
-    "overview": "Use the Flint Pay SDK to integrate with the Flint API from your server. See the [Flint Pay SDK documentation](https://developers.withflintpay.com/docs/guides/sdks) for setup and integration guides.",
+    "overview": "Use the Flint Pay SDK to integrate with the Flint API from your server. See the [Flint Pay SDK documentation](https://developers.withflintpay.com/docs/guides/sdks) for setup and integration guides. The default base URL is production (`https://api.withflintpay.com`). For sandbox testing, pass `baseUrl` as `https://api.staging.withflintpay.com`, or set `API_BASE_URL` to that URL when running example scripts.",
     "examples": ["createPaymentIntent", "getPaymentIntent", "createRefund"]
   },
   "operations": {

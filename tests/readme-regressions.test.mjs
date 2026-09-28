@@ -254,3 +254,73 @@ test('later README recipes retain exact-number and streaming symbols across auth
     },
   );
 });
+
+test('README client reuse follows the selected shortcut rather than the first permitted mode', async () => {
+  const output = fixture(
+    'shortcut-selection',
+    {
+      '/merchant': {
+        get: {
+          operationId: 'merchant',
+          security: [{ CommonID: [], CommonSecret: [] }, { Merchant: [] }],
+          responses,
+        },
+      },
+      '/customer': {
+        get: {
+          operationId: 'customer',
+          security: [{ CommonID: [], CommonSecret: [] }, { Customer: [] }],
+          responses,
+        },
+      },
+    },
+    { merchant: {}, customer: {} },
+    {
+      components: {
+        securitySchemes: {
+          CommonID: { type: 'apiKey', in: 'header', name: 'X-Common-ID' },
+          CommonSecret: { type: 'apiKey', in: 'header', name: 'X-Common-Secret' },
+          Merchant: { type: 'http', scheme: 'bearer' },
+          Customer: { type: 'http', scheme: 'bearer' },
+        },
+      },
+    },
+    {
+      auth: {
+        modes: {
+          common: { schemes: ['CommonID', 'CommonSecret'] },
+          merchant: { schemes: ['Merchant'] },
+          customer: { schemes: ['Customer'] },
+        },
+        shortcuts: {
+          token: { mode: 'merchant', scheme: 'Merchant' },
+          customerToken: { mode: 'customer', scheme: 'Customer' },
+        },
+      },
+    },
+  );
+  await withServer(async (baseUrl, requests) => {
+    for (const target of ['node', 'php']) {
+      const before = requests.length;
+      await runReadme(output, target, {
+        API_BASE_URL: baseUrl,
+        API_TOKEN: 'merchant-value',
+        CUSTOMER_TOKEN: 'customer-value',
+      });
+      assert.deepEqual(
+        requests
+          .slice(before)
+          .map((r) => [
+            r.path,
+            r.headers.authorization,
+            r.headers['x-common-id'],
+            r.headers['x-common-secret'],
+          ]),
+        [
+          ['/merchant', 'Bearer merchant-value', undefined, undefined],
+          ['/customer', 'Bearer customer-value', undefined, undefined],
+        ],
+      );
+    }
+  });
+});

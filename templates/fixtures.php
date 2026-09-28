@@ -57,7 +57,7 @@ foreach ($cases as $index => $case) {
     $client = new $clientClass(
         new $clientOptionsClass(
             baseUrl: $case['baseUrl'] ?? 'https://api.example.invalid/v1',
-            token: 'test-token',
+            token: $contract['composedAuthentication'] ?? false ? null : 'test-token',
             transport: $transport,
         ),
     );

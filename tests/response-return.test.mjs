@@ -497,7 +497,13 @@ test('payload-mode generated examples and README use the selected return shape',
       );
     const file = join(f.output, 'node/run-example.mjs');
     writeFileSync(file, source);
-    assert.match(execFileSync(process.execPath, [file], { encoding: 'utf8' }), /p_1/);
+    assert.match(
+      execFileSync(process.execPath, [file], {
+        encoding: 'utf8',
+        env: { ...process.env, API_BASE_URL: 'https://example.invalid' },
+      }),
+      /p_1/,
+    );
   }
   assert.match(f.read('php/REFERENCE.md'), /getItemWithResponse/);
   assert.doesNotMatch(f.read('node/README.md'), /result\.data\.data/);

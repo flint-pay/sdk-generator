@@ -899,6 +899,12 @@
           "waiveReturnLineInspection"
         ]
       }
+    },
+    "shortcuts": {
+      "apiKey": {
+        "mode": "merchantKey",
+        "scheme": "ApiKeyHeader"
+      }
     }
   },
   "operations": {

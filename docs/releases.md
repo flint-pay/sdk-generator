@@ -1,5 +1,13 @@
 # Releases and compatibility
 
+## Client setup changes
+
+Regenerated Node and PHP packages use the first declared top-level server as their default base URL. Existing explicit `baseUrl` values retain precedence. Adding a default is additive; changing or removing an existing default is breaking because callers may omit their URL. Unsupported relative/templated servers and path-level overrides now fail diagnosis rather than being ignored. APIs without servers continue to require `baseUrl`, with structured setup errors.
+
+The full Flint profile maps `token` to merchant bearer authentication and exposes `apiKey`, `customerToken`, `onboardingToken`, and `invoiceToken`. Its first server is production; sandbox callers must override the base URL. Checkout keeps its complete explicit credential map. Composed clients without a token mapping now reject `token` instead of silently ignoring it; TypeScript declarations omit that unsupported option. Legacy token clients remain supported. PHP `ClientOptions.baseUrl` is now nullable when omitted; the runtime stores the resolved URL independently and existing positional argument order is preserved.
+
+HTTP remains opt-in through `allowInsecureHttp`, and destination errors now distinguish protocol and allowed-origin failures. Generated examples no longer use a fabricated sandbox fallback. Review these changes when regenerating packages and migrate callers that previously passed ignored tokens.
+
 Generator releases and generated SDK package versions are independent. Generator 0.1.0 supports the subset in the [support matrix](support-matrix.md). Node and PHP outputs use the configured package version; API `info.version` and an optional pinned version header are separately documented. Preview versions use a SemVer prerelease suffix and npm's `next` tag in the release plan.
 
 Release commands use the installed `sdk-generator` executable. From a source checkout, substitute `node dist/cli.js` after running `npm ci` and `npm run build`. See the [CLI reference](cli.md) for complete positional arguments. Package preparation and tests do not establish that a version has been published.

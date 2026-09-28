@@ -31,6 +31,12 @@
           "listMeCreditNotes"
         ]
       }
+    },
+    "shortcuts": {
+      "invoiceToken": {
+        "mode": "invoice",
+        "scheme": "InvoiceAccessTokenBearer"
+      }
     }
   },
   "operations": {

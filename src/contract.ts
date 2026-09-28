@@ -6,7 +6,7 @@ import { SourceJson } from './source-json.js';
 import { Diagnostic, DiagnosticGroup, DiagnosticCollector, suggestion } from './diagnostic.js';
 import { valueInstruction, exactValue, discriminatorBindings } from './codec-plan.js';
 import { stable } from './canonical.js';
-import { successStatus, AUTH_SHORTCUT_RESERVED } from './runtime-plan.js';
+import { successStatus, isAuthShortcutName, isDefaultBaseUrl } from './runtime-plan.js';
 import { visitIntersectedProperties } from './schema-intersections.js';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname, relative as relativePath } from 'node:path';
@@ -177,6 +177,7 @@ export interface Config {
   release?: { baseUrl?: string; policy?: 'review' | 'semver' };
 }
 export interface Contract {
+  defaultBaseUrl?: string;
   title: string;
   apiVersion: string;
   operations: Operation[];
@@ -1906,6 +1907,20 @@ export function loadContract(
     },
   };
   const doc = deref(selected, resolve(definitionPath), '');
+  let defaultBaseUrl: string | undefined;
+  if (doc.servers !== undefined) {
+    if (!Array.isArray(doc.servers)) fail('/servers', 'expected an array of servers');
+    for (const [index, server] of doc.servers.entries()) {
+      const path = `/servers/${index}`;
+      record(server, path);
+      if (!isDefaultBaseUrl(server.url))
+        fail(
+          path + '/url',
+          'expected an absolute HTTP/HTTPS URL without credentials, query, fragment or template variables',
+        );
+      if (index === 0) defaultBaseUrl = server.url;
+    }
+  }
   // Path items have already been resolved relative to their own source files.
   doc.paths = selectedPaths;
   // Direction and redaction are use-site facts, even when their declaration is
@@ -2046,7 +2061,7 @@ export function loadContract(
       record(namedAuth.shortcuts, 'config/auth/shortcuts');
       for (const [key, shortcut] of Object.entries(namedAuth.shortcuts)) {
         const path = 'config/auth/shortcuts/' + key;
-        if (!/^[a-z][a-zA-Z0-9]*$/.test(key) || AUTH_SHORTCUT_RESERVED.has(key.toLowerCase()))
+        if (!isAuthShortcutName(key))
           fail(
             path,
             'shortcut name must be a portable option name that does not collide with existing options',
@@ -2199,7 +2214,13 @@ export function loadContract(
           publicNames.add(key);
         }
         for (const forbidden of ['callbacks', 'servers'])
-          if (op[forbidden]) fail(`${p}/${forbidden}`, 'unsupported operation construct');
+          if (op[forbidden] !== undefined)
+            fail(`${p}/${forbidden}`, 'unsupported operation construct');
+        if (item.servers !== undefined)
+          fail(
+            `/paths/${path}/servers`,
+            'path-level servers are unsupported; declare a top-level server or pass baseUrl',
+          );
         const params = new Map<string, Parameter>();
         for (const list of [item.parameters, op.parameters])
           if (list !== undefined && !Array.isArray(list)) fail(p, 'parameters must be an array');
@@ -2699,6 +2720,7 @@ export function loadContract(
       fail('config/apiVersion/value', 'expected a nonempty safe header value');
   }
   const contract: Contract = {
+    ...(defaultBaseUrl !== undefined ? { defaultBaseUrl } : {}),
     title: String(doc.info?.title ?? 'API'),
     apiVersion: config.apiVersion?.value ?? String(doc.info?.version ?? ''),
     operations,

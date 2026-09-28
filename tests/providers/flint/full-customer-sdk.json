@@ -109,6 +109,12 @@
           "updateMeAddress"
         ]
       }
+    },
+    "shortcuts": {
+      "customerToken": {
+        "mode": "customer",
+        "scheme": "CustomerSessionBearer"
+      }
     }
   },
   "operations": {

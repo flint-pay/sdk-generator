@@ -63,7 +63,7 @@ try {
 }
 ```
 
-Set `baseUrl` to your API's base URL; these examples do not point to a hosted service. Its path prefix is retained when operation paths are appended, so avoid duplicating `/v1` if it is already present in the generated operation paths. Provide `token` through your application's credential source when the selected contract requires authentication. The SDK itself does not read environment variables or discover credentials.
+Generated clients default to the first top-level server declared by the API, when present. Pass `baseUrl` to choose another environment; it is required when the API declares no server. The generic examples above use an explicit placeholder URL. Its path prefix is retained when operation paths are appended, so avoid duplicating `/v1` if it is already present in the generated operation paths. Provide `token` through your application's credential source when the selected contract requires authentication. The SDK itself does not read environment variables or discover credentials.
 
 By default, path values are positional arguments in URL order. Body fields and query/header parameters share the next params object or array, with request options last. There is no `body` wrapper. If the operation has no body or query/header parameters, omit the params argument entirely. Set `requests.style: "object"` to use a single input object containing path/query/header parameters and a `body` field. Optional fields may be omitted. Explicit null is accepted only where nullable; it does not automatically mean the server will clear a value. PHP inputs use omitted array keys for omission and `['field' => null]` for explicit null. PHP models provide `has()`, generated presence methods such as `hasDescription()`, and `get()`. Use `valueOrDefault('description', 'fallback')` to supply a fallback only when omitted; an explicit null stays null. Typed getters unwrap nested model values and throw a field-specific error for missing optional fields. In object/array alternatives, PHP lists (including `[]`) represent JSON arrays; use `(object) []` for an empty JSON object. Exact numeric enums accept equivalent spellings such as `1.0` and `1e0` for the value `1`, with membership checked at runtime. Numeric `anyOf` branches also accept equivalent decimal/integer spellings and preserve the request token; `oneOf` still rejects a value matching multiple branches.
 
@@ -109,8 +109,8 @@ Pass client defaults to `new Client({...})` in Node or `new Client(new ClientOpt
 
 | Option                    | Where             | Default and behavior                                                                                                                                           |
 | ------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `baseUrl`                 | Client            | Required. HTTPS API base, without credentials, query or fragment.                                                                                              |
-| `token`                   | Client            | Absent. Used for the contract's selected bearer or header API-key scheme.                                                                                      |
+| `baseUrl`                 | Client            | First declared server, if present; otherwise required. Explicit values override the default. No credentials, query or fragment.                                |
+| `token`                   | Client            | Absent. Legacy selected scheme, or an explicitly configured composed-client shortcut; otherwise rejected on composed clients.                                  |
 | `allowedOrigins`          | Client            | Only the base URL origin. Applies to every destination, including pagination links.                                                                            |
 | `allowInsecureHttp`       | Client            | `false`; enable only for deliberate local HTTP tests.                                                                                                          |
 | `timeoutMs`               | Client or request | `10000`; positive duration per attempt, including response body consumption.                                                                                   |
@@ -214,7 +214,7 @@ With schema validation enabled, object property bounds count the encoded keys, i
 
 ## Authentication modes
 
-For a composed client, supply `credentials` keyed by mode and security scheme, then select `authMode` on the client or request. Per-request `credentials` contains only that mode's scheme keys. Credentials and headers stay request-local.
+For a composed client, prefer its configured credential shortcuts. Explicit `credentials` keyed by mode and security scheme remain available; select `authMode` on the client or request. Per-request `credentials` contains only that mode's scheme keys. Credentials and headers stay request-local.
 
 ```js
 const client = new Client({
@@ -237,6 +237,26 @@ await client.orders.get(input, { apiKey: 'request-key' });
 PHP accepts the same configured name as a named argument: `new ClientOptions(baseUrl: $baseUrl, apiKey: $key)` or `new RequestOptions(apiKey: $key)`. The shortcut selects its configured mode and credential. Request overrides do not mutate the client. Explicit request authentication remains available for other modes; do not mix a shortcut and explicit authentication in the same options object.
 
 Generated TypeScript `AuthMode` and `Credentials` declarations list the actual modes and required scheme keys. Each operation limits request options to its permitted modes. The generated runtime guide includes the complete mode/key table. Missing-credential errors name the scheme and mode without printing secret values.
+
+The full Flint profiles expose `token` (merchant bearer), `apiKey` (merchant API-key header), `customerToken`, `onboardingToken`, and `invoiceToken`. Checkout still requires its complete ID/secret credential map. For example:
+
+```js
+const flint = new Client({ token: merchantToken });
+// Flint's first declared server is production. Select sandbox explicitly:
+const sandbox = new Client({
+  baseUrl: 'https://api.staging.withflintpay.com',
+  token: sandboxToken,
+});
+```
+
+```php
+$flint = new Client(new ClientOptions(token: $merchantToken));
+$sandbox = new Client(
+  new ClientOptions(baseUrl: 'https://api.staging.withflintpay.com', token: $sandboxToken),
+);
+```
+
+The SDK never reads environment variables. Generated example scripts read `API_BASE_URL`, `API_TOKEN`, `API_KEY`, or the other shortcut’s uppercase snake-case variable explicitly. A script without a compiled default requires `API_BASE_URL` and explains how to set it. Missing or malformed URLs fail with a structured `baseUrl` validation error. HTTP, including `http://localhost` on anonymous APIs, requires `allowInsecureHttp: true`; origin restrictions still apply through `allowedOrigins`.
 
 PHP uses the same associative maps in `ClientOptions` and `RequestOptions`. Constructor additions are optional named arguments; legacy token-based clients continue to work.
 

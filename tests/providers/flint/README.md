@@ -64,3 +64,9 @@ const refreshedPaymentIntent = retrieved.data.data;
 ```
 
 In PHP the equivalent paths are `$created->data->data->payment_intent` and `$retrieved->data->data`. SDK `meta` is HTTP metadata; any metadata inside `data` belongs to the provider's JSON body.
+
+## Client setup
+
+The full profiles explicitly map `token` to `merchant/BearerAuth`, `apiKey` to `merchantKey/ApiKeyHeader`, `customerToken` to `customer/CustomerSessionBearer`, `onboardingToken` to `onboarding/OnboardingSessionBearer`, and `invoiceToken` to `invoice/InvoiceAccessTokenBearer`. Each mapping supplies a complete single-scheme alternative already permitted by that profile’s operation bindings. Checkout continues to require both headers. Fixture hashes include these profile declarations.
+
+The full export’s first server is production (`https://api.withflintpay.com`), which becomes the generated default. Use an explicit `baseUrl: 'https://api.staging.withflintpay.com'` for sandbox testing. Regression tests use synthetic transports and never call either server.

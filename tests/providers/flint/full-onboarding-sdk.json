@@ -59,6 +59,12 @@
           "updateDeveloperPartnerApp"
         ]
       }
+    },
+    "shortcuts": {
+      "onboardingToken": {
+        "mode": "onboarding",
+        "scheme": "OnboardingSessionBearer"
+      }
     }
   },
   "operations": {
