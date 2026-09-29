@@ -156,7 +156,13 @@ export interface Config {
       };
   targets?: ('node' | 'php')[];
   version: string;
-  npm: { name: string; registry?: string; access?: 'public' | 'restricted' };
+  npm: {
+    name: string;
+    registry?: string;
+    access?: 'public' | 'restricted';
+    homepage?: string;
+    repository?: { type: 'git'; url: string; directory?: string };
+  };
   composer: { name: string; namespace: string };
   operations?: Record<string, Capability>;
   models?: Record<string, string>;
@@ -242,6 +248,24 @@ function keys(object: object, allowed: string[], path: string) {
     );
   if (findings.length === 1) throw findings[0];
   if (findings.length) throw new DiagnosticGroup(findings);
+}
+function publicationUrl(value: unknown, path: string, repository = false): void {
+  const message = repository
+    ? 'expected an HTTPS or git+HTTPS repository URL without embedded credentials'
+    : 'expected an HTTPS homepage URL without embedded credentials';
+  if (
+    typeof value !== 'string' ||
+    /[\s\\\u0000-\u001f\u007f]/.test(value) ||
+    !(repository ? /^(?:git\+)?https:\/\/[^/?#]/i : /^https:\/\/[^/?#]/i).test(value)
+  )
+    return fail(path, message);
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return fail(path, message);
+  }
+  if (!url.hostname || url.username || url.password) fail(path, message);
 }
 function record(value: unknown, path: string): asserts value is Record<string, any> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) fail(path, 'expected an object');
@@ -1554,8 +1578,34 @@ export function loadContract(
   checkConfig(['npm'], () => {
     if (config.npm !== undefined)
       diagnostics.check(() => {
-        keys(config.npm, ['name', 'registry', 'access'], 'config/npm');
+        keys(config.npm, ['name', 'registry', 'access', 'homepage', 'repository'], 'config/npm');
       });
+  });
+  checkConfig(['npm'], () => {
+    if (config.npm?.homepage !== undefined)
+      publicationUrl(config.npm.homepage, 'config/npm/homepage');
+  });
+  checkConfig(['npm'], () => {
+    const repository = config.npm?.repository;
+    if (repository === undefined) return;
+    keys(repository, ['type', 'url', 'directory'], 'config/npm/repository');
+    diagnostics.check(() => {
+      if (repository.type !== 'git') fail('config/npm/repository/type', 'expected git');
+    });
+    diagnostics.check(() => publicationUrl(repository.url, 'config/npm/repository/url', true));
+    diagnostics.check(() => {
+      const directory = repository.directory;
+      if (
+        directory !== undefined &&
+        (typeof directory !== 'string' ||
+          /[\\:\u0000-\u001f\u007f]/.test(directory) ||
+          directory.split('/').some((part) => !part || part === '.' || part === '..'))
+      )
+        fail(
+          'config/npm/repository/directory',
+          'expected a relative repository path with forward slashes and no traversal',
+        );
+    });
   });
   checkConfig(['npm'], () => {
     if (config.npm !== undefined)
