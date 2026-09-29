@@ -6,7 +6,9 @@ Generate and install a package using the [README quickstart](../README.md#instal
 
 New SDK methods return the decoded body directly: `const payment = await client.paymentIntents.create(input)` yields the configured payload with no SDK `data` wrapper. Use the `WithResponse` companion when you need the full decoded `body`, HTTP `meta` or the `raw` response, as in the Node example below; each invocation sends its own request, so choose one form per action. Providers may explicitly select a nested payload path or retain `Result` returns, per SDK or per operation; check the generated reference for the selected mode and follow provider migration notes when it changes. `Pages` and `Wait` always yield or return full `Result` envelopes, and `Items` yields individual items.
 
-Node.js and TypeScript share one ESM package. Use a `.mjs` file or a project with `"type": "module"`. TypeScript consumers use the included declarations with TypeScript 5.9+ and NodeNext module resolution. Generated npm packages install the pinned `@types/node` dependency required by their declarations.
+Node.js and TypeScript share one ESM package. ESM imports require Node.js 22+; use a `.mjs` file or a project with `"type": "module"`. On Node.js 22.12+, CommonJS consumers can use `const { Client } = require('@example/library')`, including resource subpaths such as `require('@example/library/resources/books')`.
+
+TypeScript consumers use the included declarations with TypeScript 5.9+ and NodeNext module resolution. Install a compatible `@types/node` version (22.16.0+) as a development dependency matching your Node runtime, for example `npm install --save-dev @types/node@22`. Generated packages declare Node types as an optional peer dependency, so consumers choose the version and JavaScript installations do not install type packages.
 
 ```js
 import { Client, SdkError } from '@example/library';

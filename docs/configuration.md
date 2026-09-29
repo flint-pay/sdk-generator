@@ -260,6 +260,24 @@ Generated clients send a User-Agent containing the provider-selected package nam
 
 `npm.registry` optionally selects an HTTPS registry URL without embedded credentials, query or fragment. `npm.access` optionally selects `public` or `restricted`; npm requires a scoped package for restricted access. Defaults are the public npm registry and public access. These settings appear in package publishConfig and the reviewable release plan. Publishing requires a separate explicit command and version acknowledgement; credentials are supplied by the caller's npm configuration. See [release policy](releases.md#version-policy) for `release.policy` and [distribution](releases.md#coordinated-composer-and-documentation-distribution) for `release.baseUrl`.
 
+`npm.homepage` and `npm.repository` optionally describe the generated SDK's public documentation and source repository. Both are omitted from package metadata when absent; they are never inferred from the generator's repository. The homepage must be an HTTPS URL. The repository uses `{ "type": "git", "url": "…", "directory": "…" }`, with an HTTPS or git+HTTPS URL. Neither URL may contain embedded credentials. For a package in a monorepo, `directory` is its relative path within the repository, using forward slashes without leading/trailing slashes or `.`/`..` segments; omit it for a repository-root package.
+
+```json
+{
+  "npm": {
+    "name": "@example/library",
+    "homepage": "https://sdk.example.com/library/",
+    "repository": {
+      "type": "git",
+      "url": "git+https://github.com/example/library-sdk.git",
+      "directory": "packages/node"
+    }
+  }
+}
+```
+
+Generated README documentation links remain relative. For repository-backed links on npm, commit the README and its referenced documentation together at the configured package location. A homepage alone does not establish destinations for those relative links.
+
 ## Full contracts, authentication modes, and profile composition
 
 `profiles` lists local JSON profiles relative to the configuration file. Compatible settings merge, operation selections and mode bindings form unions, and conflicting scalar settings fail diagnosis. A referenced profile without `include` contributes the full operation selection. The final configuration may supply its own explicit selection. Profile cycles fail diagnosis.

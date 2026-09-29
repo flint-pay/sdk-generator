@@ -827,17 +827,30 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
           name: c.config.npm.name,
           version: c.config.version,
           description: `${c.title} server SDK`,
+          homepage: c.config.npm.homepage,
+          repository: c.config.npm.repository
+            ? {
+                type: c.config.npm.repository.type,
+                url: c.config.npm.repository.url,
+                directory: c.config.npm.repository.directory,
+              }
+            : undefined,
           type: 'module',
           sideEffects: ['./custom/**'],
           main: './index.js',
           types: './index.d.ts',
           exports: {
-            '.': { types: './index.d.ts', import: './index.js' },
+            '.': { types: './index.d.ts', import: './index.js', default: './index.js' },
             './custom/*': './custom/*',
-            './resources/*': { types: './resources/*.d.ts', import: './resources/*.js' },
+            './resources/*': {
+              types: './resources/*.d.ts',
+              import: './resources/*.js',
+              default: './resources/*.js',
+            },
           },
           engines: { node: '>=22' },
-          dependencies: { '@types/node': packageMetadata.dependencies['@types/node'] },
+          peerDependencies: { '@types/node': '>=22.16.0' },
+          peerDependenciesMeta: { '@types/node': { optional: true } },
           publishConfig: {
             registry: c.config.npm.registry ?? 'https://registry.npmjs.org',
             access: c.config.npm.access ?? 'public',
@@ -1310,7 +1323,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       : `Each call returns a Result: \`${resultData}\` is the complete API response body and \`${resultMeta}\` is HTTP metadata. If the provider also wraps its payload in \`data\`, access it through \`${nestedData}\`. The examples show each endpoint's exact response path.`;
     files.set(
       `${target}/README.md`,
-      `# ${c.title} SDK (${target})\n\nPackage ${c.config.version}; generated for API ${c.apiVersion}.\n\n${guidance}## Installation\n\n${target === 'node' ? `Requires Node.js 22+. TypeScript consumers require TypeScript 5.9+; JavaScript consumers do not need TypeScript. ESM JavaScript and declarations ship together.\n\nInstall: \`npm install ${c.config.npm.name}\`` : `Requires PHP 8.2+, ext-json and ext-curl; framework independent. PHPDoc types target PHPStan 2.2+ (development tooling only).\n\nInstall: \`composer require ${c.config.composer.name}\``}\n\n## Quickstart\n\n${c.defaultBaseUrl !== undefined ? `The default API base URL is \`${c.defaultBaseUrl}\`, the first server declared by the API. Set \`API_BASE_URL\` to override it for another environment.` : 'Set `API_BASE_URL` to your API environment; this SDK has no default server.'} Replace the sample IDs below with values from your account. ${c.authentication ? 'Set the credential environment variables shown below; the [authentication guide](RUNTIME.md#authentication) lists every mode and required credential key.' : c.auth ? 'Set `API_TOKEN` to your API credential.' : ''} The example scripts read these variables explicitly.\n\n${target === 'node' ? 'Copy an example into an ESM application, or run a packaged script with `node examples/RESOURCE-METHOD.mjs`. TypeScript examples are included alongside the JavaScript files.' : 'Copy an example into your application with its `vendor/autoload.php` path, or run `composer install` in the generated package, then `php examples/RESOURCE-METHOD.php`.'} Examples use the client and operation defaults.\n\n${responseGuidance}\n\n${readmeExamples(c, target)}## More documentation\n\n- [API reference and all operation examples](REFERENCE.md)\n- [Runtime guide](RUNTIME.md): request options, errors, retries, pagination and webhooks.\n${c.config.webhook ? '- [verifyWebhook examples and errors](RUNTIME.md#webhooks-and-recovery)\n' : ''}`,
+      `# ${c.title} SDK (${target})\n\nPackage ${c.config.version}; generated for API ${c.apiVersion}.\n\n${guidance}## Installation\n\n${target === 'node' ? `Requires Node.js 22+ for ESM imports, or Node.js 22.12+ for \`require()\` from CommonJS. ESM JavaScript and declarations ship together. TypeScript consumers require TypeScript 5.9+ with NodeNext module resolution and a compatible \`@types/node\` version (22.16.0+), installed as a development dependency, for example \`npm install --save-dev @types/node@22\`. Node types are an optional peer dependency; JavaScript consumers do not need TypeScript or Node types.\n\nInstall: \`npm install ${c.config.npm.name}\`` : `Requires PHP 8.2+, ext-json and ext-curl; framework independent. PHPDoc types target PHPStan 2.2+ (development tooling only).\n\nInstall: \`composer require ${c.config.composer.name}\``}\n\n## Quickstart\n\n${c.defaultBaseUrl !== undefined ? `The default API base URL is \`${c.defaultBaseUrl}\`, the first server declared by the API. Set \`API_BASE_URL\` to override it for another environment.` : 'Set `API_BASE_URL` to your API environment; this SDK has no default server.'} Replace the sample IDs below with values from your account. ${c.authentication ? 'Set the credential environment variables shown below; the [authentication guide](RUNTIME.md#authentication) lists every mode and required credential key.' : c.auth ? 'Set `API_TOKEN` to your API credential.' : ''} The example scripts read these variables explicitly.\n\n${target === 'node' ? 'Copy an example into an ESM application, or run a packaged script with `node examples/RESOURCE-METHOD.mjs`. TypeScript examples are included alongside the JavaScript files.' : 'Copy an example into your application with its `vendor/autoload.php` path, or run `composer install` in the generated package, then `php examples/RESOURCE-METHOD.php`.'} Examples use the client and operation defaults.\n\n${responseGuidance}\n\n${readmeExamples(c, target)}## More documentation\n\n- [API reference and all operation examples](REFERENCE.md)\n- [Runtime guide](RUNTIME.md): request options, errors, retries, pagination and webhooks.\n${c.config.webhook ? '- [verifyWebhook examples and errors](RUNTIME.md#webhooks-and-recovery)\n' : ''}`,
     );
     files.set(
       `${target}/RUNTIME.md`,

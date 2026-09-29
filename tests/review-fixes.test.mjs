@@ -733,7 +733,7 @@ test('native clients decode compressed successes and code-specific retry errors 
   }
 });
 
-test('an installed generated npm archive typechecks without the generator type roots', async () => {
+test('an installed generated npm archive typechecks with consumer-owned Node types', async () => {
   const f = fixture('standalone-types', { type: 'string' }, { config: { targets: ['node'] } });
   const packed = await run(
     'npm',
@@ -745,7 +745,12 @@ test('an installed generated npm archive typechecks without the generator type r
   mkdirSync(consumer);
   writeFileSync(
     join(consumer, 'package.json'),
-    JSON.stringify({ name: 'review-consumer', private: true, type: 'module' }),
+    JSON.stringify({
+      name: 'review-consumer',
+      private: true,
+      type: 'module',
+      devDependencies: { '@types/node': '22.20.1' },
+    }),
   );
   await run('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', archive], {
     cwd: consumer,

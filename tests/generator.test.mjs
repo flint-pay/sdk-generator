@@ -97,7 +97,7 @@ test('PHP passes the same HTTP fixtures and native capability checks', () => {
 });
 test('package exports preserve types-first resolution instead of relying on sibling declarations', () => {
   const metadata = JSON.parse(readFileSync(join(output, 'node/package.json'), 'utf8'));
-  assert.deepEqual(Object.keys(metadata.exports['.']), ['types', 'import']);
+  assert.deepEqual(Object.keys(metadata.exports['.']), ['types', 'import', 'default']);
   const trace = [];
   const resolved = ts.resolveModuleName(
     metadata.name,

@@ -1,5 +1,13 @@
 # Releases and compatibility
 
+## npm package metadata
+
+Regenerated Node packages support `require()` for the package root and resource subpaths on Node.js 22.12+, using the same ESM files as imports. ESM imports continue to support Node.js 22+.
+
+Node types move from a pinned runtime dependency to an optional `@types/node >=22.16.0` peer dependency. TypeScript consumers that previously relied on the transitive installation must add a compatible version to their own development dependencies, for example `npm install --save-dev @types/node@22`. Older Node type declarations can fail with TypeScript 5.9; the supported floor is 22.16.0. JavaScript consumers need no type packages. The generator retains its pinned tooling dependencies; PHP packages are unaffected.
+
+Providers can set optional `npm.repository` and `npm.homepage` metadata; see [publication metadata](configuration.md#publication-metadata). README links remain relative to documentation committed alongside the SDK.
+
 ## Object, number and date-time representations
 
 Regeneration changes the public SDK contract in both targets. Plain `number`, float and double fields now accept and return native numbers (PHP `int|float` inputs and `float` outputs). Replace numeric-string arguments with numbers and update consumers expecting string results. Preserve precision-sensitive decimals by declaring `format: "decimal"` in the schema or a provider override. int64/uint64 retain exact strings; ordinary integers retain their safe-range checks. Native numbers use floating-point precision and reject non-finite values.
