@@ -497,8 +497,7 @@ function encode(value: unknown, depth = 0): string {
   if (value === null) return 'null';
   if (typeof value === 'string' || typeof value === 'boolean') return JSON.stringify(value);
   if (typeof value === 'number') {
-    if (!Number.isSafeInteger(value))
-      bad('value', 'use a decimal or integer string for exact numbers');
+    if (!Number.isFinite(value)) bad('value', 'expected a finite number');
     return String(value);
   }
   if (Array.isArray(value)) {
@@ -521,6 +520,8 @@ function combine(left: any, right: any, path: string, source: unknown): any {
   if (left instanceof ParsedNumber || right instanceof ParsedNumber) {
     const token = left instanceof ParsedNumber ? left : right;
     const other = left instanceof ParsedNumber ? right : left;
+    if (typeof other === 'number' && Number.isFinite(other) && other === Number(token.value))
+      return other;
     const text =
       other instanceof ParsedNumber || other instanceof RawNumber ? other.value : String(other);
     if (!exactDecimal.test(text) || compareDecimal(token.value, text) !== 0)
@@ -530,10 +531,33 @@ function combine(left: any, right: any, path: string, source: unknown): any {
   if (left instanceof RawNumber || right instanceof RawNumber) {
     const token = left instanceof RawNumber ? left : right;
     const other = left instanceof RawNumber ? right : left;
+    if (
+      source instanceof ParsedNumber &&
+      token.value === source.value &&
+      typeof other === 'number' &&
+      Number.isFinite(other) &&
+      other === Number(source.value)
+    )
+      return token;
     const text = other instanceof RawNumber ? other.value : String(other);
     if (!exactDecimal.test(text) || compareDecimal(token.value, text) !== 0)
       bad(path, 'alternatives have incompatible numeric representations');
     return token;
+  }
+  // A matching exact branch retains precision when another branch projects
+  // this same JSON token to a native number. Independent constraints ran first.
+  if (source instanceof ParsedNumber) {
+    const exact = typeof left === 'string' ? left : typeof right === 'string' ? right : undefined;
+    const native = typeof left === 'number' ? left : typeof right === 'number' ? right : undefined;
+    if (
+      exact !== undefined &&
+      native !== undefined &&
+      Number.isFinite(native) &&
+      exactDecimal.test(exact) &&
+      compareDecimal(source.value, exact) === 0 &&
+      native === Number(source.value)
+    )
+      return exact;
   }
   // Decoding can unwrap both numeric tokens into SDK strings before a later
   // branch is merged. The shared source view proves these are JSON numbers.
@@ -942,6 +966,7 @@ function numericViewChanged(before: unknown, after: unknown, depth = 0): boolean
 function mergeNumericViews(left: any, right: any, depth = 0): any {
   if (depth > 256)
     bad('value', 'value exceeds the supported nesting depth (256) or contains a cycle');
+  if (left instanceof Date && typeof right === 'string') return right;
   if (left === right || left instanceof ParsedNumber) return left;
   if (right instanceof ParsedNumber) return right;
   if (left instanceof CompiledModel) left = left.toJSON();
@@ -1035,7 +1060,13 @@ function assertNumericSources(
     ];
   });
   if (value instanceof ParsedNumber) {
-    if (!shapes.some(({ codec }) => exactValue(codec.value)))
+    if (
+      !shapes.some(
+        ({ codec }) =>
+          exactValue(codec.value) ||
+          (codec.value.kind === 'native-number' && typeof source === 'number'),
+      )
+    )
       bad(path, 'numeric interpretation depends on an unmatched alternative');
     return;
   }
@@ -1087,6 +1118,14 @@ function numericView(
   if (value instanceof CompiledModel) value = modelInputs.get(value) ?? value.toJSON();
   const shapes = codecShapes(scopes, path, depth);
   if (
+    value instanceof Date &&
+    (context.direction ?? context.mode) !== 'response' &&
+    shapes.some(({ codec }) => codec.value.kind === 'date-time')
+  ) {
+    if (!Number.isFinite(value.getTime())) bad(path, 'expected a valid Date');
+    value = value.toISOString();
+  }
+  if (
     typeof value === 'string' &&
     shapes.some(
       ({ codec }) =>
@@ -1111,7 +1150,12 @@ function numericView(
         ),
       );
     }
-  } else if (value && typeof value === 'object' && !(value instanceof ParsedNumber)) {
+  } else if (
+    value &&
+    typeof value === 'object' &&
+    !(value instanceof ParsedNumber) &&
+    !(value instanceof Date)
+  ) {
     value = Object.fromEntries(
       Object.entries(value).map(([key, child]) => {
         // Request omission is decided before a property's union is matched.
@@ -1434,6 +1478,7 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
     typeof value === 'string'
   )
     return bad(path, `expected ${type}; received a JSON string`);
+  const numberToken = value instanceof ParsedNumber ? value.value : undefined;
   if (value instanceof ParsedNumber) {
     if (type === undefined) {
       const token = value.value;
@@ -1450,10 +1495,10 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
     if (type === 'integer') {
       const token = integerToken(value.value, path);
       value = exactValue(s.value) ? token : Number(token);
-    } else if (type === 'number') value = value.value;
+    } else if (type === 'number') value = exactValue(s.value) ? value.value : Number(value.value);
     else return bad(path, `expected ${type}; received a JSON number`);
   }
-  const exactEnum = exactValue(s.value);
+  const exactEnum = exactValue(s.value) || s.value.kind === 'native-number';
   if (
     (!response || matching) &&
     s.members &&
@@ -1462,7 +1507,8 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
         exactDecimal.test(String(value)) &&
         s.members.some(
           (member) =>
-            typeof member === 'number' && compareDecimal(String(value), String(member)) === 0,
+            typeof member === 'number' &&
+            compareDecimal(numberToken ?? String(value), String(member)) === 0,
         )
       : s.members.some((member) => member === value))
   )
@@ -1480,6 +1526,13 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
       if (!response || matching)
         numericConstraints(token, s, path, validateConstraints || matching);
       return response ? token : new RawNumber(token);
+    }
+    if (s.value.kind === 'native-number') {
+      if (typeof value !== 'number' || !Number.isFinite(value))
+        return bad(path, 'expected a finite number');
+      if (!response || matching)
+        numericConstraints(numberToken ?? String(value), s, path, validateConstraints || matching);
+      return value;
     }
     if (typeof value !== 'number' || !Number.isSafeInteger(value))
       return bad(path, 'expected a safe integer; declare int64 for larger values');
@@ -1737,11 +1790,13 @@ export function redactCodec(
 export type InputValue<T> =
   | T
   | Model<T>
-  | (T extends readonly (infer Item)[]
-      ? InputValue<Item>[]
-      : T extends object
-        ? { [Key in keyof T]: InputValue<T[Key]> }
-        : never);
+  | (T extends Date
+      ? never
+      : T extends readonly (infer Item)[]
+        ? InputValue<Item>[]
+        : T extends object
+          ? { [Key in keyof T]: InputValue<T[Key]> }
+          : never);
 const modelInputs = new WeakMap<object, unknown>();
 class CompiledModel<T = unknown> {
   private readonly value: T;

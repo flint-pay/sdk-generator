@@ -34,7 +34,7 @@ writeFileSync(
                       type: 'array',
                       items: { type: 'object', properties: { value: { type: 'string' } } },
                     },
-                    amount: { anyOf: [{ type: 'number' }, { type: 'string' }] },
+                    amount: { anyOf: [{ type: 'number', format: 'decimal' }, { type: 'string' }] },
                   },
                 },
               },

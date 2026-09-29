@@ -1082,6 +1082,13 @@ final class Codec
         if ($left instanceof ParsedNumber || $right instanceof ParsedNumber) {
             $token = $left instanceof ParsedNumber ? $left : $right;
             $other = $left instanceof ParsedNumber ? $right : $left;
+            if (
+                (is_int($other) || is_float($other)) &&
+                is_finite((float) $other) &&
+                (float) $other === (float) $token->value
+            ) {
+                return $other;
+            }
             $text =
                 $other instanceof ParsedNumber || $other instanceof RawNumber
                     ? $other->value
@@ -1099,6 +1106,15 @@ final class Codec
         if ($left instanceof RawNumber || $right instanceof RawNumber) {
             $token = $left instanceof RawNumber ? $left : $right;
             $other = $left instanceof RawNumber ? $right : $left;
+            if (
+                $source instanceof ParsedNumber &&
+                $token->value === $source->value &&
+                (is_int($other) || is_float($other)) &&
+                is_finite((float) $other) &&
+                (float) $other === (float) $source->value
+            ) {
+                return $token;
+            }
             $text =
                 $other instanceof RawNumber
                     ? $other->value
@@ -1115,6 +1131,26 @@ final class Codec
         }
         // The shared source view retains JSON numeric identity after branches
         // have decoded their tokens into public SDK strings.
+        // Prefer the exact projection when both branches validated the same token.
+        if ($source instanceof ParsedNumber) {
+            $exact = is_string($left) ? $left : (is_string($right) ? $right : null);
+            $native =
+                is_int($left) || is_float($left)
+                    ? $left
+                    : (is_int($right) || is_float($right)
+                        ? $right
+                        : null);
+            if (
+                $exact !== null &&
+                $native !== null &&
+                is_finite((float) $native) &&
+                preg_match('/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/', $exact) &&
+                self::compareDecimal($source->value, $exact) === 0 &&
+                (float) $native === (float) $source->value
+            ) {
+                return $exact;
+            }
+        }
         if (
             $source instanceof ParsedNumber &&
             is_string($left) &&
@@ -1150,11 +1186,22 @@ final class Codec
         if ($left === $right) {
             return $right;
         }
-        if (is_int($left) && is_string($right) && (string) $left === $right) {
-            return $right;
+        if (
+            (is_int($left) || is_float($left)) &&
+            (is_int($right) || is_float($right)) &&
+            self::compareDecimal(self::numberText($left), self::numberText($right)) === 0
+        ) {
+            return is_float($left) ? $left : $right;
         }
-        if (is_int($right) && is_string($left) && (string) $right === $left) {
-            return $left;
+        foreach ([[$left, $right], [$right, $left]] as [$number, $text]) {
+            if (
+                (is_int($number) || is_float($number)) &&
+                is_string($text) &&
+                preg_match('/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/', $text) &&
+                self::compareDecimal(self::numberText($number), $text) === 0
+            ) {
+                return $text;
+            }
         }
         self::fail($path, 'alternatives have incompatible representations');
     }
@@ -1402,7 +1449,8 @@ final class Codec
             'null-array' => 'null',
             'null', 'boolean', 'string', 'object', 'array' => $instruction['kind'],
             'safe-integer', 'exact-integer' => 'integer',
-            'decimal' => 'number',
+            'decimal', 'native-number' => 'number',
+            'date-time' => 'string',
             'opaque' => $instruction['label'],
             default => throw new \InvalidArgumentException('Unknown codec instruction'),
         };
@@ -1729,6 +1777,9 @@ final class Codec
                 'value exceeds the supported nesting depth (256) or contains a cycle',
             );
         }
+        if ($left instanceof \DateTimeInterface && is_string($right)) {
+            return $right;
+        }
         if ((!is_array($left) && $left === $right) || $left instanceof ParsedNumber) {
             return $left;
         }
@@ -1872,7 +1923,11 @@ final class Codec
         });
         if ($value instanceof ParsedNumber) {
             foreach ($shapes as [$codec]) {
-                if (self::exactValue($codec['value'])) {
+                if (
+                    self::exactValue($codec['value']) ||
+                    ($codec['value']['kind'] === 'native-number' &&
+                        (is_int($source) || is_float($source)))
+                ) {
                     return;
                 }
             }
@@ -1946,6 +2001,16 @@ final class Codec
             $value = $value->toInputValue();
         }
         $shapes = self::codecShapes($scopes, $path, $depth);
+        if ($value instanceof \DateTimeInterface && !$response) {
+            foreach ($shapes as [$codec]) {
+                if ($codec['value']['kind'] === 'date-time') {
+                    $value = \DateTimeImmutable::createFromInterface($value)
+                        ->setTimezone(new \DateTimeZone('UTC'))
+                        ->format('Y-m-d\\TH:i:s.v\\Z');
+                    break;
+                }
+            }
+        }
         if (is_string($value)) {
             foreach ($shapes as [$codec]) {
                 $pattern =
@@ -1988,7 +2053,12 @@ final class Codec
                     array_keys($value),
                 );
             }
-        } elseif ((is_object($value) && !($value instanceof ParsedNumber)) || is_array($value)) {
+        } elseif (
+            (is_object($value) &&
+                !($value instanceof ParsedNumber) &&
+                !($value instanceof \DateTimeInterface)) ||
+            is_array($value)
+        ) {
             $out = [];
             foreach ((array) $value as $key => $child) {
                 $children = [];
@@ -2472,6 +2542,7 @@ final class Codec
         ) {
             self::fail($path, "expected $type; received a JSON string");
         }
+        $numberToken = $value instanceof ParsedNumber ? $value->value : null;
         if ($value instanceof ParsedNumber) {
             if ($type === null) {
                 if (
@@ -2479,8 +2550,8 @@ final class Codec
                     isset($s['members']) &&
                     !array_filter(
                         $s['members'],
-                        fn($v) => is_int($v) &&
-                            self::compareDecimal($value->value, (string) $v) === 0,
+                        fn($v) => (is_int($v) || is_float($v)) &&
+                            self::compareDecimal($value->value, self::numberText($v)) === 0,
                     )
                 ) {
                     self::fail($path, 'value is outside the declared enum');
@@ -2499,25 +2570,28 @@ final class Codec
                 $token = self::integerToken($value->value, $path);
                 $value = self::exactValue($s['value']) ? $token : (int) $token;
             } elseif ($type === 'number') {
-                $value = $value->value;
+                $value = self::exactValue($s['value']) ? $value->value : (float) $value->value;
             } else {
                 self::fail($path, "expected $type; received a JSON number");
             }
         }
-        $exactEnum = self::exactValue($s['value']);
+        $exactEnum = self::exactValue($s['value']) || $s['value']['kind'] === 'native-number';
         if (
             (!$response || $matching) &&
             isset($s['members']) &&
             !($exactEnum
-                ? (is_string($value) || is_int($value)) &&
+                ? (is_string($value) || is_int($value) || is_float($value)) &&
                     preg_match(
                         '/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/',
                         (string) $value,
                     ) &&
                     array_filter(
                         $s['members'],
-                        fn($member) => is_int($member) &&
-                            self::compareDecimal((string) $value, (string) $member) === 0,
+                        fn($member) => (is_int($member) || is_float($member)) &&
+                            self::compareDecimal(
+                                $numberToken ?? self::numberText($value),
+                                self::numberText($member),
+                            ) === 0,
                     )
                 : in_array($value, $s['members'], true))
         ) {
@@ -2537,6 +2611,20 @@ final class Codec
                     self::numericConstraints($token, $s, $path, $validateConstraints || $matching);
                 }
                 return $response ? $token : new RawNumber($token);
+            }
+            if ($s['value']['kind'] === 'native-number') {
+                if ((!is_int($value) && !is_float($value)) || !is_finite((float) $value)) {
+                    self::fail($path, 'expected a finite number');
+                }
+                if (!$response || $matching) {
+                    self::numericConstraints(
+                        $numberToken ?? self::numberText($value),
+                        $s,
+                        $path,
+                        $validateConstraints || $matching,
+                    );
+                }
+                return $response ? (float) $value : $value;
             }
             if (!is_int($value) || abs($value) > 9007199254740991) {
                 self::fail($path, 'expected a safe integer; declare int64 for larger values');
@@ -2718,13 +2806,25 @@ final class Codec
                 }
             }
         }
-        if ($type === null && is_int($value) && (!$response || $matching)) {
-            self::numericConstraints((string) $value, $s, $path, $validateConstraints || $matching);
+        if ($type === null && (is_int($value) || is_float($value)) && (!$response || $matching)) {
+            if (!is_finite((float) $value)) {
+                self::fail($path, 'expected a finite number');
+            }
+            self::numericConstraints(
+                self::numberText($value),
+                $s,
+                $path,
+                $validateConstraints || $matching,
+            );
         }
         if ($type === 'boolean' && !is_bool($value)) {
             self::fail($path, 'expected a boolean');
         }
         return $value;
+    }
+    private static function numberText(string|int|float $value): string
+    {
+        return is_float($value) ? json_encode($value, JSON_THROW_ON_ERROR) : (string) $value;
     }
     public static function encode(mixed $value, int $depth = 0): string
     {
@@ -2737,8 +2837,8 @@ final class Codec
         if ($value instanceof Model) {
             $value = $value->toInputValue();
         }
-        if (is_float($value) || (is_int($value) && abs($value) > 9007199254740991)) {
-            self::fail('value', 'use exact numeric strings with a declared schema');
+        if (is_float($value) && !is_finite($value)) {
+            self::fail('value', 'expected a finite number');
         }
         if (is_array($value) && array_is_list($value)) {
             return '[' .

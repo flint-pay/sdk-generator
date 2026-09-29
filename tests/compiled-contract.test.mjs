@@ -276,7 +276,7 @@ test('bounded inclusion cases distinguish declarations, runtime guarantees, and 
   }
   assert.equal(
     addedResultFits([plan({ type: 'string' })], plan({ type: 'number' }), 'result').result,
-    'compatible',
+    'incompatible',
   );
   assert.equal(
     addedResultFits([undefined], plan({ type: 'null' }), 'result').result,

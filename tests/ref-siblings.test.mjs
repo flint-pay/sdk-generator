@@ -751,7 +751,7 @@ test('exact array items and dictionary values enforce composed numeric constrain
     const schemas = {
       Numbers: { type: 'array', items: number },
       Dictionary: { type: 'object', additionalProperties: number },
-      Decimals: { type: 'array', items: { type: 'number' } },
+      Decimals: { type: 'array', items: { type: 'number', format: 'decimal' } },
       Nested: { type: 'array', items: { type: 'object', additionalProperties: number } },
     };
     const i = inputs(document(body, schemas));
@@ -1082,7 +1082,10 @@ test('union siblings validate numeric wire values in requests under both policie
           {
             type: 'object',
             required: ['kind', 'amount'],
-            properties: { kind: { type: 'string', enum: ['paid'] }, amount: { type: 'number' } },
+            properties: {
+              kind: { type: 'string', enum: ['paid'] },
+              amount: { type: 'number', format: 'decimal' },
+            },
           },
           {
             type: 'object',
@@ -1148,7 +1151,7 @@ test('union siblings validate numeric wire values in requests under both policie
 
 test('numeric negation preserves JSON strings in generated requests and responses', async () => {
   for (const validation of ['schema', 'encoding']) {
-    const numeric = { type: 'number' };
+    const numeric = { type: 'number', format: 'decimal' };
     const exactInteger = { type: 'integer', format: 'int64' };
     const text = { type: 'string', not: numeric };
     const schema = {
@@ -1166,7 +1169,11 @@ test('numeric negation preserves JSON strings in generated requests and response
           type: 'object',
           additionalProperties: { type: 'string', not: { allOf: [numeric, { enum: [7] }] } },
         },
-        amount: { type: 'number', not: { type: 'number', enum: [7] } },
+        amount: {
+          type: 'number',
+          format: 'decimal',
+          not: { type: 'number', format: 'decimal', enum: [7] },
+        },
       },
     };
     const i = inputs(document(schema, { Text: { type: 'string' } }), { ...config, validation });
@@ -1195,11 +1202,17 @@ test('numeric negation preserves JSON strings in generated requests and response
 });
 
 test('dynamic numeric negation matches the established JSON kind', () => {
-  assert.equal(serialize('7', { type: 'string', not: { type: 'number' } }), '"7"');
-  assert.equal(serialize('7', { type: 'number', not: { type: 'string' } }), '7');
-  assert.throws(() => serialize('7', { type: 'string', not: { not: { type: 'number' } } }), {
-    kind: 'validation',
-  });
+  assert.equal(
+    serialize('7', { type: 'string', not: { type: 'number', format: 'decimal' } }),
+    '"7"',
+  );
+  assert.equal(serialize('7', { type: 'number', format: 'decimal', not: { type: 'string' } }), '7');
+  assert.throws(
+    () => serialize('7', { type: 'string', not: { not: { type: 'number', format: 'decimal' } } }),
+    {
+      kind: 'validation',
+    },
+  );
 });
 
 test('recursive numeric siblings enforce bounds and enums at every value depth', async () => {
@@ -1415,7 +1428,7 @@ test('numeric unions share their representation regardless of conjunct order in 
           required: ['kind', 'amount'],
           properties: {
             kind: { type: 'string', enum: [kind] },
-            amount: { type: 'number' },
+            amount: { type: 'number', format: 'decimal' },
           },
         })),
       };
@@ -1462,7 +1475,10 @@ test('numeric enum siblings retain usable branch-specific TypeScript inputs', as
         {
           type: 'object',
           required: ['kind', 'amount'],
-          properties: { kind: { type: 'string', enum: ['paid'] }, amount: { type: 'number' } },
+          properties: {
+            kind: { type: 'string', enum: ['paid'] },
+            amount: { type: 'number', format: 'decimal' },
+          },
         },
         {
           type: 'object',
@@ -1570,9 +1586,17 @@ client.api.sendValue({body:${input('text', "'5'")}});
 
 test('anyOf interpretation revisits earlier matches when another conjunct enables numeric branches', async () => {
   const dependent = {
-    anyOf: [{}, { type: 'object', properties: { a: { type: 'number' }, b: { enum: [5] } } }],
+    anyOf: [
+      {},
+      {
+        type: 'object',
+        properties: { a: { type: 'number', format: 'decimal' }, b: { enum: [5] } },
+      },
+    ],
   };
-  const source = { anyOf: [{ type: 'object', properties: { b: { type: 'number' } } }] };
+  const source = {
+    anyOf: [{ type: 'object', properties: { b: { type: 'number', format: 'decimal' } } }],
+  };
   for (const validation of ['schema', 'encoding']) {
     for (const allOf of [
       [dependent, source],
@@ -1604,7 +1628,10 @@ test('anyOf interpretation revisits earlier matches when another conjunct enable
 });
 
 test('numeric anyOf merges equivalent exact tokens in both clients without weakening oneOf', async () => {
-  const branches = [{ type: 'number' }, { type: 'integer', format: 'int64' }];
+  const branches = [
+    { type: 'number', format: 'decimal' },
+    { type: 'integer', format: 'int64' },
+  ];
   for (const validation of ['schema', 'encoding']) {
     for (const alternatives of [branches, [...branches].reverse()]) {
       const choice = { anyOf: alternatives };
@@ -1664,7 +1691,10 @@ test('numeric anyOf merges equivalent exact tokens in both clients without weake
         {
           type: 'object',
           required: ['kind', 'value'],
-          properties: { kind: { type: 'string', enum: ['number'] }, value: { type: 'number' } },
+          properties: {
+            kind: { type: 'string', enum: ['number'] },
+            value: { type: 'number', format: 'decimal' },
+          },
         },
         {
           type: 'object',
@@ -1889,8 +1919,12 @@ test('mutually dependent numeric unions share declarations before validating the
   const exact = { kind: 'number', a: '5', b: '5' };
   const wire = '{"kind":"number","a":5,"b":5}';
   for (const keyword of ['oneOf', 'anyOf']) {
-    const left = { [keyword]: [numeric({ type: 'number' }, { enum: [5] }), text] };
-    const right = { [keyword]: [numeric({ enum: [5] }, { type: 'number' }), text] };
+    const left = {
+      [keyword]: [numeric({ type: 'number', format: 'decimal' }, { enum: [5] }), text],
+    };
+    const right = {
+      [keyword]: [numeric({ enum: [5] }, { type: 'number', format: 'decimal' }), text],
+    };
     for (const validation of ['schema', 'encoding']) {
       for (const [referenced, sibling] of [
         [left, right],
@@ -2087,14 +2121,14 @@ test('joint anyOf interpretation can use multiple validated branches from each u
     allOf: [
       {
         anyOf: [
-          shape({ a: { type: 'number' }, b: { enum: [5] } }),
-          shape({ c: { type: 'number' }, d: { enum: [5] } }),
+          shape({ a: { type: 'number', format: 'decimal' }, b: { enum: [5] } }),
+          shape({ c: { type: 'number', format: 'decimal' }, d: { enum: [5] } }),
         ],
       },
       {
         anyOf: [
-          shape({ b: { type: 'number' }, c: { enum: [5] } }),
-          shape({ d: { type: 'number' }, a: { enum: [5] } }),
+          shape({ b: { type: 'number', format: 'decimal' }, c: { enum: [5] } }),
+          shape({ d: { type: 'number', format: 'decimal' }, a: { enum: [5] } }),
         ],
       },
     ],
@@ -2122,8 +2156,8 @@ test('joint numeric search keeps recursive definitions and independent collectio
     type: 'object',
     properties: { child: ref('Entry') },
     allOf: [
-      { oneOf: [branch({ type: 'number' }, { enum: [5] })] },
-      { oneOf: [branch({ enum: [5] }, { type: 'number' })] },
+      { oneOf: [branch({ type: 'number', format: 'decimal' }, { enum: [5] })] },
+      { oneOf: [branch({ enum: [5] }, { type: 'number', format: 'decimal' })] },
     ],
   };
   const i = inputs(document({ type: 'array', items: ref('Entry') }, { Entry: choice }), {
@@ -2149,8 +2183,8 @@ test('joint numeric search fails closed at its combination limit in both runtime
   const values = Array.from({ length: 17 }, (_, n) => n + 5);
   const schema = {
     allOf: [
-      { oneOf: values.map((v) => branch({ type: 'number' }, { enum: [v] })) },
-      { oneOf: values.map((v) => branch({ enum: [v] }, { type: 'number' })) },
+      { oneOf: values.map((v) => branch({ type: 'number', format: 'decimal' }, { enum: [v] })) },
+      { oneOf: values.map((v) => branch({ enum: [v] }, { type: 'number', format: 'decimal' })) },
     ],
   };
   const i = inputs(document(schema), {
@@ -2186,8 +2220,8 @@ test('joint selection preserves tagged sibling validation policies', async () =>
   const branch = (a, b) => ({ type: 'object', required: ['a', 'b'], properties: { a, b } });
   const schema = {
     allOf: [
-      { oneOf: [branch({ type: 'number' }, { enum: [5] })] },
-      { oneOf: [branch({ enum: [5] }, { type: 'number' })] },
+      { oneOf: [branch({ type: 'number', format: 'decimal' }, { enum: [5] })] },
+      { oneOf: [branch({ enum: [5] }, { type: 'number', format: 'decimal' })] },
       {
         discriminator: { propertyName: 'tag' },
         oneOf: [
@@ -2224,7 +2258,7 @@ test('joint selection preserves tagged sibling validation policies', async () =>
 
 test('recursive numeric enum siblings retain exact TypeScript inputs at reference edges', async () => {
   for (const scalar of [
-    { type: 'number' },
+    { type: 'number', format: 'decimal' },
     { type: 'integer', format: 'int64' },
     { type: 'integer' },
   ]) {
@@ -2280,7 +2314,7 @@ c.api.sendValue({body:[[${exact ? "'5'" : '5'}]]});
 test('numeric interpretations from invalidated alternatives fail before dispatch', async () => {
   const numeric = {
     type: 'object',
-    properties: { x: { type: 'number' } },
+    properties: { x: { type: 'number', format: 'decimal' } },
     not: { required: ['y'], properties: { y: { enum: [1] } } },
   };
   const cases = [];
@@ -2290,7 +2324,7 @@ test('numeric interpretations from invalidated alternatives fail before dispatch
     for (const field of [undefined, {}, { not: { type: 'object' } }]) {
       const other = {
         type: 'object',
-        properties: { y: { type: 'number' }, ...(field ? { x: field } : {}) },
+        properties: { y: { type: 'number', format: 'decimal' }, ...(field ? { x: field } : {}) },
       };
       for (const anyOf of [
         [numeric, other],
@@ -2353,7 +2387,7 @@ test('numeric contribution checks follow final selections across parent and chil
     anyOf: [
       {
         type: 'object',
-        properties: { x: { type: 'number' } },
+        properties: { x: { type: 'number', format: 'decimal' } },
         not: { properties: { y: { enum: [1] } }, required: ['y'] },
       },
       {},
@@ -2365,7 +2399,9 @@ test('numeric contribution checks follow final selections across parent and chil
     anyOf: [
       {
         type: 'object',
-        properties: { detail: { type: 'object', properties: { y: { type: 'number' } } } },
+        properties: {
+          detail: { type: 'object', properties: { y: { type: 'number', format: 'decimal' } } },
+        },
       },
     ],
   };
@@ -2381,7 +2417,7 @@ test('numeric contribution checks follow final selections across parent and chil
 
 test('mixed numeric intersections behind unions fail diagnosis while aligned and disjoint choices remain supported', async () => {
   for (const keyword of ['anyOf', 'oneOf']) {
-    const left = { [keyword]: [{ type: 'number' }, { type: 'boolean' }] };
+    const left = { [keyword]: [{ type: 'number', format: 'decimal' }, { type: 'boolean' }] };
     const right = { [keyword]: [{ type: 'integer' }, { type: 'null' }] };
     for (const allOf of [
       [left, right],
@@ -2436,7 +2472,10 @@ new Client({baseUrl:'https://example.invalid'}).api.sendValue({body:'1'});
     properties: { kind: { type: 'string', enum: [kind] }, amount },
   });
   const choices = {
-    anyOf: [tagged('exact', { type: 'number' }), tagged('native', { type: 'integer' })],
+    anyOf: [
+      tagged('exact', { type: 'number', format: 'decimal' }),
+      tagged('native', { type: 'integer' }),
+    ],
   };
   await fixtures(inputs(document({ allOf: [choices, choices] })), [
     accepted(

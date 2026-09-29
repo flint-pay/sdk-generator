@@ -109,6 +109,7 @@ function scalarGuarantee(codec: CodecPlan): ValueGuarantee | undefined {
     case 'boolean':
     case 'null':
       return { kind };
+    case 'number':
     case 'integer':
       return { kind: 'number' };
     case 'array':

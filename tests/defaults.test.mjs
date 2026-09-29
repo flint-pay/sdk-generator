@@ -38,7 +38,7 @@ function fixture(extra = {}) {
           type: 'object',
           properties: {
             child: { $ref: '#/components/schemas/PaymentInput' },
-            amount: { oneOf: [{ type: 'string' }, { type: 'number' }] },
+            amount: { oneOf: [{ type: 'string' }, { type: 'number', format: 'decimal' }] },
           },
         },
       },

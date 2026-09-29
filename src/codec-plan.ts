@@ -8,6 +8,8 @@ export type ValueInstruction =
   | { kind: 'null-array' }
   | { kind: 'boolean' }
   | { kind: 'string' }
+  | { kind: 'date-time' }
+  | { kind: 'native-number' }
   | { kind: 'safe-integer' }
   | { kind: 'exact-integer' }
   | { kind: 'decimal' }
@@ -72,8 +74,8 @@ export interface CodecPlan {
 }
 
 export const CODEC_FORMAT = 1;
-// Numeric constraints share the JSON value interpretation across compositions.
-export const CODEC_SEMANTICS = '3';
+// Native ordinary numbers and native date inputs; exact formats retain token semantics.
+export const CODEC_SEMANTICS = '4';
 
 export function valueInstruction(type: string | undefined, format?: string): ValueInstruction {
   switch (type) {
@@ -81,14 +83,15 @@ export function valueInstruction(type: string | undefined, format?: string): Val
       return { kind: 'dynamic' };
     case 'null':
     case 'boolean':
-    case 'string':
     case 'object':
     case 'array':
       return { kind: type };
+    case 'string':
+      return { kind: format === 'date-time' ? 'date-time' : 'string' };
     case 'integer':
       return { kind: format === 'int64' || format === 'uint64' ? 'exact-integer' : 'safe-integer' };
     case 'number':
-      return { kind: 'decimal' };
+      return { kind: format === 'decimal' ? 'decimal' : 'native-number' };
     default:
       return { kind: 'opaque', label: type };
   }
@@ -101,13 +104,16 @@ export function wireKind(value: ValueInstruction): string | undefined {
       return undefined;
     case 'null':
     case 'boolean':
-    case 'string':
     case 'object':
     case 'array':
       return value.kind;
     case 'safe-integer':
     case 'exact-integer':
       return 'integer';
+    case 'string':
+    case 'date-time':
+      return 'string';
+    case 'native-number':
     case 'decimal':
       return 'number';
     case 'opaque':
@@ -361,6 +367,8 @@ export function assertCodecPlan(
       'null',
       'boolean',
       'string',
+      'date-time',
+      'native-number',
       'object',
       'array',
       'safe-integer',

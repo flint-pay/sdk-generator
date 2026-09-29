@@ -23,7 +23,7 @@ const api = {
       Payload: {
         type: 'object',
         properties: {
-          amount: { anyOf: [{ type: 'number' }, { type: 'string' }] },
+          amount: { anyOf: [{ type: 'number', format: 'decimal' }, { type: 'string' }] },
           nested: { type: 'object', properties: { value: { type: 'string' } } },
           items: { type: 'array', items: { type: 'string' } },
         },

@@ -197,7 +197,9 @@ test('later README recipes retain exact-number and streaming symbols across auth
           required: true,
           content: {
             'application/json': {
-              schema: { anyOf: [{ type: 'number', minimum: 0.25 }, { type: 'string' }] },
+              schema: {
+                anyOf: [{ type: 'number', format: 'decimal', minimum: 0.25 }, { type: 'string' }],
+              },
             },
           },
         },

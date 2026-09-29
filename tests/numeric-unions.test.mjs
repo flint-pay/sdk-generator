@@ -14,7 +14,11 @@ const schema = {
     values: {
       type: 'array',
       items: {
-        oneOf: [{ type: 'string' }, { type: 'number', multipleOf: 0.0001 }, { type: 'boolean' }],
+        oneOf: [
+          { type: 'string' },
+          { type: 'number', format: 'decimal', multipleOf: 0.0001 },
+          { type: 'boolean' },
+        ],
       },
     },
   },

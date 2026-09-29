@@ -205,7 +205,7 @@ export function compilePhpModel(
   return {
     name,
     response,
-    constructorType: phpType(declaration),
+    constructorType: phpType(declaration, response),
     constructorDoc:
       declaration.type === 'object'
         ? phpShape(declaration, response)
@@ -216,7 +216,7 @@ export function compilePhpModel(
       .map(([field, child]) => ({
         field,
         method: /^[A-Za-z][A-Za-z0-9_]*$/.test(field) ? 'get' + pascal(field) : '',
-        type: phpType(child),
+        type: phpType(child, response),
         doc: phpDocType(child, response),
       })),
     codec,
@@ -800,7 +800,7 @@ export function compileSdkContract(source: Contract): {
                   (binding?.variants
                     ? [...new Set(Object.values(binding.variants)), '\\stdClass'].join('|')
                     : response.schema
-                      ? phpType(response.schema)
+                      ? phpType(response.schema, true)
                       : 'null')
                 );
               })
@@ -897,7 +897,7 @@ export function compileSdkContract(source: Contract): {
       .map((op) => {
         const projected = payloadSchemas(op, c.definitions);
         const uncertain = payloadHasAlternatives(op, c.definitions);
-        const nativeTypes = [...new Set(projected.flatMap((s) => phpType(s).split('|')))];
+        const nativeTypes = [...new Set(projected.flatMap((s) => phpType(s, true).split('|')))];
         return [
           op.id,
           {

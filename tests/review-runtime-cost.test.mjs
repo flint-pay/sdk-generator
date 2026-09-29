@@ -266,11 +266,14 @@ test('overlapping recursive anyOf reuses branch views in requests and responses'
             child: { $ref: '#/components/schemas/Tree' },
             ...(numeric
               ? {
-                  amount: { type: 'number' },
+                  amount: { type: 'number', format: 'decimal' },
                   detail: {
                     anyOf: [
                       {},
-                      { type: 'object', properties: { a: { type: 'number' }, b: { enum: [5] } } },
+                      {
+                        type: 'object',
+                        properties: { a: { type: 'number', format: 'decimal' }, b: { enum: [5] } },
+                      },
                     ],
                   },
                 }
@@ -281,8 +284,11 @@ test('overlapping recursive anyOf reuses branch views in requests and responses'
           ? {
               type: 'object',
               properties: {
-                other: { type: 'number' },
-                detail: { type: 'object', properties: { b: { type: 'number' } } },
+                other: { type: 'number', format: 'decimal' },
+                detail: {
+                  type: 'object',
+                  properties: { b: { type: 'number', format: 'decimal' } },
+                },
               },
             }
           : {},

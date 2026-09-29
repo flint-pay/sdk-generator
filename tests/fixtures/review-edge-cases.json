@@ -2,7 +2,7 @@
   "numericEnums": [
     {
       "name": "Decimal",
-      "schema": { "type": "number", "enum": [0, 1] },
+      "schema": { "type": "number", "format": "decimal", "enum": [0, 1] },
       "valid": ["1", "1.0", "1e0", "0", "-0", "-0.00"],
       "invalid": ["2", "1.000000000000000001", "01"]
     },

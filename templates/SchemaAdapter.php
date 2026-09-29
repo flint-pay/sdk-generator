@@ -122,7 +122,7 @@ final class SchemaAdapter
             $contract['webhook']['events'] = array_map($root, $contract['webhook']['events']);
         }
         $contract['format'] = 1;
-        $contract['semantics'] = '3';
+        $contract['semantics'] = '4';
         $contract['retrySemantics'] = 'budgets-1';
         if (isset($contract['incoming'])) {
             foreach ($contract['incoming'] as &$entry) {
@@ -186,11 +186,12 @@ final class SchemaAdapter
         $format = $input['format'] ?? '';
         $kind = match ($type) {
             null => 'dynamic',
-            'null', 'boolean', 'string', 'object', 'array' => $type,
+            'null', 'boolean', 'object', 'array' => $type,
+            'string' => $format === 'date-time' ? 'date-time' : 'string',
             'integer' => in_array($format, ['int64', 'uint64'], true)
                 ? 'exact-integer'
                 : 'safe-integer',
-            'number' => 'decimal',
+            'number' => $format === 'decimal' ? 'decimal' : 'native-number',
             default => 'opaque',
         };
         if (

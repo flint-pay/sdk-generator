@@ -315,8 +315,8 @@ test('unconstrained type changes use input and response compatibility directions
 
 test('exact numeric representation changes remain breaking when accepted JSON kinds widen', () => {
   for (const numeric of [
-    { type: 'number' },
-    { type: ['number', 'null'] },
+    { type: 'number', format: 'decimal' },
+    { type: ['number', 'null'], format: 'decimal' },
     { type: 'integer', format: 'int64' },
     { type: ['integer', 'null'], format: 'uint64' },
   ]) {
@@ -338,8 +338,8 @@ test('exact numeric representation changes remain breaking when accepted JSON ki
   for (const before of [{ type: 'string' }, { type: 'integer' }, { type: 'boolean' }]) {
     assert(!compareSchemas(before, {}, 'value', 'input').some((c) => c.severity === 'breaking'));
   }
-  const number = { type: 'number' },
-    nullable = { type: ['number', 'null'] };
+  const number = { type: 'number', format: 'decimal' },
+    nullable = { type: ['number', 'null'], format: 'decimal' };
   assert(
     !compareSchemas(number, nullable, 'value', 'input').some((c) => c.severity === 'breaking'),
   );
@@ -353,7 +353,11 @@ test('removing numeric input encoding requires a major release in both generated
     'numeric-encoding-release',
     { type: 'string' },
     {
-      body: { type: 'object', required: ['amount'], properties: { amount: { type: 'number' } } },
+      body: {
+        type: 'object',
+        required: ['amount'],
+        properties: { amount: { type: 'number', format: 'decimal' } },
+      },
       config: { release: { policy: 'semver' } },
     },
   );
@@ -400,7 +404,7 @@ test('removing numeric input encoding requires a major release in both generated
 
 test('expanding nullable numeric input enums permits minor releases without changing existing values', async () => {
   for (const numeric of [
-    { type: ['number', 'null'] },
+    { type: ['number', 'null'], format: 'decimal' },
     { type: ['integer', 'null'], format: 'int64' },
     { type: ['integer', 'null'], format: 'uint64' },
   ]) {
@@ -425,7 +429,7 @@ test('expanding nullable numeric input enums permits minor releases without chan
       body: {
         type: 'object',
         required: ['amount'],
-        properties: { amount: { type: ['number', 'null'], enum: [null] } },
+        properties: { amount: { type: ['number', 'null'], format: 'decimal', enum: [null] } },
       },
       config: { release: { policy: 'semver' } },
     },
@@ -502,9 +506,12 @@ test('redundant enum input types permit minor releases without weakening represe
   }
   // Numeric wire representations and open response enums are still significant.
   assert(
-    compareSchemas({ enum: [1] }, { type: 'number', enum: [1] }, 'input', 'input').some(
-      (c) => c.severity === 'breaking',
-    ),
+    compareSchemas(
+      { enum: [1] },
+      { type: 'number', format: 'decimal', enum: [1] },
+      'input',
+      'input',
+    ).some((c) => c.severity === 'breaking'),
   );
   assert(
     compareSchemas(
@@ -594,11 +601,14 @@ test('composed input constraints recognize redundant types while still detecting
       ),
     );
   }
-  const numeric = { minimum: 1, anyOf: [{ type: 'number' }] };
+  const numeric = { minimum: 1, anyOf: [{ type: 'number', format: 'decimal' }] };
   assert(
-    compareSchemas(numeric, { ...numeric, type: 'number' }, 'body', 'input').some(
-      (c) => c.severity === 'breaking',
-    ),
+    compareSchemas(
+      numeric,
+      { ...numeric, type: 'number', format: 'decimal' },
+      'body',
+      'input',
+    ).some((c) => c.severity === 'breaking'),
   );
   // Unlike inputs, response alternatives may retain unknown future JSON kinds.
   const alternatives = { anyOf: [{ type: 'string' }] };
@@ -888,7 +898,7 @@ test('PHP nested model getters retain plain values, exact numbers, lists, object
       components: {
         Title: { type: 'string' },
         Tags: { type: 'array', items: { type: 'string' } },
-        Amount: { type: 'number' },
+        Amount: { type: 'number', format: 'decimal' },
         Payload: {
           type: 'object',
           required: ['title'],
@@ -921,7 +931,11 @@ test('PHP nested model getters retain plain values, exact numbers, lists, object
 });
 
 test('exact numeric enums accept equal spellings but reject unequal values in both public clients', async () => {
-  const f = fixture('enum', { type: 'number' }, { body: { type: 'number', enum: [0, 1] } });
+  const f = fixture(
+    'enum',
+    { type: 'number', format: 'decimal' },
+    { body: { type: 'number', format: 'decimal', enum: [0, 1] } },
+  );
   const valid = ['1', '1.0', '1e0', '0', '-0', '-0.00', '0e999999'];
   const invalid = ['2', '1.000000000000000001', 'abc', '', '01', true, null];
   const { Client } = await sdk(f);
@@ -950,8 +964,8 @@ test('exact numeric enums accept equal spellings but reject unequal values in bo
   assert.equal(compilation.status, 0, compilation.stdout);
   const union = fixture('enum-response', {
     oneOf: [
-      { type: 'number', enum: [1] },
-      { type: 'number', enum: [2] },
+      { type: 'number', format: 'decimal', enum: [1] },
+      { type: 'number', format: 'decimal', enum: [2] },
     ],
   });
   const generated = await sdk(union);
