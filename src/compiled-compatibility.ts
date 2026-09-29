@@ -40,6 +40,13 @@ export function compareCompiledContracts(
   const node = previous.targets.includes('node') && next.targets.includes('node');
   const php = previous.targets.includes('php') && next.targets.includes('php');
   if (!node && !php) return findings;
+  if (previous.runtime.semantics !== next.runtime.semantics)
+    findings.push({
+      severity: 'breaking',
+      subject: 'SDK value representations',
+      message:
+        'Compiler value semantics changed; regenerate both SDKs and review numeric representations and object declarations before upgrading.',
+    });
   if (previous.runtime.defaultBaseUrl !== next.runtime.defaultBaseUrl)
     findings.push({
       severity: previous.runtime.defaultBaseUrl === undefined ? 'additive' : 'breaking',

@@ -256,23 +256,26 @@ echo json_encode(['calls'=>$calls,'items'=>$items,'kind'=>$kind]);
 test('diagnosis automatically supports numeric/string alternatives inside objects, arrays, dictionaries and compositions', () => {
   const object = (value) => ({ type: 'object', required: ['value'], properties: { value } });
   const cases = [
-    [object({ type: 'string' }), object({ type: 'number' })],
+    [object({ type: 'string' }), object({ type: 'number', format: 'decimal' })],
     [
       object({ type: 'object', properties: { amount: { type: 'string' } } }),
       object({ type: 'object', properties: { amount: { type: 'integer', format: 'int64' } } }),
     ],
     [
       { type: 'array', items: { type: 'string' } },
-      { type: 'array', items: { type: 'number' } },
+      { type: 'array', items: { type: 'number', format: 'decimal' } },
     ],
     [
       { type: 'object', additionalProperties: { type: 'string' } },
-      { type: 'object', additionalProperties: { type: 'number' } },
+      { type: 'object', additionalProperties: { type: 'number', format: 'decimal' } },
     ],
-    [{ allOf: [object({ type: 'string' }), { required: ['value'] }] }, object({ type: 'number' })],
+    [
+      { allOf: [object({ type: 'string' }), { required: ['value'] }] },
+      object({ type: 'number', format: 'decimal' }),
+    ],
     [
       { anyOf: [object({ type: 'string' }), object({ type: 'boolean' })] },
-      object({ type: 'number' }),
+      object({ type: 'number', format: 'decimal' }),
     ],
   ];
   for (const keyword of ['oneOf', 'anyOf'])
@@ -290,7 +293,7 @@ test('distinct required tags preserve unambiguous exact-number and string inputs
     required: ['kind', 'value'],
     properties: {
       kind: { type: 'string', enum: [type] },
-      value: { type },
+      value: { type, ...(type === 'number' ? { format: 'decimal' } : {}) },
     },
   }));
   const i = inputs('tagged', {

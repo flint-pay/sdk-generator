@@ -23,7 +23,12 @@ export function objectDeclaration(
   return {
     fields,
     required: (s.required ?? []).filter((key) => !response || !s.properties?.[key]?.writeOnly),
-    open: response || s.additionalProperties !== false,
+    open:
+      s.additionalProperties === true ||
+      typeof s.additionalProperties === 'object' ||
+      (!Object.keys(s.properties ?? {}).length &&
+        !s.required?.length &&
+        s.additionalProperties !== false),
   };
 }
 
@@ -72,6 +77,13 @@ export function objectConstraint(s: Schema): ObjectContext {
     : constraints.includes('nullableObject')
       ? 'nullableObject'
       : undefined;
+}
+function hasDateInput(schema: Schema, definitions: Readonly<Record<string, Schema>>): boolean {
+  return valueScopes(schema, definitions).some((shape) =>
+    (Array.isArray(shape.type) ? shape.type : [shape.type]).some(
+      (type) => valueInstruction(type, shape.format).kind === 'date-time',
+    ),
+  );
 }
 export function typescriptType(
   s: Schema,
@@ -144,7 +156,7 @@ export function typescriptType(
           return types.flatMap((type) =>
             exactValue(valueInstruction(type, shape.format))
               ? [shape['x-sdk-number-input'] === 'explicit' ? 'ExactNumber' : 'string']
-              : type === 'integer'
+              : type === 'integer' || type === 'number'
                 ? [JSON.stringify(value)]
                 : [],
           );
@@ -154,13 +166,13 @@ export function typescriptType(
       return JSON.stringify(value);
     };
     const { const: value, ...rest } = s;
-    return (
+    const declaration =
       '(' +
       render(rest, response, discriminator, known, objectContext, arrayContext) +
       ') & (' +
       literal(value!, [s]) +
-      ')'
-    );
+      ')';
+    return hasDateInput(s, definitions) ? `(${declaration}) | globalThis.Date` : declaration;
   }
   if (s['x-sdk-ref']) {
     const reference = s['x-sdk-ref'] + (response ? '' : 'Input');
@@ -174,6 +186,7 @@ export function typescriptType(
   if (!response && (s.allOf || s.oneOf || s.anyOf)) s = numericEnumDeclaration(s, definitions);
   // Composition branches constrain the same value. Object keywords alone do
   // not exclude scalars, null or arrays, but an enclosing object type does.
+  const inheritedObjectContext = objectContext !== undefined;
   const constraint = objectConstraint(s);
   objectContext =
     objectContext === 'object' || constraint === 'object'
@@ -194,7 +207,7 @@ export function typescriptType(
         if (response && !known)
           alternatives.push(
             objectContext === 'object' || branches.every((v) => v.type === 'object')
-              ? '{ [key: string]: unknown }'
+              ? 'object'
               : 'unknown',
           );
         parts.push(alternatives.map((v) => '(' + v + ')').join(' | '));
@@ -228,12 +241,16 @@ export function typescriptType(
       };
       parts.push(absent(not));
     }
-    return (
+    const intersection =
       parts
         .filter((v) => v !== 'unknown')
         .map((v) => '(' + v + ')')
-        .join(' & ') || 'unknown'
-    );
+        .join(' & ') || 'unknown';
+    // A date is normalized before all same-value string constraints are checked.
+    // Adding it outside the intersection keeps a sibling string from erasing it.
+    return !response && hasDateInput(s, definitions)
+      ? `(${intersection}) | globalThis.Date`
+      : intersection;
   }
   const types = Array.isArray(s.type) ? s.type : [s.type];
   if (types.length > 1) return types.map((t) => render({ ...s, type: t! }, response)).join(' | ');
@@ -248,7 +265,7 @@ export function typescriptType(
   if (s.enum && exactValue(valueInstruction(types[0], s.format))) return 'string';
   if (s.enum && !response)
     return (
-      s.enum
+      (s.enum
         .filter(
           (v) =>
             !types[0] ||
@@ -260,24 +277,24 @@ export function typescriptType(
         )
         .map((v) =>
           JSON.stringify(
-            v !== null && (exactValue(valueInstruction('integer', s.format)) || s.type === 'number')
-              ? String(v)
-              : v,
+            v !== null && exactValue(valueInstruction(types[0], s.format)) ? String(v) : v,
           ),
         )
-        .join(' | ') || 'never'
+        .join(' | ') || 'never') +
+      (types[0] === 'string' && s.format === 'date-time' ? ' | globalThis.Date' : '')
     );
   switch (types[0]) {
     case 'null':
       return 'null';
     case 'string':
+      if (!response && s.format === 'date-time') return 'string | globalThis.Date';
       return s.enum
         ? s.enum.map((v) => JSON.stringify(v)).join(' | ') + ' | (string & {})'
         : 'string';
     case 'boolean':
       return 'boolean';
     case 'number':
-      return 'string';
+      return exactValue(valueInstruction('number', s.format)) ? 'string' : 'number';
     case 'integer':
       return exactValue(valueInstruction('integer', s.format)) ? 'string' : 'number';
     case 'array':
@@ -309,7 +326,14 @@ export function typescriptType(
                 : `${JSON.stringify(k)}${s.required?.includes(k) ? '' : '?'}: ${s.required?.includes(k) ? render(v, response && k !== discriminator) : optionalPropertyType(k, render(v, response && k !== discriminator))};`),
           )
           .join(' ') +
-        (declaration.open ? ` [key: string]: unknown;` : '') +
+        (declaration.open &&
+        !(
+          inheritedObjectContext &&
+          !declaration.fields.length &&
+          s.additionalProperties === undefined
+        )
+          ? ` [key: string]: unknown;`
+          : '') +
         ' }'
       );
     }
@@ -317,7 +341,7 @@ export function typescriptType(
       return 'unknown';
   }
 }
-export function phpType(s: Schema): string {
+export function phpType(s: Schema, response = false): string {
   if (s.oneOf || s.anyOf || s.allOf || s.type === undefined) return 'mixed';
   const types = Array.isArray(s.type) ? s.type : [s.type];
   return [
@@ -330,14 +354,20 @@ export function phpType(s: Schema): string {
               ? 'string'
               : 'int'
             : t === 'number'
-              ? 'string'
+              ? exactValue(valueInstruction(t, s.format))
+                ? 'string'
+                : response
+                  ? 'float'
+                  : 'int|float'
               : t === 'boolean'
                 ? 'bool'
                 : t === 'object'
                   ? 'array|object'
                   : t === 'array'
                     ? 'array'
-                    : 'string',
+                    : t === 'string' && s.format === 'date-time' && !response
+                      ? 'string|\\DateTimeInterface'
+                      : 'string',
       ),
     ),
   ].join('|');
@@ -348,7 +378,7 @@ export function phpShape(s: Schema, response = false): string {
       'array{' +
       Object.entries(s.properties ?? {})
         .filter(([, v]) => (response ? !v.writeOnly : !v.readOnly))
-        .map(([k, v]) => `${php(k)}${s.required?.includes(k) ? '' : '?'}: ${phpType(v)}`)
+        .map(([k, v]) => `${php(k)}${s.required?.includes(k) ? '' : '?'}: ${phpType(v, response)}`)
         .join(', ') +
       '}'
     );
@@ -368,5 +398,5 @@ export function phpDocType(s: Schema, response = false): string {
       .filter(([, v]) => (response ? !v.writeOnly : !v.readOnly))
       .map(([k, v]) => `${php(k)}${s.required?.includes(k) ? '' : '?'}: ${phpDocType(v, response)}`)
       .join(', ')}}`;
-  return phpType(s);
+  return phpType(s, response);
 }

@@ -283,7 +283,9 @@ test('mapped variants sharing an allOf ancestor retain exact target and alias id
 });
 
 test('explicit numeric constants accept typed consumers and preserve numeric wire tokens', async () => {
-  const choice = { oneOf: [{ type: 'string' }, { type: 'number', const: 0.25 }] };
+  const choice = {
+    oneOf: [{ type: 'string' }, { type: 'number', format: 'decimal', const: 0.25 }],
+  };
   const schema = {
     type: 'object',
     required: ['scalar', 'items'],
@@ -469,7 +471,7 @@ echo 'ok';`,
 });
 
 test('parent constants retain numeric representations through composed children', async () => {
-  const choice = { oneOf: [{ type: 'string' }, { type: 'number' }] };
+  const choice = { oneOf: [{ type: 'string' }, { type: 'number', format: 'decimal' }] };
   const schema = {
     type: 'object',
     const: { scalar: 1, items: [1], mapped: { value: 1 }, legacy: 1 },
@@ -478,7 +480,7 @@ test('parent constants retain numeric representations through composed children'
       scalar: { $ref: '#/components/schemas/Choice' },
       items: { type: 'array', items: choice },
       mapped: { type: 'object', additionalProperties: choice },
-      legacy: { allOf: [{ type: 'number' }] },
+      legacy: { allOf: [{ type: 'number', format: 'decimal' }] },
     },
   };
   for (const sharing of [false, true]) {
@@ -819,7 +821,7 @@ catch(Example\\Regressions\\SdkError $e){if(!str_contains($e->getMessage(),'publ
 });
 
 test('exact fractional union samples produce executable and typechecked examples in both targets', async () => {
-  const choice = { oneOf: [{ type: 'string' }, { type: 'number' }] };
+  const choice = { oneOf: [{ type: 'string' }, { type: 'number', format: 'decimal' }] };
   const nested = {
     type: 'object',
     const: {
@@ -835,7 +837,7 @@ test('exact fractional union samples produce executable and typechecked examples
       scalar: { $ref: '#/components/schemas/Choice' },
       items: { type: 'array', items: choice },
       mapped: { type: 'object', additionalProperties: choice },
-      legacy: { allOf: [{ type: 'number' }] },
+      legacy: { allOf: [{ type: 'number', format: 'decimal' }] },
       empty: { anyOf: [{ type: 'object' }, { type: 'array' }] },
       numericKeys: { type: 'object', additionalProperties: choice },
     },
@@ -869,8 +871,16 @@ test('exact fractional union samples produce executable and typechecked examples
         true,
         '{"scalar":0.25,"items":[0.25],"mapped":{"value":0.25},"legacy":0.25,"empty":{},"numericKeys":{"0":0.25}}',
       ],
-      [{ oneOf: [{ type: 'number', enum: [1] }, { type: 'string' }] }, false, '1'],
-      [{ oneOf: [{ type: 'number', minimum: 0.25 }, { type: 'string' }] }, false, '0.25'],
+      [
+        { oneOf: [{ type: 'number', format: 'decimal', enum: [1] }, { type: 'string' }] },
+        false,
+        '1',
+      ],
+      [
+        { oneOf: [{ type: 'number', format: 'decimal', minimum: 0.25 }, { type: 'string' }] },
+        false,
+        '0.25',
+      ],
     ]) {
       const { dir } = await build('exact-examples-', inputDocument(schema, { Choice: choice }), {
         numericUnions: 'explicit',

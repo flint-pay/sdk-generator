@@ -124,5 +124,50 @@
     },
     "value": { "kind": "future" },
     "error": true
+  },
+  {
+    "name": "ordinary fractional number",
+    "schema": {
+      "type": "number"
+    },
+    "value": 42.125,
+    "wire": "42.125"
+  },
+  {
+    "name": "native double enum",
+    "schema": {
+      "type": "number",
+      "format": "double",
+      "enum": [0.25]
+    },
+    "value": 0.25,
+    "wire": "0.25"
+  },
+  {
+    "name": "native float multiple",
+    "schema": {
+      "type": "number",
+      "format": "float",
+      "multipleOf": 0.25
+    },
+    "value": -0.5,
+    "wire": "-0.5"
+  },
+  {
+    "name": "native numeric string rejected",
+    "schema": {
+      "type": "number"
+    },
+    "value": "42.125",
+    "error": true
+  },
+  {
+    "name": "native fractional constraint rejected",
+    "schema": {
+      "type": "number",
+      "multipleOf": 0.25
+    },
+    "value": 0.3,
+    "error": true
   }
 ]

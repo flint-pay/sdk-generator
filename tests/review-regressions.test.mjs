@@ -291,7 +291,7 @@ test('integer normalization preserves wide integers, decimals, alternatives and 
     properties: {
       wide: { type: 'integer', format: 'int64' },
       unsigned: { type: 'integer', format: 'uint64' },
-      decimal: { type: 'number' },
+      decimal: { type: 'number', format: 'decimal' },
       choice: { oneOf: [{ type: 'integer' }, { type: 'string' }] },
       values: { type: 'array', items: { type: 'integer' } },
       nullable: { type: ['integer', 'null'] },

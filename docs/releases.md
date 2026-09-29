@@ -1,5 +1,15 @@
 # Releases and compatibility
 
+## Object, number and date-time representations
+
+Regeneration changes the public SDK contract in both targets. Plain `number`, float and double fields now accept and return native numbers (PHP `int|float` inputs and `float` outputs). Replace numeric-string arguments with numbers and update consumers expecting string results. Preserve precision-sensitive decimals by declaring `format: "decimal"` in the schema or a provider override. int64/uint64 retain exact strings; ordinary integers retain their safe-range checks. Native numbers use floating-point precision and reject non-finite values.
+
+TypeScript shaped objects no longer implicitly permit arbitrary property names. Correct misspelled request/response fields; explicitly open schemas and dictionaries remain open. Unknown response fields still survive decoding and can be inspected through explicit narrowing or a dictionary assertion. Unknown object variants require narrowing before accessing variant fields. This is a declaration change, not a new default runtime rejection of request keys.
+
+Date-time inputs additionally accept JavaScript `Date` and PHP `DateTimeInterface`; native values become UTC ISO 8601 strings with milliseconds. Strings and response representations remain unchanged. Date-only fields still accept strings.
+
+Compiled value semantics advance to version 4. Compatibility comparisons report a breaking migration from older compiled semantics; old snapshots keep their recorded codec decisions. Review the generated diff and version the SDK under the configured breaking-change policy before release.
+
 ## Pagination deadline correction
 
 Regenerated Node and PHP page/item iterators apply `deadlineMs` separately to each page request, including retries and decoding. The default 30-second budget no longer expires across a backfill or counts time spent processing yielded values. Explicit client and request deadlines also apply per page. Callers relying on an overall iteration bound should use cancellation or `maxPages`/`maxItems`. Polling retains its overall deadline.

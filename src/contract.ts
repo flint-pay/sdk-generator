@@ -762,26 +762,27 @@ function checkRepresentations(s: Schema, p: string, explicitNumbers = false): vo
   const scalar = (shape: Schema): string | undefined => {
     const type = Array.isArray(shape.type) ? shape.type.find((t) => t !== 'null') : shape.type;
     if (shape['x-sdk-number-input'] === 'explicit') return 'wrapped-number';
-    if (type === 'number') return 'exact-number';
+    if (type === 'number')
+      return exactValue(valueInstruction(type, shape.format)) ? 'exact-number' : 'native-number';
     if (type === 'integer')
       return exactValue(valueInstruction('integer', shape.format))
         ? 'exact-number'
-        : 'safe-integer';
+        : 'native-number';
     return type === 'string' ? 'string' : undefined;
   };
   const shapes = conjuncts(s);
   const kinds = new Set(shapes.map(scalar).filter(Boolean));
-  if (kinds.has('exact-number') && kinds.has('safe-integer'))
+  if (kinds.has('exact-number') && kinds.has('native-number'))
     fail(
       p,
       'intersected numeric schemas use different SDK representations; use a consistent numeric format with the intersected bounds in a provider override',
     );
-  if (kinds.has('string') && (kinds.has('exact-number') || kinds.has('safe-integer')))
+  if (kinds.has('string') && (kinds.has('exact-number') || kinds.has('native-number')))
     fail(p, 'intersected string and numeric schemas cannot describe the same non-null JSON value');
   // Constraint-only conjuncts must see the JSON numeric kind, even when callers
   // express that number as an exact SDK string. Inherit only an established kind.
   const numeric = shapes.find((shape) =>
-    ['exact-number', 'safe-integer'].includes(scalar(shape) ?? ''),
+    ['exact-number', 'native-number'].includes(scalar(shape) ?? ''),
   );
   if (numeric) {
     const inherit = (shape: Schema): void => {
@@ -801,7 +802,7 @@ function checkRepresentations(s: Schema, p: string, explicitNumbers = false): vo
     };
     inherit(s);
     const inheritedKinds = new Set(shapes.map(scalar));
-    if (inheritedKinds.has('exact-number') && inheritedKinds.has('safe-integer'))
+    if (inheritedKinds.has('exact-number') && inheritedKinds.has('native-number'))
       fail(
         p,
         'intersected numeric schemas use different SDK representations; use a consistent numeric format with the intersected bounds in a provider override',
@@ -818,11 +819,13 @@ function checkRepresentations(s: Schema, p: string, explicitNumbers = false): vo
     if (relation === 'intersection')
       return types.includes('number') ? [...types, 'integer'] : types;
     return types.map((type) =>
-      type === 'number' || (type === 'integer' && scalar(shape) === 'exact-number')
+      exactValue(valueInstruction(type, shape.format))
         ? shape['x-sdk-number-input'] === 'explicit'
           ? 'wrapped-number'
           : 'string'
-        : type,
+        : type === 'integer'
+          ? 'number'
+          : type,
     );
   };
   const disjoint = (left: Schema[], right: Schema[], relation: Relation): boolean => {
@@ -899,8 +902,8 @@ function checkRepresentations(s: Schema, p: string, explicitNumbers = false): vo
       b = new Set(right.map(scalar));
     if (relation === 'intersection') {
       if (
-        (a.has('exact-number') && b.has('safe-integer')) ||
-        (b.has('exact-number') && a.has('safe-integer'))
+        (a.has('exact-number') && b.has('native-number')) ||
+        (b.has('exact-number') && a.has('native-number'))
       )
         fail(
           path,
