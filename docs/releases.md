@@ -132,3 +132,13 @@ Generated Node packages now include resource subpaths and split declaration file
 Heavy descriptors are decoded and validated on first use and shared across clients independently of credentials and transports. The first call can pay a dependency-loading cost. Package validation checks all descriptor groups before release. The PHP `contract.json` implementation artifact is replaced by descriptor groups; callers needing the complete plan can continue using `SchemaRegistry::contract()`.
 
 Regenerate packages as a complete unit and refresh Composer autoload metadata on installation. Do not copy individual generated files between versions. Normal regeneration removes obsolete owned files and preserves handwritten helpers. Compiled compatibility snapshots retain their previous semantic representation.
+
+## Migrating PHP entity representations
+
+PHP response models now expose declared nested objects as generated entities. Lists contain typed entities and dictionaries are PHP arrays. For example, replace `$result->data->getData()->id` with `$result->data->getData()->getId()` for explicit typed access, and replace `$payment->getMetadata()->label` with `$payment->getMetadata()['label']`. Declared magic properties remain available and carry PHPDoc types.
+
+Accessor names now split wire words: `getRequest_id()` and `hasRequest_id()` become `getRequestId()` and `hasRequestId()`. Numbered webhook classes such as `WebhookEvent0` are replaced by names derived from their configured event keys, such as `WebhookEventPaymentIntentSucceeded`. There are no deprecated naming aliases. Update imports and class-based dispatch using the regenerated package's class inventory; event insertion order no longer determines class identity.
+
+`toArray()` and `jsonSerialize()` preserve raw normalized values instead of hydrated entities; `toInputArray()` and `toInputValue()` also preserve exact numeric kinds for reuse in requests. JSON dictionaries remain objects in model raw exports, including empty dictionaries. Explicit null and omitted fields remain distinct.
+
+Regeneration records PHP representation changes and removed methods/classes as compatibility findings. Follow the existing breaking-release version policy; do not publish these changes as a compatible patch. Node wire behavior is unchanged.

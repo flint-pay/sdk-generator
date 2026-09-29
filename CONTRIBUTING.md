@@ -12,7 +12,9 @@ Start with the [architecture](docs/architecture.md) and [support matrix](docs/su
 
 The test runner executes the full-public-package generation budget separately from the other tests so concurrent test processes do not distort its time and memory limits.
 
-Tests generate packages in temporary directories, typecheck JS/TS consumer examples, install npm/Composer packages, exercise shared provider-style fixtures, verify signatures and durable duplicate handling, and call both default transports against a local HTTP server. They do not call a live payments provider. PHP and Composer are required; a missing target runtime is a test failure, not a skipped parity check.
+The test runner installs the locked development-only PHPStan dependency from `tests/phpstan/` into ignored `.generated/phpstan-vendor/`. It is not a dependency of generated SDKs.
+
+Tests generate packages in temporary directories, typecheck PHP and JS/TS consumer examples, install npm/Composer packages, exercise shared provider-style fixtures, verify signatures and durable duplicate handling, and call both default transports against a local HTTP server. They do not call a live payments provider. PHP and Composer are required; a missing target runtime is a test failure, not a skipped parity check.
 
 When changing shared semantics, update the owning compiler decision and the affected executors or adapters, with cases in the shared fixtures. Review expected HTTP values independently of generator output. New capabilities require diagnostics for incomplete declarations, documentation and negative scenarios. Keep generated output readable and deterministic. Do not check generated artifacts, real credentials or private provider definitions into this repository.
 

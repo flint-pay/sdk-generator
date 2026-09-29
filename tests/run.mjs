@@ -2,6 +2,14 @@ import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
+const phpstan = spawnSync(
+  'composer',
+  ['install', '--working-dir=tests/phpstan', '--no-interaction', '--no-progress'],
+  { stdio: 'inherit' },
+);
+if (phpstan.error) throw phpstan.error;
+if (phpstan.status !== 0) process.exit(phpstan.status ?? 1);
+
 const directory = new URL('./', import.meta.url);
 const budgetTest = 'full-public-packages.test.mjs';
 const tests = readdirSync(directory)

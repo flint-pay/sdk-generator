@@ -424,12 +424,15 @@ test('PHP model-construction failures retain recovery data without promoting arb
 namespace Example\Drift;
 require $argv[1].'/php/src/Runtime.php';
 class ExplodingResponse {
-    public function __construct(array $data, array $redactFields) {
+    public function __construct(array|object $data, array $redactFields) {
         throw new SdkError('validation', 'synthetic-private-constructor-message');
     }
 }
 $plan=SchemaRegistry::contract();
-foreach($plan['operations'] as &$op)if($op['id']==='create')$op['responses']['201']['model']='ExplodingResponse';
+foreach($plan['operations'] as &$op)if($op['id']==='create'){
+    $op['responses']['201']['model']='ExplodingResponse';
+    $op['responses']['201']['phpRepresentation']=['kind'=>'entity','name'=>'ExplodingResponse'];
+}
 unset($op);
 $calls=0;$events=[];
 $runtime=new Runtime($plan,new ClientOptions('https://example.invalid',

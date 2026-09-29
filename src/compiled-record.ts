@@ -1,3 +1,4 @@
+import { assertPhpRepresentation } from './php-value-plan.js';
 import type { CompiledSdkContract } from './target-plan.js';
 import { assertCodecPlan } from './codec-plan.js';
 import { assertRuntimePlan } from './runtime-plan.js';
@@ -227,6 +228,7 @@ export function assertCompiledSnapshot(value: unknown): asserts value is Compile
   if (!Array.isArray(php.models)) throw new Error('Invalid PHP model plans');
   for (const value of php.models) {
     const model = object(value, 'php.model');
+    if (model.representation !== undefined) assertPhpRepresentation(model.representation);
     fields(model, ['name', 'constructorType', 'constructorDoc'], 'string', 'php.model');
     fields(model, ['response', 'defaultObject'], 'boolean', 'php.model');
     assertCodecPlan(model.codec, 'php.model.' + model.name);

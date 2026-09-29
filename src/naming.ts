@@ -22,6 +22,12 @@ function words(value: string): string[] {
     .filter(Boolean)
     .map((word) => word.toLowerCase());
 }
+
+export function pascalWords(value: string): string {
+  return words(value)
+    .map((word) => word[0]!.toUpperCase() + word.slice(1))
+    .join('');
+}
 const camel = (parts: string[]) =>
   parts.map((part, i) => (i ? part[0]!.toUpperCase() + part.slice(1) : part)).join('');
 function singular(value: string): string {

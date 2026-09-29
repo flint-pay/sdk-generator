@@ -17,6 +17,8 @@ Start with the [CLI and library reference](cli.md) for invocation, [configuratio
 
 Compilation and comparison take explicit inputs and perform no filesystem, network, clock or environment access; generation owns file reads and writes. Compiler dependency checks inspect TypeScript imports and PHP tokens to block forbidden edges and cycles.
 
+PHP public values have a separate representation graph compiled by `src/php-representation.ts` and declared in `src/php-value-plan.ts`. Entity references, nullable values, lists, dictionaries and tagged alternatives drive both declarations and hydration. `src/php-types.ts` projects composed declarations; codecs still own normalization and validation. Model raw exports remain separate from hydrated accessor values, and saved representation graphs participate in compatibility comparison.
+
 A pure packaging pass computes resource groups and transitive codec dependencies after semantic compilation and codec sharing. Recursive dependencies remain references. This layout does not change the compiled snapshots used for compatibility comparisons.
 
 Generated clients share prepared descriptors, not credentials, transports or request state. Construction reads only client settings. Operations, model factories and webhook verification load and validate their dependency groups on first use. Node owns and freezes validated data; PHP returns arrays with copy-on-write isolation. Package validation traverses every group even when no example uses it. Explicit dynamic-schema APIs keep their validation boundary.

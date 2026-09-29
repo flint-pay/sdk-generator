@@ -1,3 +1,10 @@
+import { pascalWords } from './naming.js';
+import {
+  phpRepresentations,
+  phpRepresentationType,
+  type PhpRepresentation,
+} from './php-representation.js';
+import { phpDeclaration, phpUnion } from './php-types.js';
 import { positional, pathParameters, hasParams } from './request-style.js';
 import { payloadSchemas, payloadHasAlternatives } from './response-return.js';
 import { schemaComment } from './schema-documentation.js';
@@ -191,6 +198,7 @@ export interface PhpModelPlan {
   getters: { field: string; method: string; type: string; doc: string }[];
   codec: CodecPlan;
   sharedCodec?: string;
+  representation?: PhpRepresentation;
 }
 
 export function compilePhpModel(
@@ -199,7 +207,12 @@ export function compilePhpModel(
   response: boolean,
   shared: ReadonlyMap<string, string>,
   declaration: Schema = schema,
+  definitions: Readonly<Record<string, Schema>> = {},
 ): PhpModelPlan {
+  declaration = {
+    ...phpDeclaration(declaration, schema['x-sdk-definitions'] ?? definitions),
+    'x-sdk-definitions': { ...definitions },
+  };
   const codec = compileCodec(schema);
   const sharedCodec = shared.get(stable(codec));
   return {
@@ -215,9 +228,9 @@ export function compilePhpModel(
       .filter(([, child]) => (response ? !child.writeOnly : !child.readOnly))
       .map(([field, child]) => ({
         field,
-        method: /^[A-Za-z][A-Za-z0-9_]*$/.test(field) ? 'get' + pascal(field) : '',
+        method: pascalWords(field) ? 'get' + pascalWords(field) : '',
         type: phpType(child, response),
-        doc: phpDocType(child, response),
+        doc: phpDocType(child, response, definitions),
       })),
     codec,
     ...(sharedCodec ? { sharedCodec } : {}),
@@ -444,7 +457,7 @@ function compileRequestCall(op: Operation, c: Contract, optionsType: string) {
     phpSignature,
     phpPrelude,
     phpDoc: hasParams(op)
-      ? '@param array|Model $params Flat body fields and query/header parameters; path arguments follow URL order.'
+      ? `@param array<array-key, mixed>|Model${paramsRequired ? '' : '|null'} $params Flat body fields and query/header parameters; path arguments follow URL order.`
       : 'Path arguments follow URL order; request options come last.',
   };
 }
@@ -647,9 +660,17 @@ export function compileSdkContract(source: Contract): {
     }
   }
   const eventModels: Record<string, string> = {};
-  for (const [index, [event, schema]] of Object.entries(c.config.webhook?.events ?? {}).entries()) {
+  const eventNames = new Map<string, string>();
+  for (const [event, schema] of Object.entries(c.config.webhook?.events ?? {})) {
     if (objectConstraint(schema) === 'object') {
-      const name = 'WebhookEvent' + index;
+      const name = 'WebhookEvent' + pascalWords(event);
+      const previous = eventNames.get(name.toLowerCase());
+      if (previous && (c.config.targets ?? ['node', 'php']).includes('php'))
+        throw new Diagnostic(
+          'webhook.events.' + event,
+          `PHP webhook class collision between ${previous} and ${event}`,
+        );
+      eventNames.set(name.toLowerCase(), event);
       eventModels[event] = name;
       responseModels.push(compilePhpModel(name, schema, true, sharedNames));
     }
@@ -672,7 +693,10 @@ export function compileSdkContract(source: Contract): {
         }
       : {}),
     format: 1,
-    semantics: runtime.semantics + '/results-1',
+    semantics:
+      runtime.semantics +
+      '/results-1' +
+      ((c.config.targets ?? ['node', 'php']).includes('php') ? '/php-entities-1' : ''),
     targets: [...(c.config.targets ?? ['node', 'php'])],
     runtime,
     node: {
@@ -767,7 +791,7 @@ export function compileSdkContract(source: Contract): {
       runtime: phpRuntime,
       models: [
         ...Object.entries(models).map(([name, s]) =>
-          compilePhpModel(name + 'Input', s, false, sharedNames),
+          compilePhpModel(name + 'Input', s, false, sharedNames, s, c.definitions),
         ),
         ...c.operations.map((op) =>
           compilePhpModel(
@@ -829,7 +853,10 @@ export function compileSdkContract(source: Contract): {
             models,
           ),
           nodeOutput: resultType(op),
-          phpInput: phpDocType(inputSchema(op, c.config.apiVersion)),
+          phpInput: phpDocType(inputSchema(op, c.config.apiVersion), false, c.definitions).replace(
+            /\|object$/,
+            '',
+          ),
           phpOutput: Object.entries(op.responses)
             .filter(([status]) => successStatus(status) || status === 'default')
             .map(([, response]) => (response.schema ? phpDocType(response.schema, true) : 'null'))
@@ -882,15 +909,6 @@ export function compileSdkContract(source: Contract): {
       ),
     },
   };
-  if (c.config.schemaSharing === 'named') {
-    const sharing = codecSharing(plan.runtime.definitions ?? {});
-    sharing.runtime(plan.runtime);
-    sharing.runtime(plan.php.runtime);
-    for (const model of Object.values(plan.node.models)) model.codec = sharing.compact(model.codec);
-    for (const operation of Object.values(plan.node.operations))
-      if (operation.known) operation.known.codecs = operation.known.codecs.map(sharing.compact);
-    for (const model of plan.php.models) model.codec = sharing.compact(model.codec);
-  }
   const responseReturns = Object.fromEntries(
     c.operations
       .filter((op) => op.response?.return === 'payload')
@@ -929,6 +947,173 @@ export function compileSdkContract(source: Contract): {
   if (Object.keys(responseReturns).length) {
     plan.responseReturns = responseReturns;
     plan.node.responseReturnDeclarations = `type _SdkPayloadAt<T, P extends readonly string[]> = P extends readonly [infer K extends string, ...infer R extends string[]] ? T extends Record<K, infer V> ? _SdkPayloadAt<V, R> : unknown : T;\nexport interface SdkResponse<T> { body: T; meta: Result<T>['meta']; raw: Result<T>['raw']; }\n`;
+  }
+  if (plan.targets.includes('php')) {
+    const representations = phpRepresentations(models, c.definitions ?? {});
+    const project = (value: PhpRepresentation, path: string[]): PhpRepresentation => {
+      if (!path.length) return value;
+      if (value.kind === 'entity') {
+        const entity = representations.entities.get(value.name);
+        const child = entity?.representation.fields[path[0]!];
+        if (child) return project(child, path.slice(1));
+      }
+      return { kind: 'value', type: 'mixed' };
+    };
+    for (const op of c.operations) {
+      const compiled = plan.php.runtime.operations.find((entry) => entry.id === op.id);
+      if (!compiled) throw new Error('Missing PHP operation');
+      for (const [status, response] of Object.entries(op.responses)) {
+        const result = compiled.responses[status];
+        if (!result || !response.schema || !(successStatus(status) || status === 'default'))
+          continue;
+        const prefix = pascal(op.resource) + pascal(op.method) + 'Response' + pascal(status);
+        const shape = phpDeclaration(response.schema, c.definitions);
+        if (
+          result.model &&
+          (Object.keys(shape.properties ?? {}).length || shape.additionalProperties === false)
+        )
+          result.phpRepresentation = representations.model(result.model, response.schema);
+        else if (result.variants && response.schema.oneOf && response.schema.discriminator) {
+          const variants: Record<string, PhpRepresentation> = {};
+          for (const [tag, index] of Object.entries(discriminatorBindings(response.schema) ?? {})) {
+            const branch = response.schema.oneOf[index];
+            const name = result.variants[tag];
+            if (branch && name)
+              variants[tag] = representations.model(name, responseVariant(response.schema, branch));
+          }
+          result.phpRepresentation = {
+            kind: 'tagged',
+            field: response.schema.discriminator.propertyName,
+            variants,
+          };
+        } else result.phpRepresentation = representations.compile(response.schema, prefix);
+        // Keep legacy class-identity facts aligned with the public representation.
+        if (result.phpRepresentation.kind === 'entity')
+          result.model = result.phpRepresentation.name;
+        else delete result.model;
+      }
+      const outputs = Object.entries(compiled.responses)
+        .filter(([status]) => successStatus(status) || status === 'default')
+        .map(([, result]) =>
+          result.phpRepresentation
+            ? phpRepresentationType(result.phpRepresentation)
+            : result.bodyKind === 'sse'
+              ? 'EventStream'
+              : result.bodyKind === 'binary'
+                ? 'string'
+                : result.classification === 'redirect'
+                  ? '\\stdClass'
+                  : 'null',
+        );
+      plan.php.operations[op.id]!.output = outputs.includes('mixed')
+        ? 'mixed'
+        : [...new Set(outputs)].join('|');
+      if (op.pagination) {
+        const items = Object.entries(compiled.responses)
+          .filter(([status]) => successStatus(status) || status === 'default')
+          .map(([, result]) =>
+            project(
+              result.phpRepresentation ?? { kind: 'value', type: 'mixed' },
+              op.pagination!.items.split('.'),
+            ),
+          )
+          .map((value) =>
+            phpRepresentationType(
+              value.kind === 'list' ? value.value : { kind: 'value', type: 'mixed' },
+            ),
+          );
+        plan.php.operations[op.id]!.items = items.includes('mixed')
+          ? 'mixed'
+          : [...new Set(items)].join('|');
+      }
+      const returns = plan.responseReturns?.[op.id];
+      if (returns && !payloadHasAlternatives(op, c.definitions)) {
+        const values = Object.entries(compiled.responses)
+          .filter(([status]) => successStatus(status) || status === 'default')
+          .map(([, result]) =>
+            project(result.phpRepresentation ?? { kind: 'value', type: 'mixed' }, returns.path),
+          );
+        const join = (native: boolean) => {
+          const types = [...new Set(values.map((value) => phpRepresentationType(value, native)))];
+          return native ? phpUnion(types) : types.includes('mixed') ? 'mixed' : types.join('|');
+        };
+        returns.php = join(false);
+        returns.phpNative = join(true);
+      }
+    }
+    for (const [event, name] of Object.entries(eventModels)) {
+      const schema = c.config.webhook?.events[event];
+      if (schema) representations.model(name, schema);
+    }
+    for (const entity of representations.entities.values()) {
+      const model = compilePhpModel(
+        entity.name,
+        entity.schema,
+        true,
+        sharedNames,
+        entity.declaration,
+      );
+      model.representation = entity.representation;
+      for (const getter of model.getters) {
+        const value = entity.representation.fields[getter.field];
+        if (value) {
+          getter.type = phpRepresentationType(value, true);
+          getter.doc = phpRepresentationType(value);
+        }
+      }
+      const existing = plan.php.models.findIndex((value) => value.name === model.name);
+      if (existing >= 0) {
+        if (!plan.php.models[existing]!.response)
+          throw new Diagnostic(model.name, 'PHP entity collides with an input class');
+        plan.php.models[existing] = model;
+      } else plan.php.models.push(model);
+    }
+    for (const model of plan.php.models) {
+      const methods = new Map(
+        [
+          '__construct',
+          '__get',
+          '__isset',
+          '__debugInfo',
+          'get',
+          'has',
+          'valueOrDefault',
+          'toArray',
+          'toInputArray',
+          'toInputValue',
+          'jsonSerialize',
+          'hydrate',
+          'assertRepresentation',
+          'copyValue',
+        ].map((name) => [name.toLowerCase(), 'Model::' + name]),
+      );
+      for (const getter of model.getters) {
+        if (!getter.method)
+          throw new Diagnostic(
+            model.name + '.' + getter.field,
+            'PHP field has no usable accessor name',
+          );
+        const path = model.name + '.' + getter.field;
+        for (const method of [getter.method, 'has' + getter.method.slice(3)]) {
+          const previous = methods.get(method.toLowerCase());
+          if (previous !== undefined)
+            throw new Diagnostic(
+              path,
+              `PHP field accessor collision between ${previous} and ${path}`,
+            );
+          methods.set(method.toLowerCase(), path);
+        }
+      }
+    }
+  }
+  if (c.config.schemaSharing === 'named') {
+    const sharing = codecSharing(plan.runtime.definitions ?? {});
+    sharing.runtime(plan.runtime);
+    sharing.runtime(plan.php.runtime);
+    for (const model of Object.values(plan.node.models)) model.codec = sharing.compact(model.codec);
+    for (const operation of Object.values(plan.node.operations))
+      if (operation.known) operation.known.codecs = operation.known.codecs.map(sharing.compact);
+    for (const model of plan.php.models) model.codec = sharing.compact(model.codec);
   }
   return { source: c, plan };
 }

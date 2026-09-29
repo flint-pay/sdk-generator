@@ -2486,3 +2486,31 @@ new Client({baseUrl:'https://example.invalid'}).api.sendValue({body:'1'});
     accepted('disjoint native branch', { kind: 'native', amount: 1 }),
   ]);
 });
+
+test('operation reference indexing preserves shared parameters and overlapping path prefixes', () => {
+  const schemas = Object.fromEntries(
+    ['Shared', 'First', 'Second', 'Nested'].map((name) => [
+      name,
+      { type: 'object', properties: { id: { type: 'string' } } },
+    ]),
+  );
+  const doc = document({});
+  doc.components.schemas = schemas;
+  doc.paths = {
+    '/values': {
+      parameters: [{ name: 'filter', in: 'query', schema: ref('Shared') }],
+      post: operation(ref('First'), 'first'),
+      put: operation(ref('Second'), 'second'),
+    },
+    '/values/post/nested': { post: operation(ref('Nested'), 'nested') },
+  };
+  // An object query parameter is outside the supported input surface; use a
+  // shared scalar reference while retaining independent model dependency facts.
+  doc.components.schemas.Shared = { type: 'string' };
+  const contract = inputs(doc).load();
+  assert.deepEqual(contract.modelDependencies, {
+    first: ['First', 'Nested', 'Shared'],
+    second: ['Second', 'Shared'],
+    nested: ['Nested'],
+  });
+});

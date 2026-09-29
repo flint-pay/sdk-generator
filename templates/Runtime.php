@@ -7,6 +7,7 @@ final class SdkError extends \RuntimeException
 {
     public readonly ?int $status;
 
+    /** @param array{status?: int, requestId?: string|null, attempts?: int, durationMs?: float, ...}|null $meta */
     public function __construct(
         public readonly string $kind,
         string $message,
@@ -48,7 +49,9 @@ final class SdkError extends \RuntimeException
 /** @template T */
 final class Result
 {
-    /** @param T $data */
+    /** @param T $data
+     * @param array{status: int, requestId?: string|null, attempts: int, durationMs: float, ...} $meta
+     */
     public function __construct(
         public readonly mixed $data,
         public readonly array $meta,
@@ -609,6 +612,7 @@ class Model implements \JsonSerializable
     protected readonly mixed $values;
     private readonly mixed $inputValues;
     private readonly array $codec;
+    private readonly ?array $representation;
     protected readonly array $schema;
     protected readonly array $redactFields;
     public function __construct(
@@ -621,6 +625,11 @@ class Model implements \JsonSerializable
         $this->schema = $schema;
         $codec = $compiled ?? \SdkNamespace\Internal\SchemaAdapter::compile($schema);
         $this->codec = $codec;
+        $representation = $compiled['phpRepresentation'] ?? null;
+        if ($representation !== null) {
+            self::assertRepresentation($representation);
+        }
+        $this->representation = $representation;
         $this->redactFields = $redactFields;
         if (is_array($values) && $codec['modelObjectInput']) {
             $values = (object) $values;
@@ -677,6 +686,113 @@ class Model implements \JsonSerializable
         $this->inputValues = $preserveNumbers($normalized);
         $this->values = $unwrap($normalized);
     }
+    /** @internal Validate the serialized public-value graph without invoking schema adapters. */
+    public static function assertRepresentation(mixed $plan, int $depth = 0): void
+    {
+        if (!is_array($plan) || $depth > 256) {
+            throw new \InvalidArgumentException('Invalid PHP representation');
+        }
+        switch ($plan['kind'] ?? null) {
+            case 'value':
+                if (
+                    in_array(
+                        $plan['type'] ?? null,
+                        [
+                            'mixed',
+                            'null',
+                            'string',
+                            'int',
+                            'float',
+                            'bool',
+                            '\\stdClass',
+                            'array|object',
+                        ],
+                        true,
+                    )
+                ) {
+                    return;
+                }
+                break;
+            case 'entity':
+                if (
+                    is_string($plan['name'] ?? null) &&
+                    preg_match('/^[A-Za-z][A-Za-z0-9_]*$/D', $plan['name'])
+                ) {
+                    return;
+                }
+                break;
+            case 'nullable':
+            case 'list':
+            case 'map':
+                self::assertRepresentation($plan['value'] ?? null, $depth + 1);
+                return;
+            case 'record':
+            case 'tagged':
+                $fields = $plan[$plan['kind'] === 'record' ? 'fields' : 'variants'] ?? null;
+                if (
+                    !is_array($fields) ||
+                    ($plan['kind'] === 'tagged' && !is_string($plan['field'] ?? null))
+                ) {
+                    break;
+                }
+                foreach ($fields as $field) {
+                    self::assertRepresentation($field, $depth + 1);
+                }
+                if (isset($plan['extra'])) {
+                    self::assertRepresentation($plan['extra'], $depth + 1);
+                }
+                return;
+        }
+        throw new \InvalidArgumentException('Invalid PHP representation');
+    }
+    /** @internal Execute an already validated public representation after codec normalization. */
+    public static function hydrate(
+        mixed $value,
+        array $plan,
+        array $redactFields = [],
+        int $depth = 0,
+    ): mixed {
+        if ($depth > 256) {
+            throw new \InvalidArgumentException('PHP representation nesting limit');
+        }
+        switch ($plan['kind']) {
+            case 'value':
+                return self::copyValue($value);
+            case 'nullable':
+                return $value === null
+                    ? null
+                    : self::hydrate($value, $plan['value'], $redactFields, $depth + 1);
+            case 'entity':
+                if ($value instanceof Model) {
+                    return $value;
+                }
+                $class = __NAMESPACE__ . '\\' . $plan['name'];
+                return new $class($value, $redactFields);
+            case 'list':
+            case 'map':
+                $out = [];
+                foreach ((array) $value as $key => $child) {
+                    $out[$key] = self::hydrate($child, $plan['value'], $redactFields, $depth + 1);
+                }
+                return $out;
+            case 'tagged':
+                $tag = is_object($value) ? $value->{$plan['field']} ?? null : null;
+                return is_string($tag) && isset($plan['variants'][$tag])
+                    ? self::hydrate($value, $plan['variants'][$tag], $redactFields, $depth + 1)
+                    : self::copyValue($value);
+            case 'record':
+                $out = new \stdClass();
+                foreach ((array) $value as $key => $child) {
+                    $field = $plan['fields'][$key] ?? ($plan['extra'] ?? null);
+                    $out->{$key} =
+                        $field === null
+                            ? self::copyValue($child)
+                            : self::hydrate($child, $field, $redactFields, $depth + 1);
+                }
+                return $out;
+        }
+        throw new \InvalidArgumentException('Invalid PHP representation kind');
+    }
     /** Copy normalized trees without losing immutable exact-number tokens. */
     private static function copyValue(mixed $value): mixed
     {
@@ -708,9 +824,11 @@ class Model implements \JsonSerializable
                     ' was omitted; use has() or valueOrDefault() for optional fields.',
             );
         }
-        return self::copyValue(
-            is_object($this->values) ? $this->values->{$field} : $this->values[$field],
-        );
+        $value = is_object($this->values) ? $this->values->{$field} : $this->values[$field];
+        $plan = $this->representation['fields'][$field] ?? ($this->representation['extra'] ?? null);
+        return $plan === null
+            ? self::copyValue($value)
+            : self::hydrate($value, $plan, $this->redactFields);
     }
     /** Return the fallback only for omission; an explicit null remains null. */
     public function valueOrDefault(string $field, mixed $default = null): mixed
@@ -3217,6 +3335,9 @@ class Runtime
                 }
             }
             foreach ($op['responses'] as $status => $response) {
+                if (isset($response['phpRepresentation'])) {
+                    Model::assertRepresentation($response['phpRepresentation']);
+                }
                 if (
                     ($response['bodyKind'] ?? null) === 'sse' &&
                     (isset($response['codec']) ||
@@ -3930,31 +4051,39 @@ class Runtime
                         } elseif ($raw !== '') {
                             throw new \RuntimeException('Unexpected body for an empty response');
                         }
-                        $model = $declared['model'] ?? null;
-                        if (isset($declared['variants']) && is_object($data)) {
-                            $codec = $declared['codec'];
-                            $definitions = $this->definitions();
-                            for ($depth = 0; isset($codec['reference']); $depth++) {
-                                if ($depth > 256) {
-                                    Codec::fail(
-                                        'response',
-                                        'codec reference exceeds nesting limit',
-                                    );
+                        if (isset($declared['phpRepresentation'])) {
+                            $data = Model::hydrate(
+                                $data,
+                                $declared['phpRepresentation'],
+                                $this->options->redactFields,
+                            );
+                        } else {
+                            $model = $declared['model'] ?? null;
+                            if (isset($declared['variants']) && is_object($data)) {
+                                $codec = $declared['codec'];
+                                $definitions = $this->definitions();
+                                for ($depth = 0; isset($codec['reference']); $depth++) {
+                                    if ($depth > 256) {
+                                        Codec::fail(
+                                            'response',
+                                            'codec reference exceeds nesting limit',
+                                        );
+                                    }
+                                    $definitions = $codec['definitions'] ?? $definitions;
+                                    $codec =
+                                        $definitions[$codec['reference']] ??
+                                        throw new \LogicException('Unresolved response codec');
                                 }
-                                $definitions = $codec['definitions'] ?? $definitions;
-                                $codec =
-                                    $definitions[$codec['reference']] ??
-                                    throw new \LogicException('Unresolved response codec');
+                                $tag = $codec['tag'] ?? null;
+                                $model =
+                                    $tag === null
+                                        ? null
+                                        : $declared['variants'][$data->{$tag} ?? ''] ?? null;
                             }
-                            $tag = $codec['tag'] ?? null;
-                            $model =
-                                $tag === null
-                                    ? null
-                                    : $declared['variants'][$data->{$tag} ?? ''] ?? null;
-                        }
-                        if ($model !== null && is_object($data)) {
-                            $class = __NAMESPACE__ . '\\' . $model;
-                            $data = new $class((array) $data, $this->options->redactFields);
+                            if ($model !== null && is_object($data)) {
+                                $class = __NAMESPACE__ . '\\' . $model;
+                                $data = new $class((array) $data, $this->options->redactFields);
+                            }
                         }
                     } catch (\Throwable $cause) {
                         throw new SdkError(

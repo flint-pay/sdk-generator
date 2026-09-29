@@ -2722,6 +2722,38 @@ export function loadContract(
     )
       fail('config/apiVersion/value', 'expected a nonempty safe header value');
   }
+  // Index operation reference prefixes once. Large exports can contain millions
+  // of reference occurrences; rescanning them for every operation is quadratic.
+  type ReferencePrefix = { children: Map<string, ReferencePrefix>; models?: Set<string> };
+  const referenceRoot: ReferencePrefix = { children: new Map() };
+  const dependencyPrefixes = new Map<string, Set<string>>();
+  for (const op of operations) {
+    for (const prefix of [
+      `/paths/${op.path}/${op.verb.toLowerCase()}/`,
+      `/paths/${op.path}/parameters/`,
+    ]) {
+      if (dependencyPrefixes.has(prefix)) continue;
+      let node = referenceRoot;
+      for (const char of prefix) {
+        let child = node.children.get(char);
+        if (!child) {
+          child = { children: new Map() };
+          node.children.set(char, child);
+        }
+        node = child;
+      }
+      node.models = new Set();
+      dependencyPrefixes.set(prefix, node.models);
+    }
+  }
+  for (const ref of references) {
+    let node: ReferencePrefix | undefined = referenceRoot;
+    for (const char of ref.path) {
+      node = node.children.get(char);
+      if (!node) break;
+      node.models?.add(publicModel(ref.model));
+    }
+  }
   const contract: Contract = {
     ...(defaultBaseUrl !== undefined ? { defaultBaseUrl } : {}),
     title: String(doc.info?.title ?? 'API'),
@@ -2737,14 +2769,10 @@ export function loadContract(
         return [
           op.id,
           [
-            ...new Set(
-              references
-                .filter(
-                  (ref) =>
-                    ref.path.startsWith(operationPath) || ref.path.startsWith(sharedParameters),
-                )
-                .map((ref) => publicModel(ref.model)),
-            ),
+            ...new Set([
+              ...dependencyPrefixes.get(operationPath)!,
+              ...dependencyPrefixes.get(sharedParameters)!,
+            ]),
           ].sort(),
         ];
       }),
