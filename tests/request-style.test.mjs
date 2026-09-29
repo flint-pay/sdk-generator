@@ -159,11 +159,12 @@ test('PHP positional methods dispatch the same wire request', () => {
   assert.equal(requests[4].body, '{}');
 });
 test('positional parameters named after PHP superglobals preserve their wire values', async () => {
-  // The first three names also exercise collisions with allocated fallback names.
+  // path1 and GLOBALS also exercise collision-safe positional variable allocation.
+  // Normalized model getters prohibit path1 and path1_ in the same input.
   const names = [
     'path1',
     'GLOBALS',
-    'path1_',
+    'path2_',
     '_SERVER',
     '_GET',
     '_POST',

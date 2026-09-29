@@ -1,3 +1,4 @@
+import { phpDocumentation } from './php-types.js';
 import { schemaComment } from './schema-documentation.js';
 import type { Json, Schema } from './contract.js';
 import { directionalSchema, exactValue, valueInstruction } from './codec-plan.js';
@@ -341,62 +342,19 @@ export function typescriptType(
       return 'unknown';
   }
 }
-export function phpType(s: Schema, response = false): string {
-  if (s.oneOf || s.anyOf || s.allOf || s.type === undefined) return 'mixed';
-  const types = Array.isArray(s.type) ? s.type : [s.type];
-  return [
-    ...new Set(
-      types.map((t) =>
-        t === 'null'
-          ? 'null'
-          : t === 'integer'
-            ? exactValue(valueInstruction('integer', s.format))
-              ? 'string'
-              : 'int'
-            : t === 'number'
-              ? exactValue(valueInstruction(t, s.format))
-                ? 'string'
-                : response
-                  ? 'float'
-                  : 'int|float'
-              : t === 'boolean'
-                ? 'bool'
-                : t === 'object'
-                  ? 'array|object'
-                  : t === 'array'
-                    ? 'array'
-                    : t === 'string' && s.format === 'date-time' && !response
-                      ? 'string|\\DateTimeInterface'
-                      : 'string',
-      ),
-    ),
-  ].join('|');
-}
+export { phpNative as phpType, phpDocumentation as phpDocType } from './php-types.js';
 export function phpShape(s: Schema, response = false): string {
-  if (s.type === 'object')
-    return (
-      'array{' +
-      Object.entries(s.properties ?? {})
-        .filter(([, v]) => (response ? !v.writeOnly : !v.readOnly))
-        .map(([k, v]) => `${php(k)}${s.required?.includes(k) ? '' : '?'}: ${phpType(v, response)}`)
-        .join(', ') +
-      '}'
-    );
-  return 'array<string, mixed>';
-}
-export function phpDocType(s: Schema, response = false): string {
-  if (!response && s['x-sdk-number-input'] === 'explicit') return 'ExactNumber';
-  if (s.oneOf || s.anyOf)
-    return (
-      (s.oneOf ?? s.anyOf)!.map((v) => phpDocType(v, response)).join('|') +
-      (response ? '|mixed' : '')
-    );
-  if (s.allOf) return s.allOf.map((v) => phpDocType(v, response)).join('&');
-  if (s.type === 'array') return `list<${phpDocType(s.items!, response)}>`;
-  if (s.type === 'object')
-    return `${response ? 'object' : 'array'}{${Object.entries(s.properties ?? {})
-      .filter(([, v]) => (response ? !v.writeOnly : !v.readOnly))
-      .map(([k, v]) => `${php(k)}${s.required?.includes(k) ? '' : '?'}: ${phpDocType(v, response)}`)
-      .join(', ')}}`;
-  return phpType(s, response);
+  const doc = phpDocumentation(s, response);
+  if (response && doc === '\\stdClass') {
+    const value =
+      typeof s.additionalProperties === 'object'
+        ? phpDocumentation(s.additionalProperties, true, s['x-sdk-definitions'])
+        : 'mixed';
+    return `array<array-key, ${value}>|\\stdClass`;
+  }
+  if (response && doc.startsWith('object{')) {
+    const fields = doc.slice(7, -1);
+    return `array{${fields}${fields ? ', ' : ''}...}|object`;
+  }
+  return doc;
 }

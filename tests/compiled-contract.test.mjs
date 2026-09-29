@@ -212,7 +212,7 @@ test('generated calls in both languages execute with dynamic schema compilation 
     require $argv[1].'/src/Runtime.php'; require $argv[1].'/src/Client.php';
     $body='{"entry":{"id":"abc"}}';
     $client=new Example\\Compiled\\Client(new Example\\Compiled\\ClientOptions('https://example.invalid', transport:function($r)use(&$body){return ['status'=>200,'headers'=>[],'body'=>$body];}));
-    if($client->api->readValue()->data->get('entry')->id!=='abc')exit(2);
+    if($client->api->readValue()->data->get('entry')['id']!=='abc')exit(2);
     $body='{"entry":{}}';
     try{$client->api->readValue();exit(3);}catch(Example\\Compiled\\SdkError $e){if($e->kind!=='protocol'||!str_contains($e->getPrevious()->getMessage(),'entry.id'))throw $e;}
   `;

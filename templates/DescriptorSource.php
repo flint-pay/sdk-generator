@@ -11,6 +11,7 @@ final class DescriptorSource
     private array $definitions = [];
     private array $loaded = [];
     private array $models = [];
+    private ?array $modelNames = null;
     private ?array $webhook = null;
     private bool $webhookLoaded = false;
     public function __construct(
@@ -111,6 +112,28 @@ final class DescriptorSource
         }
         return $plan;
     }
+    /** Validate entity links without including their class or codec files. */
+    private function representation(array $plan): void
+    {
+        \SdkNamespace\Model::assertRepresentation($plan);
+        $this->modelNames ??= array_fill_keys($this->read('models'), true);
+        $visit = function (array $node) use (&$visit): void {
+            if ($node['kind'] === 'entity' && !isset($this->modelNames[$node['name']])) {
+                throw new \InvalidArgumentException('Unknown PHP entity ' . $node['name']);
+            }
+            foreach (['value', 'extra'] as $key) {
+                if (isset($node[$key])) {
+                    $visit($node[$key]);
+                }
+            }
+            foreach (['fields', 'variants'] as $key) {
+                foreach ($node[$key] ?? [] as $child) {
+                    $visit($child);
+                }
+            }
+        };
+        $visit($plan);
+    }
     public function validateAll(): void
     {
         foreach (array_keys($this->routes) as $id) {
@@ -159,6 +182,11 @@ final class DescriptorSource
                 $operations[$op['id']] = $op;
             }
             foreach ($operations as $key => $operation) {
+                foreach ($operation['responses'] as $response) {
+                    if (isset($response['phpRepresentation'])) {
+                        $this->representation($response['phpRepresentation']);
+                    }
+                }
                 $this->operations[$key] = $operation;
             }
             $this->loaded[$resource] = true;
@@ -182,7 +210,14 @@ final class DescriptorSource
                 : $model['codec'] ?? null;
             \SdkNamespace\Codec::assertPlan($codec);
             self::references($codec, $definitions);
-            $this->models[$name] = $codec + ['definitions' => $definitions];
+            if (isset($model['phpRepresentation'])) {
+                $this->representation($model['phpRepresentation']);
+            }
+            $this->models[$name] =
+                $codec + ['definitions' => $definitions] +
+                (isset($model['phpRepresentation'])
+                    ? ['phpRepresentation' => $model['phpRepresentation']]
+                    : []);
         }
         return $this->models[$name];
     }

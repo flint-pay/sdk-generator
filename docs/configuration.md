@@ -382,3 +382,7 @@ Configuration `example` values, HTTP fixtures, and exported operation `Input` sh
 ## Generated package loading
 
 Descriptor grouping and deferred loading are automatic and require no configuration flag. Existing operation selection, naming, request style, response return and schema-sharing settings retain their meaning. Node packages additionally export `resources/<resource>` scoped clients. PHP packages use class-based Composer autoloading. See [SDK loading](using-sdks.md#sdk-loading-and-selective-node-imports) for consumer usage.
+
+### PHP response entity names
+
+Configured component model names also name reusable PHP response entities. Inline response objects derive their names from the owning model and property path. PHP accessors normalize separators and camel-case words (`request_id` becomes `getRequestId()`), while serialized field names remain unchanged. Webhook classes derive from event keys (`payment_intent.succeeded` becomes `WebhookEventPaymentIntentSucceeded`). Names are checked case-insensitively; collisions produce diagnostics identifying both fields or events. These names and hydrated dictionary representations are part of the generated package's compatibility contract.

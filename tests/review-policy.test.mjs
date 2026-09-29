@@ -807,13 +807,17 @@ test('new PHP status classes break typed consumers even when JSON schemas match'
         );
       }
     }
-    // Mixed/object alternatives already admit arbitrary PHP model instances.
+    // Mixed admits arbitrary entities. Open objects now expose dictionaries,
+    // so their array type does not admit a newly introduced response class.
     for (const broad of [{}, { type: ['object', 'null'] }]) {
       const before = structuredClone(baseline);
       before.operations[0].responses[202] = { schema: broad, mediaType: 'application/json' };
       const next = structuredClone(before);
       next.operations[0].responses[201] = structuredClone(before.operations[0].responses[200]);
-      assert(!compare(before, next).some((c) => c.severity === 'breaking'));
+      assert.equal(
+        compare(before, next).some((c) => c.severity === 'breaking'),
+        broad.type !== undefined,
+      );
     }
     // Error statuses emit no public result class.
     const error = structuredClone(baseline);
@@ -971,7 +975,7 @@ test('adding an empty success result breaks an existing consumer and blocks patc
   assert.equal(prepareRelease(f.out, join(f.dir, 'major')).version, '2.0.0');
 });
 
-test('PHP variant reassignment is breaking but appending variants and Node-only reordering are compatible', () => {
+test('PHP variant reassignment and additions widen concrete types while Node-only reordering is compatible', () => {
   const paid = {
     type: 'object',
     required: ['kind', 'amount'],
@@ -1013,7 +1017,9 @@ test('PHP variant reassignment is breaking but appending variants and Node-only 
   assert(!compare(nodeBefore, nodeAfter).some((c) => c.severity === 'breaking'));
   const appended = structuredClone(baseline);
   appended.operations[0].responses[200].schema.oneOf.push(pending);
-  assert(!compare(baseline, appended).some((c) => c.severity === 'breaking'));
+  // Unknown tags return stdClass; a new declared variant adds a concrete class
+  // outside that existing precise union, requiring a compatibility migration.
+  assert(compare(baseline, appended).some((c) => c.severity === 'breaking'));
   const inserted = structuredClone(baseline);
   inserted.operations[0].responses[200].schema.oneOf.unshift(pending);
   assert(

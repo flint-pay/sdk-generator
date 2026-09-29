@@ -5,7 +5,9 @@ namespace SdkNamespace;
 /** @template T */
 final class SdkResponse
 {
-    /** @param T $body */
+    /** @param T $body
+     * @param array{status: int, requestId?: string|null, attempts: int, durationMs: float, ...} $meta
+     */
     public function __construct(
         public readonly mixed $body,
         public readonly array $meta,
@@ -30,6 +32,8 @@ final class SdkResponse
         foreach ($path as $key) {
             if ($value instanceof Model && $value->has($key)) {
                 $value = $value->get($key);
+            } elseif (is_array($value) && array_key_exists($key, $value)) {
+                $value = $value[$key];
             } elseif ($value instanceof \stdClass && property_exists($value, $key)) {
                 $value = $value->{$key};
             } else {

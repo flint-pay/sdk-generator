@@ -1,3 +1,4 @@
+import { assertPhpRepresentation, type PhpRepresentation } from './php-value-plan.js';
 export const AUTH_SHORTCUT_RESERVED = new Set(
   'baseUrl token authMode credentials headers idempotencyKey ifMatch timeoutMs deadlineMs maxAttempts signal cancellation maxPages maxItems streamIdleTimeoutMs streamLifetimeMs allowedOrigins allowInsecureHttp transport diagnostics redactFields constructor prototype __proto__ withDeadline this'
     .toLowerCase()
@@ -114,6 +115,7 @@ export interface CompiledOperation
     string,
     Omit<Operation['responses'][string], 'schema'> & {
       codec?: CodecPlan;
+      phpRepresentation?: PhpRepresentation;
       model?: string;
       variants?: Record<string, string>;
     }
@@ -410,6 +412,7 @@ export function assertRuntimePlan(
         throw new Error('Invalid binary response descriptor');
       if (result.codec !== undefined) assertCodecPlan(result.codec, `${op.id}.responses.${status}`);
       if (result.schema !== undefined) throw new Error('Raw schema in compiled response');
+      if (result.phpRepresentation !== undefined) assertPhpRepresentation(result.phpRepresentation);
       for (const key of ['model', 'mediaType'])
         if (result[key] !== undefined && typeof result[key] !== 'string')
           throw new Error(`${op.id}.responses.${status}: invalid ${key}`);

@@ -1,3 +1,4 @@
+import type { PhpRepresentation } from './php-value-plan.js';
 import type { CompiledSdkContract } from './target-plan.js';
 import type { Compatibility } from './compatibility.js';
 import { addedResultFits, addsPhpResultClass, responseFits } from './response-compatibility.js';
@@ -193,6 +194,24 @@ export function compareCompiledContracts(
           status
         ];
         const after = next.php.runtime.operations.find((op) => op.id === id)?.responses[status];
+        const oldRepresentation =
+          before?.phpRepresentation ??
+          (before?.model ? { kind: 'entity' as const, name: before.model } : undefined);
+        const newRepresentation =
+          after?.phpRepresentation ??
+          (after?.model ? { kind: 'entity' as const, name: after.model } : undefined);
+        if (
+          before &&
+          newRepresentation &&
+          (oldRepresentation
+            ? !samePhpRepresentation(oldRepresentation, newRepresentation)
+            : addsPhpHydration(newRepresentation))
+        )
+          findings.push({
+            severity: 'breaking',
+            subject,
+            message: 'PHP response value representation changed.',
+          });
         if (before?.model && before.model !== after?.model)
           findings.push({
             severity: 'breaking',
@@ -299,6 +318,13 @@ export function compareCompiledContracts(
         });
         continue;
       }
+      if (!samePhpRepresentation(model.representation, current.representation))
+        findings.push({
+          severity: 'breaking',
+          subject: 'models.' + model.name,
+          message:
+            'PHP public value representation changed; migrate nested entity and dictionary access.',
+        });
       for (const getter of model.getters)
         if (getter.method && !current.getters.some((value) => value.method === getter.method))
           findings.push({
@@ -355,4 +381,41 @@ export function compareCompiledContracts(
         'Compiled execution or target descriptors changed without a source policy change; review encoding, decoding and operation behavior.',
     });
   return findings;
+}
+
+/** Historical raw objects and dictionaries did not have representation graphs. */
+function addsPhpHydration(value: PhpRepresentation): boolean {
+  switch (value.kind) {
+    case 'entity':
+    case 'map':
+      return true;
+    case 'nullable':
+    case 'list':
+      return addsPhpHydration(value.value);
+    case 'record':
+      return (
+        Object.values(value.fields).some(addsPhpHydration) ||
+        Boolean(value.extra && addsPhpHydration(value.extra))
+      );
+    case 'tagged':
+      return Object.values(value.variants).some(addsPhpHydration);
+    case 'value':
+      return false;
+  }
+}
+
+/** Adding getters is compatible; changing the value returned by an existing getter is not. */
+function samePhpRepresentation(
+  before: PhpRepresentation | undefined,
+  after: PhpRepresentation | undefined,
+): boolean {
+  if (!before || !after) return before === after;
+  if (before.kind === 'record' && after.kind === 'record')
+    return (
+      samePhpRepresentation(before.extra, after.extra) &&
+      Object.entries(before.fields).every(([field, value]) =>
+        samePhpRepresentation(value, after.fields[field]),
+      )
+    );
+  return stable(before) === stable(after);
 }
