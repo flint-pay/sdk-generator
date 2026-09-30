@@ -240,6 +240,8 @@ for(const {resource,method,payload,pagination,polling} of methods) {
  if(payload)assert.equal(typeof c[resource][method+'WithResponse'],'function');
  if(pagination)for(const suffix of ['Pages','Items'])assert.equal(typeof c[resource][method+suffix],'function');
  if(polling)assert.equal(typeof c[resource][method+'Wait'],'function');
+ if(payload && pagination)assert.equal(typeof c[resource][method+'PagesWithResponse'],'function');
+ if(payload && polling)assert.equal(typeof c[resource][method+'WaitWithResponse'],'function');
 }
 assert.ok(Object.keys(c).length > 1);
 assert.equal(typeof c.paymentIntents.create,'function');
@@ -302,8 +304,15 @@ assert.equal(firstPage.data[0].payment_intent_id,'pi_fixture');
 assert.deepEqual(await Array.fromAsync(audit.paymentIntents.listItems({page_size:1}),item=>item.payment_intent_id),['pi_fixture','pi_second']);
 const auditPages = await Array.fromAsync(audit.paymentIntents.listPages({page_size:1}));
 assert.equal(auditPages.length,2);
-assert.equal(auditPages[0].data.next_page_token,'page_two');
-assert.equal(auditPages[1].meta.requestId,'req_http');
+assert.equal(auditPages[0].next_page_token,'page_two');
+assert.equal(auditPages[0].data[0].payment_intent_id,'pi_fixture');
+assert.equal(auditPages[1].data[0].payment_intent_id,'pi_second');
+const fullPages = await Array.fromAsync(audit.paymentIntents.listPagesWithResponse({page_size:1}));
+assert.equal(fullPages.length,2);
+assert.equal(fullPages[0].body.next_page_token,'page_two');
+assert.equal(fullPages[1].body.data[0].payment_intent_id,'pi_second');
+assert.equal(fullPages[1].meta.requestId,'req_http');
+assert.equal(JSON.parse(fullPages[0].raw).next_page_token,'page_two');
 assert.deepEqual((await audit.balances.list()).data,[]);
 assert.equal(audit.balances.listItems,undefined);
 const createdReport = await audit.reports.create({body:{currency:'USD',interval_start_at:report.interval_start_at,interval_end_at:report.interval_end_at,report_type:report.report_type}});
@@ -312,7 +321,13 @@ assert.equal(requestKeys.length,2);
 assert.ok(typeof requestKeys[0] === 'string' && requestKeys[0].length > 0);
 assert.equal(requestKeys[0],requestKeys[1]);
 const waited = await audit.reports.getWait({report_id:'rep_fixture'},{deadlineMs:5000});
-assert.equal(waited.data.data.status,'succeeded');
+assert.equal(waited.status,'succeeded');
+assert.equal(reportReads,2);
+reportReads = 0;
+const waitedResponse = await audit.reports.getWaitWithResponse({report_id:'rep_fixture'},{deadlineMs:5000});
+assert.equal(waitedResponse.body.data.status,'succeeded');
+assert.equal(waitedResponse.meta.requestId,'req_http');
+assert.equal(JSON.parse(waitedResponse.raw).data.status,'succeeded');
 assert.equal(reportReads,2);
 await audit.close();
 
@@ -337,7 +352,15 @@ require __DIR__.'/vendor/autoload.php';
 use Example\\FlintFull\\{Client,ClientOptions,ExactNumber,ByteStream,SdkError,WebhookEventsStreamInput};
 $c=new Client(new ClientOptions(token:'synthetic'));
 $ids=json_decode('${JSON.stringify(summary.operations)}',true,512,JSON_THROW_ON_ERROR);
-foreach(json_decode('${JSON.stringify(summary.methods)}',true) as $method) if(!method_exists($c->{$method['resource']},$method['method'])) throw new Exception('Missing method '.$method['method']);
+foreach(json_decode('${JSON.stringify(summary.methods)}',true) as $method) {
+ $names=[$method['method']];
+ if($method['payload'])$names[]=$method['method'].'WithResponse';
+ if($method['pagination'])foreach(['Pages','Items'] as $suffix)$names[]=$method['method'].$suffix;
+ if($method['polling'])$names[]=$method['method'].'Wait';
+ if($method['payload'] && $method['pagination'])$names[]=$method['method'].'PagesWithResponse';
+ if($method['payload'] && $method['polling'])$names[]=$method['method'].'WaitWithResponse';
+ foreach($names as $name)if(!method_exists($c->{$method['resource']},$name))throw new Exception('Missing method '.$name);
+}
 foreach(json_decode('${JSON.stringify(summary.incoming)}',true,512,JSON_THROW_ON_ERROR) as $incoming) if(!class_exists('Example'.chr(92).'FlintFull'.chr(92).$incoming['model'].'Input'))throw new Exception('Missing incoming model '.$incoming['name']);
 $event=$c->verifyWebhook(base64_decode('${Buffer.from(raw).toString('base64')}'),json_decode('${JSON.stringify(headers)}',true,512,JSON_THROW_ON_ERROR),['${encodedSecret}'],${timestamp});
 if(!$event['known'] || $event['event']->get('data')->amount_money->amount !== '9007199254740993') throw new Exception('Webhook payload mismatch');
@@ -384,12 +407,17 @@ if($first->getNextPageToken()!=='page_two')throw new Exception('lost cursor');
 $ids=[];foreach($audit->paymentIntents->listItems(['page_size'=>1]) as $item)$ids[]=$item->getPaymentIntentId();
 if($ids!==['pi_fixture','pi_second'])throw new Exception('pagination items');
 $pages=iterator_to_array($audit->paymentIntents->listPages(['page_size'=>1]));
-if(count($pages)!==2 || $pages[0]->data->getNextPageToken()!=='page_two' || $pages[1]->meta['requestId']!=='req_http')throw new Exception('pagination pages');
+if(count($pages)!==2 || $pages[0]->getNextPageToken()!=='page_two' || $pages[0]->getData()[0]->getPaymentIntentId()!=='pi_fixture' || $pages[1]->getData()[0]->getPaymentIntentId()!=='pi_second')throw new Exception('pagination pages');
+$fullPages=iterator_to_array($audit->paymentIntents->listPagesWithResponse(['page_size'=>1]));
+if(count($fullPages)!==2 || $fullPages[0]->body->getNextPageToken()!=='page_two' || $fullPages[1]->body->getData()[0]->getPaymentIntentId()!=='pi_second' || $fullPages[1]->meta['requestId']!=='req_http' || json_decode($fullPages[0]->raw,true)['next_page_token']!=='page_two')throw new Exception('pagination full pages');
 if($audit->balances->list()->getData()!==[] || method_exists($audit->balances,'listItems'))throw new Exception('nonpaginated balances');
 $created=$audit->reports->create(['body'=>['currency'=>'USD','interval_start_at'=>$report['interval_start_at'],'interval_end_at'=>$report['interval_end_at'],'report_type'=>$report['report_type']]]);
 if($created->status!=='pending' || count($requestKeys)!==2 || !is_string($requestKeys[0]) || $requestKeys[0]==='' || $requestKeys[0]!==$requestKeys[1])throw new Exception('stable retry key');
 $waited=$audit->reports->getWait(['report_id'=>'rep_fixture'],new Example\\FlintFull\\RequestOptions(deadlineMs:5000));
-if($waited->data->getData()->status!=='succeeded' || $reportReads!==2)throw new Exception('report polling');
+if($waited->status!=='succeeded' || $reportReads!==2)throw new Exception('report polling');
+$reportReads=0;
+$waitedResponse=$audit->reports->getWaitWithResponse(['report_id'=>'rep_fixture'],new Example\\FlintFull\\RequestOptions(deadlineMs:5000));
+if($waitedResponse->body->getData()->status!=='succeeded' || $waitedResponse->meta['requestId']!=='req_http' || json_decode($waitedResponse->raw,true)['data']['status']!=='succeeded' || $reportReads!==2)throw new Exception('report full polling');
 $audit->close();
 
 $streaming=new Client(new ClientOptions(token:'synthetic',transport:function($request){
