@@ -22,9 +22,9 @@ test('full public export retains pinned source bytes and deterministic exhaustiv
   assert.equal(source['x-flint-api-version'], provenance.apiVersion);
   const inventory = publicInventory(source);
   assert.deepEqual(inventory, read('full-inventory.json'));
-  assert.equal(inventory.operations.length, 497);
-  assert.equal(new Set(inventory.operations.map(({ id }) => id)).size, 497);
-  assert.equal(inventory.incoming.length, 189);
+  assert.equal(inventory.operations.length, 507);
+  assert.equal(new Set(inventory.operations.map(({ id }) => id)).size, 507);
+  assert.equal(inventory.incoming.length, 191);
   assert.equal(inventory.mappings.length, 6);
   assert.deepEqual(
     Object.fromEntries(
@@ -42,11 +42,11 @@ test('full public export retains pinned source bytes and deterministic exhaustiv
     {
       multipleOf: 17,
       uniqueItems: 25,
-      if: 11,
-      then: 11,
+      if: 18,
+      then: 18,
       else: 1,
       contains: 11,
-      minProperties: 4,
+      minProperties: 6,
       maxProperties: 1,
     },
   );
@@ -71,9 +71,15 @@ test('full public export retains pinned source bytes and deterministic exhaustiv
 
 test('inventory never treats literal data as subschemas', () => {
   const result = publicInventory({
-    components: { schemas: { Literal: { const: { $ref: 'data', contains: { type: 'string' } } } } },
+    components: {
+      schemas: {
+        Literal: { const: { $ref: 'data', contains: { type: 'string' } } },
+      },
+    },
   });
-  assert.deepEqual(result.keywords, { const: ['/components/schemas/Literal/const'] });
+  assert.deepEqual(result.keywords, {
+    const: ['/components/schemas/Literal/const'],
+  });
 });
 
 test('getBundle retains its original referenced graph and decodes inherited discriminator branches in both targets', async () => {
@@ -105,6 +111,7 @@ test('getBundle retains its original referenced graph and decodes inherited disc
       data: {
         available_for_sale: true,
         bundle_id: 'bun_fixture',
+        component_count: 1,
         delivery_configuration_status: 'configured',
         images: [],
         modifier_set_id: null,
