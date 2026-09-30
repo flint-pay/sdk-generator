@@ -9,6 +9,7 @@
     "applyInventoryCount",
     "applyOrderDiscount",
     "approveReview",
+    "assessInvoiceLateFee",
     "assignToUnconfiguredDeliveryProfile",
     "authorizePartnerInstall",
     "cancelInventoryCount",
@@ -42,6 +43,7 @@
     "createCheckoutSessionDeliverySelection",
     "createCreditNote",
     "createCreditNoteAllocation",
+    "createCreditNoteRefund",
     "createCustomer",
     "createCustomerAddress",
     "createCustomerDeletionRequest",
@@ -250,6 +252,7 @@
     "listCategories",
     "listCheckoutSessions",
     "listCreditNoteAllocations",
+    "listCreditNoteRefunds",
     "listCreditNotes",
     "listCurrentAPIKeyRequestLogs",
     "listCustomerAddresses",
@@ -451,6 +454,7 @@
     "voidInvoice",
     "voidPackage",
     "voidShipment",
+    "waiveInvoiceLateFee",
     "waiveReturnLineInspection"
   ],
   "auth": {
@@ -466,6 +470,7 @@
           "applyInventoryCount",
           "applyOrderDiscount",
           "approveReview",
+          "assessInvoiceLateFee",
           "assignToUnconfiguredDeliveryProfile",
           "authorizePartnerInstall",
           "cancelInventoryCount",
@@ -499,6 +504,7 @@
           "createCheckoutSessionDeliverySelection",
           "createCreditNote",
           "createCreditNoteAllocation",
+          "createCreditNoteRefund",
           "createCustomer",
           "createCustomerAddress",
           "createCustomerDeletionRequest",
@@ -703,6 +709,7 @@
           "listCategories",
           "listCheckoutSessions",
           "listCreditNoteAllocations",
+          "listCreditNoteRefunds",
           "listCreditNotes",
           "listCurrentAPIKeyRequestLogs",
           "listCustomerAddresses",
@@ -898,6 +905,7 @@
           "voidInvoice",
           "voidPackage",
           "voidShipment",
+          "waiveInvoiceLateFee",
           "waiveReturnLineInspection"
         ]
       }
