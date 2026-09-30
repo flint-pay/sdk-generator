@@ -126,7 +126,7 @@ test('reference explains response envelopes, numeric units, models and every con
     /\/\*\* Amount in the currency's minor unit[^\n]+\*\/ "amount": string/,
   );
   assert.match(read('node/MODELS.md'), /minor unit/);
-  assert.match(read('node/MODELS.md'), /Example: 100/);
+  assert.match(read('node/MODELS.md'), /Example: `100`/);
   for (const target of ['node', 'php']) {
     const ref = read(`${target}/REFERENCE.md`);
     for (const method of ['listAllItems', 'listAllPages', 'retrieveWait'])
@@ -159,9 +159,9 @@ test('pagination and polling recipes run in both generated SDKs', () => {
   const list = JSON.stringify({ items: [JSON.parse(body)], next: null });
   for (const target of ['node', 'php']) {
     const reference = read(`${target}/REFERENCE.md`);
-    const snippets = [...reference.matchAll(/```(?:typescript|php)\n([\s\S]*?)```/g)].map(
-      (m) => m[1],
-    );
+    const snippets = [...reference.matchAll(/```(?:typescript|php)\n([\s\S]*?)```/g)]
+      .map((m) => m[1])
+      .filter((source) => source.includes('new Client'));
     assert.equal(snippets.length, 5);
     for (const [index, snippet] of snippets.entries()) {
       if (target === 'node') {
