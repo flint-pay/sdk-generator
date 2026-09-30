@@ -133,6 +133,19 @@ export function compareCompiledContracts(
       });
     const old = previous.responseReturns?.[id],
       current = next.responseReturns?.[id];
+    const oldOperation = previous.runtime.operations.find((op) => op.id === id);
+    if (
+      old &&
+      current &&
+      old.helperReturn !== current.helperReturn &&
+      (oldOperation?.pagination || oldOperation?.polling)
+    )
+      findings.push({
+        severity: 'breaking',
+        subject: id + '.helperReturn',
+        message:
+          'Pagination/polling helper return mode changed; use PagesWithResponse or WaitWithResponse for the complete body and metadata.',
+      });
     if (
       stable(old?.path) !== stable(current?.path) ||
       (node && old?.node !== current?.node) ||

@@ -2259,6 +2259,8 @@ export function loadContract(
           ...(payloadReturn ? [method, ...(c.aliases ?? [])].map((n) => n + 'WithResponse') : []),
           ...(c.pagination ? [method + 'Pages', method + 'Items'] : []),
           ...(c.polling ? [method + 'Wait'] : []),
+          ...(payloadReturn && c.pagination ? [method + 'PagesWithResponse'] : []),
+          ...(payloadReturn && c.polling ? [method + 'WaitWithResponse'] : []),
         ];
         for (const n of allNames) {
           name(n, `${p}/method`, true);
