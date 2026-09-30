@@ -1,8 +1,14 @@
 import type { Schema } from './contract.js';
 
 /** Human-facing field semantics; kept out of codec and compatibility plans. */
-export function schemaNotes(s: Schema): string {
-  const notes = s.description ? [s.description] : [];
+export function schemaNotes(
+  s: Schema,
+  formatting: { literal?: (text: string) => string; description?: (text: string) => string } = {},
+): string {
+  const literal = formatting.literal ?? ((text: string) => text);
+  const notes = s.description
+    ? [(formatting.description ?? ((text: string) => text))(s.description)]
+    : [];
   const types = Array.isArray(s.type) ? s.type : [s.type];
   if (
     types.includes('number') ||
@@ -13,7 +19,7 @@ export function schemaNotes(s: Schema): string {
         ? 'Use ExactNumber for an exact JSON number.'
         : 'Use an exact numeric string, not a floating-point number.',
     );
-  if (s.format) notes.push('Format: ' + s.format + '.');
+  if (s.format) notes.push('Format: ' + literal(s.format) + '.');
   for (const key of [
     'minimum',
     'maximum',
@@ -26,13 +32,13 @@ export function schemaNotes(s: Schema): string {
     'maxItems',
     'pattern',
   ] as const)
-    if (s[key] !== undefined) notes.push(key + ': ' + String(s[key]) + '.');
+    if (s[key] !== undefined) notes.push(key + ': ' + literal(String(s[key])) + '.');
   const example = Object.hasOwn(s, 'example')
     ? s.example
     : Array.isArray(s.examples)
       ? s.examples[0]
       : undefined;
-  if (example !== undefined) notes.push('Example: ' + JSON.stringify(example) + '.');
+  if (example !== undefined) notes.push('Example: ' + literal(JSON.stringify(example)) + '.');
   return notes.join(' ');
 }
 export function schemaComment(s: Schema): string {

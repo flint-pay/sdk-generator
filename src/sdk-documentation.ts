@@ -7,7 +7,70 @@ const cell = (text: string) =>
     .replaceAll('|', '\\|')
     .replace(/[\r\n]+/g, ' ')
     .replaceAll('<', '&lt;');
-const anchor = (name: string) => name.toLowerCase();
+function literal(text: string, table = false): string {
+  const value = (table ? text.replaceAll('|', '\\|') : text).replace(/[\r\n]+/g, ' ');
+  const delimiter = '`'.repeat(
+    Math.max(0, ...[...value.matchAll(/`+/g)].map((m) => m[0].length)) + 1,
+  );
+  const padding =
+    value.startsWith('`') ||
+    value.endsWith('`') ||
+    (value.startsWith(' ') && value.endsWith(' ') && !/^ +$/.test(value))
+      ? ' '
+      : '';
+  return `${delimiter}${padding}${value}${padding}${delimiter}`;
+}
+const literalCell = (text: string) => literal(text, true);
+const markdownNotes = (schema: Schema, table = false) =>
+  schemaNotes(schema, {
+    literal: (text) => literal(text, table),
+    ...(table ? { description: cell } : {}),
+  });
+const anchor = (name: string) =>
+  name
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}_\s-]/gu, '')
+    .replace(/\s/g, '-');
+
+/** Format existing type expressions without changing compiler-owned type decisions. */
+export function referenceType(label: string, source: string, target: 'node' | 'php'): string {
+  if (source.length <= 140) return `${label}: ${literal(source)}\n\n`;
+  let output = '',
+    depth = 0,
+    quote = '',
+    escaped = false;
+  const newline = () => {
+    output = output.trimEnd() + '\n' + '  '.repeat(depth);
+  };
+  for (let index = 0; index < source.length; index++) {
+    const char = source[index]!;
+    if (quote) {
+      output += char;
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === quote) quote = '';
+    } else if (char === '"' || char === "'" || char === '`') {
+      quote = char;
+      output += char;
+    } else if (char === '{') {
+      output += char;
+      depth++;
+      newline();
+    } else if (char === '}') {
+      depth = Math.max(0, depth - 1);
+      newline();
+      output += char;
+    } else if (char === ';' || char === ',' || char === '|') {
+      output += char;
+      newline();
+    } else if (!(/\s/.test(char) && output.endsWith(' '))) output += char;
+  }
+  const delimiter = '`'.repeat(
+    Math.max(2, ...[...output.matchAll(/`+/g)].map((match) => match[0].length)) + 1,
+  );
+  return `${label}:\n\n${delimiter}${target === 'node' ? 'typescript' : 'text'}\n${output.trim()}\n${delimiter}\n\n`;
+}
+
 export function schemaFields(
   schema: Schema,
   definitions: Record<string, Schema>,
@@ -43,25 +106,42 @@ function typeDescription(s: Schema): string {
     )
     .join(' or ');
 }
-export function fieldTable(schema: Schema, definitions: Record<string, Schema>): string {
+export function fieldTable(
+  schema: Schema,
+  definitions: Record<string, Schema>,
+  scope = 'Field',
+): string {
   const { fields, required } = schemaFields(schema, definitions);
   if (!Object.keys(fields).length) return '';
+  const enums: string[] = [];
   return (
     '| Field | Presence | Type | Description |\n| --- | --- | --- | --- |\n' +
     Object.entries(fields)
       .map(([name, child]) => {
+        const values = child.enum?.map((value) => JSON.stringify(value));
+        const heading = `${scope} ${name} values`;
+        const longEnum = values && values.join(', ').length > 140;
+        if (longEnum)
+          enums.push(
+            `#### ${heading}\n\n${values.map((value) => '- ' + literal(value)).join('\n')}\n\n`,
+          );
         const notes = [
-          schemaNotes(child),
-          child.enum ? 'Values: ' + child.enum.map((v) => JSON.stringify(v)).join(', ') + '.' : '',
+          markdownNotes(child, true),
+          longEnum
+            ? `Values: [${values.length} declared values](#${anchor(heading)}).`
+            : values
+              ? 'Values: ' + values.map(literalCell).join(', ') + '.'
+              : '',
           child.readOnly ? 'Response only.' : '',
           child.writeOnly ? 'Input only.' : '',
         ]
           .filter(Boolean)
           .join(' ');
-        return `| \`${cell(name).replaceAll('`', '&#96;')}\` | ${required.has(name) ? 'Required' : 'Optional'} | ${typeDescription(child)} | ${cell(notes)} |`;
+        return `| \`${cell(name).replaceAll('`', '&#96;')}\` | ${required.has(name) ? 'Required' : 'Optional'} | ${typeDescription(child)} | ${notes} |`;
       })
       .join('\n') +
-    '\n\n'
+    '\n\n' +
+    enums.join('')
   );
 }
 export function modelReference(c: Contract): string {
@@ -70,7 +150,7 @@ export function modelReference(c: Contract): string {
     Object.entries(c.models)
       .map(
         ([name, schema]) =>
-          `## ${name}\n\n${schemaNotes(schema)}\n\n${fieldTable(schema, c.definitions ?? c.models)}${schema.oneOf || schema.anyOf ? `Variants: ${(schema.oneOf ?? schema.anyOf ?? []).map(typeDescription).join(', ')}.\n\n` : ''}`,
+          `## ${name}\n\n${markdownNotes(schema)}\n\n${fieldTable(schema, c.definitions ?? c.models, name)}${schema.oneOf || schema.anyOf ? `Variants: ${(schema.oneOf ?? schema.anyOf ?? []).map(typeDescription).join(', ')}.\n\n` : ''}`,
       )
       .join('')
   );

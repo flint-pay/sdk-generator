@@ -353,9 +353,9 @@ PHP uses the same associative maps in `ClientOptions` and `RequestOptions`. Cons
 
 ## PDF downloads and declared redirects
 
-PDF methods return `Uint8Array` in Node and binary-safe strings in PHP by default. The `WithResponse` companion exposes the bytes in `body` and `raw`, preserving every byte, including zero and non-UTF-8 bytes. JSON error responses retain ordinary SDK error decoding. Do not convert binary results to UTF-8 text before saving them.
+PDF methods return `Uint8Array` in Node and binary-safe strings in PHP by default. The `WithResponse` companion exposes the bytes in `body` and `raw`, preserving every byte, including zero and non-UTF-8 bytes. JSON error responses retain ordinary SDK error decoding. Do not convert binary results to UTF-8 text before saving them. Generated PDF operation examples and runtime-guide recipes save those bytes directly; set `API_DOWNLOAD_PATH` to choose their output file.
 
-Explicit `302` and `307` results expose an optional `location`; their `WithResponse` companions expose status and headers in `meta` and the location in `body.location`. Required Location headers are checked. Relative and cross-origin locations are returned without following them. Following a returned location is a separate application decision. Undeclared redirects still fail.
+Explicit `302` and `307` results expose an optional `location`; their `WithResponse` companions expose status and headers in `meta` and the location in `body.location`. Required Location headers are checked. Relative and cross-origin locations are returned without following them. Following a returned location is a separate application decision. Undeclared redirects still fail. Generated redirect examples inspect the response status and returned Location; they do not make a second request or forward API credentials to that location.
 
 ## Consuming server-sent events
 
