@@ -22,6 +22,12 @@ Compiled value semantics advance to version 4. Compatibility comparisons report 
 
 Regenerated Node and PHP page/item iterators apply `deadlineMs` separately to each page request, including retries and decoding. The default 30-second budget no longer expires across a backfill or counts time spent processing yielded values. Explicit client and request deadlines also apply per page. Callers relying on an overall iteration bound should use cancellation or `maxPages`/`maxItems`. Polling retains its overall deadline.
 
+## Payload pagination and polling returns
+
+Regeneration changes payload-mode `Pages` and `Wait` returns in both Node and PHP: they now expose the same projected payload as the base method. Replace previous Result envelope access with payload access. Use `PagesWithResponse` or `WaitWithResponse` when you need the complete body, metadata or raw response; these companions return `SdkResponse` with `body`, `meta`, and `raw`. Result-mode helpers and `Items` retain their previous behavior. Cursor and polling state paths still address the original provider body.
+
+Saved compiled contracts record the helper return policy. Migrating existing payload-mode helpers from Result returns is reported as breaking, and stable SDKs using the semver policy require a major version. Review generated consumer types and migration notes before releasing the regenerated packages.
+
 ## Webhook verification changes
 
 Regenerated Node and PHP verifiers accept either one signing secret or an array for rotation. Node now accepts Fetch `Headers` and Node/Express header records; PHP accepts PSR-7 header arrays. Original body bytes remain required: Node rejects plain strings as well as parsed objects, consistent with its Buffer/Uint8Array declaration. Parsed JSON and malformed inputs produce SDK errors instead of native type errors.

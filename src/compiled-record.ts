@@ -174,6 +174,8 @@ export function assertCompiledSnapshot(value: unknown): asserts value is Compile
     for (const [id, value] of Object.entries(object(plan.responseReturns, 'responseReturns'))) {
       const response = object(value, 'responseReturns.' + id);
       fields(response, ['node', 'nodeDocumentation', 'php', 'phpNative'], 'string', id);
+      if (response.helperReturn !== undefined && response.helperReturn !== 'payload')
+        throw new Error('Invalid payload helper return mode for ' + id);
       if (!Array.isArray(response.path) || response.path.some((p) => typeof p !== 'string' || !p))
         throw new Error('Invalid payload path for ' + id);
     }

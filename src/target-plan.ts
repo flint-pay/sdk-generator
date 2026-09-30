@@ -469,7 +469,15 @@ export interface CompiledSdkContract {
   >;
   responseReturns?: Record<
     string,
-    { path: string[]; node: string; nodeDocumentation: string; php: string; phpNative: string }
+    {
+      path: string[];
+      node: string;
+      nodeDocumentation: string;
+      php: string;
+      phpNative: string;
+      /** Absent in saved plans whose Pages/Wait helpers returned Results. */
+      helperReturn?: 'payload';
+    }
   >;
   format: 1;
   semantics: string;
@@ -920,6 +928,7 @@ export function compileSdkContract(source: Contract): {
           op.id,
           {
             path: op.response?.payloadPath?.split('.') ?? [],
+            ...(op.pagination || op.polling ? { helperReturn: 'payload' as const } : {}),
             node: projected.length
               ? `_SdkPayloadAt<${plan.node.operations[op.id]!.output}, ${JSON.stringify(op.response!.payloadPath!.split('.'))}>`
               : plan.node.operations[op.id]!.output,

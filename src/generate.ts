@@ -667,27 +667,54 @@ function convenienceReference(c: Contract, op: Operation, target: 'node' | 'php'
       ? `client.${op.resource}.${method}(${source}${source ? ', ' : ''}{ ${options} })`
       : `$client->${op.resource}->${method}(${source}${source ? ', ' : ''}new RequestOptions(${options}))`;
   const examples: string[] = [];
+  const payload = op.response?.return === 'payload';
+  const access = (variable: string, path: string[]) =>
+    target === 'node'
+      ? variable + path.map((key) => `[${js(key)}]`).join('')
+      : '$' + variable + path.map((key) => '->{' + phpExampleString(key) + '}').join('');
   if (op.pagination) {
-    for (const suffix of ['Items', 'Pages']) {
+    for (const suffix of ['Items', 'Pages', ...(payload ? ['PagesWithResponse'] : [])]) {
       const value = suffix === 'Items' ? 'item' : 'page';
       const invocation = call(
         op.method + suffix,
         'maxPages: 10, maxItems: 1000, deadlineMs: 60000',
       );
+      const originalPath = op.pagination.items.split('.');
+      const payloadPath = op.response?.payloadPath?.split('.') ?? [];
+      const relativePath = payloadPath.every((key, index) => originalPath[index] === key)
+        ? originalPath.slice(payloadPath.length)
+        : [];
+      const pageValue = access(
+        value,
+        suffix === 'Items'
+          ? []
+          : suffix === 'PagesWithResponse'
+            ? ['body', ...originalPath]
+            : payload
+              ? relativePath
+              : ['data', ...originalPath],
+      );
       const loop =
         target === 'node'
-          ? `for await (const ${value} of ${invocation}) {\n  console.log(${value}${suffix === 'Pages' ? '.meta.requestId' : ''});\n}\n`
-          : `foreach (${invocation} as $${value}) {\n  // Process this ${value} before requesting the next one.\n}\n`;
+          ? `for await (const ${value} of ${invocation}) {\n  console.log(${pageValue});\n${suffix === 'PagesWithResponse' ? '  console.log(page.meta.requestId);\n' : ''}}\n`
+          : `foreach (${invocation} as $${value}) {\n  // Process ${pageValue} before requesting the next page.\n${suffix === 'PagesWithResponse' ? "  echo $page->meta['requestId'] ?? '';\n" : ''}}\n`;
       examples.push(
-        `#### ${op.resource}.${op.method}${suffix}\n\n${suffix === 'Items' ? 'Iterate individual values across pages.' : 'Iterate page Results, including HTTP metadata.'} Iteration is lazy; each page request has its own deadline, excluding time spent processing yielded values.\n\n\`\`\`${target === 'node' ? 'typescript' : 'php'}\n${exampleImports(c, target, parts.symbols, false)}${parts.setup}${loop}${parts.close}\`\`\`\n\n`,
+        `#### ${op.resource}.${op.method}${suffix}\n\n${suffix === 'Items' ? 'Iterate individual values across pages.' : suffix === 'PagesWithResponse' ? 'Iterate complete page bodies with HTTP metadata and raw access.' : payload ? 'Iterate page payloads, using the same return shape as the base method.' : 'Iterate page Results, including HTTP metadata.'} Iteration is lazy; each page request has its own deadline, excluding time spent processing yielded values.\n\n\`\`\`${target === 'node' ? 'typescript' : 'php'}\n${exampleImports(c, target, parts.symbols, false)}${parts.setup}${loop}${parts.close}\`\`\`\n\n`,
       );
     }
   }
   if (op.polling) {
     const invocation = call(op.method + 'Wait', 'deadlineMs: 60000');
+    const output = payload ? exampleResult(op, c.definitions ?? {}, target) : '';
     examples.push(
-      `#### ${op.resource}.${op.method}Wait\n\nWait for ${op.polling.state}: success ${op.polling.success.join(', ')}; failure ${op.polling.failure.join(', ')}. Unknown states keep waiting until the deadline. Cancellation stops waiting, not the remote job.\n\n\`\`\`${target === 'node' ? 'typescript' : 'php'}\n${exampleImports(c, target, parts.symbols, false)}${parts.setup}${target === 'node' ? `const result = await ${invocation};\nconsole.log(result.meta.requestId);\n` : `$result = ${invocation};\necho $result->meta['requestId'] ?? '';\n`}${parts.close}\`\`\`\n\n`,
+      `#### ${op.resource}.${op.method}Wait\n\nWait for ${op.polling.state}: success ${op.polling.success.join(', ')}; failure ${op.polling.failure.join(', ')}. ${payload ? 'Returns the same payload as the base method. ' : ''}Unknown states keep waiting until the deadline. Cancellation stops waiting, not the remote job.\n\n\`\`\`${target === 'node' ? 'typescript' : 'php'}\n${exampleImports(c, target, parts.symbols, false)}${parts.setup}${target === 'node' ? `const result = await ${invocation};\n${payload ? output || 'console.log(result);\n' : 'console.log(result.meta.requestId);\n'}` : `$result = ${invocation};\n${payload ? output || '// $result is the completed payload.\n' : "echo $result->meta['requestId'] ?? '';\n"}`}${parts.close}\`\`\`\n\n`,
     );
+    if (payload) {
+      const full = call(op.method + 'WaitWithResponse', 'deadlineMs: 60000');
+      examples.push(
+        `#### ${op.resource}.${op.method}WaitWithResponse\n\nWait using the same terminal states, then return the complete body, HTTP metadata and raw response.\n\n\`\`\`${target === 'node' ? 'typescript' : 'php'}\n${exampleImports(c, target, parts.symbols, false)}${parts.setup}${target === 'node' ? `const response = await ${full};\nconsole.log(response.body, response.meta.requestId);\n` : `$response = ${full};\necho $response->meta['requestId'] ?? '';\n// $response->body is the complete decoded body.\n`}${parts.close}\`\`\`\n\n`,
+      );
+    }
   }
   return examples.join('');
 }
@@ -933,7 +960,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     if (hasPayloadReturns) {
       put('response.js', readFileSync(join(here, '../templates/response.mjs'), 'utf8'));
       code =
-        "import { responsePayload as _sdkPayload, sdkResponse as _sdkResponse } from './response.js';\n" +
+        "import { responsePayload as _sdkPayload, sdkResponse as _sdkResponse, payloadPages as _sdkPayloadPages, sdkResponsePages as _sdkResponsePages } from './response.js';\n" +
         code;
       declarations += targetPlan.node.responseReturnDeclarations!;
     }
@@ -972,15 +999,29 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         }
         if (op.pagination)
           for (const [suffix, runtime, returnType] of [
-            ['Pages', 'pages', `Result<${prefix}Response>`],
+            [
+              'Pages',
+              'pages',
+              payload?.helperReturn === 'payload' ? payload.node : `Result<${prefix}Response>`,
+            ],
             ['Items', 'items', targetPlan.node.operations[op.id]!.items],
           ]) {
-            code += `      ${op.method}${suffix}: (${call.nodeArgs}) => this.#runtime.${runtime}(${js(op.id)}, ${call.nodeInput}, options),\n`;
+            const request = `this.#runtime.${runtime}(${js(op.id)}, ${call.nodeInput}, options)`;
+            code += `      ${op.method}${suffix}: (${call.nodeArgs}) => ${suffix === 'Pages' && payload?.helperReturn === 'payload' ? `_sdkPayloadPages(${request}, ${js(payload.path)})` : request},\n`;
             declarations += `    ${op.method}${suffix}(${call.nodeSignature}): AsyncGenerator<${returnType}>;\n`;
+            if (suffix === 'Pages' && payload?.helperReturn === 'payload') {
+              code += `      ${op.method}PagesWithResponse: (${call.nodeArgs}) => _sdkResponsePages(${request}),\n`;
+              declarations += `    ${op.method}PagesWithResponse(${call.nodeSignature}): AsyncGenerator<SdkResponse<${prefix}Response>>;\n`;
+            }
           }
         if (op.polling) {
-          code += `      ${op.method}Wait: (${call.nodeArgs}) => this.#runtime.wait(${js(op.id)}, ${call.nodeInput}, options),\n`;
-          declarations += `    ${op.method}Wait(${positional(op) ? call.nodeSignature : `input: ${prefix}Input, options?: ${requestOptionsType}`}): Promise<Result<${prefix}Response>>;\n`;
+          const request = `this.#runtime.wait(${js(op.id)}, ${call.nodeInput}, options)`;
+          code += `      ${op.method}Wait: (${call.nodeArgs}) => ${request}${payload?.helperReturn === 'payload' ? `.then(result => _sdkPayload(result, ${js(payload.path)}))` : ''},\n`;
+          declarations += `    ${op.method}Wait(${payload?.helperReturn === 'payload' || positional(op) ? call.nodeSignature : `input: ${prefix}Input, options?: ${requestOptionsType}`}): Promise<${payload?.helperReturn === 'payload' ? payload.node : `Result<${prefix}Response>`}>;\n`;
+          if (payload?.helperReturn === 'payload') {
+            code += `      ${op.method}WaitWithResponse: (${call.nodeArgs}) => ${request}.then(_sdkResponse),\n`;
+            declarations += `    ${op.method}WaitWithResponse(${call.nodeSignature}): Promise<SdkResponse<${prefix}Response>>;\n`;
+          }
         }
       }
       code += '    });\n';
@@ -1192,14 +1233,24 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
           for (const [suffix, runtime] of [
             ['Pages', 'pages'],
             ['Items', 'items'],
-          ])
+          ]) {
+            const request = `$this->runtime->${runtime}(${php(op.id)}, ${normalizeInput}, $options)`;
             code += `    /** @return \\Generator<int, ${
               suffix === 'Pages'
-                ? `Result<${responseType}>`
+                ? payload?.helperReturn === 'payload'
+                  ? payload.php
+                  : `Result<${responseType}>`
                 : targetPlan.php.operations[op.id]!.items
-            }> */\n    public function ${op.method}${suffix}(${call.phpSignature}): \\Generator { ${call.phpPrelude}return $this->runtime->${runtime}(${php(op.id)}, ${normalizeInput}, $options); }\n`;
-        if (op.polling)
-          code += `    /** @return Result<${responseType}> */\n    public function ${op.method}Wait(${call.phpSignature}): Result { ${call.phpPrelude}return $this->runtime->wait(${php(op.id)}, ${normalizeInput}, $options); }\n`;
+            }> */\n    public function ${op.method}${suffix}(${call.phpSignature}): \\Generator { ${call.phpPrelude}return ${suffix === 'Pages' && payload?.helperReturn === 'payload' ? `SdkResponse::payloadPages(${request}, [${payload.path.map(php).join(', ')}])` : request}; }\n`;
+            if (suffix === 'Pages' && payload?.helperReturn === 'payload')
+              code += `    /** @return \\Generator<int, SdkResponse<${responseType}>> */\n    public function ${op.method}PagesWithResponse(${call.phpSignature}): \\Generator { ${call.phpPrelude}return SdkResponse::responsePages(${request}); }\n`;
+          }
+        if (op.polling) {
+          const request = `$this->runtime->wait(${php(op.id)}, ${normalizeInput}, $options)`;
+          code += `    /** @return ${payload?.helperReturn === 'payload' ? payload.php : `Result<${responseType}>`} */\n    public function ${op.method}Wait(${call.phpSignature}): ${payload?.helperReturn === 'payload' ? payload.phpNative : 'Result'} { ${call.phpPrelude}return ${payload?.helperReturn === 'payload' ? `SdkResponse::payload(${request}, [${payload.path.map(php).join(', ')}])` : request}; }\n`;
+          if (payload?.helperReturn === 'payload')
+            code += `    /** @return SdkResponse<${responseType}> */\n    public function ${op.method}WaitWithResponse(${call.phpSignature}): SdkResponse { ${call.phpPrelude}$result = ${request}; return new SdkResponse($result->data, $result->meta, $result->raw); }\n`;
+        }
       }
       code += '}\n';
     }
@@ -1372,7 +1423,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         target === 'node'
           ? `const response = await client.${op.resource}.${op.method}WithResponse(${publicArguments(op, exampleInput(op, c.definitions ?? {}), 'node')});\nconsole.log(response.body, response.meta.requestId);`
           : `$response = $client->${op.resource}->${op.method}WithResponse(${publicArguments(op, exampleInput(op, c.definitions ?? {}), 'php')});\necho $response->meta['requestId'] ?? '';\n// $response->body is the complete decoded body.`;
-      const guide = `## Response return modes\n\nPayload-mode methods return the decoded body, or their explicitly configured payload path, directly. Their WithResponse companions return SdkResponse with body, meta and raw, without unwrapping. Each invocation makes its own request; choose one form per action. Result-mode operations keep their existing data/meta/raw envelope. Pages and Wait helpers always return full Results, and Items helpers yield individual items; pagination and polling paths still address the original body.\n\n\`\`\`${target === 'node' ? 'typescript' : 'php'}\n${call}\n\`\`\`\n\n`;
+      const guide = `## Response return modes\n\nPayload-mode methods return the decoded body, or their explicitly configured payload path, directly. Their WithResponse companions return SdkResponse with body, meta and raw, without unwrapping. Each invocation makes its own request; choose one form per action. Result-mode operations keep their existing data/meta/raw envelope. Pages and Wait follow the base method return mode: payload values in payload mode, full Results in result mode. Payload-mode PagesWithResponse and WaitWithResponse expose complete bodies, metadata and raw access. Items helpers yield individual items; pagination and polling paths still address the original body.\n\n\`\`\`${target === 'node' ? 'typescript' : 'php'}\n${call}\n\`\`\`\n\n`;
       files.set(
         `${target}/RUNTIME.md`,
         files
