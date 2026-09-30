@@ -697,7 +697,7 @@ function recoveryReference(c: Contract, target: 'node' | 'php'): string {
   const key = exampleKey(op, target, 'idempotencyKey', false, c.definitions ?? {});
   const parts = exampleParts(c, op, target, {
     fields: key.fields,
-    requestOption: key.requestOption,
+    requestOption: [key.requestOption, 'maxAttempts: 1'].filter(Boolean).join(', '),
   });
   const setup =
     target === 'node'
