@@ -49,4 +49,20 @@ final class SdkResponse
         }
         return $value;
     }
+
+    /** @internal */
+    public static function payloadPages(\Generator $pages, array $path): \Generator
+    {
+        foreach ($pages as $key => $result) {
+            yield $key => self::payload($result, $path);
+        }
+    }
+
+    /** @internal */
+    public static function responsePages(\Generator $pages): \Generator
+    {
+        foreach ($pages as $key => $result) {
+            yield $key => new self($result->data, $result->meta, $result->raw);
+        }
+    }
 }

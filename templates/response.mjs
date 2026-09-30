@@ -32,3 +32,11 @@ export function responsePayload(result, path) {
   }
   return value;
 }
+
+export async function* payloadPages(pages, path) {
+  for await (const result of pages) yield responsePayload(result, path);
+}
+
+export async function* sdkResponsePages(pages) {
+  for await (const result of pages) yield sdkResponse(result);
+}

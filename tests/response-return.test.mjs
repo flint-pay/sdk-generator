@@ -10,6 +10,7 @@ import { loadContract, generate, preview, validateFixtures } from '../dist/index
 import { compileSdkContract } from '../dist/target-plan.js';
 import { compareCompiledContracts } from '../dist/compiled-compatibility.js';
 import { checkVersionPolicy } from '../dist/version.js';
+import { assertCompiledSnapshot } from '../dist/compiled-record.js';
 
 const root = mkdtempSync(join(tmpdir(), 'sdk-response-return-'));
 after(() => rmSync(root, { recursive: true, force: true }));
@@ -370,18 +371,301 @@ test('pagination and polling continue reading full response envelopes', async ()
   assert.equal(calls, 2);
   const pages = [];
   for await (const page of c.api.getItemPages()) pages.push(page);
-  assert.equal(pages[0].data.next, 'two');
-  assert.equal(pages[1].meta.status, 200);
-  assert.equal((await c.api.getItemWait({})).data.state, 'done');
+  assert.equal(pages[0][0].id, 'p_1');
+  assert.equal(pages[1][0].id, 'p_2');
+  const fullPages = [];
+  for await (const page of c.api.getItemPagesWithResponse()) fullPages.push(page);
+  assert.equal(fullPages[0].body.next, 'two');
+  assert.equal(fullPages[1].meta.status, 200);
+  assert.equal((await c.api.getItemWait({}))[0].id, 'p_1');
+  assert.equal((await c.api.getItemWaitWithResponse({})).body.state, 'done');
   assert.equal((await c.api.getItem())[0].id, 'p_1');
   assert.equal(
     php(
       f,
-      "$ids=[];foreach($c->api->getItemItems() as $v)$ids[]=$v->id;foreach($c->api->getItemPages() as $p){if($p->meta['status']!==200)throw new Exception('metadata');}if($c->api->getItemWait([])->data->state!=='done')throw new Exception('polling');echo implode(',', $ids);",
+      "$ids=[];foreach($c->api->getItemItems() as $v)$ids[]=$v->id;foreach($c->api->getItemPages() as $p){if($p[0]->id!=='p_1')throw new Exception('payload');}foreach($c->api->getItemPagesWithResponse() as $p){if($p->meta['status']!==200)throw new Exception('metadata');}if($c->api->getItemWait([])[0]->id!=='p_1'||$c->api->getItemWaitWithResponse([])->body->state!=='done')throw new Exception('polling');echo implode(',', $ids);",
       '{"data":[{"id":"p_1"}],"next":null,"state":"done"}',
     ),
     'p_1',
   );
+});
+
+const helperSchema = {
+  type: 'object',
+  required: ['data', 'next', 'state'],
+  properties: {
+    data: { type: 'array', items: item },
+    next: { type: ['string', 'null'] },
+    state: { type: 'string' },
+  },
+};
+const helpers = {
+  pagination: { kind: 'cursor', items: 'data', next: 'next', parameter: 'cursor' },
+  polling: { state: 'state', success: ['done'], failure: ['failed'], intervalMs: 1 },
+};
+function helperFixture(responses, style = 'object', extra = {}) {
+  return fixture({
+    responses,
+    schema: helperSchema,
+    parameters: [{ in: 'query', name: 'cursor', schema: { type: 'string' } }],
+    operations: { getItem: { ...helpers, ...extra } },
+    configExtra: { requests: { style } },
+  });
+}
+
+for (const mode of ['result', 'whole', 'projected']) {
+  test(`${mode} helpers preserve lazy cursors, raw metadata, polling and consumer types`, async () => {
+    const f = helperFixture(
+      mode === 'result'
+        ? { return: 'result' }
+        : mode === 'whole'
+          ? { return: 'payload' }
+          : { return: 'payload', payloadPath: 'data' },
+      mode === 'whole' ? 'positional' : 'object',
+    );
+    const sdk = await import(pathToFileURL(join(f.output, 'node/index.js')));
+    let calls = 0,
+      phase = 'pages';
+    const c = new sdk.Client({
+      baseUrl: 'https://example.invalid',
+      transport: async (url) => {
+        const second = url.searchParams.get('cursor') === 'two';
+        assert.equal(url.searchParams.get('cursor'), second ? 'two' : null);
+        calls++;
+        return Response.json(
+          {
+            data: [{ id: second ? 'p_2' : 'p_1' }],
+            next: second ? null : 'two',
+            state:
+              phase === 'failed' ? 'failed' : phase === 'wait' && calls === 1 ? 'queued' : 'done',
+          },
+          { headers: { 'x-request-id': 'req_helper' } },
+        );
+      },
+    });
+    const ids = (page) =>
+      (mode === 'result' ? page.data.data : mode === 'whole' ? page.data : page).map((v) => v.id);
+    const iterator = c.api.getItemPages();
+    assert.equal(calls, 0);
+    const seen = [];
+    for await (const page of iterator) seen.push(...ids(page));
+    assert.deepEqual(seen, ['p_1', 'p_2']);
+    assert.equal(calls, 2);
+    calls = 0;
+    for await (const page of c.api.getItemPages()) {
+      assert.deepEqual(ids(page), ['p_1']);
+      break;
+    }
+    assert.equal(calls, 1, 'breaking the projected iterator must not fetch another page');
+    calls = 0;
+    const items = [];
+    for await (const v of c.api.getItemItems(undefined, { maxItems: 1 })) items.push(v.id);
+    assert.deepEqual(items, ['p_1']);
+    assert.equal(calls, 1);
+    if (mode !== 'result') {
+      calls = 0;
+      const complete = c.api.getItemPagesWithResponse(undefined, { maxPages: 1 });
+      assert.equal(calls, 0);
+      for await (const page of complete) {
+        assert.equal(page.body.data[0].id, 'p_1');
+        assert.equal(page.body.next, 'two');
+        assert.equal(page.meta.requestId, 'req_helper');
+        assert.equal(page.raw, '{"data":[{"id":"p_1"}],"next":"two","state":"done"}');
+        assert.equal(page.data, undefined);
+      }
+      assert.equal(calls, 1);
+    } else {
+      assert.equal(c.api.getItemPagesWithResponse, undefined);
+      assert.equal(c.api.getItemWaitWithResponse, undefined);
+    }
+    calls = 0;
+    const controller = new AbortController();
+    const canceled = c.api.getItemPages(undefined, { signal: controller.signal });
+    assert.deepEqual(ids((await canceled.next()).value), ['p_1']);
+    controller.abort();
+    await assert.rejects(canceled.next(), { kind: 'cancelled' });
+    assert.equal(calls, 1);
+    for (const method of [
+      'getItemWait',
+      ...(mode !== 'result' ? ['getItemWaitWithResponse'] : []),
+    ]) {
+      phase = 'wait';
+      calls = 0;
+      const result = await c.api[method]();
+      assert.equal(calls, 2, 'polling state outside the projected payload remains visible');
+      if (method.endsWith('WithResponse')) {
+        assert.equal(result.body.state, 'done');
+        assert.equal(result.meta.requestId, 'req_helper');
+        assert.match(result.raw, /"state":"done"/);
+      } else assert.deepEqual(ids(result), ['p_1']);
+      phase = 'failed';
+      calls = 0;
+      await assert.rejects(
+        c.api[method](),
+        (error) => error.kind === 'api' && error.meta.requestId === 'req_helper',
+      );
+      assert.equal(calls, 1);
+      calls = 0;
+      await assert.rejects(c.api[method](undefined, { signal: controller.signal }), {
+        kind: 'cancelled',
+      });
+      assert.equal(calls, 0);
+    }
+    const expression =
+      mode === 'result'
+        ? 'page.data.data[0].id'
+        : mode === 'whole'
+          ? 'page.data[0].id'
+          : 'page[0].id';
+    typecheck(
+      f,
+      `import {Client} from './index.js';const c=new Client({baseUrl:'https://example.invalid'});
+for await (const page of c.api.getItemPages()) { const id:string=${expression}; }
+const page=await c.api.getItemWait(${mode === 'result' ? '{}' : ''});const id:string=${expression};
+${
+  mode !== 'result'
+    ? `for await(const r of c.api.getItemPagesWithResponse()) { const id:string=r.body.data[0].id; const status:number=r.meta.status; }
+const full=await c.api.getItemWaitWithResponse();const state:string=full.body.state;
+// @ts-expect-error payloads have no metadata envelope
+page.meta;`
+    : ''
+}`,
+    );
+    const code = String.raw`require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
+use Example\ResponseReturn\{Client,ClientOptions,RequestOptions,Cancellation,SdkError};
+$mode=$argv[2];$phase='pages';$calls=0;
+$c=new Client(new ClientOptions('https://example.invalid',transport:function($r)use(&$calls,&$phase){
+ parse_str(parse_url($r['url'],PHP_URL_QUERY)??'', $q);$second=($q['cursor']??null)==='two';$calls++;
+ return ['status'=>200,'headers'=>['x-request-id'=>'req_helper'],'body'=>json_encode(['data'=>[['id'=>$second?'p_2':'p_1']],'next'=>$second?null:'two','state'=>$phase==='failed'?'failed':($phase==='wait'&&$calls===1?'queued':'done')])];
+}));
+function ids($p,$mode){$values=$mode==='result'?$p->data->data:($mode==='whole'?$p->data:$p);return array_map(fn($v)=>$v->id,$values);}
+$iterator=$c->api->getItemPages();if($calls!==0)exit(2);$seen=[];foreach($iterator as $p)$seen=array_merge($seen,ids($p,$mode));if($calls!==2||$seen!==['p_1','p_2'])exit(3);
+$calls=0;foreach($c->api->getItemPages() as $p){if(ids($p,$mode)!==['p_1'])exit(4);break;}if($calls!==1)exit(5);
+$calls=0;$cancel=new Cancellation();try{foreach($c->api->getItemPages(options:new RequestOptions(cancellation:$cancel)) as $p)$cancel->cancel();exit(6);}catch(SdkError $e){if($e->kind!=='cancelled'||$calls!==1)exit(7);}
+if($mode!=='result'){
+ $calls=0;$pages=$c->api->getItemPagesWithResponse(options:new RequestOptions(maxPages:1));if($calls!==0)exit(8);
+ foreach($pages as $r)if($r->body->data[0]->id!=='p_1'||$r->meta['requestId']!=='req_helper'||strpos($r->raw,'"next":"two"')===false)exit(9);
+ if($calls!==1)exit(10);
+}elseif(method_exists($c->api,'getItemPagesWithResponse')||method_exists($c->api,'getItemWaitWithResponse'))exit(11);
+foreach(array_merge(['getItemWait'],$mode!=='result'?['getItemWaitWithResponse']:[]) as $method){
+ $phase='wait';$calls=0;$p=$c->api->$method();if($calls!==2)exit(12);
+ if(str_ends_with($method,'WithResponse')){if($p->body->state!=='done'||$p->meta['requestId']!=='req_helper'||strpos($p->raw,'"state":"done"')===false)exit(13);}elseif(ids($p,$mode)!==['p_1'])exit(14);
+ $phase='failed';$calls=0;try{$c->api->$method();exit(15);}catch(SdkError $e){if($e->kind!=='api'||$e->meta['requestId']!=='req_helper'||$calls!==1)exit(16);}
+ $calls=0;try{$c->api->$method(options:new RequestOptions(cancellation:$cancel));exit(17);}catch(SdkError $e){if($e->kind!=='cancelled'||$calls!==0)exit(18);}
+}
+echo 'ok';`;
+    assert.equal(
+      execFileSync('php', ['-r', code, join(f.output, 'php'), mode], { encoding: 'utf8' }),
+      'ok',
+    );
+    const phpExpression =
+      mode === 'result'
+        ? '$page->data->getData()[0]->getId()'
+        : mode === 'whole'
+          ? '$page->getData()[0]->getId()'
+          : '$page[0]->getId()';
+    const consumer = join(f.dir, 'helpers.php');
+    writeFileSync(
+      consumer,
+      `<?php
+use Example\\ResponseReturn\\Client;
+function pageId(Client $client): string {
+ foreach ($client->api->getItemPages() as $page) return ${phpExpression};
+ return '';
+}
+function completedId(Client $client): string {
+ $page=$client->api->getItemWait();return ${phpExpression};
+}
+${
+  mode !== 'result'
+    ? `function responseId(Client $client): string {
+ foreach($client->api->getItemPagesWithResponse() as $response) return $response->body->getData()[0]->getId();
+ return $client->api->getItemWaitWithResponse()->body->getState();
+}`
+    : ''
+}
+`,
+    );
+    const phpstanConfig = join(f.dir, 'phpstan.neon');
+    writeFileSync(
+      phpstanConfig,
+      `parameters:\n    level: max\n    phpVersion: 80200\n    tmpDir: ${JSON.stringify(join(f.dir, 'phpstan-cache'))}\n    scanDirectories:\n        - ${JSON.stringify(join(f.output, 'php/src'))}\n`,
+    );
+    try {
+      execFileSync(
+        'php',
+        [
+          resolve('.generated/phpstan-vendor/bin/phpstan'),
+          'analyse',
+          '--no-progress',
+          '--error-format=raw',
+          '-c',
+          phpstanConfig,
+          consumer,
+        ],
+        { stdio: 'pipe' },
+      );
+    } catch (error) {
+      throw new Error(error.stdout.toString() + error.stderr.toString());
+    }
+    for (const target of ['node', 'php']) {
+      const docs = f.read(`${target}/REFERENCE.md`);
+      assert.match(docs, /getItemPages/);
+      if (mode !== 'result') {
+        assert.match(docs, /getItemPagesWithResponse/);
+        assert.match(docs, /getItemWaitWithResponse/);
+        assert.match(docs, /Iterate page payloads/);
+        assert.match(docs, /Returns the same payload as the base method/);
+      }
+    }
+    const first = preview(f.contract, f.output);
+    assert.deepEqual(first.changes, []);
+    assert.deepEqual(
+      compareCompiledContracts(
+        compileSdkContract(f.contract).plan,
+        compileSdkContract(f.contract).plan,
+      ),
+      [],
+    );
+  });
+}
+
+test('historical payload helper migration is breaking without treating new helpers as a return migration', () => {
+  const f = helperFixture({ return: 'payload', payloadPath: 'data' });
+  const current = compileSdkContract(f.contract).plan;
+  const historical = structuredClone(current);
+  delete historical.responseReturns.getItem.helperReturn;
+  const runtimeIdentity = { node: '0'.repeat(64), php: '0'.repeat(64) };
+  assertCompiledSnapshot({ plan: historical, runtimeIdentity });
+  const findings = compareCompiledContracts(historical, current);
+  assert.ok(
+    findings.some((f) => f.subject === 'getItem.helperReturn' && f.severity === 'breaking'),
+  );
+  assert.throws(() => checkVersionPolicy('1.0.0', '1.0.1', findings), /major/);
+  for (const runtime of [historical.runtime, historical.php.runtime]) {
+    delete runtime.operations[0].pagination;
+    delete runtime.operations[0].polling;
+  }
+  assert.ok(
+    !compareCompiledContracts(historical, current).some(
+      (f) => f.subject === 'getItem.helperReturn',
+    ),
+  );
+  const invalid = structuredClone(current);
+  invalid.responseReturns.getItem.helperReturn = 'result';
+  assert.throws(
+    () => assertCompiledSnapshot({ plan: invalid, runtimeIdentity }),
+    /helper return mode/,
+  );
+  for (const name of [
+    'getItemPagesWithResponse',
+    'getItemWaitWithResponse',
+    'getItemPagesWITHResponse',
+  ])
+    assert.throws(
+      () => helperFixture({ return: 'payload' }, 'object', { aliases: [name] }),
+      /collision/,
+    );
 });
 test('HTTP fixture validation uses the complete body for payload-mode SDKs', async () => {
   const f = fixture({ responses: { return: 'payload', payloadPath: 'data' } });
