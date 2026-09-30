@@ -35,36 +35,39 @@ const anchor = (name: string) =>
 /** Format existing type expressions without changing compiler-owned type decisions. */
 export function referenceType(label: string, source: string, target: 'node' | 'php'): string {
   if (source.length <= 140) return `${label}: ${literal(source)}\n\n`;
-  let output = '',
+  const lines: string[] = [];
+  let line = '',
     depth = 0,
     quote = '',
     escaped = false;
   const newline = () => {
-    output = output.trimEnd() + '\n' + '  '.repeat(depth);
+    if (line.trim()) lines.push(line.trimEnd());
+    line = '  '.repeat(depth);
   };
   for (let index = 0; index < source.length; index++) {
     const char = source[index]!;
     if (quote) {
-      output += char;
+      line += char;
       if (escaped) escaped = false;
       else if (char === '\\') escaped = true;
       else if (char === quote) quote = '';
     } else if (char === '"' || char === "'" || char === '`') {
       quote = char;
-      output += char;
+      line += char;
     } else if (char === '{') {
-      output += char;
+      line += char;
       depth++;
       newline();
     } else if (char === '}') {
       depth = Math.max(0, depth - 1);
       newline();
-      output += char;
+      line += char;
     } else if (char === ';' || char === ',' || char === '|') {
-      output += char;
+      line += char;
       newline();
-    } else if (!(/\s/.test(char) && output.endsWith(' '))) output += char;
+    } else if (!(/\s/.test(char) && line.endsWith(' '))) line += char;
   }
+  const output = [...lines, line].join('\n').trim();
   const delimiter = '`'.repeat(
     Math.max(2, ...[...output.matchAll(/`+/g)].map((match) => match[0].length)) + 1,
   );
