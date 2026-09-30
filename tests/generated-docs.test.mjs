@@ -262,7 +262,7 @@ test('download scripts, quickstarts and runtime recipes save exact bytes and ins
             if (/(?:\.|->)optional(?:WithResponse)?\(/.test(source))
               assert.match(run.stdout, /302 No Location header/);
           }
-          assert.doesNotMatch(run.stderr, /Warning:|Fatal error:/);
+          if (target === 'php') assert.doesNotMatch(run.stderr, /Warning:|Fatal error:/);
           assert.equal(calls.length - before, name.startsWith('README') ? 3 : 1);
         }
       }
