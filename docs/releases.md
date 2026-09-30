@@ -1,5 +1,11 @@
 # Releases and compatibility
 
+## Nullable response wrappers
+
+Simple `anyOf`/`oneOf` wrappers with one explicitly typed non-null branch and a plain null branch now expose typed nullable values. TypeScript nullable object fields support direct optional field access. PHP getters hydrate the existing component class, preserving its name; newly typed inline objects receive the usual owning-field class name. Unknown fields and enum members remain preserved, and genuinely polymorphic alternatives retain their fallback behavior.
+
+Regeneration changes PHP nullable object values from raw `stdClass` to generated entities and rejects malformed known values that previously escaped through an unknown-variant fallback. Use generated getters or raw `toArray()`/`jsonSerialize()` exports when adapting consumers; compatibility review should account for this representation correction before publishing a regenerated SDK. No provider configuration migration or component class rename is required.
+
 ## npm package metadata
 
 Regenerated Node packages support `require()` for the package root and resource subpaths on Node.js 22.12+, using the same ESM files as imports. ESM imports continue to support Node.js 22+.

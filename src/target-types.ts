@@ -1,7 +1,12 @@
 import { phpDocumentation } from './php-types.js';
 import { schemaComment } from './schema-documentation.js';
 import type { Json, Schema } from './contract.js';
-import { directionalSchema, exactValue, valueInstruction } from './codec-plan.js';
+import {
+  directionalSchema,
+  exactValue,
+  valueInstruction,
+  nullableAlternative,
+} from './codec-plan.js';
 import { numericEnumDeclaration, valueScopes } from './schema-intersections.js';
 const php = (s: string) => "'" + s.replaceAll('\\', '\\\\').replaceAll("'", "\\'") + "'";
 
@@ -205,7 +210,7 @@ export function typescriptType(
         const alternatives = branches.map((branch) =>
           render(branch, response, tag?.propertyName, known, objectContext, arrayContext),
         );
-        if (response && !known)
+        if (response && !known && nullableAlternative(s) === undefined)
           alternatives.push(
             objectContext === 'object' || branches.every((v) => v.type === 'object')
               ? 'object'

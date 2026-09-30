@@ -29,6 +29,8 @@ PHP uses Composer classmaps/PSR-4 rather than `autoload.files`. Generated classe
 
 Generated packages carry their compiled descriptors and execute them with their own language's JSON and transport primitives. Ordinary generated calls do not compile schemas. Public schema-taking helpers remain available for application-supplied schemas: Node bundles the same pure codec compiler used during generation, and PHP's isolated `Internal\SchemaAdapter` translates schemas into the same descriptor format. Neither is a fallback path for generated operations, and generated-client tests disable the adapters to enforce that boundary.
 
+Simple nullable alternative wrappers are classified in `src/codec-plan.ts`; declarations and PHP representations reuse that decision, and compiled codecs route responses by nullness. Genuine polymorphic alternatives retain their existing future-variant policy.
+
 Public declarations and runtime guarantees remain separate facts in the compiled contract. A target exposing `unknown` or `mixed` does not discard guarantees enforced by its codec.
 
 The private generation record stores resolved source provenance and compiled snapshots, so compatibility compares saved previous decisions against new plans rather than reinterpreting old source schemas. It is excluded from SDK archives. Selected descriptors and public dynamic schema definitions are SDK source, so an SDK for a private API must be distributed privately.

@@ -87,6 +87,8 @@ Date-time inputs accept strings or JavaScript `Date` / PHP `DateTimeInterface` o
 
 TypeScript catches undeclared properties on fresh shaped object literals and misspelled response field access. Explicitly open objects and dictionaries still accept arbitrary keys. Structural typing can accept additional keys through existing variables; runtime request rules continue to follow the schema. Unknown response fields remain present, but inspecting them requires an explicit dictionary assertion or narrowing. Unknown response object variants require a generated known-variant guard before accessing their declared fields. Closed declarations do not guarantee that `Object.keys()` or `Object.values()` enumerates only declared fields; validate values when iterating preserved response extras.
 
+Simple nullable wrappers with one explicitly typed non-null branch and one plain `type: "null"` branch retain that branch’s fields: TypeScript exposes the known value or null, and PHP response getters hydrate the existing named entity or an inline entity. Unknown fields and enum members remain preserved; malformed known values fail response decoding. Genuinely polymorphic alternatives retain their unknown-variant fallback.
+
 Integer responses accept integral decimal and exponent notation: `1.0` becomes `1`, and `1e3` becomes `1000`. int64/uint64 results remain exact strings. Fractional values are rejected rather than rounded, and decimal fields retain their original precision. Node request arrays must contain an explicit value at every index; sparse arrays fail validation before dispatch.
 
 ## Schema-taking helpers

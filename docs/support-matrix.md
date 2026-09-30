@@ -11,7 +11,7 @@ A capability must be declared to generate its public helper. Both targets implem
 | Exact integers/decimals    | Numeric strings, exact JSON token serializer/parser                                             | Same shared safe integer boundary                                              |
 | Ordinary numbers           | Native finite numbers for plain number/float/double                                             | int/float inputs; float outputs                                                |
 | Date-time inputs           | string or Date; string outputs                                                                  | string or DateTimeInterface; string outputs                                    |
-| Omission/null              | Optional properties, nullable unions                                                            | Presence-aware input classes and typed accessors                               |
+| Omission/null              | Optional properties, typed simple nullable wrappers                                             | Presence-aware inputs and typed nullable entity accessors                      |
 | Structured errors          | Server message, status, kind/code/details/cause/outcome, debug stack                            | Server message, status, kind/errorCode/details/previous/outcome, debug stack   |
 | Response compatibility     | Unknown fields/enums/tags preserved; shaped types catch field typos                             | Typed nested entities, list/map values and response accessors                  |
 | Retries/idempotency        | Read defaults, capped budgets, declared mutation policies, stable key                           | Same                                                                           |

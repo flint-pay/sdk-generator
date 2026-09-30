@@ -744,6 +744,7 @@ function selectAlternatives(
   branches: readonly CodecPlan[],
   oneOf: boolean,
   tag: string | undefined,
+  nullableAlternative: 0 | 1 | undefined,
   context: CodecContext,
   matches: (branch: CodecPlan, allowUnknownFields: boolean) => boolean,
 ): { selected: readonly CodecPlan[]; tolerateUnknownFields: boolean } {
@@ -752,6 +753,11 @@ function selectAlternatives(
   const path = context.path ?? 'input';
   let tolerateUnknownFields = context.allowUnknownResponseFields ?? false;
   let selected: readonly CodecPlan[];
+  if (nullableAlternative !== undefined && response && !matching) {
+    const branch = branches[value === null ? 1 - nullableAlternative : nullableAlternative];
+    if (!branch) throw new Error('Invalid nullable alternative policy');
+    return { selected: [branch], tolerateUnknownFields: true };
+  }
   if (oneOf && tag) {
     if (
       !value ||
@@ -927,6 +933,7 @@ function jointNumericView(
           scope.branches,
           scope.branches === scope.codec.exactlyOne,
           scope.codec.tag,
+          scope.codec.nullableAlternative,
           context,
           (branch, allowUnknownResponseFields) => {
             try {
@@ -1039,6 +1046,7 @@ function assertNumericSources(
           branches,
           branches === codec.exactlyOne,
           codec.tag,
+          codec.nullableAlternative,
           context,
           (branch, allowUnknownResponseFields) => {
             try {
@@ -1205,6 +1213,7 @@ function numericView(
           branches,
           branches === codec.exactlyOne,
           codec.tag,
+          codec.nullableAlternative,
           context,
           (branch, allowUnknownFields) => {
             try {
@@ -1424,6 +1433,7 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
         branches,
         keyword === 'oneOf',
         discriminator,
+        s.nullableAlternative,
         context,
         matches,
       );

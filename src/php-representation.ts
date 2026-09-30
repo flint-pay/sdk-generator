@@ -2,7 +2,7 @@ import type { PhpRepresentation } from './php-value-plan.js';
 export type { PhpRepresentation } from './php-value-plan.js';
 import type { Schema } from './contract.js';
 import { stable } from './canonical.js';
-import { discriminatorBindings, directionalSchema } from './codec-plan.js';
+import { discriminatorBindings, directionalSchema, nullableAlternative } from './codec-plan.js';
 import { Diagnostic } from './diagnostic.js';
 import { pascalWords } from './naming.js';
 import { phpDeclaration, phpNative } from './php-types.js';
@@ -226,6 +226,16 @@ export function phpRepresentations(
       };
     const branches = declaration.oneOf ?? declaration.anyOf;
     if (branches) {
+      const nullableBranch = nullableAlternative(declaration);
+      if (nullableBranch !== undefined) {
+        const branch = branches[nullableBranch];
+        if (!branch) throw new Error('Invalid nullable PHP branch');
+        const { oneOf: _one, anyOf: _any, ...base } = declaration;
+        return {
+          kind: 'nullable',
+          value: compile({ allOf: [base, branch] }, suggested, owner, branch),
+        };
+      }
       const tag = declaration.discriminator?.propertyName;
       if (tag && declaration.oneOf) {
         const bindings = discriminatorBindings({
