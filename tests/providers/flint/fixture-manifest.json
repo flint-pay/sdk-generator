@@ -8,18 +8,18 @@
     "risk-openapi.json": "7077821046302edb8c39d5e14c24b0ac6ff4ad6c28bda437534474e89210da68",
     "risk-sdk.json": "a794d021590a283b3a0ccf412b9f65a542ca70eb8c12c3ccfb31f5a7132ae832",
     "risk-http-cases.json": "81b0057b02d1880ed3051f5e6cd1f998fa4ffed491d123b480a42de73e1927fb",
-    "full-openapi.json": "e22e6f13d62b5ad90b79104c2c171731037fb8092981a2139c744701d9344371",
-    "full-inventory.json": "c3d798fdb3b0a71bf1d681ebd902a3a92020eb580f620ea4b2931838716391b0",
-    "full-checkout-sdk.json": "b3feb6aa25298bc7295e5e1ca8c28229602a55eac25b9fda5df60c017ba0bbab",
-    "full-common-sdk.json": "2c4c1fe51aecc9c73b1a5f2f9bbf5ea51b48c6b174805fc2b13ac78eaa494790",
+    "full-openapi.json": "5725df196c8066a517baf06a9d0d796c19e2b61d648949ec76fe0112e5d1959c",
+    "full-inventory.json": "b8eff2ed2d82b7aaaf0355ae0d511ee18fbd260bf6cc5ebd94732983d5ba9d36",
+    "full-checkout-sdk.json": "09e509cf666095f450050990c9fd3322fa938b250fd3202e5fa74d66dde5a0a1",
+    "full-common-sdk.json": "bab5ca66aadf942f44641ab225160e21185ee98b2c0604cf9a8849f9dcdd70f5",
     "full-customer-sdk.json": "d529776f96f558a6ad89e323d52799535cfa9b94ea1b9224b953d08790185ffe",
-    "full-http-cases.json": "d39e7999486d0594e19f1b0f719ee4a1e35ebfd3c5dd129ded76524119802a95",
+    "full-http-cases.json": "54a21e414db7efd5b9c2c9bce381a439919405a2bc687d40ea60bd496eb1f26d",
     "full-invoice-sdk.json": "f0a63fd40ba5adc0620c72219fd130e34067b91322a399b1f9914b7d558e04ea",
-    "full-merchant-sdk.json": "c59faba675c840ba4a79599a2b8aae6090b422dbdc85db87c654fbbc9ce8238c",
-    "full-merchantKey-sdk.json": "161e0fb1a0a9906a38972d1840d54949a73fdee20222325e1573fdada46db26a",
+    "full-merchant-sdk.json": "93812894a3e53ec0030af09d5c43bdb2777cc0de5c5751fd8e39a5070793bb56",
+    "full-merchantKey-sdk.json": "36e79cb507d45fcee43bd3118e227bb6273fd50c117fa4112c1ae86ba841b827",
     "full-model-cases.json": "a6647672707a4489b0ae59c59c8991b019f0a4d0b269575d01828510443b87f4",
     "full-onboarding-sdk.json": "e86bdf3c5478ad31273a883caf3e1a98f276757a28ef8f11125e99191172d225",
     "full-sdk.json": "1bba5a442917f1dbcf41096acb96805b176467e597cdc71d8eaa4cf5eec6bd13"
   },
-  "fullSpecRevision": "039b96023179d960bdce89cb34eea1baf3faeb67"
+  "fullSpecRevision": "35aa3b0245e9d58a6f89a7c7ab2647a2837af4a2"
 }
