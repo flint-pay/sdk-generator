@@ -1,4 +1,5 @@
 import { compileRetry } from './runtime-plan.js';
+import { exactValue, valueInstruction } from './codec-plan.js';
 import type { Contract, Operation, Schema } from './contract.js';
 import { schemaNotes } from './schema-documentation.js';
 
@@ -35,7 +36,7 @@ function typeDescription(s: Schema): string {
   const types = Array.isArray(s.type) ? s.type : [s.type ?? 'any'];
   return types
     .map((t) =>
-      t === 'number' || (t === 'integer' && ['int64', 'uint64'].includes(s.format ?? ''))
+      exactValue(valueInstruction(t, s.format))
         ? s['x-sdk-number-input'] === 'explicit'
           ? 'ExactNumber input; exact numeric string response'
           : 'exact numeric string'

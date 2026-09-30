@@ -1,13 +1,11 @@
 import type { Schema } from './contract.js';
+import { exactValue, valueInstruction } from './codec-plan.js';
 
 /** Human-facing field semantics; kept out of codec and compatibility plans. */
 export function schemaNotes(s: Schema): string {
   const notes = s.description ? [s.description] : [];
   const types = Array.isArray(s.type) ? s.type : [s.type];
-  if (
-    types.includes('number') ||
-    (types.includes('integer') && ['int64', 'uint64'].includes(s.format ?? ''))
-  )
+  if (types.some((type) => exactValue(valueInstruction(type, s.format))))
     notes.push(
       s['x-sdk-number-input'] === 'explicit'
         ? 'Use ExactNumber for an exact JSON number.'
