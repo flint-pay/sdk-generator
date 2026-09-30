@@ -66,6 +66,48 @@ final class SchemaAdapter
         }
         return $result;
     }
+    private static function nullableAlternative(array $schema): ?int
+    {
+        if (isset($schema['oneOf'], $schema['anyOf'])) {
+            return null;
+        }
+        $branches = $schema['oneOf'] ?? ($schema['anyOf'] ?? []);
+        if (count($branches) !== 2) {
+            return null;
+        }
+        foreach ($branches as $nullIndex => $branch) {
+            if (
+                ($branch['type'] ?? null) !== 'null' ||
+                array_diff(array_keys($branch), [
+                    'type',
+                    'description',
+                    'title',
+                    'deprecated',
+                    'readOnly',
+                    'writeOnly',
+                ])
+            ) {
+                continue;
+            }
+            $index = 1 - $nullIndex;
+            $value = $branches[$index];
+            if (
+                isset($value['type']) &&
+                is_string($value['type']) &&
+                in_array(
+                    $value['type'],
+                    ['boolean', 'string', 'number', 'integer', 'object', 'array'],
+                    true,
+                ) &&
+                !isset($value['oneOf']) &&
+                !isset($value['anyOf']) &&
+                !isset($value['x-sdk-ref'])
+            ) {
+                return $index;
+            }
+        }
+        return null;
+    }
     public static function compile(array $schema): array
     {
         return self::node($schema, $schema, 0);
@@ -249,6 +291,10 @@ final class SchemaAdapter
                 ]),
             ),
         ];
+        $nullableBranch = self::nullableAlternative($input);
+        if ($nullableBranch !== null) {
+            $plan['nullableAlternative'] = $nullableBranch;
+        }
         if (($input['type'] ?? null) === 'object') {
             $plan['objectOnlyAlternative'] = true;
         }

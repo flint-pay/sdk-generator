@@ -23,6 +23,8 @@ export interface CodecPlan {
   readonly nullable: boolean;
   /** Unmatched alternatives require objects only for the legacy literal type: 'object' form. */
   readonly objectOnlyAlternative?: boolean;
+  /** Concrete branch of a simple nullable wrapper; response routing is by nullness. */
+  readonly nullableAlternative?: 0 | 1;
   readonly modelObjectInput: boolean;
   readonly requiredInput: readonly string[];
   readonly requiredOutput: readonly string[];
@@ -200,6 +202,35 @@ export function discriminatorBindings(schema: Schema): Record<string, number> | 
   return result;
 }
 
+/** Nullable wrappers describe one known value, rather than future response variants.
+ * Stay conservative: require one explicitly non-null branch and a plain null branch.
+ */
+export function nullableAlternative(schema: Schema): 0 | 1 | undefined {
+  if (schema.oneOf && schema.anyOf) return undefined;
+  const branches = schema.oneOf ?? schema.anyOf;
+  if (branches?.length !== 2) return undefined;
+  const nullIndex = branches.findIndex(
+    (branch) =>
+      branch.type === 'null' &&
+      Object.keys(branch).every((key) =>
+        ['type', 'description', 'title', 'deprecated', 'readOnly', 'writeOnly'].includes(key),
+      ),
+  );
+  if (nullIndex < 0) return undefined;
+  const index = nullIndex === 0 ? 1 : 0;
+  const branch = branches[index];
+  if (
+    !branch ||
+    typeof branch.type !== 'string' ||
+    !['boolean', 'string', 'number', 'integer', 'object', 'array'].includes(branch.type) ||
+    branch.oneOf ||
+    branch.anyOf ||
+    branch['x-sdk-ref']
+  )
+    return undefined;
+  return index;
+}
+
 function compileNode(input: Schema, output: Schema, depth: number): CodecPlan {
   if (depth > 256) throw new Error('Schema exceeds the supported compilation depth (256)');
   const request = directionalSchema(input, false);
@@ -231,9 +262,11 @@ function compileNode(input: Schema, output: Schema, depth: number): CodecPlan {
   );
   const range = input.format ? ranges[input.format] : undefined;
   const bindings = discriminatorBindings(input);
+  const nullableBranch = nullableAlternative(input);
   const branches = (a: readonly Schema[], b: readonly Schema[]) =>
     a.map((child, index) => compileNode(child, b[index] ?? child, depth + 1));
   return {
+    ...(nullableBranch !== undefined ? { nullableAlternative: nullableBranch } : {}),
     ...(input['x-sdk-number-input'] === 'explicit' ? { numberInput: 'explicit' as const } : {}),
     value:
       Array.isArray(input.type) && !input.type.some((type) => type !== 'null')
@@ -441,6 +474,31 @@ export function assertCodecPlan(
     invalid('invalid constraint policy');
   if (node.objectOnlyAlternative !== undefined && typeof node.objectOnlyAlternative !== 'boolean')
     invalid('invalid alternative policy');
+  if (node.nullableAlternative !== undefined) {
+    const branches = node.exactlyOne ?? node.some;
+    if (
+      !Number.isInteger(node.nullableAlternative) ||
+      ![0, 1].includes(Number(node.nullableAlternative)) ||
+      !Array.isArray(branches) ||
+      branches.length !== 2 ||
+      (node.exactlyOne && node.some)
+    )
+      invalid('invalid nullable alternative policy');
+    const nullBranch = branches[1 - Number(node.nullableAlternative)];
+    if (!nullBranch || nullBranch.value?.kind !== 'null') invalid('missing null alternative');
+    // Interned branches retain their validated definition references; their
+    // stub value/nullability does not describe the referenced concrete value.
+    const concrete = branches[Number(node.nullableAlternative)];
+    if (
+      !concrete ||
+      (!concrete.reference &&
+        (concrete.nullable !== false ||
+          ['dynamic', 'null', 'null-array', 'opaque'].includes(concrete.value?.kind) ||
+          concrete.some ||
+          concrete.exactlyOne))
+    )
+      invalid('invalid concrete nullable alternative');
+  }
   if (
     node.range !== undefined &&
     (!Array.isArray(node.range) ||

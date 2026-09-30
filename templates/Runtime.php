@@ -1018,6 +1018,34 @@ final class Codec
         if (isset($value['objectOnlyAlternative']) && !is_bool($value['objectOnlyAlternative'])) {
             $invalid('invalid alternative policy');
         }
+        if (array_key_exists('nullableAlternative', $value)) {
+            $branches = $value['exactlyOne'] ?? ($value['some'] ?? null);
+            $index = $value['nullableAlternative'];
+            if (
+                !is_int($index) ||
+                !in_array($index, [0, 1], true) ||
+                !is_array($branches) ||
+                count($branches) !== 2 ||
+                isset($value['exactlyOne'], $value['some']) ||
+                ($branches[1 - $index]['value']['kind'] ?? null) !== 'null'
+            ) {
+                $invalid('invalid nullable alternative policy');
+            }
+            $concrete = $branches[$index];
+            if (
+                !isset($concrete['reference']) &&
+                (($concrete['nullable'] ?? null) !== false ||
+                    in_array(
+                        $concrete['value']['kind'] ?? null,
+                        ['dynamic', 'null', 'null-array', 'opaque'],
+                        true,
+                    ) ||
+                    isset($concrete['some']) ||
+                    isset($concrete['exactlyOne']))
+            ) {
+                $invalid('invalid concrete nullable alternative');
+            }
+        }
         if (isset($value['range'])) {
             if (!is_array($value['range']) || count($value['range']) !== 2) {
                 $invalid('invalid range');
@@ -1589,6 +1617,10 @@ final class Codec
         callable $matches,
     ): array {
         $tolerateUnknownFields = $allowUnknownResponseFields;
+        if (isset($s['nullableAlternative']) && $response && !$matching) {
+            $index = $value === null ? 1 - $s['nullableAlternative'] : $s['nullableAlternative'];
+            return [[$index => $s[$keyword][$index]], true];
+        }
         if ($keyword === 'exactlyOne' && isset($s['tag'])) {
             $tag = $s['tag'];
             $data = (array) $value;
