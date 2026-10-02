@@ -186,6 +186,33 @@ test('README generated keys replace required and optional header samples without
   });
 });
 
+for (const target of ['node', 'php']) {
+  test(`${target} positional examples retain generated optional headers without an input sample`, async () => {
+    const output = fixture(
+      'optional-header-' + target,
+      {
+        '/actions': {
+          post: {
+            operationId: 'createAction',
+            parameters: [{ name: 'Idempotency-Key', in: 'header', schema: { type: 'string' } }],
+            responses,
+          },
+        },
+      },
+      { createAction: { resource: 'actions', method: 'create', example: {} } },
+      {},
+      { requests: { style: 'positional' } },
+    );
+    await withServer(async (baseUrl, requests) => {
+      await runReadme(output, target, { API_BASE_URL: baseUrl });
+      assert.equal(requests.length, 1);
+      assert.equal(requests[0].path, '/actions');
+      assert.equal(requests[0].body, '');
+      assert.match(requests[0].headers['idempotency-key'], /^[a-f0-9-]{32,36}$/);
+    });
+  });
+}
+
 test('later README recipes retain exact-number and streaming symbols across authentication setups', async () => {
   const paths = {
     '/read': { get: { operationId: 'read', security: [], responses } },

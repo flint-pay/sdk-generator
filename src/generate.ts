@@ -157,7 +157,11 @@ function phpExampleSource(
   if (value === null || typeof value !== 'object')
     return typeof value === 'string' ? phpExampleString(value) : JSON.stringify(value);
   const list = Array.isArray(value);
-  const entries = exampleEntries(value, depth === 0 ? syntax.fields : undefined);
+  const entries = exampleEntries(
+    value,
+    depth === 0 ? syntax.fields : undefined,
+    depth === 0 ? syntax.omitFields : undefined,
+  );
   const prefix = list || inputArray ? '[' : '(object) [';
   if (!entries.length) return prefix + ']';
   return (
@@ -191,7 +195,11 @@ function exampleSource(
       return `new ${syntax.exactNumber ?? 'ExactNumber'}(${js(child.value)})`;
     if (child === null || typeof child !== 'object') return js(child)!;
     const array = Array.isArray(child);
-    const entries = exampleEntries(child, depth === 0 ? syntax.fields : undefined).map(
+    const entries = exampleEntries(
+      child,
+      depth === 0 ? syntax.fields : undefined,
+      depth === 0 ? syntax.omitFields : undefined,
+    ).map(
       ([key, item]) =>
         (array
           ? ''
@@ -303,8 +311,26 @@ function publicArguments(
   target: 'node' | 'php',
   syntax: ExampleSyntax = {},
   multiline = false,
+  hasOptions = false,
 ): string {
-  return requestArguments(op, input)
+  const omitFields = syntax.omitFields;
+  const value =
+    input && typeof input === 'object' && omitFields?.size
+      ? Object.fromEntries(Object.entries(input).filter(([key]) => !omitFields.has(key)))
+      : input;
+  const args = requestArguments(op, value);
+  const last = args.at(-1);
+  // Preserve generated fields and explicit empty bodies; retain the params slot for options.
+  if (
+    !hasOptions &&
+    !syntax.fields?.size &&
+    positional(op) &&
+    hasParams(op) &&
+    (last === undefined ||
+      (!op.body && last !== null && typeof last === 'object' && !Object.keys(last).length))
+  )
+    args.pop();
+  return args
     .map((value) =>
       value === undefined
         ? target === 'node'
@@ -351,7 +377,7 @@ function methodDoc(
           .map((line) => ' * ' + line + '\n')
           .join('')
       : ''
-  } * client.${op.resource}.${method}(${comment(publicArguments(op, exampleInput(op, definitions), 'node', { fields: key.fields }))}${key.requestOption ? `${!positional(op) || pathParameters(op).length || hasParams(op) ? ', ' : ''}{ ${key.requestOption} }` : ''})\n */\n`;
+  } * client.${op.resource}.${method}(${comment(publicArguments(op, exampleInput(op, definitions), 'node', key, false, Boolean(key.requestOption)))}${key.requestOption ? `${!positional(op) || pathParameters(op).length || hasParams(op) ? ', ' : ''}{ ${key.requestOption} }` : ''})\n */\n`;
 }
 function phpModel(
   plan: PhpModelPlan,
@@ -410,9 +436,14 @@ function exampleInput(op: Operation, definitions: Record<string, Schema> = {}): 
 interface ExampleSyntax {
   exactNumber?: string;
   fields?: ReadonlyMap<string, string>;
+  omitFields?: ReadonlySet<string>;
 }
-function exampleEntries(value: object, fields?: ReadonlyMap<string, string>): [string, unknown][] {
-  const entries = Object.entries(value);
+function exampleEntries(
+  value: object,
+  fields?: ReadonlyMap<string, string>,
+  omitFields?: ReadonlySet<string>,
+): [string, unknown][] {
+  const entries = Object.entries(value).filter(([key]) => !omitFields?.has(key));
   for (const key of fields?.keys() ?? [])
     if (!Object.hasOwn(value, key)) entries.push([key, undefined]);
   return entries;
@@ -466,6 +497,7 @@ function exampleKey(
   definitions: Record<string, Schema> = {},
 ) {
   const fields = new Map<string, string>();
+  const omitFields = new Set<string>();
   let requestOption = '',
     keySetup = '';
   const headerName = op.idempotency?.header ?? 'Idempotency-Key';
@@ -495,10 +527,12 @@ function exampleKey(
             : `if ($${key} === '') throw new \\RuntimeException('Set API_IDEMPOTENCY_KEY to a new key matching the header schema, or reuse the key saved with this action');\n`;
       keySetup += '\n';
     }
-    if (parameters.length) for (const p of parameters) fields.set(p.name, expression);
-    else requestOption = `idempotencyKey: ${expression}`;
+    if (op.idempotency) {
+      for (const p of parameters) omitFields.add(p.name);
+      requestOption = `idempotencyKey: ${expression}`;
+    } else for (const p of parameters) fields.set(p.name, expression);
   }
-  return { fields, requestOption, keySetup, requiresSuppliedKey };
+  return { fields, omitFields, requestOption, keySetup, requiresSuppliedKey };
 }
 interface ExampleParts {
   symbols: string[];
@@ -524,6 +558,7 @@ function exampleParts(
     result?: string;
     qualifiedPhp?: boolean;
     fields?: ReadonlyMap<string, string>;
+    omitFields?: ReadonlySet<string>;
     requestOption?: string;
   } = {},
 ): ExampleParts {
@@ -542,11 +577,17 @@ function exampleParts(
   const qualify = (symbol: string) =>
     options.qualifiedPhp ? `\\${c.config.composer.namespace}\\${symbol}` : symbol;
   const key = options.fields
-    ? { fields: options.fields, requestOption: options.requestOption, keySetup: '' }
+    ? {
+        fields: options.fields,
+        omitFields: options.omitFields,
+        requestOption: options.requestOption,
+        keySetup: '',
+      }
     : exampleKey(op, target, 'idempotencyKey', false, c.definitions ?? {});
   const syntax: ExampleSyntax = {
     exactNumber: target === 'php' ? qualify('ExactNumber') : 'ExactNumber',
     fields: key.fields,
+    ...(key.omitFields ? { omitFields: key.omitFields } : {}),
   };
   const symbols = [
     'Client',
@@ -568,7 +609,7 @@ function exampleParts(
       setup: `const ${client}BaseUrl = process.env.API_BASE_URL${c.defaultBaseUrl !== undefined ? ` ?? ${js(c.defaultBaseUrl)}` : ''};\n${c.defaultBaseUrl === undefined ? `if (${client}BaseUrl === undefined) throw new Error("Set API_BASE_URL: this SDK has no default server");\n` : ''}const ${client} = new Client({\n  baseUrl: ${client}BaseUrl,\n${authOptions ? '  ' + authOptions + ',\n' : ''}});\n`,
       call:
         key.keySetup +
-        `const ${result} = await ${client}.${op.resource}.${method}(\n${publicArguments(op, input, 'node', syntax, true)}${requestOptions ? `${requestArguments(op, input).length ? ',\n' : ''}  { ${requestOptions} },\n` : '\n'});\n${downloadExampleResult(op, 'node', result) || exampleResult(op, c.definitions ?? {}, 'node', result)}${op.response?.return === 'payload' && !withResponse ? '' : `console.log(${result}.meta.requestId);\n`}` +
+        `const ${result} = await ${client}.${op.resource}.${method}(\n${publicArguments(op, input, 'node', syntax, true, Boolean(requestOptions))}${requestOptions ? `${requestArguments(op, input).length ? ',\n' : ''}  { ${requestOptions} },\n` : '\n'});\n${downloadExampleResult(op, 'node', result) || exampleResult(op, c.definitions ?? {}, 'node', result)}${op.response?.return === 'payload' && !withResponse ? '' : `console.log(${result}.meta.requestId);\n`}` +
         (hasStream
           ? `if (${result}${op.response?.return === 'payload' ? '' : '.data'} instanceof EventStream) {\n  for await (const event of ${result}${op.response?.return === 'payload' ? '' : '.data'}) { console.log(event.event, event.id, event.data); break; }\n}\n`
           : ''),
@@ -587,7 +628,7 @@ function exampleParts(
     setup: `$baseUrl = getenv('API_BASE_URL');\n${c.defaultBaseUrl !== undefined ? `if ($baseUrl === false) $baseUrl = ${php(c.defaultBaseUrl)};\n` : 'if ($baseUrl === false) throw new \\RuntimeException("Set API_BASE_URL: this SDK has no default server");\n'}$${client} = new Client(new ClientOptions(\n  baseUrl: $baseUrl,\n${authOptions ? '  ' + authOptions + ',\n' : ''}));\n`,
     call:
       key.keySetup +
-      `${positional(op) ? '' : `$input = ${phpExampleSource(input, 0, true, syntax)};\n`}$${result} = $${client}->${op.resource}->${method}(${positional(op) ? publicArguments(op, input, 'php', syntax) : '$input'}${requestOptions ? `${requestArguments(op, input).length ? ', ' : ''}new RequestOptions(${requestOptions})` : ''});\n${downloadExampleResult(op, 'php', result) || exampleResult(op, c.definitions ?? {}, 'php', result)}${op.response?.return === 'payload' && !withResponse ? '' : `echo ($${result}->meta['requestId'] ?? '') . PHP_EOL;\n`}` +
+      `${positional(op) ? '' : `$input = ${phpExampleSource(input, 0, true, syntax)};\n`}$${result} = $${client}->${op.resource}->${method}(${positional(op) ? publicArguments(op, input, 'php', syntax, false, Boolean(requestOptions)) : '$input'}${requestOptions ? `${requestArguments(op, input).length ? ', ' : ''}new RequestOptions(${requestOptions})` : ''});\n${downloadExampleResult(op, 'php', result) || exampleResult(op, c.definitions ?? {}, 'php', result)}${op.response?.return === 'payload' && !withResponse ? '' : `echo ($${result}->meta['requestId'] ?? '') . PHP_EOL;\n`}` +
       (hasStream
         ? `if ($${result}${op.response?.return === 'payload' ? '' : '->data'} instanceof ${qualify('EventStream')}) {\n  foreach ($${result}${op.response?.return === 'payload' ? '' : '->data'} as $event) { echo $event->event; break; }\n  $${result}${op.response?.return === 'payload' ? '' : '->data'}->close();\n}\n`
         : ''),
@@ -659,7 +700,7 @@ function readmeExamples(c: Contract, target: 'node' | 'php'): string {
           target === 'node' && index > 0 ? op.resource + pascal(op.method) + 'Result' : 'result';
         const key =
           index === 0 ? 'idempotencyKey' : op.resource + pascal(op.method) + 'IdempotencyKey';
-        const { fields, requestOption, keySetup } = exampleKey(
+        const { fields, omitFields, requestOption, keySetup } = exampleKey(
           op,
           target,
           key,
@@ -670,6 +711,7 @@ function readmeExamples(c: Contract, target: 'node' | 'php'): string {
           client,
           result,
           fields,
+          omitFields,
           requestOption,
           qualifiedPhp: index > 0,
         });
@@ -709,11 +751,13 @@ function readmeExamples(c: Contract, target: 'node' | 'php'): string {
 function convenienceReference(c: Contract, op: Operation, target: 'node' | 'php'): string {
   const parts = exampleParts(c, op, target);
   const input = exampleInput(op, c.definitions ?? {});
-  const source = publicArguments(op, input, target);
+  const key = exampleKey(op, target, 'idempotencyKey', false, c.definitions ?? {});
+  const source = publicArguments(op, input, target, key, false, true);
+  const setup = parts.setup + key.keySetup;
   const call = (method: string, options: string) =>
     target === 'node'
-      ? `client.${op.resource}.${method}(${source}${source ? ', ' : ''}{ ${options} })`
-      : `$client->${op.resource}->${method}(${source}${source ? ', ' : ''}new RequestOptions(${options}))`;
+      ? `client.${op.resource}.${method}(${source}${source ? ', ' : ''}{ ${[key.requestOption, options].filter(Boolean).join(', ')} })`
+      : `$client->${op.resource}->${method}(${source}${source ? ', ' : ''}new RequestOptions(${[key.requestOption, options].filter(Boolean).join(', ')}))`;
   const examples: string[] = [];
   const payload = op.response?.return === 'payload';
   const access = (variable: string, path: string[]) =>
@@ -747,7 +791,7 @@ function convenienceReference(c: Contract, op: Operation, target: 'node' | 'php'
           ? `for await (const ${value} of ${invocation}) {\n  console.log(${pageValue});\n${suffix === 'PagesWithResponse' ? '  console.log(page.meta.requestId);\n' : ''}}\n`
           : `foreach (${invocation} as $${value}) {\n  // Process ${pageValue} before requesting the next page.\n${suffix === 'PagesWithResponse' ? "  echo $page->meta['requestId'] ?? '';\n" : ''}}\n`;
       examples.push(
-        `#### ${op.resource}.${op.method}${suffix}\n\n${suffix === 'Items' ? 'Iterate individual values across pages.' : suffix === 'PagesWithResponse' ? 'Iterate complete page bodies with HTTP metadata and raw access.' : payload ? 'Iterate page payloads, using the same return shape as the base method.' : 'Iterate page Results, including HTTP metadata.'} Iteration is lazy; each page request has its own deadline, excluding time spent processing yielded values.\n\n\`\`\`${target === 'node' ? 'typescript' : 'php'}\n${exampleImports(c, target, parts.symbols, false)}${parts.setup}${loop}${parts.close}\`\`\`\n\n`,
+        `#### ${op.resource}.${op.method}${suffix}\n\n${suffix === 'Items' ? 'Iterate individual values across pages.' : suffix === 'PagesWithResponse' ? 'Iterate complete page bodies with HTTP metadata and raw access.' : payload ? 'Iterate page payloads, using the same return shape as the base method.' : 'Iterate page Results, including HTTP metadata.'} Iteration is lazy; each page request has its own deadline, excluding time spent processing yielded values.\n\n\`\`\`${target === 'node' ? 'typescript' : 'php'}\n${exampleImports(c, target, parts.symbols, false)}${setup}${loop}${parts.close}\`\`\`\n\n`,
       );
     }
   }
@@ -755,12 +799,12 @@ function convenienceReference(c: Contract, op: Operation, target: 'node' | 'php'
     const invocation = call(op.method + 'Wait', 'deadlineMs: 60000');
     const output = payload ? exampleResult(op, c.definitions ?? {}, target) : '';
     examples.push(
-      `#### ${op.resource}.${op.method}Wait\n\nWait for ${op.polling.state}: success ${op.polling.success.join(', ')}; failure ${op.polling.failure.join(', ')}. ${payload ? 'Returns the same payload as the base method. ' : ''}Unknown states keep waiting until the deadline. Cancellation stops waiting, not the remote job.\n\n\`\`\`${target === 'node' ? 'typescript' : 'php'}\n${exampleImports(c, target, parts.symbols, false)}${parts.setup}${target === 'node' ? `const result = await ${invocation};\n${payload ? output || 'console.log(result);\n' : 'console.log(result.meta.requestId);\n'}` : `$result = ${invocation};\n${payload ? output || '// $result is the completed payload.\n' : "echo $result->meta['requestId'] ?? '';\n"}`}${parts.close}\`\`\`\n\n`,
+      `#### ${op.resource}.${op.method}Wait\n\nWait for ${op.polling.state}: success ${op.polling.success.join(', ')}; failure ${op.polling.failure.join(', ')}. ${payload ? 'Returns the same payload as the base method. ' : ''}Unknown states keep waiting until the deadline. Cancellation stops waiting, not the remote job.\n\n\`\`\`${target === 'node' ? 'typescript' : 'php'}\n${exampleImports(c, target, parts.symbols, false)}${setup}${target === 'node' ? `const result = await ${invocation};\n${payload ? output || 'console.log(result);\n' : 'console.log(result.meta.requestId);\n'}` : `$result = ${invocation};\n${payload ? output || '// $result is the completed payload.\n' : "echo $result->meta['requestId'] ?? '';\n"}`}${parts.close}\`\`\`\n\n`,
     );
     if (payload) {
       const full = call(op.method + 'WaitWithResponse', 'deadlineMs: 60000');
       examples.push(
-        `#### ${op.resource}.${op.method}WaitWithResponse\n\nWait using the same terminal states, then return the complete body, HTTP metadata and raw response.\n\n\`\`\`${target === 'node' ? 'typescript' : 'php'}\n${exampleImports(c, target, parts.symbols, false)}${parts.setup}${target === 'node' ? `const response = await ${full};\nconsole.log(response.body, response.meta.requestId);\n` : `$response = ${full};\necho $response->meta['requestId'] ?? '';\n// $response->body is the complete decoded body.\n`}${parts.close}\`\`\`\n\n`,
+        `#### ${op.resource}.${op.method}WaitWithResponse\n\nWait using the same terminal states, then return the complete body, HTTP metadata and raw response.\n\n\`\`\`${target === 'node' ? 'typescript' : 'php'}\n${exampleImports(c, target, parts.symbols, false)}${setup}${target === 'node' ? `const response = await ${full};\nconsole.log(response.body, response.meta.requestId);\n` : `$response = ${full};\necho $response->meta['requestId'] ?? '';\n// $response->body is the complete decoded body.\n`}${parts.close}\`\`\`\n\n`,
       );
     }
   }
@@ -772,6 +816,7 @@ function recoveryReference(c: Contract, target: 'node' | 'php'): string {
   const key = exampleKey(op, target, 'idempotencyKey', false, c.definitions ?? {});
   const parts = exampleParts(c, op, target, {
     fields: key.fields,
+    omitFields: key.omitFields,
     requestOption: [key.requestOption, 'maxAttempts: 1'].filter(Boolean).join(', '),
   });
   const setup =
@@ -1462,10 +1507,25 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
   if (hasPayloadReturns)
     for (const target of targets) {
       const op = c.operations.find((op) => payloadReturns[op.id])!;
+      const key = exampleKey(op, target, 'idempotencyKey', false, c.definitions ?? {});
+      const source = publicArguments(
+        op,
+        exampleInput(op, c.definitions ?? {}),
+        target,
+        key,
+        false,
+        Boolean(key.requestOption),
+      );
+      const args =
+        source +
+        (key.requestOption
+          ? `${source ? ', ' : ''}${target === 'node' ? `{ ${key.requestOption} }` : `new RequestOptions(${key.requestOption})`}`
+          : '');
       const call =
-        target === 'node'
-          ? `const response = await client.${op.resource}.${op.method}WithResponse(${publicArguments(op, exampleInput(op, c.definitions ?? {}), 'node')});\nconsole.log(response.body, response.meta.requestId);`
-          : `$response = $client->${op.resource}->${op.method}WithResponse(${publicArguments(op, exampleInput(op, c.definitions ?? {}), 'php')});\necho $response->meta['requestId'] ?? '';\n// $response->body is the complete decoded body.`;
+        key.keySetup +
+        (target === 'node'
+          ? `const response = await client.${op.resource}.${op.method}WithResponse(${args});\nconsole.log(response.body, response.meta.requestId);`
+          : `$response = $client->${op.resource}->${op.method}WithResponse(${args});\necho $response->meta['requestId'] ?? '';\n// $response->body is the complete decoded body.`);
       const guide = `## Response return modes\n\nPayload-mode methods return the decoded body, or their explicitly configured payload path, directly. Their WithResponse companions return SdkResponse with body, meta and raw, without unwrapping. Each invocation makes its own request; choose one form per action. Result-mode operations keep their existing data/meta/raw envelope. Pages and Wait follow the base method return mode: payload values in payload mode, full Results in result mode. Payload-mode PagesWithResponse and WaitWithResponse expose complete bodies, metadata and raw access. Items helpers yield individual items; pagination and polling paths still address the original body.\n\n\`\`\`${target === 'node' ? 'typescript' : 'php'}\n${call}\n\`\`\`\n\n`;
       files.set(
         `${target}/RUNTIME.md`,
