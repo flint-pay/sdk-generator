@@ -1,6 +1,6 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -10,6 +10,7 @@ import { compileCodec, assertCodecPlan } from '../dist/codec-plan.js';
 import { executeCodec, serialize, ExactNumber, Model } from '../dist/runtime.js';
 import { compileSdkContract } from '../dist/target-plan.js';
 import { compareCompiledContracts } from '../dist/compiled-compatibility.js';
+import { schemaNotes } from '../dist/schema-documentation.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'sdk-value-representations-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
@@ -18,12 +19,16 @@ const fields = {
   receipt_email: { type: 'string' },
   status: { type: 'string', enum: ['succeeded'] },
   latitude: { type: 'number' },
+  float_number: { type: 'number', format: 'float' },
   numeric_enum: { type: 'number', enum: [1] },
   numeric_const: { type: 'number', const: 0.25 },
   child: { $ref: '#/components/schemas/Value' },
   change_percent: { type: 'number', format: 'double' },
   decimal: { type: 'number', format: 'decimal' },
   large: { type: 'integer', format: 'int64' },
+  unsigned: { type: 'integer', format: 'uint64' },
+  nullable_number: { type: ['number', 'null'] },
+  nullable_decimal: { type: ['number', 'null'], format: 'decimal' },
   at: { $ref: '#/components/schemas/Timestamp' },
   dates: { type: 'array', items: date },
   times: { type: 'object', additionalProperties: date },
@@ -86,7 +91,7 @@ generate(contract, out);
 const sdk = await import(pathToFileURL(join(out, 'node/index.js')).href);
 const stamp = '2026-09-28T16:34:56.789Z';
 const wire =
-  '{"latitude":42.125,"change_percent":-0.25,"decimal":1.00000000000000000001,"large":9007199254740993,"at":"2026-09-28T16:34:56.789Z","dates":["2026-09-28T16:34:56.789Z"],"times":{"sent":"2026-09-28T16:34:56.789Z"},"choice":"2026-09-28T16:34:56.789Z","numeric_choice":0.125}';
+  '{"latitude":42.125,"float_number":0.5,"change_percent":-0.25,"decimal":1.00000000000000000001,"large":9007199254740993,"unsigned":18446744073709551615,"nullable_number":0.125,"nullable_decimal":1.00000000000000000001,"at":"2026-09-28T16:34:56.789Z","dates":["2026-09-28T16:34:56.789Z"],"times":{"sent":"2026-09-28T16:34:56.789Z"},"choice":"2026-09-28T16:34:56.789Z","numeric_choice":0.125}';
 function php(source) {
   const result = spawnSync(
     'php',
@@ -102,6 +107,62 @@ function php(source) {
   return result.stdout;
 }
 
+test('numeric hover and model reference guidance follow the declared value representation', () => {
+  for (const type of ['number', ['number'], ['number', 'null']]) {
+    for (const format of [undefined, 'float', 'double']) {
+      const s = { type, ...(format ? { format } : {}) };
+      assert.doesNotMatch(schemaNotes(s), /exact numeric string|ExactNumber/);
+    }
+  }
+  for (const [type, format] of [
+    ['number', 'decimal'],
+    ['integer', 'int64'],
+    ['integer', 'uint64'],
+  ]) {
+    for (const representation of [type, [type], [type, 'null']]) {
+      const s = { type: representation, format };
+      assert.match(schemaNotes(s), /Use an exact numeric string, not a floating-point number\./);
+      assert.match(
+        schemaNotes({ ...s, 'x-sdk-number-input': 'explicit' }),
+        /Use ExactNumber for an exact JSON number\./,
+      );
+    }
+  }
+  const input = readFileSync(join(out, 'node/declarations/ValueInput.d.ts'), 'utf8');
+  assert.match(input, /"latitude"\?: number;/);
+  assert.match(input, /\/\*\* Format: float\. \*\/ "float_number"\?: number;/);
+  assert.match(input, /\/\*\* Format: double\. \*\/ "change_percent"\?: number;/);
+  assert.match(input, /"nullable_number"\?: number \| null;/);
+  assert.doesNotMatch(
+    input,
+    /\/\*\* [^*]*exact numeric[^*]*\*\/ "(?:latitude|float_number|change_percent|nullable_number)"/,
+  );
+  for (const field of ['decimal', 'large', 'unsigned', 'nullable_decimal'])
+    assert.match(
+      input,
+      new RegExp(
+        '/\\*\\* Use an exact numeric string, not a floating-point number\\.[^*]*\\*/ "' +
+          field +
+          '"\\?: string',
+      ),
+    );
+  for (const target of ['node', 'php']) {
+    const docs = readFileSync(join(out, target, 'MODELS.md'), 'utf8');
+    for (const field of ['latitude', 'float_number', 'change_percent', 'nullable_number']) {
+      const row = docs.split('\n').find((line) => line.startsWith('| `' + field + '` |'));
+      assert.ok(row, target + ': ' + field);
+      assert.match(row, /\| number(?: or null)? \|/);
+      assert.doesNotMatch(row, /exact numeric string|ExactNumber/);
+    }
+    for (const field of ['decimal', 'large', 'unsigned', 'nullable_decimal']) {
+      const row = docs.split('\n').find((line) => line.startsWith('| `' + field + '` |'));
+      assert.ok(row, target + ': ' + field);
+      assert.match(row, /\| exact numeric string(?: or null)? \|/);
+      assert.match(row, /Use an exact numeric string, not a floating-point number\./);
+    }
+  }
+});
+
 test('generated clients encode native numbers and dates and retain exact formats', async () => {
   const nativeDate = new Date('2026-09-28T12:34:56.789-04:00');
   assert.equal(
@@ -110,9 +171,13 @@ test('generated clients encode native numbers and dates and retain exact formats
   );
   const input = {
     latitude: 42.125,
+    float_number: 0.5,
     change_percent: -0.25,
     decimal: '1.00000000000000000001',
     large: '9007199254740993',
+    unsigned: '18446744073709551615',
+    nullable_number: 0.125,
+    nullable_decimal: '1.00000000000000000001',
     at: nativeDate,
     dates: [nativeDate],
     times: { sent: nativeDate },
@@ -133,9 +198,13 @@ test('generated clients encode native numbers and dates and retain exact formats
   for (const body of [input, sdk.makeValue(input)]) {
     const result = await client.api.save({ body, at: nativeDate, latitude: 42.125 });
     assert.equal(result.data.latitude, 42.125);
+    assert.equal(result.data.float_number, 0.5);
     assert.equal(result.data.change_percent, -0.25);
     assert.equal(result.data.decimal, '1.00000000000000000001');
     assert.equal(result.data.large, '9007199254740993');
+    assert.equal(result.data.unsigned, '18446744073709551615');
+    assert.equal(result.data.nullable_number, 0.125);
+    assert.equal(result.data.nullable_decimal, '1.00000000000000000001');
     assert.equal(result.data.at, stamp);
     assert.equal(result.data.future, true);
   }
@@ -146,11 +215,12 @@ test('generated clients encode native numbers and dates and retain exact formats
     php(String.raw`
 use Example\Values\{Client,ClientOptions,ValueInput,ApiSaveInput,TimestampInput};
 $d=new DateTime('2026-09-28T12:34:56.789-04:00');
-$input=['latitude'=>42.125,'change_percent'=>-0.25,'decimal'=>'1.00000000000000000001','large'=>'9007199254740993','at'=>$d,'dates'=>[$d],'times'=>['sent'=>$d],'choice'=>$d,'numeric_choice'=>0.125];
+$input=['latitude'=>42.125,'float_number'=>0.5,'change_percent'=>-0.25,'decimal'=>'1.00000000000000000001','large'=>'9007199254740993','unsigned'=>'18446744073709551615','nullable_number'=>0.125,'nullable_decimal'=>'1.00000000000000000001','at'=>$d,'dates'=>[$d],'times'=>['sent'=>$d],'choice'=>$d,'numeric_choice'=>0.125];
 $c=new Client(new ClientOptions('https://example.invalid',transport:function($r){parse_str(parse_url($r['url'],PHP_URL_QUERY),$q);if($q['at']!=='2026-09-28T16:34:56.789Z'||$q['latitude']!=='42.125')exit(6);echo $r['body']."\n";return ['status'=>200,'headers'=>[],'body'=>substr($r['body'],0,-1).',"future":true}'];}));
 foreach ([$input,new ValueInput($input)] as $body) {
  $r=$c->api->save(new ApiSaveInput(['body'=>$body,'at'=>$d,'latitude'=>42.125]));
  if($r->data->latitude!==42.125 || $r->data->change_percent!==-0.25 || $r->data->at!=='2026-09-28T16:34:56.789Z' || $r->data->future!==true || $r->data->decimal!=='1.00000000000000000001' || $r->data->large!=='9007199254740993') exit(2);
+ if($r->data->float_number!==0.5 || $r->data->unsigned!=='18446744073709551615' || $r->data->nullable_number!==0.125 || $r->data->nullable_decimal!=='1.00000000000000000001') exit(5);
 }
 if($d->format('P')!=='-04:00') exit(3);
 if((new TimestampInput($d))->jsonSerialize()!=='2026-09-28T16:34:56.789Z') exit(4);
@@ -170,6 +240,14 @@ client.api.save({body:{receipt_email:'demo@example.invalid', latitude:42.125, at
 new ScopedClient({baseUrl:'https://example.invalid'}).api.save({body:{at:new Date()}});
 makeTimestamp(new Date());
 makeValue({composed_date:new Date(), numeric_enum:1, numeric_const:0.25, child:{at:new Date()}});
+makeValue({float_number:0.5, change_percent:-0.25, unsigned:'18446744073709551615', nullable_number:0.125, nullable_decimal:'1.00000000000000000001'});
+makeValue({nullable_number:null, nullable_decimal:null});
+// @ts-expect-error float and double formats use native numbers
+makeValue({float_number:'0.5', change_percent:'-0.25'});
+// @ts-expect-error nullable native numbers do not accept numeric strings
+makeValue({nullable_number:'0.125'});
+// @ts-expect-error exact integers and decimals use numeric strings
+makeValue({unsigned:1, nullable_decimal:0.125});
 // @ts-expect-error native numeric enums use numeric literals
 makeValue({numeric_enum:'1'});
 // @ts-expect-error native numeric constants use numeric literals
@@ -311,7 +389,14 @@ test('invalid native inputs stop dispatch; native response overflow is a protoco
       return new Response(raw);
     },
   });
-  for (const body of [{ latitude: '1.25' }, { latitude: Infinity }, { at: new Date(NaN) }])
+  for (const body of [
+    { latitude: '1.25' },
+    { float_number: '0.5' },
+    { change_percent: '-0.25' },
+    { nullable_number: '0.125' },
+    { latitude: Infinity },
+    { at: new Date(NaN) },
+  ])
     await assert.rejects(client.api.save({ body }), { kind: 'validation' });
   assert.equal(calls, 0);
   await assert.rejects(client.api.save({ body: {} }), { kind: 'protocol' });
@@ -324,7 +409,7 @@ test('invalid native inputs stop dispatch; native response overflow is a protoco
 use Example\Values\{Client,ClientOptions,ApiSaveInput,SdkError};
 $calls=0;
 $c=new Client(new ClientOptions('https://example.invalid',transport:function()use(&$calls){$calls++;return ['status'=>200,'headers'=>[],'body'=>'{"latitude":1e999}'];}));
-foreach (['1.25',INF] as $bad) {try {$c->api->save(new ApiSaveInput(['body'=>['latitude'=>$bad]]));exit(2);}catch(SdkError $e){if($e->kind!=='validation')throw $e;}}
+foreach ([['latitude'=>'1.25'],['float_number'=>'0.5'],['change_percent'=>'-0.25'],['nullable_number'=>'0.125'],['latitude'=>INF]] as $body) {try {$c->api->save(new ApiSaveInput(['body'=>$body]));exit(2);}catch(SdkError $e){if($e->kind!=='validation')throw $e;}}
 if($calls!==0)exit(3);
 try {$c->api->save(new ApiSaveInput(['body'=>[]]));exit(4);}catch(SdkError $e){echo $e->kind;}
 `),
