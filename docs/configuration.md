@@ -38,7 +38,7 @@ Request bodies support `application/json` and `application/merge-patch+json`. Wh
 
 GET/HEAD request bodies are rejected when Node is a selected target because its built-in fetch transport cannot send them.
 
-HTTP parameters require an explicit non-null scalar type or a supported scalar array. References and conjunctive schemas may supply that type and add constraints. An empty schema or an enum without a type is insufficient for parameter encoding and fails diagnosis; declare the intended type. Typeless schemas remain supported in JSON bodies and models.
+HTTP parameters require an explicit non-null scalar type, a supported scalar array, or a scalar-or-array union with the same scalar type. References and conjunctive schemas may supply that type and add constraints. An empty schema or an enum without a type is insufficient for parameter encoding and fails diagnosis; declare the intended type. Typeless schemas remain supported in JSON bodies and models.
 
 Package metadata is required only for selected targets. `targets` defaults to both. Namespace segments and public names are validated; collisions and reserved identifiers fail with source locations. `license` changes distribution metadata only and must accurately describe the provider's package; bundled Apache-2.0 code and notices remain included. PHP-compatible prerelease versions use `alpha`, `beta`, or `rc`, optionally with a numeric suffix, such as `1.2.0-beta.1`.
 

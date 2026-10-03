@@ -1031,3 +1031,76 @@ test('PHP variant reassignment and additions widen concrete types while Node-onl
   emit(f);
   assert.equal(prepareRelease(f.out, join(f.dir, 'major')).version, '2.0.0');
 });
+
+test('scalar-or-array query filters retain both input shapes in Node and PHP', async () => {
+  for (const keyword of ['anyOf', 'oneOf']) {
+    const f = fixture('scalar-array-' + keyword, {
+      get: {
+        operationId: 'read',
+        parameters: [
+          {
+            in: 'query',
+            name: 'status',
+            explode: true,
+            schema: {
+              [keyword]: [
+                { type: 'string', enum: ['paid', 'unpaid'] },
+                { type: 'array', items: { type: 'string', enum: ['paid', 'unpaid'] } },
+              ],
+            },
+          },
+        ],
+        responses: { 204: { description: 'Empty' } },
+      },
+    });
+    emit(f);
+    const path = join(f.dir, 'http.json');
+    writeFileSync(
+      path,
+      JSON.stringify([
+        {
+          name: 'scalar',
+          operation: 'read',
+          input: { status: 'paid' },
+          expected: { method: 'GET', path: '/v1/values?status=paid' },
+          responses: [{ status: 204 }],
+          empty: true,
+        },
+        {
+          name: 'array',
+          operation: 'read',
+          input: { status: ['paid', 'unpaid'] },
+          expected: { method: 'GET', path: '/v1/values?status=paid&status=unpaid' },
+          responses: [{ status: 204 }],
+          empty: true,
+        },
+        ...[null, { invalid: true }, [1], 'other'].map((status, i) => ({
+          name: 'invalid' + i,
+          operation: 'read',
+          input: { status },
+          responses: [],
+          error: { kind: 'validation' },
+          attempts: 0,
+        })),
+      ]),
+    );
+    assert.deepEqual(
+      (await validateFixtures(f.out, path)).map((r) => r.scenarios),
+      [6, 6],
+    );
+  }
+  for (const branches of [
+    [{ type: 'string' }, { type: 'array', items: { type: 'integer' } }],
+    [{ type: 'string' }, { type: 'integer' }],
+    [{ type: 'string' }, { type: 'null' }],
+  ]) {
+    const f = fixture('invalid-alternative-' + JSON.stringify(branches), {
+      get: {
+        operationId: 'read',
+        parameters: [{ in: 'query', name: 'status', schema: { anyOf: branches } }],
+        responses: { 204: { description: 'Empty' } },
+      },
+    });
+    assert.throws(() => load(f), /parameter/);
+  }
+});

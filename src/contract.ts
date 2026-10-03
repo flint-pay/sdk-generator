@@ -334,6 +334,23 @@ function hasType(s: Schema, type: string): boolean {
 // Parameter serialization requires one explicit wire shape; conjuncts may add
 // constraints without repeating it. Alternatives remain outside this subset.
 function parameterType(s: Schema, p: string, item = false): string {
+  // A scalar and an array of the same scalar have one unambiguous form encoding.
+  const alternatives = s.anyOf ?? s.oneOf;
+  if (!item && alternatives?.length === 2 && s.type === undefined && !s.allOf && !s.not) {
+    const kinds = alternatives.map((branch) => parameterType(branch, p));
+    const arrayIndex = kinds.indexOf('array');
+    const scalarIndex = 1 - arrayIndex;
+    const array = alternatives[arrayIndex];
+    const scalar = kinds[scalarIndex];
+    if (
+      array?.items &&
+      scalar &&
+      ['string', 'integer', 'boolean'].includes(scalar) &&
+      parameterType(array.items, p + '/items', true) === scalar
+    )
+      return 'scalar_or_array';
+    fail(p, 'parameter alternatives require a scalar and an array of the same scalar');
+  }
   const shapes = (value: Schema): Schema[] => [value, ...(value.allOf ?? []).flatMap(shapes)];
   const parts = shapes(s);
   const declared = parts.flatMap((part) =>
