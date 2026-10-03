@@ -32,6 +32,8 @@ A capability must be declared to generate its public helper. Both targets implem
 
 Clients use the first declared top-level server as their default URL; explicit `baseUrl` overrides it. Only absolute HTTP/HTTPS server URLs without credentials, query, fragment or variables are supported. An absent/empty server list requires an explicit URL. HTTP always requires `allowInsecureHttp`, including localhost and anonymous APIs.
 
+Both targets compare HTTP/HTTPS origins without scheme or host case distinctions and normalize default ports. Nondefault ports remain distinct origins, including for pagination links. Explicit `allowedOrigins` entries must be canonical origin strings with default ports omitted. Error paths traverse JSON objects and array indices, and scalar values have no child fields. Error messages, provider codes and code-based retries require original JSON strings; exact numeric preservation in parsed details does not convert JSON numbers into valid messages or codes.
+
 ## Exact OpenAPI subset
 
 | Area           | Supported                                                                                                                                                                                                                               | Rejected or unsupported                                                                                                                         |

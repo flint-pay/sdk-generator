@@ -1,5 +1,11 @@
 # Releases and compatibility
 
+## Error parsing and origin normalization corrections
+
+Regenerated Node and PHP clients require original JSON strings for server messages, provider codes and code-based retries. Decimal, exponent and large-integer JSON numbers no longer become messages or codes or trigger string-code retries. Node error paths also stop at scalar strings and ignore runtime-only array properties, matching PHP. A path such as `code.0` cannot turn a scalar string into a one-character retry code, and `details.length` cannot expose an array length. Object members and array indices remain supported. Parsed error details and explicit raw bodies retain their existing representations.
+
+PHP now normalizes HTTP/HTTPS scheme capitalization before omitting default ports, matching Node origin checks. Equivalent pagination destinations such as `HTTPS://example.invalid:443` and `https://example.invalid` are accepted; nondefault ports remain distinct.
+
 ## Nullable response wrappers
 
 Simple `anyOf`/`oneOf` wrappers with one explicitly typed non-null branch and a plain null branch now expose typed nullable values. TypeScript nullable object fields support direct optional field access. PHP getters hydrate the existing component class, preserving its name; newly typed inline objects receive the usual owning-field class name. Unknown fields and enum members remain preserved, and genuinely polymorphic alternatives retain their fallback behavior.

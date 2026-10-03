@@ -1882,7 +1882,17 @@ export function modelFromCodec<T>(value: InputValue<T>, codec: CodecPlan): Model
 const field = (value: any, path: string): any =>
   path
     .split('.')
-    .reduce((v, key) => (v != null && Object.hasOwn(v, key) ? v[key] : undefined), value);
+    .reduce(
+      (v, key) =>
+        v !== null &&
+        typeof v === 'object' &&
+        !(v instanceof ParsedNumber) &&
+        (!Array.isArray(v) || /^(?:0|[1-9]\d*)$/.test(key)) &&
+        Object.hasOwn(v, key)
+          ? v[key]
+          : undefined,
+      value,
+    );
 const encoded = (s: string): string =>
   encodeURIComponent(s).replace(
     /[!'()*]/g,
@@ -2409,8 +2419,7 @@ class CompiledRuntime {
         let data: any;
         try {
           raw = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
-          data =
-            raw && !redirect ? parseJson(raw, response.ok || response.status === 304) : undefined;
+          data = raw && !redirect ? parseJson(raw, true) : undefined;
         } catch (cause) {
           if (response.ok)
             throw new SdkError(
@@ -2523,18 +2532,19 @@ class CompiledRuntime {
                   : response.status >= 500 && response.status < 600
                     ? 'server'
                     : 'api';
-        const code = field(data, this.contract.errors?.codePath ?? 'code');
-        const redacted = redactCodec(
+        const code: unknown = field(data, this.contract.errors?.codePath ?? 'code');
+        const originalMessage: unknown = field(
           data,
+          this.contract.errors?.messagePath ?? 'message',
+        );
+        // Text fields use their wire kinds; public details keep exact numeric tokens as strings.
+        const redacted = redactCodec(
+          plainNumbers(data),
           (op.responses[String(response.status)] ?? op.responses.default)?.codec,
           this.options.redactFields,
           this.definitions(),
         );
         const publicCode: unknown = field(redacted, this.contract.errors?.codePath ?? 'code');
-        const originalMessage: unknown = field(
-          data,
-          this.contract.errors?.messagePath ?? 'message',
-        );
         const message: unknown = field(redacted, this.contract.errors?.messagePath ?? 'message');
         const eligible =
           safe &&

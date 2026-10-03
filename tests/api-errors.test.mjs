@@ -390,3 +390,292 @@ echo json_encode($rows);
   assert.equal(result.status, 0, result.stderr + result.stdout);
   assert.deepEqual(JSON.parse(result.stdout), expected);
 });
+
+for (const redacted of [false, true]) {
+  test(`numeric error tokens cannot become messages or retry codes (${redacted ? 'redacted configured' : 'default'} paths) in both targets`, async (t) => {
+    const tokens = ['1', '1.5', '9007199254750393', '1.0', '1e3', '9.007199254750393e15', '1e400'];
+    const f = fixture(
+      t,
+      redacted
+        ? {
+            messagePath: 'error.privateMessage',
+            codePath: 'error.privateDetail',
+            detailsPath: 'error',
+          }
+        : undefined,
+      {
+        readValue: {
+          retry: {
+            maxAttempts: 2,
+            statuses: [],
+            errors: [{ status: 503, codes: tokens }],
+            transport: false,
+            baseDelayMs: 0,
+          },
+        },
+      },
+    );
+    generate(loadContract(f.source, f.config), f.output);
+    const { Client } = await import(pathToFileURL(join(f.output, 'node/index.js')));
+    const wireCases = tokens.flatMap((token) =>
+      [false, true].map((string) => {
+        const value = string ? JSON.stringify(token) : token;
+        const body = redacted
+          ? `{"error":{"privateMessage":${value},"privateDetail":${value},"fields":{"fraction":1.5,"wide":9007199254750393,"exponent":1e400}}}`
+          : `{"message":${value},"code":${value},"fields":{"fraction":1.5,"wide":9007199254750393,"exponent":1e400}}`;
+        const publicValue = redacted ? '[REDACTED]' : string || token !== '1' ? token : 1;
+        return {
+          body,
+          expected: {
+            attempts: string ? 2 : 1,
+            message: string ? (redacted ? '[REDACTED]' : token) : 'API returned HTTP 503',
+            code: string ? (redacted ? '[REDACTED]' : token) : null,
+            retryAllowed: string,
+            details: {
+              [redacted ? 'privateMessage' : 'message']: publicValue,
+              [redacted ? 'privateDetail' : 'code']: publicValue,
+              fields: { fraction: '1.5', wide: '9007199254750393', exponent: '1e400' },
+            },
+            raw: body,
+          },
+        };
+      }),
+    );
+    for (const { body, expected } of wireCases) {
+      let attempts = 0;
+      const client = new Client({
+        baseUrl: 'https://example.invalid',
+        transport: async () => {
+          attempts++;
+          return new Response(body, { status: 503 });
+        },
+      });
+      await assert.rejects(client.api.readValue(), (error) => {
+        assert.deepEqual(
+          {
+            attempts,
+            message: error.message,
+            code: error.code ?? null,
+            retryAllowed: error.retryAllowed,
+            details: error.details,
+            raw: error.raw,
+          },
+          expected,
+        );
+        return true;
+      });
+    }
+    const result = spawnSync(
+      'php',
+      [
+        '-r',
+        String.raw`
+require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';$rows=[];
+foreach(json_decode(stream_get_contents(STDIN),true) as $body){
+  $attempts=0;
+  $c=new Example\Errors\Client(new Example\Errors\ClientOptions('https://example.invalid',transport:function($r)use(&$attempts,$body){$attempts++;return ['status'=>503,'headers'=>[],'body'=>$body];}));
+  try{$c->api->readValue();exit(1);}catch(Example\Errors\SdkError $e){$rows[]=['attempts'=>$attempts,'message'=>$e->getMessage(),'code'=>$e->errorCode,'retryAllowed'=>$e->retryAllowed,'details'=>$e->details,'raw'=>$e->raw];}
+}
+echo json_encode($rows);
+`,
+        join(f.output, 'php'),
+      ],
+      { encoding: 'utf8', input: JSON.stringify(wireCases.map(({ body }) => body)) },
+    );
+    assert.equal(result.status, 0, result.stderr + result.stdout);
+    assert.deepEqual(
+      JSON.parse(result.stdout),
+      wireCases.map(({ expected }) => expected),
+    );
+  });
+}
+
+test('error field paths cannot traverse internal numeric token wrappers in either target', async (t) => {
+  const f = fixture(
+    t,
+    { messagePath: 'message.value', codePath: 'code.value' },
+    {
+      readValue: {
+        retry: {
+          maxAttempts: 2,
+          statuses: [],
+          errors: [{ status: 503, codes: ['1.5'] }],
+          transport: false,
+          baseDelayMs: 0,
+        },
+      },
+    },
+  );
+  generate(loadContract(f.source, f.config), f.output);
+  const { Client } = await import(pathToFileURL(join(f.output, 'node/index.js')));
+  const body = '{"message":1.5,"code":1.5}';
+  let attempts = 0;
+  const client = new Client({
+    baseUrl: 'https://example.invalid',
+    transport: async () => {
+      attempts++;
+      return new Response(body, { status: 503 });
+    },
+  });
+  await assert.rejects(client.api.readValue(), (error) => {
+    assert.equal(error.message, 'API returned HTTP 503');
+    assert.equal(error.code, undefined);
+    assert.equal(error.retryAllowed, false);
+    assert.equal(attempts, 1);
+    return true;
+  });
+  const result = spawnSync(
+    'php',
+    [
+      '-r',
+      String.raw`
+require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';$attempts=0;$body=stream_get_contents(STDIN);
+$c=new Example\Errors\Client(new Example\Errors\ClientOptions('https://example.invalid',transport:function($r)use(&$attempts,$body){$attempts++;return ['status'=>503,'headers'=>[],'body'=>$body];}));
+try{$c->api->readValue();exit(1);}catch(Example\Errors\SdkError $e){echo json_encode(['message'=>$e->getMessage(),'code'=>$e->errorCode,'retryAllowed'=>$e->retryAllowed,'attempts'=>$attempts]);}
+`,
+      join(f.output, 'php'),
+    ],
+    { encoding: 'utf8', input: body },
+  );
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.deepEqual(JSON.parse(result.stdout), {
+    message: 'API returned HTTP 503',
+    code: null,
+    retryAllowed: false,
+    attempts: 1,
+  });
+});
+
+test('error field paths traverse JSON containers without indexing scalar strings in either target', async (t) => {
+  const f = fixture(
+    t,
+    { messagePath: 'message.0', codePath: 'code.0' },
+    {
+      readValue: {
+        retry: {
+          maxAttempts: 2,
+          statuses: [],
+          errors: [{ status: 503, codes: ['1'] }],
+          transport: false,
+          baseDelayMs: 0,
+        },
+      },
+    },
+  );
+  generate(loadContract(f.source, f.config), f.output);
+  const { Client } = await import(pathToFileURL(join(f.output, 'node/index.js')));
+  const cases = [
+    { body: '{"message":"1.5","code":"1.5"}' },
+    { body: '{"message":1.5,"code":1.5}', details: { message: '1.5', code: '1.5' } },
+    { body: '{"message":["Array message"],"code":["1"]}', message: 'Array message' },
+    { body: '{"message":{"0":"Object message"},"code":{"0":"1"}}', message: 'Object message' },
+  ].flatMap((row) =>
+    [false, true].map((redacted) => ({
+      body: row.body,
+      redacted,
+      expected: {
+        attempts: row.message ? 2 : 1,
+        message: row.message && !redacted ? row.message : 'API returned HTTP 503',
+        code: row.message && !redacted ? '1' : null,
+        retryAllowed: !!row.message,
+        details: redacted
+          ? { message: '[REDACTED]', code: '[REDACTED]' }
+          : (row.details ?? JSON.parse(row.body)),
+        raw: row.body,
+      },
+    })),
+  );
+  for (const { body, redacted, expected } of cases) {
+    let attempts = 0;
+    const client = new Client({
+      baseUrl: 'https://example.invalid',
+      redactFields: redacted ? ['message', 'code'] : [],
+      transport: async () => {
+        attempts++;
+        return new Response(body, { status: 503 });
+      },
+    });
+    await assert.rejects(client.api.readValue(), (error) => {
+      assert.deepEqual(
+        {
+          attempts,
+          message: error.message,
+          code: error.code ?? null,
+          retryAllowed: error.retryAllowed,
+          details: error.details,
+          raw: error.raw,
+        },
+        expected,
+      );
+      return true;
+    });
+  }
+  const result = spawnSync(
+    'php',
+    [
+      '-r',
+      String.raw`
+require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';$rows=[];
+foreach(json_decode(stream_get_contents(STDIN),true) as $case){
+  $attempts=0;$body=$case['body'];
+  $c=new Example\Errors\Client(new Example\Errors\ClientOptions('https://example.invalid',redactFields:$case['redacted']?['message','code']:[],transport:function($r)use(&$attempts,$body){$attempts++;return ['status'=>503,'headers'=>[],'body'=>$body];}));
+  try{$c->api->readValue();exit(1);}catch(Example\Errors\SdkError $e){$rows[]=['attempts'=>$attempts,'message'=>$e->getMessage(),'code'=>$e->errorCode,'retryAllowed'=>$e->retryAllowed,'details'=>$e->details,'raw'=>$e->raw];}
+}
+echo json_encode($rows);
+`,
+      join(f.output, 'php'),
+    ],
+    { encoding: 'utf8', input: JSON.stringify(cases) },
+  );
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.deepEqual(
+    JSON.parse(result.stdout),
+    cases.map(({ expected }) => expected),
+  );
+});
+
+test('error detail paths cannot expose array length but retain JSON object members in both targets', async (t) => {
+  const f = fixture(t, { detailsPath: 'details.length' });
+  generate(loadContract(f.source, f.config), f.output);
+  const { Client } = await import(pathToFileURL(join(f.output, 'node/index.js')));
+  const cases = [
+    { body: '{"details":["first","second"]}', details: null },
+    { body: '{"details":"scalar"}', details: null },
+    { body: '{"details":{"length":"Declared detail"}}', details: 'Declared detail' },
+  ];
+  for (const { body, details } of cases) {
+    const client = new Client({
+      baseUrl: 'https://example.invalid',
+      maxAttempts: 1,
+      transport: async () => new Response(body, { status: 503 }),
+    });
+    await assert.rejects(client.api.readValue(), (error) => {
+      assert.equal(error.kind, 'server');
+      assert.equal(error.status, 503);
+      assert.equal(error.details ?? null, details);
+      assert.equal(error.raw, body);
+      return true;
+    });
+  }
+  const result = spawnSync(
+    'php',
+    [
+      '-r',
+      String.raw`
+require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';$rows=[];
+foreach(json_decode(stream_get_contents(STDIN),true) as $body){
+  $c=new Example\Errors\Client(new Example\Errors\ClientOptions('https://example.invalid',maxAttempts:1,transport:fn()=>['status'=>503,'headers'=>[],'body'=>$body]));
+  try{$c->api->readValue();exit(1);}catch(Example\Errors\SdkError $e){$rows[]=['kind'=>$e->kind,'status'=>$e->status,'details'=>$e->details,'raw'=>$e->raw];}
+}
+echo json_encode($rows);
+`,
+      join(f.output, 'php'),
+    ],
+    { encoding: 'utf8', input: JSON.stringify(cases.map(({ body }) => body)) },
+  );
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.deepEqual(
+    JSON.parse(result.stdout),
+    cases.map(({ body, details }) => ({ kind: 'server', status: 503, details, raw: body })),
+  );
+});

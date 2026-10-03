@@ -3441,11 +3441,14 @@ class Runtime
     private static function origin(string $url): string
     {
         $p = parse_url($url);
-        return strtolower(($p['scheme'] ?? '') . '://' . ($p['host'] ?? '')) .
+        $scheme = strtolower($p['scheme'] ?? '');
+        return $scheme .
+            '://' .
+            strtolower($p['host'] ?? '') .
             (isset($p['port']) &&
             !(
-                ($p['scheme'] === 'https' && $p['port'] === 443) ||
-                ($p['scheme'] === 'http' && $p['port'] === 80)
+                ($scheme === 'https' && $p['port'] === 443) ||
+                ($scheme === 'http' && $p['port'] === 80)
             )
                 ? ':' . $p['port']
                 : '');
@@ -4005,10 +4008,7 @@ class Runtime
                 $data = null;
                 try {
                     if ($raw !== '' && !$binary && !$redirect) {
-                        $data = Codec::parse(
-                            $raw,
-                            ($status >= 200 && $status < 300) || $status === 304,
-                        );
+                        $data = Codec::parse($raw, true);
                     }
                 } catch (\Throwable $cause) {
                     if ($status >= 200 && $status < 300) {
@@ -4156,8 +4156,13 @@ class Runtime
                     default => 'api',
                 };
                 $code = self::field($data, $this->contract['errors']['codePath'] ?? 'code');
-                $details = Codec::redactPlan(
+                $originalMessage = self::field(
                     $data,
+                    $this->contract['errors']['messagePath'] ?? 'message',
+                );
+                // Text fields use their wire kinds; public details keep exact numeric tokens as strings.
+                $details = Codec::redactPlan(
+                    Codec::plainNumbers($data),
                     $op['responses'][(string) $status]['codec'] ??
                         ($op['responses']['default']['codec'] ?? []),
                     $this->options->redactFields,
@@ -4165,10 +4170,6 @@ class Runtime
                 );
                 $message = self::field(
                     $details,
-                    $this->contract['errors']['messagePath'] ?? 'message',
-                );
-                $originalMessage = self::field(
-                    $data,
                     $this->contract['errors']['messagePath'] ?? 'message',
                 );
                 $publicCode = self::field(
@@ -4341,6 +4342,9 @@ class Runtime
     private static function field(mixed $value, string $path): mixed
     {
         foreach (explode('.', $path) as $key) {
+            if ($value instanceof ParsedNumber) {
+                return null;
+            }
             $value = is_array($value) ? $value[$key] ?? null : $value->{$key} ?? null;
         }
         return $value;
