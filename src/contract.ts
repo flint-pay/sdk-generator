@@ -1037,6 +1037,15 @@ function pointer(root: unknown, pointer: string, p: string): any {
   }
   return current;
 }
+/** Clone owned JSON containers while reusing immutable primitive values.
+ * structuredClone copies string storage too, multiplying large enum annotations
+ * each time a resolved response schema is instantiated. */
+function cloneJson(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(cloneJson);
+  return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, cloneJson(child)]));
+}
+
 export function loadContract(
   definitionPath: string,
   configPath: string,
@@ -1134,7 +1143,7 @@ export function loadContract(
     stack: { key: string; path: string }[] = [],
     context: Context = 'root',
   ): any {
-    if (context === 'literal') return structuredClone(value);
+    if (context === 'literal') return cloneJson(value);
     if (Array.isArray(value))
       return value.map((v, i) => deref(v, file, `${path}/${i}`, stack, context));
     if (!value || typeof value !== 'object') return value;
@@ -1250,7 +1259,7 @@ export function loadContract(
       const cached = resolved.get(cacheKey);
       if (cached) {
         for (const model of cached.models) references.push({ path, model });
-        return applySiblings(structuredClone(cached.value));
+        return applySiblings(cloneJson(cached.value));
       }
       const before = references.length;
       const result = deref(
@@ -1264,7 +1273,7 @@ export function loadContract(
         value: result,
         models: [...new Set(references.slice(before).map((ref) => ref.model))],
       });
-      return applySiblings(structuredClone(result));
+      return applySiblings(cloneJson(result));
     }
     const result = Object.fromEntries(
       Object.entries(value).map(([k, v]) => [
@@ -2856,6 +2865,11 @@ export function loadContract(
   // Resolution is finished. Do not retain expanded cached copies while the
   // owned contract is compacted and compiled.
   resolved.clear();
+  // Operations now own the schemas they consume. Drop the temporary OpenAPI
+  // paths before compaction replaces those schemas, so expanded response copies
+  // are collectible instead of remaining rooted through doc.paths/selectedPaths.
+  for (const path of Object.keys(selectedPaths)) delete selectedPaths[path];
+  streamSchemas.clear();
   if (config.schemaSharing === 'named') shareContractSchemas(contract);
   contract.hash = hash(stable(contract));
   return contract;
