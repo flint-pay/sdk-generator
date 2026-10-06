@@ -191,7 +191,7 @@ export function authenticationGuide(c: Contract): string {
 }
 export function operationGuidance(c: Contract, op: Operation): string {
   const { retry, replay } = compileRetry(op);
-  return (
+  const guidance =
     (op.response?.return === 'payload'
       ? `Returns ${op.response.payloadPath ? 'the payload at `' + cell(op.response.payloadPath) + '`' : 'the complete decoded body'} directly. Use \`${op.method}WithResponse\` for \`body\`, \`meta\` and \`raw\` without unwrapping.\n\n`
       : '') +
@@ -213,7 +213,6 @@ export function operationGuidance(c: Contract, op: Operation): string {
       : 'idempotencyKey is not supported on this operation. ') +
     (op.conditional
       ? `Use \`ifMatch\` to send the declared \`${op.conditional.header}\` header. `
-      : '') +
-    '\n\n'
-  );
+      : '');
+  return guidance.trimEnd() + '\n\n';
 }

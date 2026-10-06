@@ -540,6 +540,7 @@ test('operation references explain automatic keys and code-specific retries', ()
     assert.match(reference, /When no key is supplied, the SDK generates one for this call/);
     assert.match(reference, /Code-specific retries: HTTP 409 \(`in_progress`\)/);
     assert.match(reference, /Without an optional idempotency key, mutations send once/);
+    assert.doesNotMatch(reference, /[\t ]+\r?$/m);
   }
 });
 
