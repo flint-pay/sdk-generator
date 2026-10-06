@@ -1037,6 +1037,15 @@ function pointer(root: unknown, pointer: string, p: string): any {
   }
   return current;
 }
+/** Clone owned JSON containers while reusing immutable primitive values.
+ * structuredClone copies string storage too, multiplying large enum annotations
+ * each time a resolved response schema is instantiated. */
+function cloneJson(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(cloneJson);
+  return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, cloneJson(child)]));
+}
+
 export function loadContract(
   definitionPath: string,
   configPath: string,
@@ -1053,7 +1062,6 @@ export function loadContract(
   // Context follows the use site, including when the target is an external fragment.
   // Map keys and annotation values are data, never OpenAPI keywords.
   type Context = string;
-  type SchemaScope = 'independent' | 'composed';
   const childContext = (context: Context, key: string): Context => {
     if (context.startsWith('map:')) return context.slice(4);
     if (context === 'schema') {
@@ -1134,22 +1142,10 @@ export function loadContract(
     path: string,
     stack: { key: string; path: string }[] = [],
     context: Context = 'root',
-    inheritedSchemaScope: SchemaScope = 'independent',
   ): any {
-    if (context === 'literal') return structuredClone(value);
-    const schemaScope: SchemaScope =
-      inheritedSchemaScope === 'composed' ||
-      (context === 'schema' &&
-        value &&
-        typeof value === 'object' &&
-        (['allOf', 'anyOf', 'oneOf', 'not', 'contains', 'if', 'then', 'else'].some((key) =>
-          Object.hasOwn(value, key),
-        ) ||
-          (Object.hasOwn(value, '$ref') && Object.keys(value).some((key) => key !== '$ref'))))
-        ? 'composed'
-        : 'independent';
+    if (context === 'literal') return cloneJson(value);
     if (Array.isArray(value))
-      return value.map((v, i) => deref(v, file, `${path}/${i}`, stack, context, schemaScope));
+      return value.map((v, i) => deref(v, file, `${path}/${i}`, stack, context));
     if (!value || typeof value !== 'object') return value;
     if (context === 'schema' && !(raw.openapi.startsWith('3.0.') && '$ref' in value))
       for (const key of [
@@ -1178,7 +1174,7 @@ export function loadContract(
         if (context === 'schema') {
           if (!Object.keys(siblings).length) return result;
           record(result, path);
-          const local = deref(siblings, file, path, stack, context, schemaScope);
+          const local = deref(siblings, file, path, stack, context);
           if (local.allOf !== undefined && (!Array.isArray(local.allOf) || !local.allOf.length))
             fail(path + '/allOf', 'expected a nonempty schema array');
           for (const key of ['readOnly', 'writeOnly', 'x-sensitive'])
@@ -1236,14 +1232,6 @@ export function loadContract(
         references.push({ path, model: modelMatch[1]!.replace(/~1/g, '/').replace(/~0/g, '~') });
       const key = target + '#' + fragment;
       const cacheKey = context + ':' + key;
-      const cloneReference = (result: unknown): unknown => {
-        // Composition can normalize corresponding fields using another branch's
-        // representation. Those descendants must remain local to the use site.
-        const siblings = Object.keys(value).some((key) => key !== '$ref');
-        return context === 'schema' && schemaScope === 'independent' && !siblings
-          ? cloneResolved(result, context)
-          : structuredClone(result);
-      };
       const ancestor = stack.find((entry) => entry.key === cacheKey);
       if (ancestor) {
         if (
@@ -1271,7 +1259,7 @@ export function loadContract(
       const cached = resolved.get(cacheKey);
       if (cached) {
         for (const model of cached.models) references.push({ path, model });
-        return applySiblings(cloneReference(cached.value));
+        return applySiblings(cloneJson(cached.value));
       }
       const before = references.length;
       const result = deref(
@@ -1280,18 +1268,17 @@ export function loadContract(
         path,
         [...stack, { key: cacheKey, path }],
         context,
-        schemaScope,
       );
       resolved.set(cacheKey, {
         value: result,
         models: [...new Set(references.slice(before).map((ref) => ref.model))],
       });
-      return applySiblings(cloneReference(result));
+      return applySiblings(cloneJson(result));
     }
     const result = Object.fromEntries(
       Object.entries(value).map(([k, v]) => [
         k,
-        deref(v, file, `${path}/${k}`, stack, childContext(context, k), schemaScope),
+        deref(v, file, `${path}/${k}`, stack, childContext(context, k)),
       ]),
     );
     if (context === 'schema' && value.discriminator?.mapping !== undefined) {
@@ -1306,7 +1293,7 @@ export function loadContract(
         const ref = Object.hasOwn(load(file).components?.schemas ?? {}, target)
           ? '#/components/schemas/' + target.replaceAll('~', '~0').replaceAll('/', '~1')
           : target;
-        const resolvedTarget = deref({ $ref: ref }, file, location, stack, 'schema', schemaScope);
+        const resolvedTarget = deref({ $ref: ref }, file, location, stack, 'schema');
         const referenceKeys = (
           shape: Schema,
           source: string,
@@ -1354,28 +1341,6 @@ export function loadContract(
       result['x-sdk-discriminator-mapping'] = bindings;
     }
     return result;
-  }
-  function cloneResolved(value: unknown, context: Context): unknown {
-    if (context !== 'schema' || !value || typeof value !== 'object' || Array.isArray(value))
-      return structuredClone(value);
-    // Normalization may change same-instance conjuncts at a use site. Keep those
-    // owned by that use, while value-descending fields share the resolved DAG.
-    // Expanding those fields into copies multiplies common response schemas by
-    // every operation/status before named-schema sharing can compact them.
-    return Object.fromEntries(
-      Object.entries(value).map(([key, child]) => [
-        key,
-        key === 'properties' && child && typeof child === 'object' && !Array.isArray(child)
-          ? { ...child }
-          : ['items', 'additionalProperties'].includes(key)
-            ? child
-            : ['allOf', 'anyOf', 'oneOf'].includes(key) && Array.isArray(child)
-              ? child.map((branch) => cloneResolved(branch, context))
-              : ['not', 'contains', 'if', 'then', 'else'].includes(key)
-                ? cloneResolved(child, context)
-                : structuredClone(child),
-      ]),
-    );
   }
   const raw = load(resolve(definitionPath));
   if (!raw || typeof raw !== 'object' || Array.isArray(raw))
@@ -2900,6 +2865,11 @@ export function loadContract(
   // Resolution is finished. Do not retain expanded cached copies while the
   // owned contract is compacted and compiled.
   resolved.clear();
+  // Operations now own the schemas they consume. Drop the temporary OpenAPI
+  // paths before compaction replaces those schemas, so expanded response copies
+  // are collectible instead of remaining rooted through doc.paths/selectedPaths.
+  for (const path of Object.keys(selectedPaths)) delete selectedPaths[path];
+  streamSchemas.clear();
   if (config.schemaSharing === 'named') shareContractSchemas(contract);
   contract.hash = hash(stable(contract));
   return contract;
