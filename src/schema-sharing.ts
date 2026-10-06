@@ -25,11 +25,9 @@ function identities() {
 
 /** Share named schemas at value-descending edges; conjunction/tag policy stays at its use site. */
 export function shareContractSchemas(contract: Contract): void {
-  let identity = identities();
+  const identity = identities();
   const catalog = { ...contract.models, ...contract.definitions };
-  const names = new Map(
-    Object.entries(catalog).map(([name, schema]) => [identities()(schema), name]),
-  );
+  const names = new Map(Object.entries(catalog).map(([name, schema]) => [identity(schema), name]));
   const compact = (schema: Schema, nested = false): Schema => {
     const name = nested ? names.get(identity(schema)) : undefined;
     if (name && !schema['x-sdk-ref'])
@@ -54,9 +52,8 @@ export function shareContractSchemas(contract: Contract): void {
     return out;
   };
   const compactRoot = (schema: Schema): Schema => {
-    // A full export contains many independent expanded copies. Memoize within
-    // one root, allowing previous roots' fingerprint tables to be collected.
-    identity = identities();
+    // Resolution shares value-descending subgraphs. Weak keys let compacted
+    // roots be collected while fingerprints are reused by the remaining roots.
     return compact(schema);
   };
   contract.models = Object.fromEntries(
