@@ -44,10 +44,13 @@ export interface PhpEntity {
 export function phpRepresentations(
   models: Readonly<Record<string, Schema>>,
   definitions: Readonly<Record<string, Schema>>,
+  fieldClasses: Readonly<Record<string, Readonly<Record<string, string>>>> = {},
 ) {
   const entities = new Map<string, PhpEntity>();
   const building = new Set<string>();
   const activeSchemas = new Map<string, string>();
+  const appliedFieldClasses = new Set<string>();
+  type FieldClass = { name: string; path: string; field: string };
   // Reference-site annotations describe the containing field, not a different
   // component value. Nested annotations and all validation constraints remain.
   const identitySchema = (schema: Schema): Schema => {
@@ -75,6 +78,7 @@ export function phpRepresentations(
     seen = {
       schema: new WeakMap<object, WeakSet<object>>(),
       collection: new WeakMap<object, WeakSet<object>>(),
+      references: new WeakMap<object, object>(),
     },
     context: 'schema' | 'collection' | 'data' = 'schema',
   ): boolean => {
@@ -83,8 +87,18 @@ export function phpRepresentations(
     if (context === 'data') return stable(left) === stable(right);
     const pairs = seen[context];
     const resolve = (value: object): object => {
-      if (context === 'schema' && 'x-sdk-ref' in value && typeof value['x-sdk-ref'] === 'string')
-        return definitions[value['x-sdk-ref']] ?? value;
+      if (context === 'schema' && 'x-sdk-ref' in value && typeof value['x-sdk-ref'] === 'string') {
+        const target = definitions[value['x-sdk-ref']];
+        if (!target) return value;
+        const previous = seen.references.get(value);
+        if (previous) return previous;
+        // Nested reference annotations are part of the field's identity. In
+        // particular, resolving a ref must not erase direction or sensitivity.
+        const { 'x-sdk-ref': _ref, ...metadata } = value;
+        const resolved = Object.keys(metadata).length ? { ...target, ...metadata } : target;
+        seen.references.set(value, resolved);
+        return resolved;
+      }
       return value;
     };
     left = resolve(left);
@@ -171,10 +185,31 @@ export function phpRepresentations(
       const fields = Object.fromEntries(
         Object.entries(declaration.properties ?? {})
           .filter(([, child]) => !child.writeOnly)
-          .map(([key, child]) => [
-            key,
-            compile(child, name + pascalWords(key), owner + '.properties.' + key),
-          ]),
+          .map(([key, child]) => {
+            const customizations = Object.hasOwn(fieldClasses, name)
+              ? fieldClasses[name]
+              : undefined;
+            const pinned =
+              customizations && Object.hasOwn(customizations, key)
+                ? customizations[key]
+                : undefined;
+            return [
+              key,
+              compile(
+                child,
+                name + pascalWords(key),
+                owner + '.properties.' + key,
+                child,
+                pinned === undefined
+                  ? undefined
+                  : {
+                      name: pinned,
+                      path: 'config/phpFieldClasses/' + name + '/' + key,
+                      field: name + '.' + key,
+                    },
+              ),
+            ];
+          }),
       );
       const extra =
         typeof declaration.additionalProperties === 'object'
@@ -200,10 +235,19 @@ export function phpRepresentations(
     suggested: string,
     owner = suggested,
     identity = schema,
+    fieldClass?: FieldClass,
   ): PhpRepresentation {
+    const notEntity = (): never => {
+      if (!fieldClass) throw new Error('Missing PHP field class customization');
+      throw new Diagnostic(
+        fieldClass.path,
+        fieldClass.field + ' is not a single PHP response entity',
+      );
+    };
     const declaration = phpDeclaration(schema, definitions);
     const types = Array.isArray(declaration.type) ? declaration.type : [declaration.type];
-    if (types.includes('null') && types.length > 1)
+    if (types.includes('null') && types.length > 1) {
+      if (fieldClass && types.every((type) => type !== 'object' && type !== 'array')) notEntity();
       return {
         kind: 'nullable',
         value: types.every((type) => type !== 'object' && type !== 'array')
@@ -222,8 +266,10 @@ export function phpRepresentations(
               suggested,
               owner,
               identity,
+              fieldClass,
             ),
       };
+    }
     const branches = declaration.oneOf ?? declaration.anyOf;
     if (branches) {
       const nullableBranch = nullableAlternative(declaration);
@@ -233,9 +279,10 @@ export function phpRepresentations(
         const { oneOf: _one, anyOf: _any, ...base } = declaration;
         return {
           kind: 'nullable',
-          value: compile({ allOf: [base, branch] }, suggested, owner, branch),
+          value: compile({ allOf: [base, branch] }, suggested, owner, branch, fieldClass),
         };
       }
+      if (fieldClass) notEntity();
       const tag = declaration.discriminator?.propertyName;
       if (tag && declaration.oneOf) {
         const bindings = discriminatorBindings({
@@ -265,16 +312,19 @@ export function phpRepresentations(
       }
       return { kind: 'value', type: declaration.type === 'object' ? '\\stdClass' : 'mixed' };
     }
-    if (types[0] === 'array')
+    if (types[0] === 'array') {
+      if (fieldClass) notEntity();
       return {
         kind: 'list',
         value: compile(declaration.items ?? {}, suggested + 'Item', owner + '.items'),
       };
+    }
     if (types[0] === 'object') {
       if (
         !Object.keys(declaration.properties ?? {}).length &&
         declaration.additionalProperties !== false
-      )
+      ) {
+        if (fieldClass) notEntity();
         return {
           kind: 'map',
           value:
@@ -286,9 +336,24 @@ export function phpRepresentations(
                 )
               : { kind: 'value', type: 'mixed' },
         };
+      }
       // Removing null changes the declaration, not the component's identity.
       const reference = identity['x-sdk-ref'];
       const canonical = reference ?? named(identity);
+      if (fieldClass) {
+        const pinned = Object.hasOwn(models, fieldClass.name) ? models[fieldClass.name] : undefined;
+        if (!pinned)
+          throw new Diagnostic(fieldClass.path, fieldClass.name + ' is not a generated PHP model');
+        const defaultSchema = reference ? (definitions[reference] ?? identity) : identity;
+        const pinnedSchema = definitions[fieldClass.name] ?? pinned;
+        if (!canonical || !equivalent(identitySchema(pinnedSchema), identitySchema(defaultSchema)))
+          throw new Diagnostic(
+            fieldClass.path,
+            fieldClass.name + ' is not structurally identical to ' + (canonical ?? suggested),
+          );
+        appliedFieldClasses.add(fieldClass.path);
+        return model(fieldClass.name, pinnedSchema, 'models.' + fieldClass.name);
+      }
       if (!canonical) {
         const recursive = activeSchemas.get(stable(schema));
         if (recursive) return { kind: 'entity', name: recursive };
@@ -300,7 +365,25 @@ export function phpRepresentations(
         canonical ? 'models.' + canonical : owner,
       );
     }
+    if (fieldClass) notEntity();
     return { kind: 'value', type: phpNative(schema, true, definitions) };
   }
-  return { entities, model, compile };
+  const checkFieldClasses = (): void => {
+    for (const [name, fields] of Object.entries(fieldClasses)) {
+      const path = 'config/phpFieldClasses/' + name;
+      const entity = entities.get(name);
+      if (!entity)
+        throw new Diagnostic(
+          path,
+          'stale PHP field class customization: ' + name + ' is not a generated PHP response class',
+        );
+      for (const field of Object.keys(fields))
+        if (!appliedFieldClasses.has(path + '/' + field))
+          throw new Diagnostic(
+            path + '/' + field,
+            'stale PHP field class customization: ' + name + ' has no response field ' + field,
+          );
+    }
+  };
+  return { entities, model, compile, checkFieldClasses };
 }

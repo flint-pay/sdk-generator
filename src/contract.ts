@@ -2,6 +2,7 @@ import { validateRequestStyle, validatePositional, type RequestStyle } from './r
 import { validateResponseReturn, payloadSchemas, type ResponseReturn } from './response-return.js';
 import { operationNames, modelNames, isPublicName } from './naming.js';
 import { shareContractSchemas } from './schema-sharing.js';
+import { schemaAnnotations, isSchemaAnnotation } from './schema-annotations.js';
 import { SourceJson } from './source-json.js';
 import { Diagnostic, DiagnosticGroup, DiagnosticCollector, suggestion } from './diagnostic.js';
 import { valueInstruction, exactValue, discriminatorBindings } from './codec-plan.js';
@@ -166,6 +167,7 @@ export interface Config {
   composer: { name: string; namespace: string };
   operations?: Record<string, Capability>;
   models?: Record<string, string>;
+  phpFieldClasses?: Record<string, Record<string, string>>;
   include?: string[];
   audiences?: string[];
   overrides?: Record<string, Json | Schema>;
@@ -542,17 +544,6 @@ function schema(s: Schema, p: string, legacy = false, explicitNumbers = false): 
       }
     }
   }
-  const annotations = [
-    'description',
-    'title',
-    'default',
-    'example',
-    'examples',
-    'deprecated',
-    'readOnly',
-    'writeOnly',
-    'x-sensitive',
-  ];
   const supported = [
     'type',
     'properties',
@@ -584,7 +575,7 @@ function schema(s: Schema, p: string, legacy = false, explicitNumbers = false): 
     'maxProperties',
     'pattern',
     'uniqueItems',
-    ...annotations,
+    ...schemaAnnotations,
   ];
   keys(
     Object.fromEntries(Object.entries(s).filter(([key]) => !key.startsWith('x-'))),
@@ -790,7 +781,7 @@ function schema(s: Schema, p: string, legacy = false, explicitNumbers = false): 
     s.allOf?.length === 1 &&
     !s.allOf[0]!['x-sdk-ref'] &&
     Object.keys(s).every(
-      (key) => key === 'allOf' || annotations.includes(key) || key.startsWith('x-'),
+      (key) => key === 'allOf' || schemaAnnotations.includes(key) || key.startsWith('x-'),
     )
   ) {
     const branch = s.allOf[0]!;
@@ -1040,10 +1031,16 @@ function pointer(root: unknown, pointer: string, p: string): any {
 /** Clone owned JSON containers while reusing immutable primitive values.
  * structuredClone copies string storage too, multiplying large enum annotations
  * each time a resolved response schema is instantiated. */
-function cloneJson(value: unknown): unknown {
+function cloneJson(value: unknown, referenceNames?: WeakMap<object, string>): unknown {
   if (value === null || typeof value !== 'object') return value;
-  if (Array.isArray(value)) return value.map(cloneJson);
-  return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, cloneJson(child)]));
+  const copy = Array.isArray(value)
+    ? value.map((child) => cloneJson(child, referenceNames))
+    : Object.fromEntries(
+        Object.entries(value).map(([key, child]) => [key, cloneJson(child, referenceNames)]),
+      );
+  const name = referenceNames?.get(value);
+  if (name) referenceNames?.set(copy, name);
+  return copy;
 }
 
 export function loadContract(
@@ -1059,6 +1056,8 @@ export function loadContract(
   const references: { path: string; model: string }[] = [];
   const resolved = new Map<string, { value: any; models: string[] }>();
   const cycles = new Map<string, string>();
+  // Keep use-site identity outside the expanded schema until validation finishes.
+  const referenceNames = new WeakMap<object, string>();
   // Context follows the use site, including when the target is an external fragment.
   // Map keys and annotation values are data, never OpenAPI keywords.
   type Context = string;
@@ -1177,9 +1176,22 @@ export function loadContract(
           const local = deref(siblings, file, path, stack, context);
           if (local.allOf !== undefined && (!Array.isArray(local.allOf) || !local.allOf.length))
             fail(path + '/allOf', 'expected a nonempty schema array');
-          for (const key of ['readOnly', 'writeOnly', 'x-sensitive'])
+          for (const key of ['readOnly', 'writeOnly', 'deprecated', 'x-sensitive'])
             if (local[key] !== undefined && typeof local[key] !== 'boolean')
               fail(path + '/' + key, 'expected a boolean');
+          if (Object.keys(local).every(isSchemaAnnotation)) {
+            const combined = { ...result, ...local };
+            for (const key of ['readOnly', 'writeOnly', 'x-sensitive'])
+              if (result[key] === true || local[key] === true) combined[key] = true;
+            if (combined.readOnly && combined.writeOnly)
+              fail(path, 'a field cannot be both readOnly and writeOnly');
+            if (target === resolve(definitionPath) && modelMatch)
+              referenceNames.set(
+                combined,
+                publicModel(modelMatch[1]!.replace(/~1/g, '/').replace(/~0/g, '~')),
+              );
+            return combined;
+          }
           // Preserve keyword scope (especially additionalProperties and alternatives).
           // The referenced target remains a separate conjunct, even at recursive edges.
           const metadata = Object.fromEntries(
@@ -1259,7 +1271,7 @@ export function loadContract(
       const cached = resolved.get(cacheKey);
       if (cached) {
         for (const model of cached.models) references.push({ path, model });
-        return applySiblings(cloneJson(cached.value));
+        return applySiblings(cloneJson(cached.value, referenceNames));
       }
       const before = references.length;
       const result = deref(
@@ -1273,7 +1285,7 @@ export function loadContract(
         value: result,
         models: [...new Set(references.slice(before).map((ref) => ref.model))],
       });
-      return applySiblings(cloneJson(result));
+      return applySiblings(cloneJson(result, referenceNames));
     }
     const result = Object.fromEntries(
       Object.entries(value).map(([k, v]) => [
@@ -1365,7 +1377,16 @@ export function loadContract(
     ) {
       const result: Record<string, unknown> = { ...left };
       for (const [key, value] of Object.entries(right))
-        result[key] = mergeProfiles(result[key], value, path + '/' + key);
+        Object.defineProperty(result, key, {
+          value: mergeProfiles(
+            Object.hasOwn(result, key) ? result[key] : undefined,
+            value,
+            path + '/' + key,
+          ),
+          writable: true,
+          enumerable: true,
+          configurable: true,
+        });
       return result;
     }
     return fail(path, 'conflicting SDK profile settings');
@@ -1418,6 +1439,7 @@ export function loadContract(
     'money',
     'operations',
     'models',
+    'phpFieldClasses',
     'overrides',
     'documentation',
     'release',
@@ -1445,6 +1467,7 @@ export function loadContract(
         'composer',
         'operations',
         'models',
+        'phpFieldClasses',
         'include',
         'audiences',
         'overrides',
@@ -1498,6 +1521,18 @@ export function loadContract(
   checkConfig(['models', 'targets'], () => {
     for (const [original, mapped] of Object.entries(config.models ?? {}))
       diagnostics.check(() => modelName(mapped, 'config/models/' + original, config.targets));
+  });
+  checkConfig(['phpFieldClasses', 'targets'], () => {
+    if (config.phpFieldClasses === undefined) return;
+    diagnostics.check(() => {
+      if (!targets.includes('php')) fail('config/phpFieldClasses', 'requires the php target');
+    });
+    for (const [owner, fields] of Object.entries(config.phpFieldClasses)) {
+      const path = 'config/phpFieldClasses/' + owner;
+      if (!diagnostics.check(() => record(fields, path))) continue;
+      for (const [field, value] of Object.entries(fields))
+        diagnostics.check(() => modelName(value, path + '/' + field, ['php']));
+    }
   });
   checkConfig(['release'], () => {
     if (config.release !== undefined) {
@@ -2870,7 +2905,7 @@ export function loadContract(
   // are collectible instead of remaining rooted through doc.paths/selectedPaths.
   for (const path of Object.keys(selectedPaths)) delete selectedPaths[path];
   streamSchemas.clear();
-  if (config.schemaSharing === 'named') shareContractSchemas(contract);
+  if (config.schemaSharing === 'named') shareContractSchemas(contract, referenceNames);
   contract.hash = hash(stable(contract));
   return contract;
 }

@@ -5,6 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, cpSync } f
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHmac } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { loadContract, generate, render, compare, validateFixtures } from '../dist/index.js';
 import { serialize, redact } from '../dist/runtime.js';
@@ -129,6 +130,352 @@ test('3.1 sibling constraints intersect, retain local metadata, and never contam
   assert.throws(() => serialize({ short: 'a' }, body), /minLength/);
   assert.throws(() => serialize({ short: 'abcd' }, body), /maxLength/);
   assert.throws(() => serialize({ long: 'abcd' }, body), /minLength/);
+});
+
+test('description siblings retain named identity despite structurally identical PHP models', async () => {
+  const record = { type: 'object', required: ['id'], properties: { id: { type: 'string' } } };
+  const envelope = {
+    type: 'object',
+    required: ['plain', 'annotated', 'other'],
+    properties: {
+      plain: ref('SecondRecord'),
+      annotated: ref('SecondRecord', { description: 'Record at this field.' }),
+      other: ref('FirstRecord', { description: 'A distinct named record.' }),
+    },
+  };
+  const i = inputs(
+    document(ref('Envelope'), {
+      FirstRecord: { ...record, description: 'First component' },
+      SecondRecord: { ...record, description: 'Second component' },
+      Envelope: envelope,
+    }),
+  );
+  const c = i.load();
+  assert.equal(c.models.Envelope.properties.annotated['x-sdk-ref'], 'SecondRecord');
+  assert.equal(c.models.Envelope.properties.other['x-sdk-ref'], 'FirstRecord');
+  const files = render(c);
+  for (const target of ['node', 'php']) {
+    assert.match(
+      files.get(target + '/MODELS.md'),
+      /\| `annotated` \| Required \| \[SecondRecord\]\(MODELS.md#secondrecord\) \| Record at this field\./,
+    );
+    assert.match(
+      files.get(target + '/MODELS.md'),
+      /\| `other` \| Required \| \[FirstRecord\]\(MODELS.md#firstrecord\)/,
+    );
+  }
+  assert.match(
+    files.get('php/src/classes/ApiSendValueResponse200.php'),
+    /getAnnotated\(\): SecondRecord/,
+  );
+  assert.match(
+    files.get('php/src/classes/ApiSendValueResponse200.php'),
+    /getOther\(\): FirstRecord/,
+  );
+  assert.match(renderedDeclarations(files), /"annotated": SecondRecord/);
+  const value = { plain: { id: 'plain' }, annotated: { id: 'field' }, other: { id: 'other' } };
+  await fixtures(i, [
+    accepted('named records', value),
+    rejected('referenced required field still applies', { ...value, annotated: {} }),
+  ]);
+  const php = spawnSync(
+    'php',
+    [
+      '-r',
+      String.raw`
+      declare(strict_types=1);
+      require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
+      function recordId(SiblingsSdk\SecondRecord $record): string { return $record->getId(); }
+      $model=new SiblingsSdk\ApiSendValueResponse200(json_decode($argv[2],false));
+      if(recordId($model->getPlain())!=='plain'||recordId($model->getAnnotated())!=='field')exit(2);
+      if(get_class($model->getOther())!==SiblingsSdk\FirstRecord::class)exit(3);
+      if(get_class($model->getAnnotated())!==SiblingsSdk\SecondRecord::class)exit(4);
+      $copy=$model->toArray();$copy['annotated']->id='changed';
+      if($model->getAnnotated()->getId()!=='field')exit(5);
+      echo 'named identity and isolation';
+      `,
+      join(i.output, 'php'),
+      JSON.stringify(value),
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.equal(php.status, 0, php.stdout + php.stderr);
+  assert.equal(php.stdout, 'named identity and isolation');
+  const { Client } = await import(pathToFileURL(join(i.output, 'node/index.js')).href);
+  const client = new Client({
+    baseUrl: 'https://example.invalid',
+    transport: async () => new Response(JSON.stringify(value)),
+  });
+  const result = (await client.api.sendValue({ body: value })).data;
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), value);
+  value.annotated.id = 'changed';
+  assert.equal(result.annotated.id, 'field');
+});
+
+test('annotation overrides stay at their ref use sites through cached outer references and model aliases', () => {
+  const base = {
+    type: 'string',
+    minLength: 2,
+    description: 'Component description',
+    title: 'Component title',
+    default: 'base',
+    example: 'base',
+    examples: ['base'],
+    deprecated: true,
+    'x-display': { label: 'base' },
+  };
+  const annotations = {
+    description: 'Field description',
+    title: 'Field title',
+    default: null,
+    example: { $ref: 'missing-example.json' },
+    examples: [{ $ref: 'missing-examples.json' }],
+    deprecated: false,
+    'x-display': { $ref: 'missing-extension.json' },
+  };
+  const i = inputs(
+    document(ref('Envelope', { description: 'Response envelope' }), {
+      Text: base,
+      Envelope: {
+        type: 'object',
+        properties: {
+          annotated: ref('Text', annotations),
+          sibling: ref('Text', { description: 'Other field' }),
+          plain: ref('Text'),
+        },
+      },
+    }),
+    { ...config, models: { Text: 'Label' } },
+  );
+  const c = i.load();
+  assert.deepEqual(c.models.Envelope.properties.annotated, {
+    'x-sdk-ref': 'Label',
+    ...annotations,
+  });
+  assert.deepEqual(c.definitions.Label, base);
+  assert.equal(c.models.Envelope.properties.sibling.description, 'Other field');
+  assert.equal(c.operations[0].body.description, 'Response envelope');
+  assert.deepEqual(
+    c.operations[0].body.properties.annotated,
+    c.models.Envelope.properties.annotated,
+  );
+  assert.deepEqual(c, i.load());
+  const snapshot = JSON.stringify(c);
+  const first = render(c);
+  assert.deepEqual([...first], [...render(c)]);
+  assert.equal(JSON.stringify(c), snapshot);
+  assert.match(renderedDeclarations(first), /Field description/);
+  assert.throws(
+    () =>
+      serialize(
+        { annotated: 'a' },
+        { ...c.operations[0].body, 'x-sdk-definitions': c.definitions },
+      ),
+    /minLength/,
+  );
+});
+
+test('descriptions retain the existing shared identity of otherwise identical named components', async () => {
+  const record = { type: 'object', required: ['id'], properties: { id: { type: 'string' } } };
+  const i = inputs(
+    document(
+      {
+        type: 'object',
+        required: ['plain', 'annotated'],
+        properties: {
+          plain: ref('FirstRecord'),
+          annotated: ref('FirstRecord', { description: 'Annotated alias' }),
+          other: ref('SecondRecord'),
+        },
+      },
+      { FirstRecord: record, SecondRecord: record },
+    ),
+  );
+  const properties = i.load().operations[0].body.properties;
+  assert.equal(properties.plain['x-sdk-ref'], 'SecondRecord');
+  assert.equal(properties.annotated['x-sdk-ref'], 'SecondRecord');
+  const value = { plain: { id: 'plain' }, annotated: { id: 'annotated' } };
+  await fixtures(i, [accepted('existing component alias', value)]);
+  const php = spawnSync(
+    'php',
+    [
+      '-r',
+      String.raw`
+      require $argv[1].'/src/Client.php';
+      function id(SiblingsSdk\SecondRecord $record): string { return $record->getId(); }
+      $value=new SiblingsSdk\ApiSendValueResponse200(json_decode($argv[2],false));
+      if(id($value->getPlain())!=='plain'||id($value->getAnnotated())!=='annotated')exit(2);
+      `,
+      join(i.output, 'php'),
+      JSON.stringify(value),
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.equal(php.status, 0, php.stdout + php.stderr);
+});
+
+test('described incoming webhook roots keep their generated response classes and named nested values', async () => {
+  const event = {
+    type: 'object',
+    required: ['type', 'data'],
+    properties: {
+      type: { type: 'string', enum: ['record.created'] },
+      data: ref('EventRecord', { description: 'Event payload record' }),
+    },
+  };
+  const doc = document(ref('Event'), {
+    Event: event,
+    EventRecord: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
+  });
+  doc.webhooks = {
+    'record.created': {
+      post: { requestBody: { content: content(ref('Event', { description: 'Incoming event' })) } },
+    },
+  };
+  const i = inputs(doc, {
+    ...config,
+    webhook: {
+      algorithm: 'hmac-sha256',
+      format: 'timestamped-hex',
+      header: 'X-Signature',
+      separator: '.',
+      toleranceSeconds: 300,
+      typeField: 'type',
+      events: {},
+    },
+  });
+  const value = { type: 'record.created', data: { id: 'synthetic-record' } };
+  await fixtures(i, [accepted('annotated webhook control', value)]);
+  const raw = JSON.stringify(value);
+  const timestamp = 1700000000;
+  const secret = 'synthetic-webhook-key';
+  const signature = createHmac('sha256', secret)
+    .update(timestamp + '.' + raw)
+    .digest('hex');
+  const headers = { 'X-Signature': `t=${timestamp},v1=${signature}` };
+  const { Client } = await import(pathToFileURL(join(i.output, 'node/index.js')).href);
+  const verified = new Client({ baseUrl: 'https://example.invalid' }).verifyWebhook(
+    Buffer.from(raw),
+    headers,
+    [secret],
+    timestamp,
+  );
+  assert.equal(verified.known, true);
+  assert.equal(verified.event.data.id, 'synthetic-record');
+  const php = spawnSync(
+    'php',
+    [
+      '-r',
+      String.raw`
+      require $argv[1].'/src/Client.php';
+      $client=new SiblingsSdk\Client(new SiblingsSdk\ClientOptions('https://example.invalid'));
+      $value=$client->verifyWebhook($argv[2],json_decode($argv[3],true),[$argv[4]],(int)$argv[5]);
+      if(!$value['known']||!$value['event'] instanceof SiblingsSdk\WebhookEventRecordCreated)exit(2);
+      if(!$value['event']->getData() instanceof SiblingsSdk\EventRecord)exit(3);
+      if($value['event']->get('data')->getId()!=='synthetic-record')exit(4);
+      `,
+      join(i.output, 'php'),
+      raw,
+      JSON.stringify(headers),
+      secret,
+      String(timestamp),
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.equal(php.status, 0, php.stdout + php.stderr);
+});
+
+test('described constrained refs keep their conjunctions and reject narrowed shapes in both runtimes', async () => {
+  const i = inputs(
+    document(
+      {
+        type: 'object',
+        required: ['record', 'text'],
+        properties: {
+          record: ref('Entity', { description: 'Narrowed record', required: ['extra'] }),
+          text: ref('Text', { description: 'Short text', maxLength: 3 }),
+        },
+      },
+      {
+        Entity: {
+          type: 'object',
+          required: ['id'],
+          properties: { id: { type: 'string' }, extra: { type: 'boolean' } },
+        },
+        Text: { type: 'string', minLength: 2, example: 'abc' },
+      },
+    ),
+  );
+  const properties = i.load().operations[0].body.properties;
+  assert.equal(properties.record['x-sdk-ref'], undefined);
+  assert.ok(properties.record.allOf.length);
+  assert.equal(properties.text['x-sdk-ref'], undefined);
+  assert.ok(properties.text.allOf.length);
+  await fixtures(i, [
+    accepted('both conjuncts', { record: { id: 'ok', extra: true }, text: 'abc' }),
+    rejected('sibling required', { record: { id: 'ok' }, text: 'abc' }),
+    rejected('target required', { record: { extra: true }, text: 'abc' }),
+    rejected('sibling bound', { record: { id: 'ok', extra: true }, text: 'abcd' }),
+    rejected('target bound', { record: { id: 'ok', extra: true }, text: 'a' }),
+  ]);
+});
+
+test('annotation-only recursive field, item and map refs keep aliases, links and nested validation', async () => {
+  const tree = {
+    type: 'object',
+    required: ['id'],
+    properties: {
+      id: { type: 'string' },
+      child: ref('Tree', { description: 'Child branch' }),
+      children: { type: 'array', items: ref('Tree', { description: 'List branch' }) },
+      lookup: { type: 'object', additionalProperties: ref('Tree', { description: 'Map branch' }) },
+    },
+  };
+  const i = inputs(document(ref('Tree'), { Tree: tree }), {
+    ...config,
+    models: { Tree: 'Branch' },
+  });
+  const c = i.load();
+  assert.deepEqual(c.definitions.Branch.properties.child, {
+    'x-sdk-ref': 'Branch',
+    description: 'Child branch',
+  });
+  assert.equal(c.definitions.Branch.properties.children.items['x-sdk-ref'], 'Branch');
+  assert.equal(c.definitions.Branch.properties.lookup.additionalProperties['x-sdk-ref'], 'Branch');
+  const files = render(c);
+  for (const target of ['node', 'php'])
+    assert.match(
+      files.get(target + '/MODELS.md'),
+      /\[Branch\]\(MODELS.md#branch\) \| Child branch/,
+    );
+  const value = {
+    id: 'root',
+    child: { id: 'child', child: { id: 'leaf' } },
+    children: [{ id: 'item' }],
+    lookup: { key: { id: 'entry' } },
+  };
+  await fixtures(i, [
+    accepted('annotated recursive branches', value),
+    rejected('nested field requirement', { id: 'root', child: { id: 'child', child: {} } }),
+    rejected('item requirement', { id: 'root', children: [{}] }),
+    rejected('map requirement', { id: 'root', lookup: { key: {} } }),
+  ]);
+  const php = spawnSync(
+    'php',
+    [
+      '-r',
+      String.raw`
+      require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
+      $model=new SiblingsSdk\Branch(json_decode($argv[2],false));
+      foreach([$model->getChild()->getChild(),$model->getChildren()[0],$model->getLookup()['key']] as $child)
+        if(get_class($child)!==SiblingsSdk\Branch::class)exit(2);
+      `,
+      join(i.output, 'php'),
+      JSON.stringify(value),
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.equal(php.status, 0, php.stdout + php.stderr);
 });
 
 test('3.0 ignores reference siblings without traversing them and preserves nullable wrappers', async () => {
@@ -314,7 +661,11 @@ test('map keys and annotation payloads are literal; unsupported active siblings 
     'x-vendor': { $ref: 'missing.json' },
   };
   const i = inputs(document(schema, { Text: { type: 'string' } }));
-  assert.equal(serialize({ $ref: 'a' }, i.load().operations[0].body), '{"$ref":"a"}');
+  const c = i.load();
+  assert.equal(
+    serialize({ $ref: 'a' }, { ...c.operations[0].body, 'x-sdk-definitions': c.definitions }),
+    '{"$ref":"a"}',
+  );
   for (const sibling of [{ minContains: 2 }, { 'x-sdk-ref': 'Forged' }, { readOnly: 'yes' }])
     assert.throws(
       inputs(document(ref('Text', sibling), { Text: { type: 'string', readOnly: true } })).load,

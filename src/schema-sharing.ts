@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { Contract, Schema } from './contract.js';
+import { isSchemaAnnotation } from './schema-annotations.js';
 
 /** Hash subtrees without ever materializing the expanded graph as one JSON string. */
 function identities() {
@@ -24,11 +25,27 @@ function identities() {
 }
 
 /** Share named schemas at value-descending edges; conjunction/tag policy stays at its use site. */
-export function shareContractSchemas(contract: Contract): void {
+export function shareContractSchemas(
+  contract: Contract,
+  referenceNames: Readonly<WeakMap<object, string>> = new WeakMap(),
+): void {
   const identity = identities();
   const catalog = { ...contract.models, ...contract.definitions };
   const names = new Map(Object.entries(catalog).map(([name, schema]) => [identity(schema), name]));
   const compact = (schema: Schema, nested = false): Schema => {
+    const reference = referenceNames.get(schema);
+    if (nested && reference) {
+      const target = catalog[reference];
+      if (!target) throw new Error('Missing annotation reference ' + reference);
+      // Reuse the identity assigned to an unannotated reference, including
+      // existing aliases among identical components.
+      const name = names.get(identity(target));
+      if (!name) throw new Error('Missing named schema identity for ' + reference);
+      return {
+        'x-sdk-ref': name,
+        ...Object.fromEntries(Object.entries(schema).filter(([key]) => isSchemaAnnotation(key))),
+      };
+    }
     const name = nested ? names.get(identity(schema)) : undefined;
     if (name && !schema['x-sdk-ref'])
       return {

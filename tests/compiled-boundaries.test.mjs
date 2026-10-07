@@ -18,6 +18,7 @@ const semantic = new Set([
   'php-value-plan',
   'naming',
   'schema-documentation',
+  'schema-annotations',
   'target-plan',
   'value-guarantee',
   'response-plan',

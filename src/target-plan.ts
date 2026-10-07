@@ -958,7 +958,11 @@ export function compileSdkContract(source: Contract): {
     plan.node.responseReturnDeclarations = `type _SdkPayloadAt<T, P extends readonly string[]> = P extends readonly [infer K extends string, ...infer R extends string[]] ? T extends Record<K, infer V> ? _SdkPayloadAt<V, R> : unknown : T;\nexport interface SdkResponse<T> { body: T; meta: Result<T>['meta']; raw: Result<T>['raw']; }\n`;
   }
   if (plan.targets.includes('php')) {
-    const representations = phpRepresentations(models, c.definitions ?? {});
+    const representations = phpRepresentations(
+      models,
+      c.definitions ?? {},
+      c.config.phpFieldClasses,
+    );
     const project = (value: PhpRepresentation, path: string[]): PhpRepresentation => {
       if (!path.length) return value;
       if (value.kind === 'entity') {
@@ -1054,6 +1058,7 @@ export function compileSdkContract(source: Contract): {
       const schema = c.config.webhook?.events[event];
       if (schema) representations.model(name, schema);
     }
+    representations.checkFieldClasses();
     for (const entity of representations.entities.values()) {
       const model = compilePhpModel(
         entity.name,
@@ -1192,6 +1197,8 @@ export function sample(
   definitions: Record<string, Schema> = {},
   stack: string[] = [],
 ): unknown {
+  // A use-site example takes precedence over the referenced model's sample.
+  if (s.example !== undefined) return s.example;
   if (s['x-sdk-ref']) {
     const name = s['x-sdk-ref'];
     const target = definitions[name];
@@ -1201,7 +1208,6 @@ export function sample(
     return sample(target, inherited, definitions, [...stack, name]);
   }
   s = directionalSchema(s, false);
-  if (s.example !== undefined) return s.example;
   if (Object.hasOwn(s, 'const')) {
     const literal = (value: import('./contract.js').Json, declarations: Schema[]): unknown => {
       const shapes = declarations.flatMap((shape) => valueScopes(shape, definitions));
