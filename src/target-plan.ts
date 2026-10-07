@@ -958,7 +958,11 @@ export function compileSdkContract(source: Contract): {
     plan.node.responseReturnDeclarations = `type _SdkPayloadAt<T, P extends readonly string[]> = P extends readonly [infer K extends string, ...infer R extends string[]] ? T extends Record<K, infer V> ? _SdkPayloadAt<V, R> : unknown : T;\nexport interface SdkResponse<T> { body: T; meta: Result<T>['meta']; raw: Result<T>['raw']; }\n`;
   }
   if (plan.targets.includes('php')) {
-    const representations = phpRepresentations(models, c.definitions ?? {});
+    const representations = phpRepresentations(
+      models,
+      c.definitions ?? {},
+      c.config.phpFieldClasses,
+    );
     const project = (value: PhpRepresentation, path: string[]): PhpRepresentation => {
       if (!path.length) return value;
       if (value.kind === 'entity') {
@@ -1054,6 +1058,7 @@ export function compileSdkContract(source: Contract): {
       const schema = c.config.webhook?.events[event];
       if (schema) representations.model(name, schema);
     }
+    representations.checkFieldClasses();
     for (const entity of representations.entities.values()) {
       const model = compilePhpModel(
         entity.name,

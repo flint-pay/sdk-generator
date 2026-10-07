@@ -95,6 +95,7 @@ Unknown configuration keys fail with a source location. Capability declarations 
 | `operations`           | Public naming, aliases, examples and declared operation capabilities. Matching resource tags and operation IDs supply names; otherwise `api` and `operationId`. |
 | `include`, `audiences` | Optional operation filters; operation `hidden: true` excludes that operation.                                                                                   |
 | `models`               | Optional component-to-public-model name mapping.                                                                                                                |
+| `phpFieldClasses`      | Optional PHP response field class pins among structurally identical models; see [PHP response entity names](#php-response-entity-names).                        |
 | `overrides`            | Explicit root-document JSON Pointer replacements before reference resolution.                                                                                   |
 | `validation`           | `encoding` by default; `schema` adds supported request bounds, lengths and patterns.                                                                            |
 | `auth`                 | Optional explicit security scheme selection. Required when multiple declared schemes need disambiguation.                                                       |
@@ -408,3 +409,19 @@ Descriptor grouping and deferred loading are automatic and require no configurat
 ### PHP response entity names
 
 Configured component model names also name reusable PHP response entities. Inline response objects derive their names from the owning model and property path. PHP accessors normalize separators and camel-case words (`request_id` becomes `getRequestId()`), while serialized field names remain unchanged. Webhook classes derive from event keys (`payment_intent.succeeded` becomes `WebhookEventPaymentIntentSucceeded`). Names are checked case-insensitively; collisions produce diagnostics identifying both fields or events. These names and hydrated dictionary representations are part of the generated package's compatibility contract.
+
+Structurally identical component schemas can share one generated PHP class, so a response field can return a class other than the one its `$ref` names. Annotations beside a `$ref`, such as `description` or `readOnly`, never change that class. To keep the class an existing PHP SDK already returns for a field, pin it with `phpFieldClasses`. Here `Location` and `Place` are identical components, and the pin keeps `Venue::getMailingAddress()` returning `Location`:
+
+```json
+{
+  "phpFieldClasses": {
+    "Venue": { "mailing_address": "Location" }
+  }
+}
+```
+
+Owner keys are exact generated PHP response class names without a namespace: component model, operation response, variant and webhook event classes. `Input` classes cannot be owners. Field keys are serialized JSON property names, not accessor names. Values are generated public model names after `models` mapping. The field must hold a single response entity, directly or as a nullable value; lists, dictionaries, other unions and scalars cannot be pinned. The pinned model must be structurally identical to the field's default model. Root-level `description`, `title`, `deprecated`, `readOnly` and `writeOnly` are ignored; any other difference, including nested fields, `required`, constraints, enums and `x-sensitive`, fails diagnosis. A pin matching the default class is allowed and still validated.
+
+Pins apply before default classes are built, so output does not depend on build order, and a default class that no other field uses is not generated. Pins change only PHP response getter types and hydrated classes. Input classes, Node declarations, schema definitions and wire serialization are unchanged.
+
+Generation fails when `targets` excludes `php`, the owner is not a generated PHP response class, the owner has no response field with that name, or the value is not a generated model or not structurally identical to the default. `writeOnly` fields are not response fields and cannot be pinned. Profiles merge matching pins; different classes for the same owner and field fail as conflicting settings. Pins are keyed by PHP class, so the same source field reached through another generated class needs its own entry. Regeneration records changed PHP field classes as [compatibility findings](releases.md#migrating-php-entity-representations); use them to find fields that need pins when upgrading an existing SDK.

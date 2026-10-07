@@ -167,6 +167,7 @@ export interface Config {
   composer: { name: string; namespace: string };
   operations?: Record<string, Capability>;
   models?: Record<string, string>;
+  phpFieldClasses?: Record<string, Record<string, string>>;
   include?: string[];
   audiences?: string[];
   overrides?: Record<string, Json | Schema>;
@@ -1429,6 +1430,7 @@ export function loadContract(
     'money',
     'operations',
     'models',
+    'phpFieldClasses',
     'overrides',
     'documentation',
     'release',
@@ -1456,6 +1458,7 @@ export function loadContract(
         'composer',
         'operations',
         'models',
+        'phpFieldClasses',
         'include',
         'audiences',
         'overrides',
@@ -1509,6 +1512,18 @@ export function loadContract(
   checkConfig(['models', 'targets'], () => {
     for (const [original, mapped] of Object.entries(config.models ?? {}))
       diagnostics.check(() => modelName(mapped, 'config/models/' + original, config.targets));
+  });
+  checkConfig(['phpFieldClasses', 'targets'], () => {
+    if (config.phpFieldClasses === undefined) return;
+    diagnostics.check(() => {
+      if (!targets.includes('php')) fail('config/phpFieldClasses', 'requires the php target');
+    });
+    for (const [owner, fields] of Object.entries(config.phpFieldClasses)) {
+      const path = 'config/phpFieldClasses/' + owner;
+      if (!diagnostics.check(() => record(fields, path))) continue;
+      for (const [field, value] of Object.entries(fields))
+        diagnostics.check(() => modelName(value, path + '/' + field, ['php']));
+    }
   });
   checkConfig(['release'], () => {
     if (config.release !== undefined) {
