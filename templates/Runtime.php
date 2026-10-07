@@ -3044,9 +3044,12 @@ final class Codec
         $definitions = $schema['definitions'] ?? $definitions;
         $shapes = function ($s) use (&$shapes, $definitions) {
             if (isset($s['reference'])) {
-                return isset($definitions[$s['reference']])
-                    ? $shapes($definitions[$s['reference']])
-                    : [];
+                return array_merge(
+                    [$s],
+                    isset($definitions[$s['reference']])
+                        ? $shapes($definitions[$s['reference']])
+                        : [],
+                );
             }
             $out = [$s];
             foreach (['then', 'else'] as $key) {

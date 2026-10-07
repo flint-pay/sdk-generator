@@ -1737,6 +1737,7 @@ export function redactCodec(
 ): unknown {
   if (depth > 256) return '[Nesting limit]';
   definitions = schema?.definitions ?? definitions;
+  if (schema?.sensitive) return '[REDACTED]';
   if (schema?.reference) {
     const target = definitions[schema.reference];
     return target
@@ -1745,7 +1746,7 @@ export function redactCodec(
   }
   const shapes = (s?: CodecPlan): CodecPlan[] =>
     s?.reference
-      ? shapes(definitions[s.reference])
+      ? [s, ...shapes(definitions[s.reference])]
       : s
         ? [
             s,

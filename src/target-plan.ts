@@ -1192,6 +1192,8 @@ export function sample(
   definitions: Record<string, Schema> = {},
   stack: string[] = [],
 ): unknown {
+  // A use-site example takes precedence over the referenced model's sample.
+  if (s.example !== undefined) return s.example;
   if (s['x-sdk-ref']) {
     const name = s['x-sdk-ref'];
     const target = definitions[name];
@@ -1201,7 +1203,6 @@ export function sample(
     return sample(target, inherited, definitions, [...stack, name]);
   }
   s = directionalSchema(s, false);
-  if (s.example !== undefined) return s.example;
   if (Object.hasOwn(s, 'const')) {
     const literal = (value: import('./contract.js').Json, declarations: Schema[]): unknown => {
       const shapes = declarations.flatMap((shape) => valueScopes(shape, definitions));
