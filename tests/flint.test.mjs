@@ -1,3 +1,4 @@
+import { npmPackResult } from '../dist/distribution.js';
 import { localExampleSource } from './local-example.mjs';
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -392,9 +393,9 @@ test('Flint reference verifies its declared payment event envelope in both publi
 test('Flint quickstarts typecheck and both packages install with usable public interfaces', async () => {
   const checks = validate(output);
   assert.ok(checks.some((c) => c.command.includes('--strict')));
-  const archive = JSON.parse(
+  const archive = npmPackResult(
     run('npm', ['pack', '--ignore-scripts', '--json'], join(output, 'node')),
-  )[0].filename;
+  ).filename;
   const consumer = join(dir, 'consumer');
   mkdirSync(consumer);
   writeFileSync(join(consumer, 'package.json'), JSON.stringify({ private: true, type: 'module' }));

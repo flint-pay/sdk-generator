@@ -1,3 +1,4 @@
+import { npmPackResult } from '../dist/distribution.js';
 import { measureSdkWeight } from './helpers/sdk-weight.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -117,7 +118,7 @@ writeFileSync(${JSON.stringify(join(dir, 'summary.json'))},JSON.stringify({opera
         join(fixture, 'full-http-cases.json'),
       ]);
 
-      const packed = JSON.parse(
+      const packed = npmPackResult(
         run('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', dir], {
           cwd: join(output, 'node'),
         }),
@@ -130,7 +131,7 @@ writeFileSync(${JSON.stringify(join(dir, 'summary.json'))},JSON.stringify({opera
       );
       run(
         'npm',
-        ['install', '--ignore-scripts', '--no-audit', '--no-fund', join(dir, packed[0].filename)],
+        ['install', '--ignore-scripts', '--no-audit', '--no-fund', join(dir, packed.filename)],
         { cwd: consumer },
       );
       writeFileSync(

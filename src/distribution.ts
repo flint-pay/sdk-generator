@@ -17,6 +17,26 @@ import { Diagnostic, stable, type Contract } from './contract.js';
 import MarkdownIt from 'markdown-it';
 import { compareVersions } from './version.js';
 
+export function npmPackResult(output: string): Record<string, unknown> & { filename: string } {
+  const report: unknown = JSON.parse(output);
+  const packages: unknown[] = Array.isArray(report)
+    ? report
+    : report !== null && typeof report === 'object'
+      ? Object.values(report)
+      : [];
+  const packed = packages[0];
+  if (
+    packages.length !== 1 ||
+    packed === null ||
+    typeof packed !== 'object' ||
+    !('filename' in packed) ||
+    typeof packed.filename !== 'string' ||
+    !/^[A-Za-z0-9_.-]+\.tgz$/.test(packed.filename)
+  )
+    throw new Diagnostic('npm pack', 'expected one archive with a valid filename');
+  return { ...packed, filename: packed.filename };
+}
+
 export function artifactHashes(directory: string, prefix = ''): Record<string, string> {
   const hashes: Record<string, string> = {};
   for (const name of readdirSync(join(directory, prefix)).sort()) {
