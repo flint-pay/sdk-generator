@@ -1377,7 +1377,16 @@ export function loadContract(
     ) {
       const result: Record<string, unknown> = { ...left };
       for (const [key, value] of Object.entries(right))
-        result[key] = mergeProfiles(result[key], value, path + '/' + key);
+        Object.defineProperty(result, key, {
+          value: mergeProfiles(
+            Object.hasOwn(result, key) ? result[key] : undefined,
+            value,
+            path + '/' + key,
+          ),
+          writable: true,
+          enumerable: true,
+          configurable: true,
+        });
       return result;
     }
     return fail(path, 'conflicting SDK profile settings');
