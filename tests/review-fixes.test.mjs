@@ -1,3 +1,4 @@
+import { npmPackResult } from '../dist/distribution.js';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync, readFileSync, readdirSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
@@ -740,7 +741,7 @@ test('an installed generated npm archive typechecks with consumer-owned Node typ
     ['pack', '--ignore-scripts', '--json', '--pack-destination', f.dir],
     { cwd: join(f.out, 'node') },
   );
-  const archive = join(f.dir, JSON.parse(packed.stdout)[0].filename);
+  const archive = join(f.dir, npmPackResult(packed.stdout).filename);
   const consumer = join(f.dir, 'consumer');
   mkdirSync(consumer);
   writeFileSync(

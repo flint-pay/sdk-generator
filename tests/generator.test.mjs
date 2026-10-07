@@ -1,3 +1,4 @@
+import { npmPackResult } from '../dist/distribution.js';
 import { renderedDeclarations } from './helpers/generated-source.mjs';
 import ts from 'typescript';
 import { localExampleFile } from './local-example.mjs';
@@ -844,7 +845,7 @@ test('generator itself installs from its npm archive and produces validated pack
     { cwd: resolve('.'), encoding: 'utf8' },
   );
   assert.equal(pack.status, 0, pack.stderr);
-  const packed = JSON.parse(pack.stdout)[0];
+  const packed = npmPackResult(pack.stdout);
   const packedPaths = packed.files.map((file) => file.path);
   assert.ok(
     packedPaths.every(

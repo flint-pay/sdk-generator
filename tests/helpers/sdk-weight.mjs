@@ -1,3 +1,4 @@
+import { npmPackResult } from '../../dist/distribution.js';
 import { buildSync } from 'esbuild';
 import { tmpdir } from 'node:os';
 import { readdirSync, statSync, readFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
@@ -113,7 +114,7 @@ export function measureSdkWeight(output) {
     { cwd: join(output, 'php'), encoding: 'utf8', timeout: 120000 },
   );
   const archives = {
-    node: packed[0]?.size ?? packed,
+    node: npmPackResult(JSON.stringify(packed)).size,
     php:
       archive.status === 0
         ? statSync(join(archiveDir, 'sdk.zip')).size

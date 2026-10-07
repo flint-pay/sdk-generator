@@ -26,7 +26,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import { comparePolicies } from './compatibility.js';
-import { artifactHashes, prepareSite, verifyRelease } from './distribution.js';
+import { artifactHashes, prepareSite, verifyRelease, npmPackResult } from './distribution.js';
 import { checkVersionPolicy } from './version.js';
 import { serialize, executeCodec, ExactNumber } from './runtime.js';
 import {
@@ -2331,7 +2331,7 @@ export function prepareRelease(output: string, destination: string, acknowledgeR
       );
       rmSync(nodeStage, { recursive: true, force: true });
       if (r.error || r.status !== 0) throw new Error(r.error?.message ?? r.stderr);
-      const name = JSON.parse(r.stdout)[0].filename;
+      const name = npmPackResult(r.stdout).filename;
       commands.push([
         'npm',
         'publish',

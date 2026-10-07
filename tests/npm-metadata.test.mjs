@@ -14,6 +14,7 @@ import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import ts from 'typescript';
 import { generate, loadContract, preview, render } from '../dist/index.js';
+import { npmPackResult } from '../dist/distribution.js';
 
 const root = realpathSync(mkdtempSync(join(tmpdir(), 'sdk-npm-metadata-')));
 after(() => rmSync(root, { recursive: true, force: true }));
@@ -142,7 +143,7 @@ test('publication metadata rejects invalid values with configuration paths', () 
 test('installed SDK supports ESM, CommonJS and consumer-owned Node types', () => {
   const output = join(root, 'packed');
   generate(contract({ homepage, repository }), output);
-  const [packed] = JSON.parse(
+  const packed = npmPackResult(
     run(
       'npm',
       ['pack', '--ignore-scripts', '--json', '--pack-destination', root],
