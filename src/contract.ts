@@ -1790,6 +1790,11 @@ export function loadContract(
       diagnostics.check(() => {
         if (!/^(@[a-z0-9._-]+\/)?[a-z0-9][a-z0-9._-]*$/.test(config.npm?.name ?? ''))
           fail('config/npm/name', 'expected an npm package name');
+        if (config.npm.name.length > 214)
+          fail(
+            'config/npm/name',
+            'npm package names must be at most 214 characters, including scope',
+          );
       });
   });
   checkConfig(['composer'], () => {

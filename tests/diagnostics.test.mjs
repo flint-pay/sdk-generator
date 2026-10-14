@@ -83,6 +83,26 @@ test('diagnose reports all unknown keys and nested package issues', (t) => {
   );
 });
 
+test('npm names enforce the 214-character limit including scope', (t) => {
+  for (const prefix of ['', '@example/']) {
+    const valid = fixture(t, (c) => {
+      c.npm.name = prefix + 'a'.repeat(214 - prefix.length);
+    });
+    assert.doesNotThrow(() => loadContract(valid.definition, valid.configuration));
+    const invalid = fixture(t, (c) => {
+      c.npm.name = prefix + 'a'.repeat(215 - prefix.length);
+    });
+    assert.throws(() => loadContract(invalid.definition, invalid.configuration), {
+      name: 'Diagnostic',
+      message: 'config/npm/name: npm package names must be at most 214 characters, including scope',
+    });
+    assert.throws(
+      () => loadContract(invalid.definition, invalid.configuration, { collectDiagnostics: true }),
+      /config\/npm\/name: npm package names must be at most 214 characters, including scope/,
+    );
+  }
+});
+
 test('missing package settings explain default and explicit targets', (t) => {
   for (const [key, target, alternative] of [
     ['composer', 'php', 'node'],

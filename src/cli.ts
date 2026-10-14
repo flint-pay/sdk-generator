@@ -136,6 +136,9 @@ function usage(name: string, definition: Command): string {
   });
   return ['sdk-generator', name, ...definition.arguments, ...flags].join(' ');
 }
+function shellQuote(path: string): string {
+  return /^[A-Za-z0-9_./:-]+$/.test(path) ? path : "'" + path.replaceAll("'", "'\\''") + "'";
+}
 function parseArguments(definition: Command) {
   const positional: string[] = [];
   const flags = new Map<string, string | true>();
@@ -348,7 +351,7 @@ try {
         if (initialized && !json)
           console.log(
             'Next: replace the @example/example package names, then run\n' +
-              `  sdk-generator generate ${positional[0]!} ${initialized.written} OUTPUT`,
+              `  sdk-generator generate ${shellQuote(positional[0]!)} ${shellQuote(initialized.written)} OUTPUT`,
           );
       } else if (command === 'effective') {
         const targets = contract.config.targets ?? ['node', 'php'];

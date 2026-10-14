@@ -29,14 +29,19 @@ export function initialConfig(
     info && typeof info === 'object' && 'title' in info && typeof info.title === 'string'
       ? info.title
       : '';
-  const slug = kebabWords(title) || 'sdk';
+  let slug = kebabWords(title) || 'sdk';
+  // Leave room for @example/; preserve whole words unless the first word alone is too long.
+  const maxSlugLength = 214 - '@example/'.length;
+  if (slug.length > maxSlugLength) {
+    const boundary = slug.lastIndexOf('-', maxSlugLength);
+    slug = slug.slice(0, boundary > 0 ? boundary : maxSlugLength);
+  }
   const pascal = pascalWords(title) || 'Sdk';
+  const namespace = 'Example\\' + (/^\d/.test(pascal) ? 'Sdk' + pascal : pascal);
   return {
     version: '0.1.0',
     targets: [...targets],
     ...(targets.includes('node') ? { npm: { name: '@example/' + slug } } : {}),
-    ...(targets.includes('php')
-      ? { composer: { name: 'example/' + slug, namespace: 'Example\\' + pascal } }
-      : {}),
+    ...(targets.includes('php') ? { composer: { name: 'example/' + slug, namespace } } : {}),
   };
 }

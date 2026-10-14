@@ -24,7 +24,9 @@ Arguments are positional; named options may appear before or after them. Require
 
 ## Output
 
-`init` derives package names from `info.title` using ASCII kebab-case words and a matching PascalCase PHP namespace. Empty names fall back to `sdk` / `Sdk`. It writes version `0.1.0`, the selected targets and only their package metadata, using `@example` / `example` placeholder vendors. It refuses an existing destination, including symlinks; there is no `--force`. Invalid JSON and unsupported OpenAPI versions fail before writing. After writing, unsupported constructs or an invalid inferred namespace (for example, a title beginning with digits) exit with status 1 and the same findings as `diagnose`. Fix the specification or edit the configuration, including `include` / `hidden` operation selection, then rerun `diagnose`.
+`init` derives package names from `info.title` using ASCII kebab-case words and a matching PascalCase PHP namespace. Empty names fall back to `sdk` / `Sdk`. A namespace segment beginning with a digit gets an `Sdk` prefix: `123 Widgets` becomes `Example\Sdk123Widgets`. The shared package slug is shortened at a word boundary so the full scoped npm name is at most 214 characters, without a trailing hyphen; a first word longer than the available space is cut to fit. It writes version `0.1.0`, the selected targets and only their package metadata, using `@example` / `example` placeholder vendors.
+
+It refuses an existing destination, including symlinks; there is no `--force`. Invalid JSON and unsupported OpenAPI versions fail before writing. After writing, unsupported constructs exit with status 1 and the same findings as `diagnose`. Fix the specification or edit the configuration, including `include` / `hidden` operation selection, then rerun `diagnose`.
 
 ```text
 Wrote sdk.json (targets: node, php)
@@ -32,6 +34,8 @@ Valid: 12 operations; targets: node, php; contract hash: <hash>
 Next: replace the @example/example package names, then run
   sdk-generator generate openapi.json sdk.json OUTPUT
 ```
+
+The suggested command uses POSIX single quotes for paths containing spaces or shell metacharacters, escaping embedded single quotes.
 
 With `--json`, `init` prints `{ "written": "<path>", "config": {...}, "diagnose": {...} }`, where `diagnose` is the same report as `diagnose --json`. Success goes to stdout; if diagnosis fails after writing, the envelope containing the failure report goes to stderr. Errors before writing use the ordinary JSON error format.
 

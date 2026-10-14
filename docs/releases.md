@@ -182,6 +182,8 @@ For example, with `validation: "schema"`, adding `minLength: 3` to a string inpu
 
 Regenerate packages as a complete unit, review the preview and compatibility findings, and follow the version policy. Do not publish breaking findings as a compatible patch. The [changelog](../CHANGELOG.md) lists every generator change that affects regenerated SDKs.
 
+Configuration validation rejects `npm.name` values longer than 214 characters, including the scope and separator. Shorten an oversized package name before regenerating.
+
 ### Migrating PHP entity representations
 
 PHP response models expose declared nested objects as generated entities, lists of typed entities, and PHP arrays for dictionaries. Node wire behavior is unaffected.

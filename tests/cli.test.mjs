@@ -148,7 +148,9 @@ test('initialConfig reuses ASCII naming words and fallbacks without writing file
   for (const [title, slug, pascal] of [
     ['  Widgets... & HTTP_API/v2!  ', 'widgets-http-api-v2', 'WidgetsHttpApiV2'],
     ['myHTTPService', 'my-http-service', 'MyHttpService'],
-    ['123 Widgets', '123-widgets', '123Widgets'],
+    ['123 Widgets', '123-widgets', 'Sdk123Widgets'],
+    ['123', '123', 'Sdk123'],
+    ['9HTTPService', '9-http-service', 'Sdk9HttpService'],
     ['Café Über 支付', 'caf-ber', 'CafBer'],
     ['支付 🚀', 'sdk', 'Sdk'],
     ['--- !!!', 'sdk', 'Sdk'],
@@ -158,21 +160,93 @@ test('initialConfig reuses ASCII naming words and fallbacks without writing file
     const api = JSON.parse(readFileSync(f.api, 'utf8'));
     api.info.title = title;
     writeFileSync(f.api, JSON.stringify(api));
-    assert.deepEqual(initialConfig(f.api, { targets: ['node', 'php'] }), {
+    const config = initialConfig(f.api, { targets: ['node', 'php'] });
+    assert.deepEqual(config, {
       version: '0.1.0',
       targets: ['node', 'php'],
       npm: { name: '@example/' + slug },
       composer: { name: 'example/' + slug, namespace: 'Example\\' + pascal },
     });
     assert.deepEqual(readdirSync(f.dir), ['api.json']);
-    const result = run(['init', f.api, f.sdk, '--json']);
-    const report = JSON.parse(pascal === '123Widgets' ? result.stderr : result.stdout);
-    assert.deepEqual(report.config, initialConfig(f.api));
-    assert.equal(result.status, pascal === '123Widgets' ? 1 : 0, result.stderr);
-    if (result.status === 1)
-      assert.equal(report.diagnose.diagnostics[0].location, 'config/composer/namespace');
+    writeFileSync(f.sdk, JSON.stringify(config));
+    assert.doesNotThrow(() => render(loadContract(f.api, f.sdk)));
     rmSync(f.sdk);
     assert.deepEqual(readdirSync(f.dir), ['api.json']);
+  }
+});
+
+test('init writes valid digit-leading names for every target selection', (t) => {
+  const f = fixture(t, ['node', 'php'], { generated: false });
+  const api = JSON.parse(readFileSync(f.api, 'utf8'));
+  api.info.title = '123 Widgets';
+  writeFileSync(f.api, JSON.stringify(api));
+  for (const targets of ['node', 'php', 'node,php']) {
+    const result = run(['init', f.api, f.sdk, '--targets', targets, '--json']);
+    assert.equal(result.status, 0, result.stderr);
+    const report = JSON.parse(result.stdout);
+    assert.equal(report.diagnose.valid, true);
+    assert.deepEqual(report.config, initialConfig(f.api, { targets: targets.split(',') }));
+    assert.deepEqual(JSON.parse(readFileSync(f.sdk, 'utf8')), report.config);
+    rmSync(f.sdk);
+  }
+});
+
+test('initialConfig bounds package names and keeps whole slug words where possible', (t) => {
+  const f = fixture(t, ['node', 'php'], { generated: false });
+  for (const [title, slug] of [
+    ['a'.repeat(205), 'a'.repeat(205)],
+    ['a'.repeat(206), 'a'.repeat(205)],
+    ['alpha '.repeat(40), Array(34).fill('alpha').join('-')],
+    ['a'.repeat(200) + ' widgets', 'a'.repeat(200)],
+    ['a'.repeat(205) + ' widgets', 'a'.repeat(205)],
+    ['a'.repeat(206) + ' widgets', 'a'.repeat(205)],
+    ['123 widgets '.repeat(30), Array(17).fill('123-widgets').join('-')],
+  ]) {
+    const api = JSON.parse(readFileSync(f.api, 'utf8'));
+    api.info.title = title;
+    writeFileSync(f.api, JSON.stringify(api));
+    const config = initialConfig(f.api);
+    assert.equal(config.npm.name, '@example/' + slug);
+    assert.ok(config.npm.name.length <= 214);
+    assert.equal(config.composer.name, 'example/' + slug);
+    assert.ok(!slug.endsWith('-'));
+    writeFileSync(f.sdk, JSON.stringify(config));
+    assert.doesNotThrow(() => render(loadContract(f.api, f.sdk)));
+  }
+});
+
+test('init quotes shell-sensitive paths only in the human generate suggestion', (t) => {
+  const f = fixture(t, ['node'], { generated: false });
+  for (const [apiName, sdkName, expected] of [
+    ['api input.json', 'sdk output.json', "'api input.json' 'sdk output.json'"],
+    ["api's.json", "sdk's.json", "'api'\\''s.json' 'sdk'\\''s.json'"],
+    [
+      'api$(echo unsafe).json',
+      'sdk;echo unsafe.json',
+      "'api$(echo unsafe).json' 'sdk;echo unsafe.json'",
+    ],
+  ]) {
+    writeFileSync(join(f.dir, apiName), readFileSync(f.api));
+    const invoke = (json) =>
+      spawnSync(process.execPath, [cli, 'init', apiName, sdkName, ...(json ? ['--json'] : [])], {
+        cwd: f.dir,
+        encoding: 'utf8',
+      });
+    const human = invoke(false);
+    assert.equal(human.status, 0, human.stderr);
+    assert.ok(human.stdout.endsWith(`  sdk-generator generate ${expected} OUTPUT\n`));
+    // Ask a POSIX shell to parse the displayed arguments without executing generation.
+    const parsed = spawnSync('sh', ['-c', `printf '%s\\n' ${expected}`], {
+      cwd: f.dir,
+      encoding: 'utf8',
+    });
+    assert.equal(parsed.status, 0, parsed.stderr);
+    assert.equal(parsed.stdout, `${apiName}\n${sdkName}\n`);
+    rmSync(join(f.dir, sdkName));
+    const json = invoke(true);
+    assert.equal(json.status, 0, json.stderr);
+    assert.equal(JSON.parse(json.stdout).written, sdkName);
+    rmSync(join(f.dir, sdkName));
   }
 });
 

@@ -64,6 +64,7 @@ Unknown configuration keys fail with a source location. Capability declarations 
 Other validation rules:
 
 - Namespace segments and public names are validated. Collisions and reserved identifiers fail with source locations.
+- `npm.name` must be at most 214 characters, including any scope and separator. `init` shortens derived package slugs to fit and prefixes digit-leading PHP namespace segments with `Sdk`.
 - `license` changes distribution metadata only and must accurately describe the provider's package. Bundled Apache-2.0 code and notices stay included.
 - PHP-compatible prerelease versions use `alpha`, `beta` or `rc`, optionally with a numeric suffix, such as `1.2.0-beta.1`.
 
