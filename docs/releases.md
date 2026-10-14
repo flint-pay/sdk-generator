@@ -142,7 +142,10 @@ A matching existing shape produces a review finding for its HTTP semantics, unle
 - Comparison follows public response fields. `readOnly` does not change the output type; `writeOnly` fields and their requiredness are excluded.
 - Object responses tolerate unknown fields even with `additionalProperties: false`. Adding such a result beside a typed dictionary can widen its values to `unknown` and is breaking.
 - Removing a guaranteed response field or widening a field's public type is breaking.
-- Pure dictionaries (schema-valued `additionalProperties` with no declared properties) emit `Record<string, T>`. Runtime validation enforces their `required` keys, but the type does not declare them. The comparison checks both declarations and runtime presence, including nested dictionaries. Adding a dictionary result that drops a previously required key is breaking even when the TypeScript type is unchanged. Adding a dictionary result beside an object with an explicitly required property is also breaking, even if the dictionary requires the same key; declare the property in `properties` to keep its field guarantee.
+- Pure dictionaries (schema-valued `additionalProperties` with no declared properties) emit `Record<string, T>`:
+  - Runtime validation enforces their `required` keys, but the type does not declare them. The comparison checks both, including nested dictionaries.
+  - Adding a dictionary result that drops a previously required key is breaking, even when the TypeScript type is unchanged.
+  - Adding a dictionary result beside an object with an explicitly required property is breaking, even if the dictionary requires the same key. Declare the property in `properties` to keep its field guarantee.
 - Inclusion between distinct result unions, composed schemas, recursive schemas and schemas with typeless fields at any depth can require manual review.
 
 ### PHP class names

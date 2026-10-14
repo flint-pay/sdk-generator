@@ -189,8 +189,7 @@ New SDKs return the complete decoded body directly (`responses.return: "payload"
 - Pagination and polling paths always address the original response body, so projection never loses continuation or state. HTTP fixtures assert the complete wire body, through `WithResponse` for payload-mode operations.
 - Return settings and payload types are recorded in the compiled contract. Enabling or disabling payload mode, or changing a payload path, is breaking under `semver`.
 - Regenerating an SDK that previously used `Result` returns with no `responses.return` produces a diagnostic. Set `"result"` to keep its API or `"payload"` to migrate. Operation-level explicit return choices also count.
-
-Successful responses use exact status declarations, then `default`. An otherwise undeclared 2xx reuses the sole declared JSON 2xx response; multiple JSON declarations stay ambiguous. This needs no configuration and keeps required fields strict. See [response drift and recovery](using-sdks.md#successful-http-responses-and-schema-drift).
+- Undeclared 2xx statuses need no configuration; see [response drift and recovery](using-sdks.md#successful-http-responses-and-schema-drift).
 
 ## Declared capabilities
 
@@ -202,7 +201,7 @@ All four fields (`maxAttempts`, `statuses`, `transport`, `baseDelayMs`) are requ
 
 - `maxAttempts` includes the initial attempt (1–10). Client and request budgets are capped at it.
 - A policy replaces the defaults completely. Use `maxAttempts: 1` to disable retries.
-- Without a policy, GET/HEAD/OPTIONS make three total attempts for transport failures and HTTP 408, 429, 500, 502, 503 and 504, with a 100 ms exponential jitter base. Other methods send once.
+- Without a policy, GET/HEAD/OPTIONS use the [default read retries](using-sdks.md#errors-and-retries) and other methods send once.
 - Mutation retries need retry and idempotency declarations and a nonempty key. A missing optional key reduces the call to one attempt; required keys stay required.
 - 409 and 412 cannot appear in `statuses`. 412 is never retried.
 - Transport replay applies only to fully encoded JSON bodies.
@@ -227,9 +226,8 @@ Use the provider's code and set top-level `errors.codePath` (for example `error.
 
 `header`, `retention` and `scope` are required; `auto` defaults to `false`.
 
-- An automatic key is stable only within one SDK call. Callers persist their own key for resubmission and recovery across restarts.
-- Automatic keys are generated only when no explicit key was supplied, including for required headers. They pass the same header validation as explicit keys; callers supply a compatible key when the automatic format fails the schema.
-- Explicit keys from operation header inputs, request headers or `idempotencyKey` are preserved across retries. Conflicting values fail before dispatch.
+- Automatic keys are generated only when no explicit key was supplied, including for required headers. They pass the same header validation as explicit keys.
+- Explicit keys from operation header inputs, request headers or `idempotencyKey` are preserved across retries. See [errors and retries](using-sdks.md#errors-and-retries) for key lifetime and conflicts.
 - Empty keys and keys with leading or trailing spaces or tabs fail before dispatch, because transports can change their wire identity.
 - Callers may supply a required header through `RequestOptions.idempotencyKey` or request headers instead of the input. Input types allow omission, but a missing required key still fails before dispatch when `auto` is off.
 
@@ -255,7 +253,7 @@ Use the provider's code and set top-level `errors.codePath` (for example `error.
 - GET only. The SDK never computes offsets.
 - Links resolve relative to the URL of the page that supplied them.
 - An int64/uint64 continuation decodes to an exact string, so it needs an int64/uint64 query parameter; incompatible declarations fail diagnosis. Ordinary integer continuations can feed ordinary or exact integer parameters.
-- Items and pages are lazy and bounded by optional caller limits. Each page request has its own deadline, including retries and decoding; consumer processing time doesn't count. There is no overall iterator deadline.
+- Consumer behavior, limits and deadlines: [pagination and polling](using-sdks.md#pagination-and-polling).
 
 ### Polling
 
@@ -324,10 +322,11 @@ Top level `webhook`: an HMAC-SHA256 signing format and event schemas. Other sign
 - Required: `algorithm: "hmac-sha256"`, `header`, `separator`, `toleranceSeconds`, `typeField` and `events`.
 - Select the provider's format with `format`; a plain hex signature is not interchangeable with a structured signature header.
 - Verification checks every supplied rotation secret, timestamp tolerance and payload parsing.
-- `known` requires a registered event name and a matching declared envelope. Unknown names and unmatched variants stay authenticated but untyped (`known: false`).
 - Top-level OpenAPI `webhooks` are incoming contracts and never generate client methods. Effective literal event types bind incoming payload schemas to the verifier; incompatible explicit bindings fail diagnosis.
 
-Consumer usage and error codes: [webhook verification](using-sdks.md#webhook-verification).
+Consumer usage, `known` event matching and error codes: [webhook verification](using-sdks.md#webhook-verification).
+
+### Webhook inbox examples
 
 Generated `examples/webhook-inbox.*` implement an optional durable SQLite inbox and outbox, outside the default SDK transport:
 
@@ -407,12 +406,7 @@ With one declared scheme, clients take `token`. With several, select one: `"auth
 - Server URLs must be absolute HTTP/HTTPS URLs without credentials, query, fragment or template variables. Relative URLs, server variables and path or operation server overrides fail diagnosis.
 - HTTP defaults still require the consumer's `allowInsecureHttp: true`.
 
-Client and request options, defaults and language differences are in the [consumer guide](using-sdks.md#client-and-request-options). When declaring capabilities, note:
-
-- The deadline is rechecked after response decoding and model construction, so an overrun returns a deadline error with response metadata instead of a late success.
-- Attempts default to the operation's retry policy, or one attempt without one.
-- Origin checks ignore scheme and host case and normalize default ports; other ports are distinct origins, including for pagination links.
-- Injected transports are privileged. They must honor timeouts, cancellation and destination constraints and disable their own redirects and retries. Node uses the fetch signature. PHP receives `{url, method, headers, body, timeoutMs, cancellation}` and returns `{status, headers, body}`. The SDK never closes caller-owned transports; PHP's built-in cURL handle is SDK-owned and released on close or destruction.
+Client and request options, origins, deadlines and transports are in the [consumer guide](using-sdks.md#client-and-request-options).
 
 ## Errors
 
@@ -425,14 +419,7 @@ Client and request options, defaults and language differences are in the [consum
 | `detailsPath`     | The whole redacted error body | Dot path to error details.           |
 | `requestIdHeader` | `x-request-id`                | Response header with the request ID. |
 
-For nested errors: `{"codePath":"error.code","messagePath":"error.message","detailsPath":"error"}`.
-
-- Paths traverse JSON objects and array indices; scalar values have no child fields.
-- A nonempty JSON string at `messagePath` becomes the exception message after redaction. Absent, blank or non-string values fall back to `API returned HTTP <status>`.
-- Public error codes are redacted. Code-based retry matching uses the original JSON string at `codePath`.
-- JSON numbers, including decimal, exponent and large-integer tokens, never become messages or codes and never match string retry codes.
-- Malformed or non-JSON errors keep status, metadata and explicit `raw` access.
-- Consumers' `redactFields` adds field names to inspection and error message, code and detail redaction without changing response data.
+For nested errors: `{"codePath":"error.code","messagePath":"error.message","detailsPath":"error"}`. Paths traverse JSON objects and array indices. See [errors and retries](using-sdks.md#errors-and-retries) for how messages, codes and details are read and redacted.
 
 ## Documentation and examples
 
@@ -619,7 +606,6 @@ For OpenAPI 3.0, put annotations and nullability on an explicit wrapper:
 
 - Plain numbers must be finite; ordinary floating-point rounding applies.
 - Other integers use the shared safe range ±9,007,199,254,740,991. Exact numeric strings may be larger.
-- Native dates serialize to UTC ISO 8601 with milliseconds; invalid Node dates are rejected. Date-time responses stay strings, and supplied strings keep their spelling.
 - Unknown numeric response fields use numbers for safe integers and strings for larger or decimal tokens.
 - OpenAPI 3.0 `nullable` is normalized before generation, including reference wrappers.
 - Required `readOnly` fields are response requirements; sending them is rejected. Required `writeOnly` fields are input requirements, excluded from response declarations and ordinary inspection.
@@ -635,8 +621,11 @@ For OpenAPI 3.0, put annotations and nullability on an explicit wrapper:
 - Unknown response tags and enum values stay unchanged and are never converted to a known result. Required fields of known schemas must exist and known field shapes must be representable. Request enums and unknown-property restrictions are enforced.
 - Untagged object response alternatives keep future objects through an unknown-object branch.
 - Tagged operation responses export an `is<Resource><Method>ResponseKnown` guard. Check it before switching on known discriminator values; unknown variants stay available.
-- A response union reached through `allOf`, including a `$ref` with sibling constraints, also gets a guard. It checks the complete composed schema, including sibling required fields, bounds and `not`, before narrowing. Such tagged unions keep PHP variant classes whose constructors validate the branch with the surrounding constraints and whose getters include sibling fields. Normal decoding and PHP response constructors stay tolerant of business bounds and future fields.
-- A nullable wrapper with one explicitly typed non-null branch and one plain `type: "null"` branch keeps that branch's fields: TypeScript exposes the value or null, and PHP getters hydrate the named or inline entity. Unknown fields and enum members are preserved; malformed known values fail decoding. Polymorphic alternatives keep their unknown-variant fallback.
+- A response union reached through `allOf`, including a `$ref` with sibling constraints, also gets a guard:
+  - The guard checks the complete composed schema, including sibling required fields, bounds and `not`, before narrowing.
+  - Tagged unions wrapped this way keep PHP variant classes. Their constructors validate the branch with the surrounding constraints, and their getters include sibling fields.
+  - Normal decoding and PHP response constructors stay tolerant of business bounds and future fields.
+- A nullable wrapper with one explicitly typed non-null branch and one plain `type: "null"` branch keeps that branch's fields; see [TypeScript object types](using-sdks.md#typescript-object-types) and [PHP models](using-sdks.md#php-models).
 - Constraints apply at every depth: array items, dictionary values, recursive fields, and types or bounds from another `allOf` branch or `$ref` sibling. A named property can take constraints from another branch's `additionalProperties`; specializing a named property doesn't change the dictionary rule for other keys.
 - Numeric interpretation follows the selected branch's representation: a numeric-looking value in a string branch stays a JSON string, and exact-number strings keep their numeric meaning.
 - Mutually dependent unions, where one branch's numeric interpretation depends on another's, are matched jointly under a bounded search. An unusually ambiguous schema can exhaust it and fail validation. Give each field's type and constraints together, or declare a discriminator.
@@ -645,7 +634,12 @@ For OpenAPI 3.0, put annotations and nullability on an explicit wrapper:
 
 - Numeric enums accept equivalent spellings such as `1`, `1.0` and `1e0`. TypeScript represents exact numeric enum inputs as strings and checks membership at runtime, including single-element type arrays such as `type: ["number"], format: "decimal"`. Native-number enums use numeric literals.
 - Numeric bound literals must be finite, with integer literals in the safe range of the generator's JSON parser.
-- Source numeric constraints must keep their decimal value through that parser. `0.1000` and `1e-1` are accepted; `0.10000000000000001`, which would become `0.1`, fails at the constraint location. This applies to bounds, `multipleOf`, numeric enums and numbers inside `const`, and to numeric values in configuration and profiles. Ignored OpenAPI examples and excluded operations are not checked. Use an override to replace a problematic constraint. This limit does not affect exact numeric strings passed to generated SDKs.
+- Source numeric constraints must keep their decimal value through that parser:
+  - `0.1000` and `1e-1` are accepted. `0.10000000000000001`, which would become `0.1`, fails at the constraint location.
+  - The check covers bounds, `multipleOf`, numeric enums, numbers inside `const`, and numeric values in configuration and profiles.
+  - Ignored OpenAPI examples and excluded operations are not checked.
+  - Use an override to replace a problematic constraint.
+  - Exact numeric strings passed to generated SDKs are unaffected.
 
 ### Patterns
 
@@ -665,15 +659,12 @@ For OpenAPI 3.0, put annotations and nullability on an explicit wrapper:
 
 ### TypeScript declarations
 
-- Shaped objects, including responses, have no implicit index signature. `additionalProperties: true` or an additional-property schema keeps declarations open, and unstructured objects stay dictionaries. This catches misspelled literals and property access without changing runtime additional-property rules.
-- Unknown response fields are preserved; consumers narrow or assert a dictionary type to read them. Unknown object alternatives need the generated guards. Structural assignment can still pass variables with extra keys.
-- Optional fields named like inherited `Object` members (such as `toString`) include the inherited signature so callers can omit them. Explicit own values are validated, functions are never serialized as strings, and required fields keep their types. The runtime reads only own request properties.
+Shaped objects, including responses, have no implicit index signature. `additionalProperties: true` or an additional-property schema keeps a declaration open, and unstructured objects stay dictionaries. Consumer effects: [TypeScript object types](using-sdks.md#typescript-object-types).
 
 ### PHP response entity names
 
 - Configured component model names also name reusable PHP response entities. Inline response objects are named from the owning model and property path.
-- Accessors normalize separators and camel-case words (`request_id` becomes `getRequestId()`); serialized field names are unchanged.
-- Webhook classes derive from event keys: `payment_intent.succeeded` becomes `WebhookEventPaymentIntentSucceeded`.
+- Accessor and webhook class naming: [PHP models](using-sdks.md#php-models).
 - Names are checked case-insensitively; collisions fail with both fields or events identified.
 - These names and hydrated dictionary representations are part of the package's compatibility contract.
 

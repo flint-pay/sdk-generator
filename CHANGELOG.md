@@ -24,6 +24,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 ### Added
 
 - `errors.messagePath` (default `message`) and a direct HTTP `status` on errors in both targets. Node inspection and PHP debug output include provider codes, redacted details and stack frames.
+- Destination errors distinguish protocol failures from allowed-origin failures.
+- TypeScript nullable object fields support direct optional field access.
 - Default base URL from the first declared top-level server. Explicit `baseUrl` values take precedence. Adding a default is additive; changing or removing one is breaking. PHP `ClientOptions.baseUrl` is nullable when omitted; positional argument order is unchanged.
 - Typed nullable values for `anyOf`/`oneOf` wrappers with one typed non-null branch and a plain null branch.
 - Date-time inputs accept JavaScript `Date` and PHP `DateTimeInterface`.
@@ -38,3 +40,4 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 - PHP normalizes HTTP/HTTPS scheme capitalization before omitting default ports, matching Node origin checks.
 - Optional idempotency keys: mutations without a key send once instead of failing because retries were declared.
 - Generated examples no longer use a fabricated sandbox fallback URL.
+- Generated examples use the effective retry policy instead of disabling retries.

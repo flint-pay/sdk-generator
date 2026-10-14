@@ -45,7 +45,7 @@ $client->close();
 
 - `baseUrl` defaults to the first top-level server the API declares. Pass it to choose another environment; it is required when the API declares no server.
 - The base URL's path prefix is kept when operation paths are appended. Don't repeat `/v1` if operation paths already include it.
-- HTTP URLs, including `http://localhost` and anonymous APIs, require `allowInsecureHttp: true`. `allowedOrigins` still applies.
+- HTTP URLs require `allowInsecureHttp: true`. This includes `http://localhost`, even for anonymous APIs. `allowedOrigins` still applies.
 - A missing or malformed URL fails with a structured `baseUrl` validation error. Destination errors distinguish protocol failures from allowed-origin failures.
 - The SDK never reads environment variables or discovers credentials. Pass them from your application's configuration.
 
@@ -186,9 +186,11 @@ Shared `kind` values: `transport`, `authentication`, `validation`, `rate_limit`,
 
 Messages and codes:
 
-- The message is the server explanation at the configured `errors.messagePath` (default `message`), after redaction. Without one it is `API returned HTTP <status>`.
+- The message is the nonempty JSON string at the configured `errors.messagePath` (default `message`), after redaction. Absent, blank or non-string values fall back to `API returned HTTP <status>`.
 - Error paths traverse JSON objects and array indices; scalar values have no child fields.
-- Messages and provider codes must be JSON strings. Numeric tokens never become messages or codes and never match string retry codes. Parsed details keep their exact numeric representation.
+- Messages and provider codes must be JSON strings. Numeric tokens, including decimal, exponent and large-integer values, never become messages or codes and never match string retry codes. Parsed details keep their exact numeric representation.
+- Public codes are redacted; code-based retry matching uses the original string at `errors.codePath`.
+- Malformed or non-JSON error bodies keep status, metadata and explicit `raw` access.
 - Provider `details` are `unknown` in TypeScript. Read the message, status and code without narrowing them.
 
 | `outcome`  | Meaning for recovery                                                                                                                                      |
@@ -329,7 +331,7 @@ try {
 }
 ```
 
-Verification does not deduplicate delivery. Commit a unique event ID and durable work before acknowledging, process effects idempotently, and leave unknown names or unmatched envelopes pending for review. The optional generated SQLite inbox/outbox examples demonstrate this flow; applications supply the database, processing callbacks and retention policy. See [webhook configuration](configuration.md#webhooks).
+Verification does not deduplicate delivery. Commit a unique event ID and durable work before acknowledging, process effects idempotently, and leave unknown names or unmatched envelopes pending for review. The optional generated [SQLite inbox/outbox examples](configuration.md#webhook-inbox-examples) demonstrate this flow.
 
 ## Client and request options
 
@@ -338,12 +340,12 @@ Pass client defaults to `new Client({...})` in Node or `new Client(new ClientOpt
 | Option                    | Where             | Default and behavior                                                                                                                                                |
 | ------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `baseUrl`                 | Client            | First declared server, if present; otherwise required. Explicit values override the default. No credentials, query or fragment.                                     |
-| `token`                   | Client            | Absent. The single selected scheme, or an explicitly configured composed-client shortcut; otherwise rejected on composed clients.                                   |
+| `token`                   | Client            | Absent. See [authenticate](#authenticate) for when it is available.                                                                                                 |
 | `allowedOrigins`          | Client            | Only the base URL origin. Applies to every destination, including pagination links.                                                                                 |
 | `allowInsecureHttp`       | Client            | `false`; enable only for deliberate local HTTP tests.                                                                                                               |
 | `timeoutMs`               | Client or request | `10000`; positive duration per attempt, including response body consumption.                                                                                        |
-| `deadlineMs`              | Client or request | `30000`; positive overall duration, not an absolute timestamp. Includes retry waits; applies separately to each pagination page and across the entire polling wait. |
-| `maxAttempts`             | Client or request | A positive safe integer budget capped at the operation limit. Defaults: 3 for GET/HEAD/OPTIONS, 1 for other methods; explicit policies replace these defaults.      |
+| `deadlineMs`              | Client or request | `30000`; positive overall duration, not an absolute timestamp. Includes retry waits. Iterator and polling scope: [pagination and polling](#pagination-and-polling). |
+| `maxAttempts`             | Client or request | A positive safe integer budget capped at the operation limit. Defaults follow [retries](#errors-and-retries).                                                       |
 | `transport`               | Client            | Native fetch in Node, reusable cURL in PHP. Injected transports are caller-owned.                                                                                   |
 | `diagnostics`             | Client            | Optional callback receiving operation, attempt, status, request ID, timing and error kind, without bodies or credentials.                                           |
 | `redactFields`            | Client            | Additional field names to redact in model inspection, error messages and parsed error details. Does not change response data.                                       |
@@ -351,11 +353,12 @@ Pass client defaults to `new Client({...})` in Node or `new Client(new ClientOpt
 | `idempotencyKey`          | Request           | Caller-owned stable key for a declared idempotent operation. Persist across retries and process restarts.                                                           |
 | `ifMatch`                 | Request           | Value for the declared conditional header, including when that header is `If-None-Match`.                                                                           |
 | `signal` / `cancellation` | Request           | Node `AbortSignal` / PHP `Cancellation` token. Stops local work, not a remote mutation.                                                                             |
-| `maxPages`, `maxItems`    | Request           | Optional positive limits for generated iterators; each page request has its own deadline.                                                                           |
+| `maxPages`, `maxItems`    | Request           | Optional positive limits for generated iterators.                                                                                                                   |
 
 Precedence and budgets:
 
 - Request timeout, deadline and attempt settings override client defaults.
+- The deadline is rechecked after response decoding and model construction, so an overrun returns a `deadline` error with response metadata instead of a late success.
 - `maxAttempts` budgets are capped at each operation's limit, so one client budget is safe across operations. Set `maxAttempts: 1` to disable retries. A budget cannot enable undeclared mutation retries.
 - No mutable client-wide tenant headers are shared between calls.
 
@@ -374,7 +377,8 @@ Concurrency and cleanup:
 
 - Node clients serve concurrent calls within an event loop. Non-streaming Node clients need no cleanup and have no `close()`; clients with streaming operations expose `close()` to release owned streams.
 - PHP clients support sequential calls in one execution context. Don't share a client across threads or fibers. Call `close()` to release the owned cURL handle.
-- The default fetch pool belongs to the runtime. Injected transports belong to the caller, receive credentials and bodies, must honor cancellation and timeouts, and must disable their own redirects and retries.
+- The default fetch pool belongs to the runtime. PHP's built-in cURL handle is SDK-owned and released on close or destruction.
+- Injected transports are privileged and caller-owned; the SDK never closes them. They receive credentials and bodies, must honor timeouts, cancellation and destination constraints, and must disable their own redirects and retries. Node uses the fetch signature. PHP receives `{url, method, headers, body, timeoutMs, cancellation}` and returns `{status, headers, body}`.
 
 ## Advanced
 
@@ -430,13 +434,7 @@ $client->close();
 
 ### Numbers and dates
 
-| Schema                                   | Input                                                | Output             |
-| ---------------------------------------- | ---------------------------------------------------- | ------------------ |
-| `integer` int64/uint64, `number` decimal | Exact string, such as `"9007199254740993"`           | Exact string       |
-| Ordinary `integer`                       | Native safe integer                                  | Native integer     |
-| Plain `number`, float, double            | Native finite number (PHP `int` or `float`)          | Number (PHP float) |
-| `string` date-time                       | String, JavaScript `Date` or PHP `DateTimeInterface` | String             |
-| `string` date                            | String                                               | String             |
+Inputs and outputs follow the [schema representations](configuration.md#schema-representations) table. int64/uint64 and decimal fields use exact strings, such as `"9007199254740993"`; date-time inputs also accept JavaScript `Date` or PHP `DateTimeInterface`.
 
 - The schema decides whether an exact string becomes an unquoted number token on the wire. Don't convert an exact amount to a floating-point number before passing it.
 - Plain numbers use floating-point precision and reject non-finite values.
@@ -453,6 +451,7 @@ $client->close();
 - Unknown response fields stay present. Read them with an explicit dictionary assertion or narrowing.
 - Unknown response object variants need a generated known-variant guard before you read declared fields.
 - `Object.keys()` and `Object.values()` can include undeclared fields. Validate values when iterating preserved extras.
+- Optional fields named like inherited `Object` members (such as `toString`) include the inherited signature, so you can omit them. Explicit own values are validated, functions are never serialized as strings, and the runtime reads only own request properties.
 - An OpenAPI 3.1 schema with `properties` or `required` but no `type` does not require an object. Its type keeps the permitted nonobject values; narrow before reading fields. An enclosing object constraint in an `allOf` still applies.
 - A nullable wrapper with one explicitly typed non-null branch and one plain `type: "null"` branch exposes the known value or null. Unknown fields and enum members are preserved; malformed known values fail decoding. Genuinely polymorphic alternatives keep their unknown-variant fallback.
 
