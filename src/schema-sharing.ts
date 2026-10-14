@@ -28,7 +28,10 @@ function identities() {
 export function shareContractSchemas(
   contract: Contract,
   referenceNames: Readonly<WeakMap<object, string>> = new WeakMap(),
+  typeNames: Readonly<WeakMap<object, string>> = new WeakMap(),
 ): void {
+  // Public Node names are declaration hints, separate from shared codec references
+  // and PHP class identities. Sharing must not rename a source component's return type.
   const identity = identities();
   const catalog = { ...contract.models, ...contract.definitions };
   const names = new Map(Object.entries(catalog).map(([name, schema]) => [identity(schema), name]));
@@ -43,13 +46,16 @@ export function shareContractSchemas(
       if (!name) throw new Error('Missing named schema identity for ' + reference);
       return {
         'x-sdk-ref': name,
+        ...(name !== reference ? { 'x-sdk-type-name': reference } : {}),
         ...Object.fromEntries(Object.entries(schema).filter(([key]) => isSchemaAnnotation(key))),
       };
     }
     const name = nested ? names.get(identity(schema)) : undefined;
+    const typeName = typeNames.get(schema);
     if (name && !schema['x-sdk-ref'])
       return {
         'x-sdk-ref': name,
+        ...(typeName && typeName !== name ? { 'x-sdk-type-name': typeName } : {}),
         ...(schema.readOnly ? { readOnly: true } : {}),
         ...(schema.writeOnly ? { writeOnly: true } : {}),
         ...(schema['x-sensitive'] ? { 'x-sensitive': true } : {}),
@@ -83,7 +89,13 @@ export function shareContractSchemas(
     for (const parameter of operation.parameters) parameter.schema = compactRoot(parameter.schema);
     if (operation.body) operation.body = compactRoot(operation.body);
     for (const response of Object.values(operation.responses))
-      if (response.schema) response.schema = compactRoot(response.schema);
+      if (response.schema) {
+        const name = typeNames.get(response.schema);
+        response.schema = {
+          ...compactRoot(response.schema),
+          ...(name ? { 'x-sdk-type-name': name } : {}),
+        };
+      }
     if (operation.streamEventSchemas)
       operation.streamEventSchemas = Object.fromEntries(
         Object.entries(operation.streamEventSchemas).map(([name, schema]) => [

@@ -3334,6 +3334,13 @@ class Runtime
                 }
             }
             foreach ($op['parameters'] as $parameter) {
+                if (
+                    array_key_exists('source', $parameter) &&
+                    ($parameter['source'] !== 'authentication' ||
+                        ($parameter['in'] ?? null) !== 'header')
+                ) {
+                    throw new \InvalidArgumentException('Invalid compiled parameter source');
+                }
                 Codec::assertPlan($parameter['codec'], $op['id'] . '.parameter');
             }
             if (isset($op['body'])) {
@@ -3436,6 +3443,37 @@ class Runtime
     private function decode(mixed $value, array $codec, array $context = []): mixed
     {
         return Codec::execute($value, $codec, $context + ['definitions' => $this->definitions()]);
+    }
+    private function validateHeaderValue(string $value, array $codec, string $path): void
+    {
+        // Simple headers carry scalars or comma-separated scalar arrays. Keep
+        // their spelling and exact numeric tokens while the request codec
+        // validates the possible wire interpretations.
+        $parseScalar = static fn(string $text): mixed => $text === 'true' || $text === 'false'
+            ? $text === 'true'
+            : (preg_match('/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/D', $text)
+                ? new ParsedNumber($text)
+                : $text);
+        $parts = explode(',', $value);
+        $failure = null;
+        foreach (
+            [$value, $parseScalar($value), $parts, array_map($parseScalar, $parts)]
+            as $candidate
+        ) {
+            try {
+                $this->decode($candidate, $codec, ['path' => $path]);
+                return;
+            } catch (SdkError $error) {
+                if ($error->kind !== 'validation') {
+                    throw $error;
+                }
+                $failure ??= $error;
+            }
+        }
+        if ($failure !== null) {
+            throw $failure;
+        }
+        throw new \LogicException('Header validation did not evaluate a value');
     }
     private static function now(): int
     {
@@ -3602,6 +3640,12 @@ class Runtime
         $path = $op['path'];
         $query = [];
         foreach ($op['parameters'] as $p) {
+            if (($p['source'] ?? null) === 'authentication') {
+                if (array_key_exists($p['name'], $input)) {
+                    Codec::fail($p['name'], 'supply this header through authentication options');
+                }
+                continue;
+            }
             $present = array_key_exists($p['name'], $input);
             $value = $present ? $input[$p['name']] : null;
             if (
@@ -3832,6 +3876,19 @@ class Runtime
         }
         if (isset($this->contract['apiVersion'])) {
             $set($this->contract['apiVersion']['header'], $this->contract['apiVersion']['value']);
+        }
+        foreach ($op['parameters'] as $p) {
+            if (($p['source'] ?? null) !== 'authentication') {
+                continue;
+            }
+            $value = $headers[strtolower($p['name'])] ?? null;
+            if ($value === null) {
+                if ($p['required'] ?? false) {
+                    Codec::fail($p['name'], 'required parameter is missing');
+                }
+            } else {
+                $this->validateHeaderValue($value, $p['codec'], $p['name']);
+            }
         }
         if ($o->ifMatch !== null) {
             if (!isset($op['conditional'])) {

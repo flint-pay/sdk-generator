@@ -60,6 +60,7 @@ export function phpRepresentations(
       description: _description,
       title: _title,
       deprecated: _deprecated,
+      'x-sdk-type-name': _nodeName,
       ...value
     } = schema;
     return value;
@@ -110,10 +111,14 @@ export function phpRepresentations(
     pairs.set(left, rights);
     if (Array.isArray(left) !== Array.isArray(right)) return false;
     const a = Object.entries(left)
-      .filter(([key]) => context !== 'schema' || key !== 'x-sdk-definitions')
+      .filter(
+        ([key]) => context !== 'schema' || !['x-sdk-definitions', 'x-sdk-type-name'].includes(key),
+      )
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
     const b = Object.entries(right)
-      .filter(([key]) => context !== 'schema' || key !== 'x-sdk-definitions')
+      .filter(
+        ([key]) => context !== 'schema' || !['x-sdk-definitions', 'x-sdk-type-name'].includes(key),
+      )
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
     return (
       a.length === b.length &&

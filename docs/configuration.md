@@ -279,7 +279,7 @@ GET only. Unknown states keep waiting within the deadline. Backoff caps at 10 se
 Top level: `{ "apiVersion": { "header": "X-Api-Version", "value": "2026-09" } }`.
 
 - Sends the header on every request, overriding per-request headers.
-- Satisfies a required OpenAPI header parameter without a duplicate input field, and is validated against that header's schema.
+- Satisfies a required OpenAPI header parameter without a duplicate input field, and is validated against that header's schema. Headers supplied by an operation's permitted authentication modes are likewise omitted from its inputs and validated by their wire representation after credentials are attached. Anonymous operations and operations whose modes never supply a declared header retain that input field.
 - Generated documentation reports this value as the API version, or the schema's `info.version` without a pin. Package versions stay independent.
 - Generate from a spec for the same API version; the header does not transform the spec or types. The generator has no global version pin.
 

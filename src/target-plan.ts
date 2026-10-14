@@ -29,25 +29,40 @@ import {
   valueInstruction,
   type CodecPlan,
 } from './codec-plan.js';
-import { compileRuntimePlan, successStatus, type CompiledRuntimePlan } from './runtime-plan.js';
+import {
+  compileRuntimePlan,
+  parameterSource,
+  successStatus,
+  type CompiledRuntimePlan,
+} from './runtime-plan.js';
 import { compileResultPlan, type ResponsePlan } from './response-plan.js';
 import { compileSchemaPolicy, type SchemaPolicy } from './schema-policy.js';
 export { successStatus, RETRY_DEFAULTS, AUTH_SHORTCUT_RESERVED } from './runtime-plan.js';
 const pascal = (s: string) => s[0]!.toUpperCase() + s.slice(1);
 
-export function inputSchema(op: Operation, apiVersion?: Contract['config']['apiVersion']): Schema {
+export function inputSchema(
+  op: Operation,
+  apiVersion?: Contract['config']['apiVersion'],
+  authentication?: Pick<Contract, 'auth' | 'authentication'>,
+): Schema {
+  const settings = {
+    ...(authentication?.auth ? { auth: authentication.auth } : {}),
+    ...(authentication?.authentication ? { authentication: authentication.authentication } : {}),
+    ...(apiVersion ? { apiVersion } : {}),
+  };
+  const parameters = op.parameters.filter((p) => parameterSource(op, p, settings) === 'input');
   const properties: Record<string, Schema> = Object.fromEntries(
-    op.parameters.map((p) => [p.name, p.schema]),
+    parameters.map((p) => [p.name, p.schema]),
   );
   // Managed headers may be supplied outside the operation input. The runtime
   // validates their effective values and requiredness before dispatch.
-  const required = op.parameters
+  const required = parameters
     .filter(
       (p) =>
         p.required &&
         !(
           p.in === 'header' &&
-          [op.idempotency?.header, op.conditional?.header, apiVersion?.header].some(
+          [op.idempotency?.header, op.conditional?.header].some(
             (header) => header?.toLowerCase() === p.name.toLowerCase(),
           )
         ),
@@ -66,6 +81,7 @@ export function namedType(
   response = false,
   documentation = false,
 ): string {
+  if (response && s['x-sdk-type-name']) return s['x-sdk-type-name'];
   const identity = stable(s);
   const indexed = modelIndexes.get(models);
   const name = indexed?.get(identity);
@@ -83,8 +99,9 @@ export function operationInputType(
   models: Record<string, Schema>,
   documentation = false,
   apiVersion?: Contract['config']['apiVersion'],
+  authentication?: Pick<Contract, 'auth' | 'authentication'>,
 ): string {
-  const schema = inputSchema(op, apiVersion);
+  const schema = inputSchema(op, apiVersion, authentication);
   return `{ ${Object.entries(schema.properties!)
     .map(
       ([key, value]) =>
@@ -372,8 +389,11 @@ const js = (v: unknown) => JSON.stringify(v, null, 2)?.replaceAll('"__proto__":'
 const php = (s: string) => "'" + s.replaceAll('\\', '\\\\').replaceAll("'", "\\'") + "'";
 function compileRequestCall(op: Operation, c: Contract, optionsType: string) {
   const paths = pathParameters(op);
-  const fields = op.parameters.filter((p) => p.in !== 'path');
-  const requiredFields = new Set(inputSchema(op, c.config.apiVersion).required);
+  const input = inputSchema(op, c.config.apiVersion, c);
+  const fields = op.parameters.filter(
+    (p) => p.in !== 'path' && Object.hasOwn(input.properties ?? {}, p.name),
+  );
+  const requiredFields = new Set(input.required);
   const paramsRequired = op.bodyRequired || fields.some((p) => requiredFields.has(p.name));
   const type = (schema: Schema) =>
     typescriptType(schema, false, undefined, false, undefined, undefined, c.models);
@@ -385,14 +405,15 @@ function compileRequestCall(op: Operation, c: Contract, optionsType: string) {
         ? ` | { ${[...new Set(valueScopes(op.body, c.definitions).flatMap((s) => Object.keys(s.properties ?? {})))].map((name) => `${JSON.stringify(name)}?: never`).join('; ')} }`
         : '')
     : undefined;
-  const paramsType = [
-    ...(bodyType ? [`(${bodyType})`] : []),
-    ...(fields.length
-      ? [
-          `{ ${fields.map((p) => `${JSON.stringify(p.name)}${requiredFields.has(p.name) ? '' : '?'}: ${requiredFields.has(p.name) ? `InputValue<${type(p.schema)}>` : optionalPropertyType(p.name, `InputValue<${type(p.schema)}>`)}`).join('; ')} }`,
-        ]
-      : []),
-  ].join(' & ');
+  const paramsType =
+    [
+      ...(bodyType ? [`(${bodyType})`] : []),
+      ...(fields.length
+        ? [
+            `{ ${fields.map((p) => `${JSON.stringify(p.name)}${requiredFields.has(p.name) ? '' : '?'}: ${requiredFields.has(p.name) ? `InputValue<${type(p.schema)}>` : optionalPropertyType(p.name, `InputValue<${type(p.schema)}>`)}`).join('; ')} }`,
+          ]
+        : []),
+    ].join(' & ') || '{}';
   const reserved = new Set(
     '_sdkRequestInput _sdkPayload _sdkResponse params options input rest arguments eval await yield break case catch class const continue debugger default delete do else enum export extends false finally for function if import in instanceof let new null return super switch this throw true try typeof var void while with implements interface package private protected public static'.split(
       ' ',
@@ -757,10 +778,10 @@ export function compileSdkContract(source: Contract): {
           return [
             op.id,
             {
-              input: operationInputType(op, models, false, c.config.apiVersion),
-              documentedInput: operationInputType(op, models, true, c.config.apiVersion),
+              input: operationInputType(op, models, false, c.config.apiVersion, c),
+              documentedInput: operationInputType(op, models, true, c.config.apiVersion, c),
               output: resultType(op, models),
-              inputRequired: Boolean(inputSchema(op, c.config.apiVersion).required?.length),
+              inputRequired: Boolean(inputSchema(op, c.config.apiVersion, c).required?.length),
               requestOptions: operationOptions(op, authentication),
               idempotencyKey: Boolean(op.idempotency),
               ...(authentication ? { authModes: op.authModes?.slice().sort() ?? [] } : {}),
@@ -804,7 +825,7 @@ export function compileSdkContract(source: Contract): {
         ...c.operations.map((op) =>
           compilePhpModel(
             pascal(op.resource) + pascal(op.method) + 'Input',
-            inputSchema(op, c.config.apiVersion),
+            inputSchema(op, c.config.apiVersion, c),
             false,
             sharedNames,
           ),
@@ -852,7 +873,7 @@ export function compileSdkContract(source: Contract): {
         op.id,
         {
           nodeInput: typescriptType(
-            inputSchema(op, c.config.apiVersion),
+            inputSchema(op, c.config.apiVersion, c),
             false,
             undefined,
             false,
@@ -861,10 +882,11 @@ export function compileSdkContract(source: Contract): {
             models,
           ),
           nodeOutput: resultType(op),
-          phpInput: phpDocType(inputSchema(op, c.config.apiVersion), false, c.definitions).replace(
-            /\|object$/,
-            '',
-          ),
+          phpInput: phpDocType(
+            inputSchema(op, c.config.apiVersion, c),
+            false,
+            c.definitions,
+          ).replace(/\|object$/, ''),
           phpOutput: Object.entries(op.responses)
             .filter(([status]) => successStatus(status) || status === 'default')
             .map(([, response]) => (response.schema ? phpDocType(response.schema, true) : 'null'))
@@ -906,7 +928,7 @@ export function compileSdkContract(source: Contract): {
         source.operations.map((op) => [
           op.id,
           {
-            input: compileSchemaPolicy(inputSchema(op, source.config.apiVersion), 'input'),
+            input: compileSchemaPolicy(inputSchema(op, source.config.apiVersion, source), 'input'),
             responses: Object.fromEntries(
               Object.entries(op.responses).flatMap(([status, response]) =>
                 response.schema ? [[status, compileSchemaPolicy(response.schema, 'response')]] : [],

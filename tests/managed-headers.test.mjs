@@ -92,8 +92,12 @@ for (const style of ['object', 'positional']) {
       },
       {
         name: 'options override inputs; version pin wins',
-        input: { 'If-Match': 'tag_old', 'X-Api-Version': 'v1', 'Idempotency-Key': 'same_key' },
-        options: { ifMatch: 'tag_new', idempotencyKey: 'same_key' },
+        input: { 'If-Match': 'tag_old', 'Idempotency-Key': 'same_key' },
+        options: {
+          ifMatch: 'tag_new',
+          idempotencyKey: 'same_key',
+          headers: { 'X-Api-Version': 'v1' },
+        },
         tag: 'tag_new',
         key: 'same_key',
       },
@@ -161,10 +165,10 @@ for (const style of ['object', 'positional']) {
         key: 'key_saved',
       },
       {
-        name: 'version pin must satisfy the schema even with a valid input',
+        name: 'version pin must satisfy the schema even with a valid request header',
         operation: 'badVersion',
-        input: { 'X-Api-Version': 'v1' },
-        options: {},
+        input: {},
+        options: { headers: { 'X-Api-Version': 'v1' } },
         error: true,
       },
       {
@@ -226,6 +230,8 @@ const c = new Client({baseUrl:'https://example.invalid'});
 const input: ApiSendValueInput = {};
 c.api.sendValue({}, {ifMatch:'tag_new'});
 c.api.sendValue(undefined, {ifMatch:'tag_new'});
+// @ts-expect-error the configured version pin supplies this header
+const pinned: ApiSendValueInput = {'X-Api-Version':'v1'};
 // @ts-expect-error ordinary required inputs remain required
 c.api.plain({});
 `,

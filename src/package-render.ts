@@ -2,6 +2,7 @@ import ts from 'typescript';
 import { codecClosure, packagePlan } from './package-plan.js';
 import type { CompiledRuntimePlan } from './runtime-plan.js';
 import type { CodecPlan } from './codec-plan.js';
+import { stable } from './canonical.js';
 
 export type Put = (path: string, value: string) => void;
 const json = (value: unknown) => JSON.stringify(value);
@@ -155,6 +156,8 @@ export function splitNodeDeclarations(
   text: string,
   groups: string[],
   put: Put,
+  publicModels: ReadonlySet<string> = new Set(),
+  modelCodecs: ReadonlyMap<string, CodecPlan> = new Map(),
 ): Map<string, Set<string>> {
   const source = ts.createSourceFile('index.d.ts', text, ts.ScriptTarget.Latest, true);
   const importStatements = source.statements.filter(ts.isImportDeclaration);
@@ -237,6 +240,30 @@ export function splitNodeDeclarations(
   }
   const rootExports: string[] = [exports];
   const shapes = new Map<string, string>();
+  const declarationRefs = new Map<string, Set<string>>();
+  // Extending a fixed object keeps the owning symbol in inferred types. Be
+  // conservative with intersections: conflicting discriminants can reduce an
+  // otherwise object-shaped alias to never, which an interface cannot extend.
+  const canExtend = (type: ts.TypeNode): boolean => {
+    const fields = new Map<string, string>();
+    const visit = (node: ts.TypeNode): boolean => {
+      if (ts.isParenthesizedTypeNode(node)) return visit(node.type);
+      if (ts.isIntersectionTypeNode(node)) return node.types.every(visit);
+      if (!ts.isTypeLiteralNode(node)) return false;
+      for (const member of node.members) {
+        if (ts.isIndexSignatureDeclaration(member)) continue;
+        if (!ts.isPropertySignature(member) || !member.type) return false;
+        const key = member.name.getText(source);
+        const value = member.type.getText(source);
+        const previous = fields.get(key);
+        if (previous && previous !== value && previous !== 'unknown' && value !== 'unknown')
+          return false;
+        if (value !== 'unknown' || !previous) fields.set(key, value);
+      }
+      return true;
+    };
+    return visit(type);
+  };
   for (const [name, nodes] of symbols) {
     let body = nodes.map((n) => n.getFullText(source)).join('\n');
     let names = refs(nodes, name);
@@ -245,9 +272,21 @@ export function splitNodeDeclarations(
       const shape = alias.type.getText(source);
       const existing = shapes.get(shape);
       if (existing && shape.length > existing.length) {
-        const start = alias.type.getStart(source) - alias.getFullStart();
-        const end = alias.type.getEnd() - alias.getFullStart();
-        body = body.slice(0, start) + existing + body.slice(end);
+        if (publicModels.has(name) && canExtend(alias.type)) {
+          const start = alias.getStart(source) - alias.getFullStart();
+          // Preserve the declaration's own documentation and export modifier.
+          const prefix = alias
+            .getText(source)
+            .slice(0, alias.name.getStart(source) - alias.getStart(source));
+          body =
+            body.slice(0, start) +
+            prefix.replace(/type\s*$/, 'interface ') +
+            `${name} extends ${existing} {}`;
+        } else {
+          const start = alias.type.getStart(source) - alias.getFullStart();
+          const end = alias.type.getEnd() - alias.getFullStart();
+          body = body.slice(0, start) + existing + body.slice(end);
+        }
         names = new Set([existing]);
       } else shapes.set(shape, name);
     }
@@ -263,6 +302,7 @@ export function splitNodeDeclarations(
       ts.canHaveModifiers(first) &&
       ts.getModifiers(first)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
     if (!exported) body = 'export ' + body.trimStart();
+    declarationRefs.set(name, names);
     put(`declarations/${file(name)}.d.ts`, `${headerFor(nodes)}\n${imports(names)}\n${body}\n`);
     const node = nodes[0];
     const publicSymbol =
@@ -273,16 +313,36 @@ export function splitNodeDeclarations(
       rootExports.push(`export { ${name} } from './declarations/${file(name)}.js';`);
   }
   put('index.d.ts', rootExports.join('\n') + '\n');
+  // Retain component exports reached through the previous shared name, including
+  // resource subpaths, while methods use their owning source component's name.
+  const equivalentModels = new Map<string, string[]>();
+  for (const [name, codec] of modelCodecs) {
+    const key = stable(codec);
+    equivalentModels.set(key, [...(equivalentModels.get(key) ?? []), name]);
+  }
+  const peers = new Map(
+    [...equivalentModels.values()].flatMap((names) => names.map((name) => [name, names] as const)),
+  );
   // Include the type dependency closure in selective entry points without importing the root.
   for (const [group, names] of roots) {
     const visit = (name: string): void => {
-      for (const dependency of refs(symbols.get(name) ?? [], name))
+      for (const dependency of [...(peers.get(name) ?? []), ...refs(symbols.get(name) ?? [], name)])
         if (!names.has(dependency)) {
           names.add(dependency);
           visit(dependency);
         }
     };
     for (const name of [...names]) visit(name);
+    // Add emitted sharing dependencies after the original closure, preserving
+    // existing export order and names even when different codecs share a type.
+    const visitShared = (name: string): void => {
+      for (const dependency of declarationRefs.get(name) ?? [])
+        if (!names.has(dependency)) {
+          names.add(dependency);
+          visitShared(dependency);
+        }
+    };
+    for (const name of [...names]) visitShared(name);
   }
   return roots;
 }

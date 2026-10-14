@@ -34,6 +34,10 @@ A capability must be declared to generate its public helper. Both targets implem
 
 Clients use the first declared top-level server as their default URL; explicit `baseUrl` overrides it. Only absolute HTTP/HTTPS server URLs without credentials, query, fragment or variables are supported. An absent/empty server list requires an explicit URL. HTTP always requires `allowInsecureHttp`, including localhost and anonymous APIs.
 
+Both targets omit headers supplied by the operation's permitted authentication modes and configured API-version headers from method inputs while validating their supplied values before dispatch. Credential headers are validated by their wire representation. Anonymous operations and operations whose modes never supply a declared header retain that input field. Declared idempotency, conditional and outgoing request-ID headers retain input fields and their declared requiredness is enforced before dispatch; idempotency and conditional values can also come from request options or automatic idempotency keys. API responses and verified webhooks use the same numeric codecs; their respective schemas determine whether integers are exact strings or native safe integers.
+
+Node response declarations retain the component name referenced by the source schema, even when codecs share an identical shape with another component. Existing exported component names remain available. PHP retains its compiled response class identities.
+
 Both targets compare HTTP/HTTPS origins without scheme or host case distinctions and normalize default ports. Nondefault ports remain distinct origins, including for pagination links. Explicit `allowedOrigins` entries must be canonical origin strings with default ports omitted. Error paths traverse JSON objects and array indices, and scalar values have no child fields. Error messages, provider codes and code-based retries require original JSON strings; exact numeric preservation in parsed details does not convert JSON numbers into valid messages or codes.
 
 ## Exact OpenAPI subset

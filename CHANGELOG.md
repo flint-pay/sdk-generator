@@ -25,6 +25,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 - **Retry defaults and `idempotencyKey` types.** See [retry defaults](docs/releases.md#retry-defaults).
 - **Node type dependency.** `@types/node` moves from a pinned runtime dependency to an optional `>=22.16.0` peer dependency. TypeScript consumers must install it, for example `npm install --save-dev @types/node@22`.
 
+- **Managed header inputs.** Headers supplied by an operation's permitted authentication modes and the configured API-version header are removed from method inputs and PHP input getters. Anonymous operations and operations whose modes never supply a declared header retain that input field. Pass credentials through authentication options; their wire values are validated against declared header schemas. Compatibility comparison reports the removed fields as breaking. Declared idempotency, conditional and request-ID headers retain input fields and their declared requiredness is enforced before dispatch; idempotency and conditional values may be supplied through request options or automatic idempotency keys.
+
 ### Added
 
 - `preview --diff`.
@@ -47,6 +49,7 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 - Request bodies with no supported media type report that limitation immediately and suggest excluding the operation, rather than asking for an unusable media selection.
 - `effective` omits unselected package metadata, and release plans omit unselected publication settings and instructions. Private records retain compatibility placeholders for existing comparisons.
 - Node packages omit the unused `package-plan.d.ts`; transitive runtime dependencies, including `php-value-plan`, remain bundled.
+- Node response types keep the component name referenced by the source schema when a structurally identical component shares its codec, so inferred return types match the reference (for example `CreatePaymentIntentResult`).
 - Pagination iterators apply `deadlineMs` to each page request, including retries and decoding, instead of across the whole backfill. Bound an iteration with cancellation, `maxPages` or `maxItems`. Polling keeps its overall deadline.
 - PHP normalizes HTTP/HTTPS scheme capitalization before omitting default ports, matching Node origin checks.
 - Generator CLI errors name the cause: unknown command or flag, missing, empty or extra argument, a missing PHP or Composer tool for a selected target, and the JSON parse position. Hand-edit detection reports every edited file.

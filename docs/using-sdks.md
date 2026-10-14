@@ -115,6 +115,10 @@ $book = $client->books->retrieve(
 );
 ```
 
+Headers supplied by an operation's permitted authentication modes and the configured API-version header are omitted from its inputs; pass credentials through [authentication](#authenticate) options. Anonymous operations and operations whose modes never supply a declared header retain that input field. Credential headers are validated by their wire representation before dispatch.
+
+Declared idempotency, conditional and request-ID headers retain input fields and their declared requiredness is enforced before dispatch. Idempotency and conditional inputs may be omitted when their effective values come from request options or automatic idempotency keys. A required request-ID header remains a required input.
+
 With `requests.style: "object"`, methods take one input object with path/query/header fields and a `body` field, then options. See [request arguments](configuration.md#request-arguments) for empty and optional bodies.
 
 ### Results
@@ -441,10 +445,13 @@ Inputs and outputs follow the [schema representations](configuration.md#schema-r
 - Native dates serialize as UTC ISO 8601 with milliseconds, without changing the supplied object. Invalid JavaScript dates fail validation. String inputs keep their spelling.
 - Integer responses accept integral decimal and exponent notation: `1.0` becomes `1`, and `1e3` becomes `1000`. Fractional values are rejected, not rounded.
 - Exact numeric enums accept equivalent spellings such as `1.0` and `1e0` for `1`; membership is checked at runtime. Numeric `anyOf` branches also accept equivalent decimal and integer spellings and preserve the request token; `oneOf` still rejects a value matching multiple branches.
+- API responses and verified webhooks use the same rules. Each schema decides: a plain `integer` is a native safe integer even where another schema declares the same field `int64`. The SDK never infers a format from a field name.
 - Node request arrays need a value at every index; sparse arrays fail validation before dispatch.
 - When configured, `money(currency, major)` converts an exact major-unit string to minor units. It rejects whitespace, including trailing newlines, and excess precision.
 
 ### TypeScript object types
+
+Response types keep the component name their source schema references, even when another component has an identical shape. All exported component names remain available.
 
 - Fresh object literals with undeclared properties, and misspelled response fields, are type errors. Explicitly open objects and dictionaries accept arbitrary keys.
 - Structural typing can still accept extra keys through existing variables; runtime request rules follow the schema.

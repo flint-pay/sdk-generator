@@ -127,6 +127,23 @@ final class SchemaAdapter
             foreach ($op['parameters'] as &$parameter) {
                 $parameter['codec'] = $root($parameter['schema']);
                 unset($parameter['schema']);
+                if (($parameter['in'] ?? null) === 'header') {
+                    $name = strtolower($parameter['name']);
+                    $authHeader =
+                        ($op['authenticated'] || ($op['optionalAuthentication'] ?? false)) &&
+                        strtolower($contract['auth']['header'] ?? '') === $name;
+                    foreach ($op['authModes'] ?? [] as $mode) {
+                        foreach ($contract['authentication'][$mode]['schemes'] ?? [] as $scheme) {
+                            $authHeader = $authHeader || strtolower($scheme['header']) === $name;
+                        }
+                    }
+                    if (
+                        $authHeader &&
+                        strtolower($contract['apiVersion']['header'] ?? '') !== $name
+                    ) {
+                        $parameter['source'] = 'authentication';
+                    }
+                }
             }
             unset($parameter);
             if (isset($op['body'])) {
