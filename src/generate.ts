@@ -31,10 +31,11 @@ import { artifactHashes, prepareSite, verifyRelease, npmPackResult } from './dis
 import { checkVersionPolicy } from './version.js';
 import { DiagnosticGroup, pointerSegment } from './diagnostic.js';
 import { requireTool } from './tool-checks.js';
-import { serialize, executeCodec, ExactNumber } from './runtime.js';
+import { serialize, executeCodec, ExactNumber, SdkError } from './runtime.js';
 import {
   modelReference,
   fieldTable,
+  bodyReference,
   referenceType,
   authenticationGuide,
   operationGuidance,
@@ -44,10 +45,13 @@ import {
   inputSchema,
   successStatus,
   sample,
+  sampleWithFormats,
+  parameterExample,
   ExactNumberSample,
   compileSdkContract,
   RETRY_DEFAULTS,
   AUTH_SHORTCUT_RESERVED,
+  type SampleValidator,
   type CompiledSdkContract,
   type PhpModelPlan,
 } from './target-plan.js';
@@ -427,10 +431,44 @@ function exampleSchema(
       schema.required!.push(p.name);
   return schema;
 }
+function configuredExample(
+  op: Operation,
+  schema: Schema,
+  definitions: Record<string, Schema>,
+): unknown {
+  if (op.example !== undefined) return op.example;
+  const accepts: SampleValidator = (value, codec) => {
+    try {
+      executeCodec(materializeSample(value), codec, { mode: 'request', validateConstraints: true });
+      return true;
+    } catch (error) {
+      if (!(error instanceof SdkError)) throw error;
+      return false;
+    }
+  };
+  const input = sampleWithFormats(schema, definitions, accepts);
+  if (input && typeof input === 'object' && !Array.isArray(input)) {
+    for (const parameter of op.parameters) {
+      // Omitted optional fields stay omitted. Main's examples, enums and consts
+      // retain precedence, even when their value happens to equal a placeholder.
+      if (!Object.hasOwn(input, parameter.name)) continue;
+      const child = schema.properties?.[parameter.name];
+      if (!child) continue;
+      let metadata = false;
+      sample(child, {}, definitions, [], () => {
+        metadata = true;
+      });
+      if (metadata) continue;
+      const selected = parameterExample(parameter, definitions, accepts);
+      if (selected) Reflect.set(input, parameter.name, selected.value);
+    }
+  }
+  return materializeSample(input);
+}
 function exampleInput(op: Operation, definitions: Record<string, Schema> = {}): unknown {
   if (checkedExamples.has(op)) return checkedExamples.get(op);
   try {
-    const input = op.example ?? materializeSample(sample(exampleSchema(op), {}, definitions));
+    const input = configuredExample(op, exampleSchema(op), definitions);
     serialize(input, { ...inputSchema(op), 'x-sdk-definitions': definitions });
     return input;
   } catch (error) {
@@ -1075,7 +1113,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     if (!model) throw new Error('Missing input codec for ' + op.id);
     try {
       const schema = exampleSchema(op, c.config.apiVersion, c);
-      const configured = op.example ?? materializeSample(sample(schema, {}, c.definitions ?? {}));
+      const configured = configuredExample(op, schema, c.definitions ?? {});
       const omitted = new Set(
         op.parameters
           .filter((p) => !Object.hasOwn(schema.properties ?? {}, p.name))
@@ -1685,7 +1723,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
                         .join(', ') || 'none'
                     }. Params contain flat body fields and query/header fields.\n\n`
                   : ''
-              }${referenceType(positional(op) ? 'Canonical input schema (for configuration examples and HTTP fixtures)' : 'Input', target === 'php' ? targetPlan.documentation[op.id]!.phpInput : targetPlan.documentation[op.id]!.nodeInput, target)}${referenceType(payloadReturns[op.id] ? 'Returned payload' : 'Response body (inside Result.data)', target === 'php' ? (payloadReturns[op.id]?.php ?? targetPlan.documentation[op.id]!.phpOutput) : (payloadReturns[op.id]?.nodeDocumentation ?? targetPlan.documentation[op.id]!.nodeOutput), target)}${fieldTable(inputSchema(op, c.config.apiVersion, c), c.definitions ?? c.models, `${op.resource}.${op.method} input`)}${operationGuidance(c, op)}${op.idempotency ? `Idempotency header: ${op.idempotency.header}; retention: ${op.idempotency.retention}; scope: ${op.idempotency.scope}.\n\n` : ''}${op.aliases?.length ? `Deprecated aliases: ${op.aliases.join(', ')} (same wire operation).\n\n` : ''}[Example](examples/${op.resource}-${op.method}.${target === 'node' ? 'mjs' : 'php'})\n\n${convenienceReference(c, op, target)}`,
+              }${referenceType(positional(op) ? 'Canonical input schema (for configuration examples and HTTP fixtures)' : 'Input', target === 'php' ? targetPlan.documentation[op.id]!.phpInput : targetPlan.documentation[op.id]!.nodeInput, target)}${referenceType(payloadReturns[op.id] ? 'Returned payload' : 'Response body (inside Result.data)', target === 'php' ? (payloadReturns[op.id]?.php ?? targetPlan.documentation[op.id]!.phpOutput) : (payloadReturns[op.id]?.nodeDocumentation ?? targetPlan.documentation[op.id]!.nodeOutput), target)}${fieldTable(inputSchema(op, c.config.apiVersion, c), c.definitions ?? c.models, `${op.resource}.${op.method} input`)}${bodyReference(op, c.definitions ?? c.models)}${operationGuidance(c, op)}${op.idempotency ? `Idempotency header: ${op.idempotency.header}; retention: ${op.idempotency.retention.replace(/[.!?]+$/, '')}; scope: ${op.idempotency.scope.replace(/[.!?]+$/, '')}.\n\n` : ''}${op.aliases?.length ? `Deprecated aliases: ${op.aliases.join(', ')} (same wire operation).\n\n` : ''}[Example](examples/${op.resource}-${op.method}.${target === 'node' ? 'mjs' : 'php'})\n\n${convenienceReference(c, op, target)}`,
           )
           .join('\n'),
     );
