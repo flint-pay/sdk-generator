@@ -698,6 +698,115 @@ for (const keyword of ['oneOf', 'anyOf'])
       }
     });
 
+for (const keyword of ['oneOf', 'anyOf'])
+  for (const layout of ['inline', 'reference'])
+    test(`nested allOf ${keyword} ${layout} body variants merge every enclosing declaration`, () => {
+      const parent = {
+        type: 'object',
+        required: ['parentId'],
+        properties: {
+          parentId: { type: 'string', description: 'Outer parent field.' },
+          label: { type: 'string', minLength: 2, description: 'Parent label.' },
+          mode: { type: 'string', description: 'Parent mode.' },
+          responseOnly: { type: 'string', readOnly: true },
+        },
+      };
+      const common = {
+        properties: {
+          label: { maxLength: 20, description: 'Common label.' },
+          common: { type: 'boolean', description: 'Inner common field.' },
+        },
+      };
+      const alternatives = {
+        [keyword]: [
+          {
+            description: 'First branch description.',
+            required: ['label', 'mode', 'responseOnly'],
+            properties: { mode: { const: 'first' } },
+          },
+          {
+            description: 'Second branch description.',
+            required: ['mode'],
+            properties: { mode: { const: 'second' } },
+          },
+        ],
+      };
+      const inner = {
+        allOf: [
+          layout === 'reference' ? { $ref: '#/components/schemas/Common' } : common,
+          layout === 'reference' ? { $ref: '#/components/schemas/Choices' } : alternatives,
+        ],
+      };
+      const { files } = fixture({
+        body: {
+          allOf: [
+            parent,
+            layout === 'reference' ? { $ref: '#/components/schemas/Inner' } : inner,
+            {
+              required: ['sibling'],
+              properties: { sibling: { type: 'integer', description: 'Outer sibling field.' } },
+            },
+          ],
+        },
+        schemas:
+          layout === 'reference' ? { Common: common, Choices: alternatives, Inner: inner } : {},
+      });
+      for (const target of ['node', 'php']) {
+        const reference = files.get(`${target}/REFERENCE.md`);
+        const commonTable = reference
+          .split('#### api.createValue body fields')[1]
+          ?.split('####')[0];
+        assert.match(commonTable, /\| `label` \| Optional \| string \|/);
+        for (const [index, presence, mode] of [
+          [1, 'Required', 'first'],
+          [2, 'Optional', 'second'],
+        ]) {
+          const table = reference
+            .split(`#### api.createValue body ${keyword} variant ${index} fields`)[1]
+            ?.split('####')[0];
+          assert.ok(table, `${target}: missing nested ${keyword} variant ${index} table`);
+          assert.match(table, /\| `parentId` \| Required \| string \| Outer parent field\./);
+          assert.match(
+            table,
+            new RegExp(`\\| \`label\` \\| ${presence} \\| string \\| Parent label\\.`),
+          );
+          assert.match(table, /minLength: `2`\. Common label\. maxLength: `20`\./);
+          assert.match(table, /\| `common` \| Optional \| boolean \| Inner common field\./);
+          assert.match(table, /\| `sibling` \| Required \| integer \| Outer sibling field\./);
+          assert.match(table, /\| `mode` \| Required \| string \| Parent mode\./);
+          assert.ok(table.includes(`Values: \`"${mode}"\`.`));
+          assert.doesNotMatch(table, /responseOnly/);
+        }
+        assert.match(reference, /First branch description\./);
+        assert.match(reference, /Second branch description\./);
+      }
+    });
+
+for (const keyword of ['oneOf', 'anyOf'])
+  test(`body references follow reference chains to nested ${keyword} and stop reference cycles`, () => {
+    const body = bodyReference(
+      { resource: 'values', method: 'create', body: { 'x-sdk-ref': 'Body' } },
+      {
+        Body: {
+          allOf: [{ properties: { label: { type: 'string' } } }, { 'x-sdk-ref': 'Alias' }],
+        },
+        Alias: { 'x-sdk-ref': 'Choices' },
+        Choices: {
+          allOf: [
+            {
+              [keyword]: [{ required: ['label'] }, { 'x-sdk-ref': 'Body' }],
+            },
+          ],
+        },
+      },
+    );
+    const first = body
+      .split(`#### values.create body ${keyword} variant 1 fields`)[1]
+      ?.split('####')[0];
+    assert.match(first, /\| `label` \| Required \| string \|/);
+    assert.equal(body.split(`${keyword} variant 1 fields`).length, 2);
+  });
+
 test('long unions indent their members, preserve Record expressions and retain syntax', () => {
   const source =
     '{ mapping?: Record<string, { nested: Record<string, string | null> }>; status?: ' +

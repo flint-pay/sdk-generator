@@ -257,13 +257,15 @@ export function bodyReference(op: Operation, definitions: Record<string, Schema>
           document(variant, title, seen, parent) ||
           `Body shape: ${typeDescription(variant, definitions)}.\n\n`;
       }
+    // Composition-only wrappers can hide unions several allOf/reference levels
+    // deep. Keep the complete common field view while following each wrapper.
     for (const branch of schema.allOf ?? [])
-      if (branch.oneOf || branch.anyOf || branch['x-sdk-ref'])
+      if (branch.oneOf || branch.anyOf || branch.allOf || branch['x-sdk-ref'])
         output += document(branch, label, seen, parent);
     const ref = schema['x-sdk-ref'];
     if (ref && definitions[ref] && !seen.has(ref)) {
       const target = definitions[ref]!;
-      if (target.oneOf || target.anyOf || target.allOf)
+      if (target.oneOf || target.anyOf || target.allOf || target['x-sdk-ref'])
         output += document(target, label, new Set(seen).add(ref), parent);
     }
     return output;
