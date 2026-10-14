@@ -12,6 +12,7 @@ import { assertRuntimePlan, compileRuntimePlan } from '../dist/runtime-plan.js';
 import { compileSchemaPolicy } from '../dist/schema-policy.js';
 import { typescriptType } from '../dist/target-types.js';
 import { storeCompiledSnapshot, restoreCompiledSnapshot } from '../dist/compiled-record.js';
+import { splitNodeDeclarations } from '../dist/package-render.js';
 
 function fixture(t, api, config = {}) {
   mkdirSync('.generated', { recursive: true });
@@ -146,12 +147,14 @@ test('structurally shared results retain source component names, exported shapes
     a.plan.runtime.operations[1].responses['200'].codec.fields.data.reference,
     'BetaResult',
   );
-  for (const name of ['AlphaResult', 'BetaResult']) {
-    assert.match(
-      readFileSync(join(f.output, 'node/declarations', name + '.d.ts'), 'utf8'),
-      new RegExp(`export type ${name} = \\{ "id": string; \\};`),
-    );
-  }
+  assert.match(
+    readFileSync(join(f.output, 'node/declarations/AlphaResult.d.ts'), 'utf8'),
+    /export type AlphaResult = \{ "id": string; \};/,
+  );
+  assert.match(
+    readFileSync(join(f.output, 'node/declarations/BetaResult.d.ts'), 'utf8'),
+    /export interface BetaResult extends AlphaResult \{\}/,
+  );
   const consumer = join(f.output, 'node/consumer.ts');
   const constrained = typescriptType(
     { 'x-sdk-ref': 'SharedNullable', 'x-sdk-type-name': 'OwnedNullable' },
@@ -193,7 +196,7 @@ const constrainedNull: Constrained = null;
   function visit(node) {
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
       const type = checker.getAwaitedType(checker.getTypeAtLocation(node.initializer));
-      names.set(node.name.text, type?.aliasSymbol?.name);
+      names.set(node.name.text, type && checker.typeToString(type));
     }
     ts.forEachChild(node, visit);
   }
@@ -201,6 +204,7 @@ const constrainedNull: Constrained = null;
   assert.equal(names.get('alpha'), 'AlphaResult');
   assert.equal(names.get('beta'), 'BetaResult');
   assert.equal(names.get('direct'), 'AlphaResult');
+  assert.equal(names.get('scoped'), 'AlphaResult');
   const sdk = await import(pathToFileURL(join(f.output, 'node/index.js')));
   const c = new sdk.Client({
     baseUrl: 'https://example.invalid',
@@ -220,6 +224,129 @@ foreach ([$c->alpha->create(), $c->beta->create()] as $value) {
     join(f.output, 'php'),
   ]);
   assert.equal(preview(f.contract, f.output).changes.length, 0);
+  assert.deepEqual(preview(f.contract, f.output).compatibility, []);
+  // Rendering an interface leaves the saved public contract unchanged. A saved
+  // canonical payload name still receives the existing breaking classification.
+  const recordPath = join(f.output, '.sdk-generator.json');
+  const record = JSON.parse(readFileSync(recordPath, 'utf8'));
+  const snapshot = restoreCompiledSnapshot(record.compiled);
+  const previous = structuredClone(snapshot.plan);
+  previous.node.operations.createAlpha.output = previous.node.operations.createBeta.output;
+  previous.responseReturns.createAlpha.node = previous.responseReturns.createBeta.node;
+  record.compiled = storeCompiledSnapshot({ ...snapshot, plan: previous });
+  writeFileSync(recordPath, JSON.stringify(record));
+  assert.ok(
+    preview(f.contract, f.output).compatibility.some(
+      (finding) =>
+        finding.severity === 'breaking' && finding.subject === 'createAlpha.responseReturn',
+    ),
+  );
+});
+
+test('shared object declarations retain owning names and documentation; nonextendable shapes remain valid aliases', (t) => {
+  const dir = mkdtempSync(resolve('.generated/shared-declarations-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const object = '{ id: string; status: "ready" | "done"; [key: string]: unknown; }';
+  const intersection = '({ id?: unknown }) & ({ id: string; status: string })';
+  const union = '{ kind: "a"; value: string } | { kind: "b"; value: number }';
+  const conflict = '({ kind: "a" }) & ({ kind: "b" })';
+  const files = new Map();
+  const names = ['Object', 'Intersection', 'Union', 'Conflict', 'Nullable', 'Array'];
+  const source = [
+    'export interface ClientOptions {}',
+    ...[object, intersection, union, conflict, object + ' | null', '(' + object + ')[]'].flatMap(
+      (shape, index) => [
+        `export type Shared${names[index]} = ${shape};`,
+        `/** Owning ${names[index]} documentation. */\nexport type Owned${names[index]} = ${shape};`,
+      ],
+    ),
+    'export declare class Client { constructor(options: ClientOptions); readonly api: { object(): Promise<OwnedObject>; intersection(): Promise<OwnedIntersection>; union(): Promise<OwnedUnion>; }; }',
+  ].join('\n');
+  const roots = splitNodeDeclarations(
+    source,
+    ['api'],
+    (name, text) => files.set(name, text),
+    new Set(names.map((name) => 'Owned' + name)),
+  );
+  assert.match(
+    files.get('declarations/OwnedObject.d.ts'),
+    /export interface OwnedObject extends SharedObject \{\}/,
+  );
+  assert.match(
+    files.get('declarations/OwnedIntersection.d.ts'),
+    /export interface OwnedIntersection extends SharedIntersection \{\}/,
+  );
+  for (const name of ['Union', 'Conflict', 'Nullable', 'Array'])
+    assert.match(
+      files.get(`declarations/Owned${name}.d.ts`),
+      new RegExp(`export type Owned${name} = Shared${name};`),
+    );
+  for (const name of names)
+    assert.ok(
+      files.get(`declarations/Owned${name}.d.ts`).includes(`Owning ${name} documentation.`),
+    );
+  // A shared declaration must enter the subpath closure even without equivalent codecs.
+  assert.ok(roots.get('api').has('SharedObject'));
+  assert.ok(roots.get('api').has('SharedIntersection'));
+  files.set(
+    'resources/api.d.ts',
+    files.get('resources/api.d.ts') +
+      [...roots.get('api')]
+        .filter((name) => name !== 'Client')
+        .map((name) => `\nexport type { ${name} } from '../declarations/${name}.js';`)
+        .join(''),
+  );
+  for (const [name, text] of files) {
+    const path = join(dir, name);
+    mkdirSync(join(path, '..'), { recursive: true });
+    writeFileSync(path, text);
+  }
+  const consumer = join(dir, 'consumer.ts');
+  writeFileSync(
+    consumer,
+    `import {Client, type SharedObject, type OwnedObject, type SharedIntersection, type OwnedIntersection, type OwnedUnion, type OwnedNullable, type OwnedArray, type OwnedConflict} from './index.js';
+import type {SharedObject as ScopedSharedObject} from './resources/api.js';
+const c = new Client({});
+const object = c.api.object();
+const intersection = c.api.intersection();
+declare const shared: SharedObject;
+declare const owned: OwnedObject;
+const fromShared: OwnedObject = shared;
+const fromOwned: SharedObject = owned;
+const scoped: ScopedSharedObject = owned;
+declare const sharedIntersection: SharedIntersection;
+const fromSharedIntersection: OwnedIntersection = sharedIntersection;
+const nullable: OwnedNullable = null;
+const array: OwnedArray = [owned];
+const unionA: OwnedUnion = {kind:'a',value:'synthetic'};
+const unionB: OwnedUnion = {kind:'b',value:1};
+// @ts-expect-error required fields remain required
+const missingId: OwnedObject = {status:'ready'};
+// @ts-expect-error discriminated unions retain their branches
+const wrongUnion: OwnedUnion = {kind:'a',value:1};
+// @ts-expect-error conflicting discriminants remain uninhabitable
+const impossible: OwnedConflict = {kind:'a'};
+`,
+  );
+  typecheck(consumer);
+  const program = ts.createProgram([consumer], {
+    strict: true,
+    module: ts.ModuleKind.NodeNext,
+    target: ts.ScriptTarget.ES2022,
+  });
+  const checker = program.getTypeChecker();
+  const inferred = new Map();
+  function visit(node) {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer)
+      inferred.set(
+        node.name.text,
+        checker.typeToString(checker.getTypeAtLocation(node.initializer)),
+      );
+    ts.forEachChild(node, visit);
+  }
+  visit(program.getSourceFile(consumer));
+  assert.equal(inferred.get('object'), 'Promise<OwnedObject>');
+  assert.equal(inferred.get('intersection'), 'Promise<OwnedIntersection>');
 });
 
 test('API and signed webhooks share exact numeric types and decoding; plain integer schemas remain distinct', async (t) => {
