@@ -436,6 +436,14 @@ For nested errors: `{"codePath":"error.code","messagePath":"error.message","deta
 - `documentation.authShortcut`: an `auth.shortcuts` name that README and operation examples use wherever the operation permits its mode, such as `"apiKey"`. Without it, examples prefer `token`, then other shortcuts by name, then the operation's first permitted mode. Diagnosis checks the name against the merged configuration, so set it in a profile or configuration that also declares or includes that shortcut, not in a shared base profile used alone by profiles without it.
 - `operations.<operationId>.example`: realistic SDK inputs for that operation's examples. Generated quickstart inputs are validated during rendering; an invalid inferred or configured example fails generation at `config/operations/<id>/example`.
 
+Existing schema sample selection is preserved: schema `example` values (including annotation references and finite recursive examples) and enums retain their precedence. Schema `examples` arrays and defaults remain metadata and do not supply missing inputs. Explicit SDK configuration examples retain the highest precedence.
+
+When the existing sampler would emit a placeholder for an included path or query parameter, it may instead use a parameter-level `example`, or the first named `examples` entry's `value` (in normalized name order), if it validates against the parameter schema. Optional fields that the existing sampler omits stay omitted. Header and security-scheme parameter examples are excluded. Credential-name tokens (`password`, `passwd`, `secret`, `token`, `api_key`/`apikey`, `client_secret`, `private_key`, `access_key`, `authorization`, `credential`, `signature`, `cookie`, including case and camel-case variants), `x-sensitive`, `writeOnly`, and `format: password` exclude this new parameter-level copying. These exclusions do not change existing schema example or enum handling.
+
+No new request-body or media example copying is added. Exact int64/uint64/decimal parameter examples retain numeric-string tokens; parsed numeric literals fall back rather than copying a potentially rounded value. Invalid parameter examples fall back to the existing sampler. UUID, URI, hostname, IPv4 and IPv6 placeholders replace the literal `"example"`; existing date-time, date and email placeholders are preserved. No internal example annotations are added to contracts or records. Explicit SDK configuration examples must use safe, publishable values. If constraints prevent generating a valid placeholder, supply `operations.<operationId>.example`.
+
+Both targets' `REFERENCE.md` list request body fields, presence, types, descriptions and model links, with separate tables for inline `oneOf`/`anyOf` variants. These tables omit schema examples. Existing schema metadata and declaration/model documentation are otherwise preserved; this sample policy does not sanitize the source contract or package schema definitions.
+
 READMEs start with the install command and one complete quickstart, then up to two short recipes reusing its client, preferring configured examples and covering a create operation, a read operation and another resource when available. Short errors, pagination and webhook sections follow; pagination and webhooks appear only when declared. Detailed behavior is in each package's `RUNTIME.md`, also on the release site. Keep workflow assumptions and provider-specific recovery instructions in the overview and guides.
 
 `example`, `examples`, `default`, `enum` and custom extension payloads keep literal JSON, including fields named `$ref`. Internal `x-sdk-*` extensions are reserved and cannot appear in source definitions.
@@ -489,7 +497,7 @@ Rules for both policies:
 - Integer formats int32/uint32/int64/uint64 enforce their request ranges; uint64 uses exact strings.
 - OpenAPI 3.0 exclusive booleans are normalized with their bounds.
 - Unsupported validation keywords, including `minContains` and `maxContains`, fail diagnosis.
-- Other textual formats are annotations.
+- Other textual formats (including IPv4/IPv6) are runtime annotations. New parameter-level example selection checks their format; this does not add format validation to SDK calls.
 
 ## Publication metadata
 

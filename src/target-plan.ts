@@ -12,7 +12,7 @@ import { schemaComment } from './schema-documentation.js';
 import { codecSharing } from './codec-sharing.js';
 import { Diagnostic } from './diagnostic.js';
 import { valueScopes } from './schema-intersections.js';
-import type { Contract, Operation, Schema } from './contract.js';
+import type { Contract, Operation, Parameter, Schema } from './contract.js';
 import { stable } from './canonical.js';
 import {
   typescriptType,
@@ -1263,24 +1263,249 @@ export class ExactNumberSample {
   constructor(readonly token: string) {}
 }
 
+/** Credential-name tokens exclude new parameter-level example copying. */
+function credentialName(name: string): boolean {
+  const tokens = name
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/);
+  return (
+    tokens.some((token) =>
+      [
+        'password',
+        'passwd',
+        'secret',
+        'token',
+        'apikey',
+        'authorization',
+        'credential',
+        'signature',
+        'cookie',
+      ].includes(token),
+    ) || /(?:^|_)(?:api_key|client_secret|private_key|access_key)(?:_|$)/.test(tokens.join('_'))
+  );
+}
+function sensitiveSample(schema: Schema, definitions: Record<string, Schema>): boolean {
+  return [schema, ...valueScopes(schema, definitions)].some(
+    (shape) =>
+      shape['x-sensitive'] === true || shape.writeOnly === true || shape.format === 'password',
+  );
+}
+export type SampleValidator = (value: unknown, codec: CodecPlan) => boolean;
+
+/** Formats ignored by wire codecs still need valid documentation sample values. */
+function validSampleFormat(
+  value: unknown,
+  schema: Schema,
+  definitions: Record<string, Schema>,
+): boolean {
+  const scopes = valueScopes(schema, definitions);
+  if (Array.isArray(value))
+    return value.every((child) =>
+      validSampleFormat(
+        child,
+        { allOf: scopes.flatMap((shape) => (shape.items ? [shape.items] : [])) },
+        definitions,
+      ),
+    );
+  if (typeof value !== 'string') return true;
+  const date = (text: string) =>
+    /^\d{4}-\d{2}-\d{2}$/.test(text) &&
+    Number.isFinite(Date.parse(text)) &&
+    new Date(text).toISOString().slice(0, 10) === text;
+  const ipv4 = (text: string) =>
+    text.split('.').length === 4 &&
+    text.split('.').every((part) => /^(?:0|[1-9]\d{0,2})$/.test(part) && Number(part) <= 255);
+  const ipv6 = (text: string) => {
+    if (
+      !/^[\da-f:.]+$/i.test(text) ||
+      text.split('::').length > 2 ||
+      (text.startsWith(':') && !text.startsWith('::')) ||
+      (text.endsWith(':') && !text.endsWith('::')) ||
+      text.includes(':::')
+    )
+      return false;
+    const parts = text.split(':');
+    const tail = parts.at(-1) ?? '';
+    const units = parts.filter(Boolean).length + (tail.includes('.') ? 1 : 0);
+    return (
+      (text.includes('::') ? units < 8 : units === 8) &&
+      parts.every((part, index) =>
+        !part
+          ? text.includes('::')
+          : part.includes('.')
+            ? index === parts.length - 1 && ipv4(part)
+            : /^[\da-f]{1,4}$/i.test(part),
+      )
+    );
+  };
+  return scopes.every((shape) => {
+    switch (shape.format) {
+      case 'uuid':
+        return /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i.test(value);
+      case 'date':
+        return date(value);
+      case 'date-time': {
+        const match =
+          /^(\d{4}-\d{2}-\d{2})[tT](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:[zZ]|[+-]\d{2}:\d{2})$/.exec(
+            value,
+          );
+        const datePart = match?.[1];
+        return Boolean(
+          match &&
+            datePart !== undefined &&
+            date(datePart) &&
+            Number(match[2]) < 24 &&
+            Number(match[3]) < 60 &&
+            Number(match[4]) < 60 &&
+            Number.isFinite(Date.parse(value)),
+        );
+      }
+      case 'email':
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+      case 'uri': {
+        if (!/^[a-z][a-z\d+.-]*:[^\s]+$/i.test(value) || /%(?![\da-f]{2})/i.test(value))
+          return false;
+        try {
+          new URL(value);
+          return true;
+        } catch (error) {
+          if (!(error instanceof TypeError)) throw error;
+          return false;
+        }
+      }
+      case 'hostname':
+        return (
+          value.length <= 253 &&
+          value
+            .replace(/\.$/, '')
+            .split('.')
+            .every((part) => /^(?:[a-z\d]|[a-z\d][a-z\d-]{0,61}[a-z\d])$/i.test(part))
+        );
+      case 'ipv4':
+        return ipv4(value);
+      case 'ipv6':
+        return ipv6(value);
+      default:
+        return true;
+    }
+  });
+}
+function validSample(
+  value: unknown,
+  schema: Schema,
+  definitions: Record<string, Schema>,
+  accepts: SampleValidator,
+): boolean {
+  return (
+    validSampleFormat(value, schema, definitions) &&
+    accepts(value, compileCodec({ ...schema, 'x-sdk-definitions': definitions }))
+  );
+}
+
+function sensitiveParameter(parameter: Parameter, definitions: Record<string, Schema>): boolean {
+  return (
+    credentialName(parameter.name) ||
+    sensitiveSample(parameter.schema, definitions) ||
+    Reflect.get(parameter, 'x-sensitive') === true ||
+    Reflect.get(parameter, 'writeOnly') === true ||
+    Reflect.get(parameter, 'format') === 'password'
+  );
+}
+
+/** Parameter metadata is already literal source data; do not annotate the schema or contract. */
+export function parameterExample(
+  parameter: Parameter,
+  definitions: Record<string, Schema>,
+  accepts: SampleValidator,
+): { value: unknown } | undefined {
+  if (!['path', 'query'].includes(parameter.in) || sensitiveParameter(parameter, definitions))
+    return undefined;
+  const examples: unknown = Reflect.get(parameter, 'examples');
+  const first =
+    examples && typeof examples === 'object' && !Array.isArray(examples)
+      ? Object.values(examples)[0]
+      : undefined;
+  const value: unknown = Object.hasOwn(parameter, 'example')
+    ? Reflect.get(parameter, 'example')
+    : first && typeof first === 'object' && Object.hasOwn(first, 'value')
+      ? Reflect.get(first, 'value')
+      : undefined;
+  if (value === undefined) return undefined;
+  // SourceJson's provenance is deliberately not serialized. Never stringify a parsed
+  // exact numeric literal: it may already be rounded. Numeric strings retain their token;
+  // parsed numeric literals for exact schemas use the placeholder.
+  const unproven = (value: unknown, schema: Schema): boolean => {
+    const scopes = valueScopes(schema, definitions);
+    if (Array.isArray(value))
+      return value.some((child) =>
+        unproven(child, { allOf: scopes.flatMap((shape) => (shape.items ? [shape.items] : [])) }),
+      );
+    if (typeof value !== 'number') return false;
+    return scopes.some((shape) =>
+      (Array.isArray(shape.type) ? shape.type : [shape.type]).some((type) =>
+        exactValue(valueInstruction(type, shape.format)),
+      ),
+    );
+  };
+  if (unproven(value, parameter.schema)) return undefined;
+  if (validSample(value, parameter.schema, definitions, accepts)) return { value };
+  const projected = sampleMetadata(value, parameter.schema, definitions);
+  return validSample(projected, parameter.schema, definitions, accepts)
+    ? { value: projected }
+    : undefined;
+}
+function sampleMetadata(
+  value: unknown,
+  schema: Schema,
+  definitions: Record<string, Schema>,
+): unknown {
+  const scopes = valueScopes(schema, definitions);
+  if (Array.isArray(value))
+    return value.map((child) =>
+      sampleMetadata(
+        child,
+        { allOf: scopes.flatMap((shape) => (shape.items ? [shape.items] : [])) },
+        definitions,
+      ),
+    );
+  const exact = scopes.find((shape) =>
+    (Array.isArray(shape.type) ? shape.type : [shape.type]).some((type) =>
+      exactValue(valueInstruction(type, shape.format)),
+    ),
+  );
+  if (exact && typeof value === 'string')
+    return exact['x-sdk-number-input'] === 'explicit'
+      ? new ExactNumberSample(String(value))
+      : String(value);
+  return value;
+}
+
 export function sample(
   s: Schema,
   inherited: Record<string, Schema> = {},
   definitions: Record<string, Schema> = {},
   stack: string[] = [],
+  // Observe existing metadata selection without changing its precedence or validation.
+  onMetadata?: () => void,
 ): unknown {
   // A use-site example takes precedence over the referenced model's sample.
-  if (s.example !== undefined) return s.example;
+  if (s.example !== undefined) {
+    onMetadata?.();
+    return s.example;
+  }
   if (s['x-sdk-ref']) {
     const name = s['x-sdk-ref'];
     const target = definitions[name];
     if (!target || stack.includes(name))
       throw new Diagnostic('example', 'provide a finite example for recursive model ' + name);
     if (Array.isArray(target.type) && target.type.includes('null')) return null;
-    return sample(target, inherited, definitions, [...stack, name]);
+    return sample(target, inherited, definitions, [...stack, name], onMetadata);
   }
   s = directionalSchema(s, false);
   if (Object.hasOwn(s, 'const')) {
+    onMetadata?.();
     const literal = (value: import('./contract.js').Json, declarations: Schema[]): unknown => {
       const shapes = declarations.flatMap((shape) => valueScopes(shape, definitions));
       if (Array.isArray(value))
@@ -1331,13 +1556,14 @@ export function sample(
     const properties = { ...inherited, ...collect(s) };
     const typed = [base, ...(allOf ?? [])].find((shape) => shape.type !== undefined);
     const item = [base, ...(allOf ?? [])].find((shape) => shape.items !== undefined)?.items;
-    let result = sample(base, properties, definitions, stack);
+    let result = sample(base, properties, definitions, stack, onMetadata);
     for (const branch of [...(allOf ?? []), ...(oneOf ?? anyOf ?? []).slice(0, 1)]) {
       const next = sample(
         { ...(typed ? { type: typed.type } : {}), ...(item ? { items: item } : {}), ...branch },
         properties,
         definitions,
         stack,
+        onMetadata,
       );
       result =
         result &&
@@ -1354,12 +1580,14 @@ export function sample(
     return result;
   }
   const t = Array.isArray(s.type) ? s.type.find((t) => t !== 'null') : s.type;
-  if (s.enum?.length)
+  if (s.enum?.length) {
+    onMetadata?.();
     return s.enum[0] !== null && exactValue(valueInstruction(t, s.format))
       ? s['x-sdk-number-input'] === 'explicit'
         ? new ExactNumberSample(String(s.enum[0]))
         : String(s.enum[0])
       : s.enum[0];
+  }
   if (t === 'object' || s.required || s.properties) {
     const fields = Object.entries({
       ...Object.fromEntries((s.required ?? []).map((key) => [key, {} as Schema])),
@@ -1371,7 +1599,7 @@ export function sample(
       if (selected.length < (s.minProperties ?? 0) && !selected.includes(field))
         selected.push(field);
     const result = Object.fromEntries(
-      selected.map(([key, child]) => [key, sample(child, {}, definitions, stack)]),
+      selected.map(([key, child]) => [key, sample(child, {}, definitions, stack, onMetadata)]),
     );
     if (Object.keys(result).length < (s.minProperties ?? 0) && s.additionalProperties !== false) {
       for (let i = Object.keys(result).length; i < (s.minProperties ?? 0); i++)
@@ -1380,6 +1608,7 @@ export function sample(
           {},
           definitions,
           stack,
+          onMetadata,
         );
     }
     return result;
@@ -1391,6 +1620,7 @@ export function sample(
         {},
         definitions,
         stack,
+        onMetadata,
       ),
     );
   if (t === 'boolean') return true;
@@ -1410,13 +1640,20 @@ export function sample(
   }
   if (t === 'string') {
     const formatted =
-      s.format === 'date'
-        ? '2026-01-01'
-        : s.format === 'date-time'
-          ? '2026-01-01T00:00:00Z'
-          : s.format === 'email'
-            ? 'example@example.invalid'
-            : 'example';
+      (
+        {
+          uuid: '00000000-0000-4000-8000-000000000001',
+          date: '2026-01-01',
+          'date-time': '2026-01-01T00:00:00Z',
+          email: 'example@example.invalid',
+          uri: 'https://example.invalid/',
+          hostname: 'example.invalid',
+          ipv4: '192.0.2.1',
+          ipv6: '2001:db8::1',
+        } as Record<string, string>
+      )[s.format ?? ''] ?? 'example';
+    if (s.format && ['uuid', 'uri', 'hostname', 'ipv4', 'ipv6'].includes(s.format))
+      return formatted;
     return formatted.padEnd(s.minLength ?? 0, 'x').slice(0, s.maxLength);
   }
   if (t === 'null') return null;

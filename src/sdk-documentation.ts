@@ -1,5 +1,6 @@
+import { stable } from './canonical.js';
 import { compileRetry } from './runtime-plan.js';
-import { exactValue, valueInstruction } from './codec-plan.js';
+import { directionalSchema, exactValue, valueInstruction } from './codec-plan.js';
 import type { Contract, Operation, Schema } from './contract.js';
 import { schemaNotes } from './schema-documentation.js';
 
@@ -36,37 +37,57 @@ const anchor = (name: string) =>
 /** Format existing type expressions without changing compiler-owned type decisions. */
 export function referenceType(label: string, source: string, target: 'node' | 'php'): string {
   if (source.length <= 140) return `${label}: ${literal(source)}\n\n`;
+  // Quoted literals are atomic, including punctuation and escaped quotes.
+  const tokens =
+    source.match(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\s+|[A-Za-z_$][\w$]*|./g) ??
+    [];
   const lines: string[] = [];
   let line = '',
     depth = 0,
-    quote = '',
-    escaped = false;
+    genericDepth = 0,
+    recordDepth = 0,
+    continuation = 0;
   const newline = () => {
     if (line.trim()) lines.push(line.trimEnd());
-    line = '  '.repeat(depth);
+    line = '  '.repeat(depth + continuation);
   };
-  for (let index = 0; index < source.length; index++) {
-    const char = source[index]!;
-    if (quote) {
-      line += char;
-      if (escaped) escaped = false;
-      else if (char === '\\') escaped = true;
-      else if (char === quote) quote = '';
-    } else if (char === '"' || char === "'" || char === '`') {
-      quote = char;
-      line += char;
-    } else if (char === '{') {
-      line += char;
+  const longUnion = (index: number) => {
+    let first = index,
+      last = index;
+    while (first > 0 && ![';', '{', '}'].includes(tokens[first - 1]!)) first--;
+    while (last < tokens.length && ![';', '{', '}'].includes(tokens[last]!)) last++;
+    return tokens.slice(first, last).join('').length > 100;
+  };
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index]!;
+    if (token === '<') {
+      genericDepth++;
+      if (!recordDepth && tokens[index - 1] === 'Record') recordDepth = genericDepth;
+      line += token;
+    } else if (token === '>') {
+      if (genericDepth === recordDepth) recordDepth = 0;
+      genericDepth = Math.max(0, genericDepth - 1);
+      line += token;
+    } else if (recordDepth) line += token;
+    else if (token === '{') {
+      line += token;
       depth++;
+      continuation = 0;
       newline();
-    } else if (char === '}') {
+    } else if (token === '}') {
       depth = Math.max(0, depth - 1);
+      continuation = 0;
       newline();
-      line += char;
-    } else if (char === ';' || char === ',' || char === '|') {
-      line += char;
+      line += token;
+    } else if (token === ';' || (token === ',' && !genericDepth)) {
+      line += token;
+      continuation = 0;
       newline();
-    } else if (!(/\s/.test(char) && line.endsWith(' '))) line += char;
+    } else if (token === '|' && longUnion(index)) {
+      line += token;
+      continuation = 1;
+      newline();
+    } else if (!(/^\s+$/.test(token) && line.endsWith(' '))) line += token;
   }
   const output = [...lines, line].join('\n').trim();
   const delimiter = '`'.repeat(
@@ -95,10 +116,25 @@ export function schemaFields(
   }
   return { fields, required };
 }
-function typeDescription(s: Schema): string {
-  if (s['x-sdk-ref']) return `[${s['x-sdk-ref']}](MODELS.md#${anchor(s['x-sdk-ref'])})`;
+const documentedModels = new WeakMap<Record<string, Schema>, Map<string, string>>();
+function modelName(schema: Schema, definitions: Record<string, Schema>): string | undefined {
+  if (schema['x-sdk-ref']) return schema['x-sdk-ref'];
+  let index = documentedModels.get(definitions);
+  if (!index) {
+    index = new Map();
+    for (const [name, shape] of Object.entries(definitions)) {
+      const identity = stable(shape);
+      if (!index.has(identity)) index.set(identity, name);
+    }
+    documentedModels.set(definitions, index);
+  }
+  return index.get(stable(schema));
+}
+function typeDescription(s: Schema, definitions: Record<string, Schema> = {}): string {
+  const name = modelName(s, definitions);
+  if (name) return `[${name}](MODELS.md#${anchor(name)})`;
   if (s.oneOf || s.anyOf) return 'Alternative shapes (see declared variants)';
-  if (s.type === 'array') return `Array of ${typeDescription(s.items ?? {})}`;
+  if (s.type === 'array') return `Array of ${typeDescription(s.items ?? {}, definitions)}`;
   const types = Array.isArray(s.type) ? s.type : [s.type ?? 'any'];
   return types
     .map((t) =>
@@ -114,6 +150,7 @@ export function fieldTable(
   schema: Schema,
   definitions: Record<string, Schema>,
   scope = 'Field',
+  includeExamples = true,
 ): string {
   const { fields, required } = schemaFields(schema, definitions);
   if (!Object.keys(fields).length) return '';
@@ -130,7 +167,7 @@ export function fieldTable(
             `#### ${heading}\n\n${values.map((value) => '- ' + literal(value)).join('\n')}\n\n`,
           );
         const notes = [
-          markdownNotes(child, true),
+          markdownNotes(includeExamples ? child : withoutExamples(child), true),
           longEnum
             ? `Values: [${values.length} declared values](#${anchor(heading)}).`
             : values
@@ -141,11 +178,59 @@ export function fieldTable(
         ]
           .filter(Boolean)
           .join(' ');
-        return `| \`${cell(name).replaceAll('`', '&#96;')}\` | ${required.has(name) ? 'Required' : 'Optional'} | ${typeDescription(child)} | ${notes} |`;
+        return `| \`${cell(name).replaceAll('`', '&#96;')}\` | ${required.has(name) ? 'Required' : 'Optional'} | ${typeDescription(child, includeExamples ? {} : definitions)} | ${notes} |`;
       })
       .join('\n') +
     '\n\n' +
     enums.join('')
+  );
+}
+function withoutExamples({ example, examples, ...schema }: Schema): Schema {
+  return schema;
+}
+/** Keep canonical body fields visible beside parameters in both target references. */
+export function bodyReference(op: Operation, definitions: Record<string, Schema>): string {
+  if (!op.body) return '';
+  const body = op.body;
+  const document = (schema: Schema, label: string, seen = new Set<string>()): string => {
+    const shape = schemaFields(directionalSchema(schema, false), definitions);
+    const table = fieldTable(
+      {
+        properties: Object.fromEntries(
+          Object.entries(shape.fields).filter(([, child]) => !child.readOnly),
+        ),
+        required: [...shape.required],
+      },
+      definitions,
+      label,
+      false,
+    );
+    let output = modelName(schema, definitions)
+      ? `Body model: ${typeDescription(schema, definitions)}.\n\n`
+      : '';
+    if (table) output += `#### ${label} fields\n\n${table}`;
+    for (const keyword of ['oneOf', 'anyOf'] as const)
+      for (const [index, variant] of (schema[keyword] ?? []).entries()) {
+        const title = `${label} ${keyword} variant ${index + 1}`;
+        output += `#### ${title}\n\n${markdownNotes(withoutExamples(variant))}\n\n`;
+        output +=
+          document(variant, title, seen) ||
+          `Body shape: ${typeDescription(variant, definitions)}.\n\n`;
+      }
+    for (const branch of schema.allOf ?? [])
+      if (branch.oneOf || branch.anyOf || branch['x-sdk-ref'])
+        output += document(branch, label, seen);
+    const ref = schema['x-sdk-ref'];
+    if (ref && definitions[ref] && !seen.has(ref)) {
+      const target = definitions[ref]!;
+      if (target.oneOf || target.anyOf || target.allOf)
+        output += document(target, label, new Set(seen).add(ref));
+    }
+    return output;
+  };
+  return (
+    document(body, `${op.resource}.${op.method} body`) ||
+    `Body shape: ${typeDescription(body, definitions)}.\n\n`
   );
 }
 export function modelReference(c: Contract): string {
@@ -154,7 +239,7 @@ export function modelReference(c: Contract): string {
     Object.entries(c.models)
       .map(
         ([name, schema]) =>
-          `## ${name}\n\n${markdownNotes(schema)}\n\n${fieldTable(schema, c.definitions ?? c.models, name)}${schema.oneOf || schema.anyOf ? `Variants: ${(schema.oneOf ?? schema.anyOf ?? []).map(typeDescription).join(', ')}.\n\n` : ''}`,
+          `## ${name}\n\n${markdownNotes(schema)}\n\n${fieldTable(schema, c.definitions ?? c.models, name)}${schema.oneOf || schema.anyOf ? `Variants: ${(schema.oneOf ?? schema.anyOf ?? []).map((variant) => typeDescription(variant)).join(', ')}.\n\n` : ''}`,
       )
       .join('')
   );

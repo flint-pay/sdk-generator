@@ -776,6 +776,8 @@ function schema(s: Schema, p: string, legacy = false, explicitNumbers = false): 
       'uri',
       'password',
       'hostname',
+      'ipv4',
+      'ipv6',
     ].includes(s.format)
   )
     fail(p + '/format', 'unsupported format ' + s.format);

@@ -580,6 +580,15 @@ test('JavaScript, descriptors, complete PHP output and existing root exports ret
       fixture.phpSha256,
       fixture.name + ' PHP',
     );
+    assert.equal(
+      hash(
+        [...files].filter(
+          ([p]) => p.startsWith('php/') && !p.endsWith('.md') && !p.includes('/examples/'),
+        ),
+      ),
+      fixture.phpRuntimeSha256,
+      fixture.name + ' PHP runtime/descriptors retain origin/main bytes',
+    );
     const root = ts.createSourceFile(
       'index.d.ts',
       files.get('node/index.d.ts'),
