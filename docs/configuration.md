@@ -11,6 +11,8 @@ Credentials, runtime base URLs and request options are consumer inputs; they nev
 
 ## Minimal configuration
 
+`node dist/cli.js init openapi.json sdk.json --targets node` produces a minimal configuration with an `@example/<slug>` package name derived from `info.title`. Replace the placeholder vendor before generating. Omit `--targets` to include both Node and PHP metadata; see [`init`](cli.md#commands).
+
 ```json
 {
   "version": "0.1.0",

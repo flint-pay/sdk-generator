@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   writeFileSync,
   rmSync,
   existsSync,
@@ -17,6 +18,7 @@ import { spawnSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import {
   loadContract,
+  initialConfig,
   generate,
   render,
   preview,
@@ -32,6 +34,7 @@ import { stable } from '../dist/contract.js';
 
 const cli = resolve('dist/cli.js');
 const commandArguments = {
+  init: ['API_JSON', 'SDK_JSON'],
   diagnose: ['API_JSON', 'SDK_JSON'],
   effective: ['API_JSON', 'SDK_JSON'],
   preview: ['API_JSON', 'SDK_JSON', 'OUTPUT'],
@@ -44,7 +47,7 @@ const commandArguments = {
 const run = (args, env = process.env) =>
   spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8', env });
 
-test('CLI internals do not change the library exports', async () => {
+test('the package exports the documented library API', async () => {
   assert.deepEqual(
     Object.keys(await import('../dist/index.js')).sort(),
     [
@@ -52,6 +55,7 @@ test('CLI internals do not change the library exports', async () => {
       'DiagnosticGroup',
       'compare',
       'generate',
+      'initialConfig',
       'loadContract',
       'prepareRelease',
       'preview',
@@ -71,7 +75,7 @@ function failure(args, env) {
   assert.equal(typeof output.error, 'string');
   return output.error;
 }
-function fixture(t, targets = ['php']) {
+function fixture(t, targets = ['php'], { generated = true } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'sdk-cli-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const api = join(dir, 'api.json'),
@@ -108,9 +112,218 @@ function fixture(t, targets = ['php']) {
     writeFileSync(sdk, JSON.stringify(config));
     generate(loadContract(api, sdk), output);
   };
-  emit();
+  if (generated) emit();
   return { dir, api, sdk, output, config, emit };
 }
+
+test('init writes only the expected minimal config and reports diagnosis and next steps', (t) => {
+  const f = fixture(t, ['node', 'php'], { generated: false });
+  const result = spawnSync(process.execPath, [cli, 'init', 'api.json', 'sdk.json'], {
+    cwd: f.dir,
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  const config = {
+    version: '0.1.0',
+    targets: ['node', 'php'],
+    npm: { name: '@example/synthetic-todos' },
+    composer: { name: 'example/synthetic-todos', namespace: 'Example\\SyntheticTodos' },
+  };
+  assert.equal(readFileSync(f.sdk, 'utf8'), JSON.stringify(config, null, 2) + '\n');
+  assert.deepEqual(readdirSync(f.dir).sort(), ['api.json', 'sdk.json']);
+  const diagnosis = run(['diagnose', f.api, f.sdk]);
+  assert.equal(diagnosis.status, 0, diagnosis.stderr);
+  assert.equal(
+    result.stdout,
+    'Wrote sdk.json (targets: node, php)\n' +
+      diagnosis.stdout +
+      'Next: replace the @example/example package names, then run\n' +
+      '  sdk-generator generate api.json sdk.json OUTPUT\n',
+  );
+});
+
+test('initialConfig reuses ASCII naming words and fallbacks without writing files', (t) => {
+  const f = fixture(t, ['node', 'php'], { generated: false });
+  for (const [title, slug, pascal] of [
+    ['  Widgets... & HTTP_API/v2!  ', 'widgets-http-api-v2', 'WidgetsHttpApiV2'],
+    ['myHTTPService', 'my-http-service', 'MyHttpService'],
+    ['123 Widgets', '123-widgets', '123Widgets'],
+    ['Café Über 支付', 'caf-ber', 'CafBer'],
+    ['支付 🚀', 'sdk', 'Sdk'],
+    ['--- !!!', 'sdk', 'Sdk'],
+    ['', 'sdk', 'Sdk'],
+    [undefined, 'sdk', 'Sdk'],
+  ]) {
+    const api = JSON.parse(readFileSync(f.api, 'utf8'));
+    api.info.title = title;
+    writeFileSync(f.api, JSON.stringify(api));
+    assert.deepEqual(initialConfig(f.api, { targets: ['node', 'php'] }), {
+      version: '0.1.0',
+      targets: ['node', 'php'],
+      npm: { name: '@example/' + slug },
+      composer: { name: 'example/' + slug, namespace: 'Example\\' + pascal },
+    });
+    assert.deepEqual(readdirSync(f.dir), ['api.json']);
+    const result = run(['init', f.api, f.sdk, '--json']);
+    const report = JSON.parse(pascal === '123Widgets' ? result.stderr : result.stdout);
+    assert.deepEqual(report.config, initialConfig(f.api));
+    assert.equal(result.status, pascal === '123Widgets' ? 1 : 0, result.stderr);
+    if (result.status === 1)
+      assert.equal(report.diagnose.diagnostics[0].location, 'config/composer/namespace');
+    rmSync(f.sdk);
+    assert.deepEqual(readdirSync(f.dir), ['api.json']);
+  }
+});
+
+test('init target selection omits unselected metadata and preserves diagnose JSON', (t) => {
+  const f = fixture(t, ['node'], { generated: false });
+  for (const [option, targets] of [
+    ['node', ['node']],
+    ['php', ['php']],
+    ['node,php', ['node', 'php']],
+  ]) {
+    const result = run(['init', '--targets', option, f.api, f.sdk, '--json']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stderr, '');
+    const diagnosis = run(['diagnose', f.api, f.sdk, '--json']);
+    assert.equal(diagnosis.status, 0, diagnosis.stderr);
+    const config = {
+      version: '0.1.0',
+      targets,
+      ...(targets.includes('node') ? { npm: { name: '@example/synthetic-todos' } } : {}),
+      ...(targets.includes('php')
+        ? { composer: { name: 'example/synthetic-todos', namespace: 'Example\\SyntheticTodos' } }
+        : {}),
+    };
+    assert.deepEqual(JSON.parse(result.stdout), {
+      written: f.sdk,
+      config,
+      diagnose: JSON.parse(diagnosis.stdout),
+    });
+    assert.deepEqual(JSON.parse(readFileSync(f.sdk, 'utf8')), config);
+    assert.deepEqual(initialConfig(f.api, { targets }), config);
+    rmSync(f.sdk);
+  }
+  const targets = ['node'];
+  const config = initialConfig(f.api, { targets });
+  targets.push('php');
+  assert.deepEqual(config.targets, ['node']);
+  for (const invalid of [[], ['node', 'node'], ['ruby']])
+    assert.throws(() => initialConfig(f.api, { targets: invalid }), /select node and\/or php/);
+});
+
+test('init rejects invalid flags and target values before writing', (t) => {
+  const f = fixture(t, ['node'], { generated: false });
+  for (const args of [
+    ['--unknown'],
+    ['--force'],
+    ['--targets'],
+    ['--targets', ''],
+    ['--targets', 'ruby'],
+    ['--targets', 'node,node'],
+    ['--targets', 'node,'],
+    ['--targets', 'php,node'],
+    ['--targets', 'node', '--targets', 'php'],
+  ]) {
+    assert.match(failure(['init', f.api, f.sdk, ...args]), /arguments:/);
+    assert.deepEqual(readdirSync(f.dir), ['api.json']);
+  }
+});
+
+test('init refuses existing files, directories and symlinks without changing them', (t) => {
+  const f = fixture(t, ['node'], { generated: false });
+  const original = 'synthetic existing config\n';
+  writeFileSync(f.sdk, original);
+  const refuse = () => {
+    const error = failure(['init', f.api, f.sdk]);
+    assert.ok(error.includes(f.sdk));
+    assert.match(error, /already exists; refusing to overwrite/);
+  };
+  refuse();
+  assert.equal(readFileSync(f.sdk, 'utf8'), original);
+  rmSync(f.sdk);
+  mkdirSync(f.sdk);
+  refuse();
+  assert.deepEqual(readdirSync(f.sdk), []);
+  rmSync(f.sdk, { recursive: true });
+  symlinkSync(join(f.dir, 'absent.json'), f.sdk);
+  refuse();
+  assert.equal(existsSync(join(f.dir, 'absent.json')), false);
+});
+
+test('init keeps the written config and reports the same diagnosis on failure', (t) => {
+  const f = fixture(t, ['node'], { generated: false });
+  const api = JSON.parse(readFileSync(f.api, 'utf8'));
+  api.paths['/todos'].post = api.paths['/todos'].get;
+  delete api.paths['/todos'].get;
+  api.paths['/todos'].post.requestBody = {
+    content: { 'multipart/form-data': { schema: { type: 'object' } } },
+  };
+  writeFileSync(f.api, JSON.stringify(api));
+  for (const json of [false, true]) {
+    const result = run(['init', f.api, f.sdk, ...(json ? ['--json'] : [])]);
+    assert.equal(result.status, 1);
+    assert.deepEqual(JSON.parse(readFileSync(f.sdk, 'utf8')), initialConfig(f.api));
+    const diagnosis = run(['diagnose', f.api, f.sdk, ...(json ? ['--json'] : [])]);
+    assert.equal(diagnosis.status, 1);
+    if (json) {
+      assert.equal(result.stdout, '');
+      assert.deepEqual(JSON.parse(result.stderr), {
+        written: f.sdk,
+        config: initialConfig(f.api),
+        diagnose: JSON.parse(diagnosis.stderr),
+      });
+    } else {
+      assert.equal(result.stdout, `Wrote ${f.sdk} (targets: node, php)\n`);
+      assert.equal(result.stderr, diagnosis.stderr);
+      assert.match(result.stderr, /no supported media type/);
+    }
+    rmSync(f.sdk);
+  }
+  assert.deepEqual(readdirSync(f.dir), ['api.json']);
+});
+
+test('init uses the existing input diagnostics and does not write unreadable or invalid inputs', (t) => {
+  const f = fixture(t, ['node'], { generated: false });
+  const valid = JSON.parse(readFileSync(f.api, 'utf8'));
+  const existingSdk = join(f.dir, 'existing-sdk.json');
+  writeFileSync(existingSdk, JSON.stringify(f.config));
+  for (const input of [
+    '{\n "openapi":',
+    'openapi: 3.1.0',
+    'null',
+    '[]',
+    '{}',
+    JSON.stringify({ ...valid, openapi: '2.0' }),
+  ]) {
+    writeFileSync(f.api, input);
+    const diagnosis = run(['diagnose', f.api, existingSdk, '--json']);
+    assert.equal(diagnosis.status, 1);
+    const error = failure(['init', f.api, f.sdk]);
+    assert.equal(error, JSON.parse(diagnosis.stderr).error);
+    assert.throws(() => initialConfig(f.api), { message: error });
+    assert.equal(existsSync(f.sdk), false);
+  }
+  rmSync(f.api);
+  assert.match(failure(['init', f.api, f.sdk]), /cannot read input/);
+  assert.equal(existsSync(f.sdk), false);
+});
+
+test('a Node config written by init generates and validates a real package', (t) => {
+  const f = fixture(t, ['node'], { generated: false });
+  const initialized = run(['init', f.api, f.sdk, '--targets', 'node']);
+  assert.equal(initialized.status, 0, initialized.stderr);
+  const generated = run(['generate', f.api, f.sdk, f.output]);
+  assert.equal(generated.status, 0, generated.stderr);
+  const validated = run(['validate', f.output, '--json']);
+  assert.equal(validated.status, 0, validated.stderr);
+  assert.ok(JSON.parse(validated.stdout).checks.length > 0);
+  assert.deepEqual(readdirSync(f.output).sort(), ['.sdk-generator.json', 'node']);
+  const metadata = JSON.parse(readFileSync(join(f.output, 'node/package.json'), 'utf8'));
+  assert.equal(metadata.name, '@example/synthetic-todos');
+  assert.equal(metadata.version, '0.1.0');
+});
 
 test('argument errors name the cause and suggest nearby commands', () => {
   assert.match(failure(['diagnoes']), /unknown command "diagnoes".*Did you mean "diagnose"/);
@@ -231,6 +444,7 @@ test('global and command help are plain text and describe arguments and side eff
     const result = run([flag]);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stderr, '');
+    assert.match(result.stdout, /sdk-generator init API_JSON SDK_JSON/);
     assert.match(result.stdout, /sdk-generator diagnose API_JSON SDK_JSON/);
     for (const [command, names] of Object.entries(commandArguments)) {
       const result = run([command, flag]);
@@ -250,6 +464,7 @@ test('global and command help are plain text and describe arguments and side eff
     }
   }
   assert.match(run(['validate', '--help']).stdout, /--fixtures HTTP_CASES_JSON/);
+  assert.match(run(['init', '--help']).stdout, /--targets node\|php\|node,php/);
   assert.match(run(['release', '--help']).stdout, /--acknowledge-review.*approved: true/);
   assert.match(
     run(['generate', 'missing-api', 'missing-sdk', '--help']).stdout,

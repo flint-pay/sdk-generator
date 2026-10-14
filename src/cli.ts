@@ -22,19 +22,32 @@ import {
 import { DiagnosticGroup, suggestion } from './diagnostic.js';
 import { Diagnostic, stable } from './contract.js';
 import { publishSite } from './distribution.js';
-import { readFileSync } from 'node:fs';
+import { initialConfig } from './initial-config.js';
+import { readFileSync, writeFileSync } from 'node:fs';
 const args = process.argv.slice(2);
 // Select the error format before parsing, including unknown commands/flags;
 // parsed flags take over once arguments are accepted.
 const separator = args.indexOf('--');
 let jsonErrors = args.slice(0, separator < 0 ? args.length : separator).includes('--json');
 const command = args.shift();
+let initialized: { written: string; config: ReturnType<typeof initialConfig> } | undefined;
 interface Command {
   arguments: string[];
   flags: Record<string, { value?: string; required?: boolean; description: string }>;
   description: string;
 }
 const commands: Record<string, Command> = {
+  init: {
+    arguments: ['API_JSON', 'SDK_JSON'],
+    flags: {
+      '--targets': {
+        value: 'node|php|node,php',
+        description: 'Select SDK targets (default: node,php).',
+      },
+    },
+    description:
+      'Write a minimal SDK configuration, refuse an existing SDK_JSON, then diagnose the pair. The file is kept if diagnosis fails. Replace the placeholder package names before generating.',
+  },
   diagnose: {
     arguments: ['API_JSON', 'SDK_JSON'],
     flags: {},
@@ -287,16 +300,40 @@ try {
         );
       }
     } else {
+      if (command === 'init') {
+        const targets = flags.get('--targets');
+        if (
+          targets !== undefined &&
+          targets !== 'node' &&
+          targets !== 'php' &&
+          targets !== 'node,php'
+        )
+          throw new Diagnostic('arguments', '--targets must be node, php or node,php');
+        const config = initialConfig(positional[0]!, {
+          targets: targets === 'node' ? ['node'] : targets === 'php' ? ['php'] : ['node', 'php'],
+        });
+        const written = positional[1]!;
+        try {
+          writeFileSync(written, JSON.stringify(config, null, 2) + '\n', { flag: 'wx' });
+        } catch (error) {
+          if (error && typeof error === 'object' && 'code' in error && error.code === 'EEXIST')
+            throw new Diagnostic(written, 'already exists; refusing to overwrite');
+          throw error;
+        }
+        initialized = { written, config };
+        if (!json) console.log(`Wrote ${written} (targets: ${config.targets.join(', ')})`);
+      }
+      const diagnosing = command === 'diagnose' || command === 'init';
       const contract = loadContract(positional[0]!, positional[1]!, {
-        collectDiagnostics: command === 'diagnose',
+        collectDiagnostics: diagnosing,
         onWarning: (warning) =>
           console.error(
             json ? stable({ warning: warning.message }) : messageText('warning', warning.message),
           ),
       });
       // generate/preview already compile and render while inspecting the output.
-      if (command === 'diagnose' || command === 'effective') render(contract);
-      if (command === 'diagnose') {
+      if (diagnosing || command === 'effective') render(contract);
+      if (diagnosing) {
         const result = {
           valid: true,
           operations: contract.operations.length,
@@ -305,9 +342,14 @@ try {
         };
         console.log(
           json
-            ? stable(result)
+            ? stable(initialized ? { ...initialized, diagnose: result } : result)
             : `Valid: ${result.operations} ${result.operations === 1 ? 'operation' : 'operations'}; targets: ${result.targets.join(', ')}; contract hash: ${result.contractHash}`,
         );
+        if (initialized && !json)
+          console.log(
+            'Next: replace the @example/example package names, then run\n' +
+              `  sdk-generator generate ${positional[0]!} ${initialized.written} OUTPUT`,
+          );
       } else if (command === 'effective') {
         const targets = contract.config.targets ?? ['node', 'php'];
         const config = { ...contract.config };
@@ -341,20 +383,19 @@ try {
   const diagnostics = (
     error instanceof DiagnosticGroup ? error.findings : error instanceof Diagnostic ? [error] : []
   ).map((finding) => ({ location: finding.location, message: finding.detail }));
-  if (jsonErrors)
-    console.error(
-      stable({
-        error: error instanceof Error ? error.message : String(error),
-        ...(command === 'diagnose'
-          ? {
-              valid: false,
-              diagnostics,
-            }
-          : {}),
-      }),
-    );
-  else if (
-    command === 'diagnose' &&
+  if (jsonErrors) {
+    const report = {
+      error: error instanceof Error ? error.message : String(error),
+      ...(command === 'diagnose' || initialized
+        ? {
+            valid: false,
+            diagnostics,
+          }
+        : {}),
+    };
+    console.error(stable(initialized ? { ...initialized, diagnose: report } : report));
+  } else if (
+    (command === 'diagnose' || initialized) &&
     diagnostics.length &&
     !(error instanceof Diagnostic && error.location === 'arguments')
   )

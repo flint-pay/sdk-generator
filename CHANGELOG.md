@@ -31,6 +31,7 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ### Added
 
+- `init API_JSON SDK_JSON [--targets node|php|node,php] [--json]` writes a minimal configuration with placeholder package names, refuses overwrites and reports diagnosis while keeping the file on diagnostic failure. Library callers can use `initialConfig` without writing files.
 - `preview --diff`.
 - Node exports `VerifiedWebhook`, `KnownWebhookEvent` and `WebhookEvent<EventName>`; `verifyWebhook` returns `VerifiedWebhook`.
 

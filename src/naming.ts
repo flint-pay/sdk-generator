@@ -23,6 +23,10 @@ function words(value: string): string[] {
     .map((word) => word.toLowerCase());
 }
 
+export function kebabWords(value: string): string {
+  return words(value).join('-');
+}
+
 export function pascalWords(value: string): string {
   return words(value)
     .map((word) => word[0]!.toUpperCase() + word.slice(1))
