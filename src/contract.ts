@@ -1813,7 +1813,10 @@ export function loadContract(
         fail('config/overrides/' + pointerSegment(p), 'override parent must be an object or array');
       const decoded = key.replace(/~1/g, '/').replace(/~0/g, '~');
       if (!Object.hasOwn(parent, decoded))
-        fail('config/overrides/' + pointerSegment(p), 'stale override target');
+        fail(
+          'config/overrides/' + pointerSegment(p),
+          'override pointer does not exist; overrides replace existing values only',
+        );
       parent[decoded] = replacement;
       sourceJson.forget(parent, decoded);
     });
@@ -2265,8 +2268,14 @@ export function loadContract(
         const p = `/paths/${pointerSegment(path)}/${pointerSegment(verb)}`;
         record(op, p);
         const id = op.operationId;
-        if (typeof id !== 'string' || !id || ids.has(id))
-          fail(p, 'operationId must be present and unique');
+        if (typeof id !== 'string' || !id) {
+          if (config.include) continue;
+          fail(
+            p,
+            'operationId must be a nonempty string; add an operationId to the source or select named operations with include (hidden and audiences settings require an operationId)',
+          );
+        }
+        if (ids.has(id)) fail(p, 'operationId must be unique');
         ids.add(id);
         const c: Capability = own(config.operations, id) ?? {};
         keys(
@@ -2492,6 +2501,11 @@ export function loadContract(
             fail(p, 'requestBody.required must be boolean');
           record(op.requestBody.content, p + '/requestBody/content');
           const supported = ['application/json', 'application/merge-patch+json'];
+          if (!Object.keys(op.requestBody.content).some((media) => supported.includes(media)))
+            fail(
+              p + '/requestBody/content',
+              `requestBody declares no supported media type; supported types are ${supported.join(' and ')}; exclude this operation with include or operations.${id}.hidden`,
+            );
           if (
             c.requestMediaType !== undefined &&
             !Object.hasOwn(op.requestBody.content, c.requestMediaType)

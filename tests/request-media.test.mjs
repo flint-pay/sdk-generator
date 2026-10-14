@@ -62,7 +62,7 @@ test('request selection is explicit when ambiguous and independent of declaratio
   assert.throws(() => load(ambiguous, 'text/plain'), /not declared/);
   assert.throws(
     () => load({ 'application/x-www-form-urlencoded': form }, 'application/x-www-form-urlencoded'),
-    /unsupported request media/,
+    /declares no supported media type/,
   );
   assert.throws(() => load(ambiguous, 42), /expected a media type string/);
 });

@@ -510,6 +510,7 @@ This example assumes an SDK with a declared server, a `token` shortcut and objec
 - Resource imports let ESM bundlers drop unrelated descriptors; use them for the largest bundle-size reduction. Root clients keep the complete surface.
 - Both forms decode descriptors on first use by a request, model factory, predicate or webhook verification, so a first call costs more than later ones. Reused clients reuse their transports; credentials and request state are never stored in shared descriptor caches.
 - Split files add packaging overhead, so npm and Composer archives can grow while startup memory falls.
+- Node packages bundle their transitive runtime and declaration dependencies, including the shared descriptor validator's `php-value-plan` module. That module is JavaScript and requires no PHP installation.
 - PHP classes live in individual files for autoloading and editor indexing. Descriptors load on demand; the tested full public fixture needs no increased memory limit. `SchemaRegistry::contract()` and `codecs()` materialize the complete plan and are unnecessary for normal calls.
 
 ### Successful HTTP responses and schema drift

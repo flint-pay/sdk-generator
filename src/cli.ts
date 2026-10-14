@@ -239,8 +239,14 @@ try {
             targets: contract.config.targets ?? ['node', 'php'],
           }),
         );
-      else if (command === 'effective') console.log(stable(contract));
-      else {
+      else if (command === 'effective') {
+        const targets = contract.config.targets ?? ['node', 'php'];
+        const config = { ...contract.config };
+        // Resolved contracts retain metadata for saved-record compatibility.
+        if (!targets.includes('node')) Reflect.deleteProperty(config, 'npm');
+        if (!targets.includes('php')) Reflect.deleteProperty(config, 'composer');
+        console.log(stable({ ...contract, config }));
+      } else {
         console.log(stable(generate(contract, positional[2]!, command === 'preview')));
       }
     }

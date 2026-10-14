@@ -78,6 +78,8 @@ OUTPUT/
 
 Only selected targets are emitted. Webhook inbox/outbox examples appear when verification is configured. The private root record is excluded from package archives; preserve it to detect hand edits, remove obsolete owned files and compare future versions. Generated packages contain their selected operation descriptors, codecs and public types. Source schema definitions are retained where required by public schema-taking helpers.
 
+`effective` omits unselected targets' package metadata. The resolved library contract and private record retain compatibility placeholders; see [overrides and effective configuration](configuration.md#overrides). Release plans contain publication settings and instructions only for selected targets; unselected entries in `packages` are `null`.
+
 ## Using the generator as a library
 
 The built module exports the same operations for automation. From a script in the repository root:

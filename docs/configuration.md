@@ -120,14 +120,17 @@ Stale operation and model customization targets fail diagnosis.
 ### Select operations
 
 - `include` selects operation IDs.
+- With `include`, operations without a nonempty `operationId` are skipped. Without it, add IDs to the source before generating. Declared IDs must be unique, including on unselected operations.
 - `audiences` selects operations whose declared `audiences` intersect it.
 - `hidden: true` excludes an operation.
+- `hidden` and operation audience declarations are keyed by `operationId`; they cannot address an unnamed operation. Use `include` to select named operations from such a document.
 - Only models needed by selected operations and events are exported. Unselected unsupported components do not block a supported slice.
 - Selection never confers server authorization. The private generation record keeps the resolved selected contract and source hashes.
 
 ### Request bodies and parameters
 
 - Request bodies support `application/json` and `application/merge-patch+json`. When exactly one supported type is declared, it is selected, even beside unsupported types. When both are declared, set `operations.<operationId>.requestMediaType` to a declared supported type; only its schema controls encoding. For example, select `application/json` for an OAuth operation that also offers form encoding.
+- If no declared request media type is supported, selecting `requestMediaType` cannot enable it. Exclude the operation with `include` or `operations.<operationId>.hidden: true`.
 - GET/HEAD request bodies are rejected when Node is a selected target; its built-in fetch transport cannot send them.
 - HTTP parameters need an explicit non-null scalar type, a supported scalar array, or a union of a scalar with its array. References and conjunctive schemas may supply the type and add constraints. An empty schema or an untyped enum fails diagnosis; declare the type. Typeless schemas remain supported in JSON bodies and models.
 
@@ -447,9 +450,11 @@ READMEs embed one complete quickstart and up to two short recipes reusing its cl
 ```
 
 - Overrides replace the addressed value before reference resolution. They are explicit provider corrections and affect both targets.
-- Pointers to missing values fail.
+- Overrides replace existing values only; pointers to missing values fail. They cannot add an absent property such as `operationId`; add it to the source document instead.
 - To correct a referenced local schema, override its `$ref` occurrence or vendor a corrected file.
 - `effective` prints the resolved contract, customization results, source hashes and selected operations. Treat that output as private.
+
+`effective` omits package metadata for unselected targets. Resolved library contracts and private generation records retain placeholder metadata when that target's settings were omitted: saved-record comparison treats removing it as a package identity change. These placeholders do not select a target or produce a package.
 
 ## Profiles
 
