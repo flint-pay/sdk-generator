@@ -82,8 +82,10 @@ export function parameterSource(
   const name = parameter.name.toLowerCase();
   if (settings.apiVersion?.header.toLowerCase() === name) return 'api-version';
   if (
-    Object.values(settings.authentication ?? {}).some((mode) =>
-      mode.schemes.some((scheme) => scheme.header.toLowerCase() === name),
+    op.authModes?.some((mode) =>
+      settings.authentication?.[mode]?.schemes.some(
+        (scheme) => scheme.header.toLowerCase() === name,
+      ),
     ) ||
     (settings.auth?.header.toLowerCase() === name &&
       (op.authenticated || op.optionalAuthentication))

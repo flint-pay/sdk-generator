@@ -720,3 +720,355 @@ try{$c->api->readProtected(['x-key'=>'stale-value']);throw new Exception('Expect
     join(f.dir, 'raw.json'),
   ]);
 });
+
+for (const named of [false, true]) {
+  test(`${named ? 'named' : 'single-scheme'} credential headers validate scalar and array wire values in both targets`, async (t) => {
+    const cases = [
+      {
+        id: 'integer',
+        schema: { type: 'integer', minimum: 100, maximum: 200 },
+        value: '123',
+        invalid: ['99', '123.5', 'invalid'],
+      },
+      {
+        id: 'boolean',
+        schema: { type: 'boolean', enum: [true] },
+        value: 'true',
+        invalid: ['false', 'invalid'],
+      },
+      { id: 'string', schema: { type: 'string', minLength: 3 }, value: '123', invalid: ['12'] },
+      {
+        id: 'exact',
+        schema: { type: 'integer', format: 'int64' },
+        value: '9007199254740993',
+        invalid: ['9223372036854775808'],
+      },
+      { id: 'number', schema: { type: 'number', minimum: 0 }, value: '1.25', invalid: ['-1'] },
+      {
+        id: 'integers',
+        schema: { type: 'array', minItems: 2, items: { type: 'integer', maximum: 3 } },
+        value: '1,2',
+        invalid: ['1,4', '1'],
+      },
+      {
+        id: 'booleans',
+        schema: { type: 'array', items: { type: 'boolean' } },
+        value: 'true,false',
+        invalid: ['true,invalid'],
+      },
+      {
+        id: 'strings',
+        schema: { type: 'array', items: { type: 'string', minLength: 2 } },
+        value: 'true,123',
+        invalid: ['a,123'],
+      },
+      {
+        id: 'alternative',
+        schema: { anyOf: [{ type: 'integer' }, { type: 'array', items: { type: 'integer' } }] },
+        value: '1,2',
+        invalid: ['invalid'],
+      },
+    ];
+    const f = fixture(
+      t,
+      {
+        components: { securitySchemes: { Key: { type: 'apiKey', in: 'header', name: 'X-Key' } } },
+        paths: Object.fromEntries(
+          cases.map(({ id, schema }) => [
+            '/' + id,
+            {
+              get: {
+                operationId: 'read' + id[0].toUpperCase() + id.slice(1),
+                security: [{ Key: [] }],
+                parameters: [{ in: 'header', name: 'x-key', required: true, schema }],
+                responses: { 204: { description: 'OK' } },
+              },
+            },
+          ]),
+        ),
+      },
+      { auth: named ? { modes: { key: { schemes: ['Key'] } } } : { scheme: 'Key' } },
+    );
+    const sdk = await import(pathToFileURL(join(f.output, 'node/index.js')));
+    for (const scenario of cases) {
+      const seen = [];
+      const client = (value) =>
+        new sdk.Client({
+          baseUrl: 'https://example.invalid',
+          ...(named ? { authMode: 'key', credentials: { key: { Key: value } } } : { token: value }),
+          transport: async (_url, request) => {
+            seen.push(request.headers['x-key']);
+            return new Response(null, { status: 204 });
+          },
+        });
+      await client(scenario.value).api[
+        'read' + scenario.id[0].toUpperCase() + scenario.id.slice(1)
+      ]();
+      assert.deepEqual(seen, [scenario.value], scenario.id);
+      for (const value of scenario.invalid)
+        await assert.rejects(
+          client(value).api['read' + scenario.id[0].toUpperCase() + scenario.id.slice(1)](),
+          { kind: 'validation' },
+          scenario.id,
+        );
+      assert.deepEqual(seen, [scenario.value], 'invalid credentials dispatched: ' + scenario.id);
+    }
+    writeFileSync(join(f.dir, 'cases.json'), JSON.stringify(cases));
+    ok('php', [
+      '-r',
+      String.raw`
+require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
+$named=$argv[3]==='named';
+foreach(json_decode(file_get_contents($argv[2]),true) as $case){
+  $seen=[];
+  $client=function($value)use($named,&$seen){return new Example\Types\Client(new Example\Types\ClientOptions(baseUrl:'https://example.invalid',token:$named?null:$value,authMode:$named?'key':null,credentials:$named?['key'=>['Key'=>$value]]:[],transport:function($r)use(&$seen){$seen[]=$r['headers']['x-key'];return ['status'=>204,'headers'=>[],'body'=>''];}));};
+  $method='read'.ucfirst($case['id']);$client($case['value'])->api->$method();
+  foreach($case['invalid'] as $value){try{$client($value)->api->$method();throw new Exception('Invalid credential accepted: '.$method);}catch(Example\Types\SdkError $e){if($e->kind!=='validation')throw $e;}}
+  if($seen!==[$case['value']])throw new Exception('Credential wire value: '.$method);
+}
+`,
+      join(f.output, 'php'),
+      join(f.dir, 'cases.json'),
+      named ? 'named' : 'single',
+    ]);
+  });
+}
+
+test('named modes preserve header inputs outside the operation security requirements', async (t) => {
+  const headers = [
+    { in: 'header', name: 'x-checkout-id', required: true, schema: { type: 'string' } },
+    { in: 'header', name: 'X-Checkout-Secret', schema: { type: 'string' } },
+  ];
+  const operation = (operationId, security) => ({
+    get: { operationId, security, parameters: headers, responses: { 204: { description: 'OK' } } },
+  });
+  const f = fixture(
+    t,
+    {
+      components: {
+        securitySchemes: {
+          Bearer: { type: 'http', scheme: 'bearer' },
+          CheckoutID: { type: 'apiKey', in: 'header', name: 'X-Checkout-ID' },
+          CheckoutSecret: { type: 'apiKey', in: 'header', name: 'X-Checkout-Secret' },
+        },
+      },
+      paths: {
+        '/anonymous': operation('anonymous', []),
+        '/bearer': operation('bearer', [{ Bearer: [] }]),
+        '/checkout': operation('checkout', [{ CheckoutID: [], CheckoutSecret: [] }]),
+        '/optional': operation('optional', [{}, { CheckoutID: [], CheckoutSecret: [] }]),
+      },
+    },
+    {
+      auth: {
+        modes: {
+          bearer: { schemes: ['Bearer'] },
+          checkout: { schemes: ['CheckoutID', 'CheckoutSecret'] },
+        },
+      },
+    },
+  );
+  const raw = {
+    operations: f.contract.operations,
+    authentication: f.contract.authentication,
+    validation: 'schema',
+  };
+  const plan = compileRuntimePlan(raw);
+  for (const op of f.contract.operations) {
+    const managed = ['checkout', 'optional'].includes(op.id);
+    const input = inputSchema(op, undefined, f.contract);
+    assert.deepEqual(
+      Object.keys(input.properties),
+      managed ? [] : ['x-checkout-id', 'X-Checkout-Secret'],
+    );
+    assert.deepEqual(input.required, managed ? [] : ['x-checkout-id']);
+    for (const p of plan.operations.find((candidate) => candidate.id === op.id).parameters)
+      assert.equal(p.source, managed ? 'authentication' : undefined, op.id);
+  }
+  const consumer = join(f.output, 'node/retained.ts');
+  writeFileSync(
+    consumer,
+    `import {Client, type ApiAnonymousInput, type ApiBearerInput} from './index.js';
+const c=new Client({baseUrl:'https://example.invalid'});
+const anonymous:ApiAnonymousInput={'x-checkout-id':'id','X-Checkout-Secret':'secret'};
+const bearer:ApiBearerInput={'x-checkout-id':'id'};
+c.api.anonymous(anonymous);c.api.bearer(bearer);c.api.checkout();
+// @ts-expect-error the anonymous operation retains the required header
+c.api.anonymous({});
+// @ts-expect-error the bearer-only operation retains the required header
+c.api.bearer({});
+`,
+  );
+  typecheck(consumer);
+  const sdk = await import(pathToFileURL(join(f.output, 'node/index.js')));
+  const seen = [];
+  const c = new sdk.Client({
+    baseUrl: 'https://example.invalid',
+    authMode: 'bearer',
+    credentials: {
+      bearer: { Bearer: 'synthetic-token' },
+      checkout: { CheckoutID: 'id', CheckoutSecret: 'secret' },
+    },
+    transport: async (_url, request) => {
+      seen.push(request.headers);
+      return new Response(null, { status: 204 });
+    },
+  });
+  await c.api.checkout({}, { authMode: 'checkout' });
+  assert.equal(seen[0]['x-checkout-id'], 'id');
+  for (const method of ['anonymous', 'bearer']) {
+    await assert.rejects(c.api[method]({}), { kind: 'validation' });
+    // origin/main already rejects these conflicting headers; retaining declarations does not change that guard.
+    await assert.rejects(c.api[method]({ 'x-checkout-id': 'id' }), { kind: 'authentication' });
+  }
+  assert.equal(seen.length, 1);
+  writeFileSync(join(f.dir, 'raw.json'), JSON.stringify(raw));
+  writeFileSync(join(f.dir, 'plan.json'), JSON.stringify(plan));
+  ok('php', [
+    '-r',
+    String.raw`
+require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
+$raw=json_decode(file_get_contents($argv[2]),true);
+$dynamic=Example\Types\Internal\SchemaAdapter::runtimePlan($raw);
+$compiled=json_decode(file_get_contents($argv[3]),true);
+foreach($dynamic['operations'] as $i=>$op)foreach($op['parameters'] as $j=>$p)if(($p['source']??null)!==($compiled['operations'][$i]['parameters'][$j]['source']??null))throw new Exception('Dynamic classification differs');
+foreach([Example\Types\ApiAnonymousInput::class,Example\Types\ApiBearerInput::class] as $class){$r=new ReflectionClass($class);foreach(['getXCheckoutId','getXCheckoutSecret'] as $method)if(!$r->hasMethod($method))throw new Exception('Header getter removed');}
+if((new ReflectionClass(Example\Types\ApiCheckoutInput::class))->hasMethod('getXCheckoutId'))throw new Exception('Credential getter retained');
+$seen=[];$c=new Example\Types\Client(new Example\Types\ClientOptions(baseUrl:'https://example.invalid',authMode:'bearer',credentials:['bearer'=>['Bearer'=>'synthetic-token'],'checkout'=>['CheckoutID'=>'id','CheckoutSecret'=>'secret']],transport:function($r)use(&$seen){$seen[]=$r['headers'];return ['status'=>204,'headers'=>[],'body'=>''];}));
+$c->api->checkout(options:new Example\Types\RequestOptions(authMode:'checkout'));
+foreach(['anonymous','bearer'] as $method)foreach([[] ,['x-checkout-id'=>'id']] as $input){try{$c->api->$method($input);throw new Exception('Expected rejection');}catch(Example\Types\SdkError $e){if($e->kind!==($input?'authentication':'validation'))throw $e;}}
+if(count($seen)!==1||$seen[0]['x-checkout-id']!=='id')throw new Exception('Credential dispatch');
+`,
+    join(f.output, 'php'),
+    join(f.dir, 'raw.json'),
+    join(f.dir, 'plan.json'),
+  ]);
+  // Model the origin/main declarations: every header was an operation input.
+  const recordPath = join(f.output, '.sdk-generator.json');
+  const record = JSON.parse(readFileSync(recordPath));
+  const snapshot = restoreCompiledSnapshot(record.compiled);
+  const previous = structuredClone(snapshot.plan);
+  for (const op of f.contract.operations) {
+    const oldInput = {
+      type: 'object',
+      properties: Object.fromEntries(headers.map((p) => [p.name, p.schema])),
+      required: ['x-checkout-id'],
+      additionalProperties: false,
+    };
+    previous.policy.operations[op.id].input = compileSchemaPolicy(oldInput, 'input');
+    const name = 'Api' + op.id[0].toUpperCase() + op.id.slice(1) + 'Input';
+    previous.php.models.find((model) => model.name === name).getters = compilePhpModel(
+      name,
+      oldInput,
+      false,
+      new Map(),
+    ).getters;
+  }
+  record.compiled = storeCompiledSnapshot({ ...snapshot, plan: previous });
+  writeFileSync(recordPath, JSON.stringify(record));
+  const findings = preview(f.contract, f.output).compatibility;
+  for (const id of ['anonymous', 'bearer'])
+    assert.ok(
+      !findings.some(
+        (f) =>
+          f.subject.startsWith(id + '.input') ||
+          f.subject.startsWith('models.Api' + id[0].toUpperCase() + id.slice(1) + 'Input.'),
+      ),
+      JSON.stringify(findings),
+    );
+  for (const id of ['checkout', 'optional']) {
+    for (const p of headers)
+      assert.ok(
+        findings.some((f) => f.severity === 'breaking' && f.subject === id + '.input.' + p.name),
+        JSON.stringify(findings),
+      );
+    const name = 'Api' + id[0].toUpperCase() + id.slice(1) + 'Input';
+    for (const getter of previous.php.models.find((model) => model.name === name).getters)
+      assert.ok(
+        findings.some(
+          (f) => f.severity === 'breaking' && f.subject === 'models.' + name + '.' + getter.method,
+        ),
+        JSON.stringify(findings),
+      );
+  }
+});
+
+test('declared request-ID requiredness is preserved alongside required managed headers in both targets', async (t) => {
+  const f = fixture(
+    t,
+    {
+      paths: {
+        '/send': {
+          post: {
+            operationId: 'send',
+            parameters: ['X-Request-Id', 'Idempotency-Key', 'If-Match'].map((name) => ({
+              in: 'header',
+              name,
+              required: true,
+              schema: { type: 'string' },
+            })),
+            responses: { 204: { description: 'OK' } },
+          },
+        },
+      },
+    },
+    {
+      errors: { requestIdHeader: 'X-Request-Id' },
+      operations: {
+        send: {
+          idempotency: {
+            header: 'Idempotency-Key',
+            retention: '24h',
+            scope: 'command',
+            auto: false,
+          },
+          conditional: { header: 'If-Match' },
+        },
+      },
+    },
+  );
+  assert.deepEqual(inputSchema(f.contract.operations[0], undefined, f.contract).required, [
+    'X-Request-Id',
+  ]);
+  const consumer = join(f.output, 'node/required.ts');
+  writeFileSync(
+    consumer,
+    `import {Client, type ApiSendInput} from './index.js';
+const c=new Client({baseUrl:'https://example.invalid'});
+const input:ApiSendInput={'X-Request-Id':'caller'};
+c.api.send(input,{idempotencyKey:'saved',ifMatch:'tag'});
+// @ts-expect-error request-ID headers keep their declared requiredness
+const missing:ApiSendInput={};
+`,
+  );
+  typecheck(consumer);
+  const sdk = await import(pathToFileURL(join(f.output, 'node/index.js')));
+  const seen = [];
+  const c = new sdk.Client({
+    baseUrl: 'https://example.invalid',
+    transport: async (_url, request) => {
+      seen.push(request.headers);
+      return new Response(null, { status: 204 });
+    },
+  });
+  const options = { idempotencyKey: 'saved', ifMatch: 'tag' };
+  await assert.rejects(c.api.send({}, options), { kind: 'validation' });
+  await assert.rejects(c.api.send({ 'X-Request-Id': 'caller' }), { kind: 'validation' });
+  await c.api.send({ 'X-Request-Id': 'caller' }, options);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0]['x-request-id'], 'caller');
+  assert.equal(seen[0]['idempotency-key'], 'saved');
+  assert.equal(seen[0]['if-match'], 'tag');
+  ok('php', [
+    '-r',
+    String.raw`
+require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
+$seen=[];$c=new Example\Types\Client(new Example\Types\ClientOptions(baseUrl:'https://example.invalid',transport:function($r)use(&$seen){$seen[]=$r['headers'];return ['status'=>204,'headers'=>[],'body'=>''];}));
+$options=new Example\Types\RequestOptions(idempotencyKey:'saved',ifMatch:'tag');
+foreach([[[],$options],[['X-Request-Id'=>'caller'],null]] as [$input,$o]){try{$c->api->send($input,$o);throw new Exception('Expected required header failure');}catch(Example\Types\SdkError $e){if($e->kind!=='validation')throw $e;}}
+$c->api->send(['X-Request-Id'=>'caller'],$options);
+if(count($seen)!==1||$seen[0]['x-request-id']!=='caller'||$seen[0]['idempotency-key']!=='saved'||$seen[0]['if-match']!=='tag')throw new Exception('Required header dispatch');
+`,
+    join(f.output, 'php'),
+  ]);
+});

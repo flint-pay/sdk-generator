@@ -21,7 +21,7 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 - **Retry defaults and `idempotencyKey` types.** See [retry defaults](docs/releases.md#retry-defaults).
 - **Node type dependency.** `@types/node` moves from a pinned runtime dependency to an optional `>=22.16.0` peer dependency. TypeScript consumers must install it, for example `npm install --save-dev @types/node@22`.
 
-- **Managed header inputs.** Credential headers and the configured API-version header are removed from method inputs and PHP input getters. Pass credentials through authentication options. Compatibility comparison reports the removed fields as breaking.
+- **Managed header inputs.** Headers supplied by an operation's permitted authentication modes and the configured API-version header are removed from method inputs and PHP input getters. Anonymous operations and operations whose modes never supply a declared header retain that input field. Pass credentials through authentication options; their wire values are validated against declared header schemas. Compatibility comparison reports the removed fields as breaking. Declared idempotency, conditional and request-ID headers retain input fields and their declared requiredness is enforced before dispatch; idempotency and conditional values may be supplied through request options or automatic idempotency keys.
 
 ### Added
 

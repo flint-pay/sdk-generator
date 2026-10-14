@@ -115,7 +115,9 @@ $book = $client->books->retrieve(
 );
 ```
 
-Credential headers and the configured API-version header are not input fields; pass credentials through [authentication](#authenticate) options. Declared idempotency, conditional and request-ID headers remain optional input fields.
+Headers supplied by an operation's permitted authentication modes and the configured API-version header are omitted from its inputs; pass credentials through [authentication](#authenticate) options. Anonymous operations and operations whose modes never supply a declared header retain that input field. Credential headers are validated by their wire representation before dispatch.
+
+Declared idempotency, conditional and request-ID headers retain input fields and their declared requiredness is enforced before dispatch. Idempotency and conditional inputs may be omitted when their effective values come from request options or automatic idempotency keys. A required request-ID header remains a required input.
 
 With `requests.style: "object"`, methods take one input object with path/query/header fields and a `body` field, then options. See [request arguments](configuration.md#request-arguments) for empty and optional bodies.
 

@@ -132,8 +132,8 @@ final class SchemaAdapter
                     $authHeader =
                         ($op['authenticated'] || ($op['optionalAuthentication'] ?? false)) &&
                         strtolower($contract['auth']['header'] ?? '') === $name;
-                    foreach ($contract['authentication'] ?? [] as $mode) {
-                        foreach ($mode['schemes'] as $scheme) {
+                    foreach ($op['authModes'] ?? [] as $mode) {
+                        foreach ($contract['authentication'][$mode]['schemes'] ?? [] as $scheme) {
                             $authHeader = $authHeader || strtolower($scheme['header']) === $name;
                         }
                     }

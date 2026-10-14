@@ -3444,6 +3444,37 @@ class Runtime
     {
         return Codec::execute($value, $codec, $context + ['definitions' => $this->definitions()]);
     }
+    private function validateHeaderValue(string $value, array $codec, string $path): void
+    {
+        // Simple headers carry scalars or comma-separated scalar arrays. Keep
+        // their spelling and exact numeric tokens while the request codec
+        // validates the possible wire interpretations.
+        $parseScalar = static fn(string $text): mixed => $text === 'true' || $text === 'false'
+            ? $text === 'true'
+            : (preg_match('/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/D', $text)
+                ? new ParsedNumber($text)
+                : $text);
+        $parts = explode(',', $value);
+        $failure = null;
+        foreach (
+            [$value, $parseScalar($value), $parts, array_map($parseScalar, $parts)]
+            as $candidate
+        ) {
+            try {
+                $this->decode($candidate, $codec, ['path' => $path]);
+                return;
+            } catch (SdkError $error) {
+                if ($error->kind !== 'validation') {
+                    throw $error;
+                }
+                $failure ??= $error;
+            }
+        }
+        if ($failure !== null) {
+            throw $failure;
+        }
+        throw new \LogicException('Header validation did not evaluate a value');
+    }
     private static function now(): int
     {
         return (int) floor(hrtime(true) / 1000000);
@@ -3856,7 +3887,7 @@ class Runtime
                     Codec::fail($p['name'], 'required parameter is missing');
                 }
             } else {
-                $this->decode($value, $p['codec'], ['path' => $p['name']]);
+                $this->validateHeaderValue($value, $p['codec'], $p['name']);
             }
         }
         if ($o->ifMatch !== null) {

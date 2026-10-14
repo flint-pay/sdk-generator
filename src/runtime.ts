@@ -2035,6 +2035,30 @@ class CompiledRuntime {
   private decode(value: unknown, codec: CodecPlan, context: CodecContext): unknown {
     return executeCodec(value, codec, { ...context, definitions: this.definitions() });
   }
+  private validateHeaderValue(value: string, codec: CodecPlan, path: string): void {
+    // Simple headers carry scalars or comma-separated scalar arrays. Validate
+    // their possible wire interpretations with the request codec, keeping the
+    // original header spelling and exact numeric tokens intact.
+    const parseScalar = (text: string): unknown =>
+      text === 'true' || text === 'false'
+        ? text === 'true'
+        : exactDecimal.test(text)
+          ? new ParsedNumber(text)
+          : text;
+    const parts = value.split(',');
+    let failure: SdkError | undefined;
+    for (const candidate of [value, parseScalar(value), parts, parts.map(parseScalar)]) {
+      try {
+        this.decode(candidate, codec, { mode: 'request', path });
+        return;
+      } catch (error) {
+        if (!(error instanceof SdkError) || error.kind !== 'validation') throw error;
+        failure ??= error;
+      }
+    }
+    if (failure) throw failure;
+    throw new Error('Header validation did not evaluate a value');
+  }
   private checkUrl(url: URL) {
     if (!url.hostname || url.username || url.password || url.hash)
       throw new SdkError(
@@ -2253,7 +2277,7 @@ class CompiledRuntime {
       const value = headers[p.name.toLowerCase()];
       if (value === undefined) {
         if (p.required) bad(p.name, 'required parameter is missing');
-      } else this.decode(value, p.codec, { mode: 'request', path: p.name });
+      } else this.validateHeaderValue(value, p.codec, p.name);
     }
     if (options.ifMatch !== undefined) {
       if (!op.conditional) bad('ifMatch', 'operation does not declare conditional requests');
