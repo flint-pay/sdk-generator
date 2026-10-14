@@ -8,11 +8,27 @@ import {
   rmSync,
   existsSync,
   symlinkSync,
+  cpSync,
+  chmodSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, join, dirname, delimiter } from 'node:path';
-import { spawnSync } from 'node:child_process';
-import { loadContract, generate, validateFixtures } from '../dist/index.js';
+import { spawnSync, spawn } from 'node:child_process';
+import { once } from 'node:events';
+import {
+  loadContract,
+  generate,
+  render,
+  preview,
+  validate,
+  validateFixtures,
+  prepareRelease,
+  publishRelease,
+  publishSite,
+  Diagnostic,
+  DiagnosticGroup,
+} from '../dist/index.js';
+import { stable } from '../dist/contract.js';
 
 const cli = resolve('dist/cli.js');
 const commandArguments = {
@@ -27,8 +43,28 @@ const commandArguments = {
 };
 const run = (args, env = process.env) =>
   spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8', env });
+
+test('CLI internals do not change the library exports', async () => {
+  assert.deepEqual(
+    Object.keys(await import('../dist/index.js')).sort(),
+    [
+      'Diagnostic',
+      'DiagnosticGroup',
+      'compare',
+      'generate',
+      'loadContract',
+      'prepareRelease',
+      'preview',
+      'publishRelease',
+      'publishSite',
+      'render',
+      'validate',
+      'validateFixtures',
+    ].sort(),
+  );
+});
 function failure(args, env) {
-  const result = run(args, env);
+  const result = run([args[0], '--json', ...args.slice(1)], env);
   assert.equal(result.status, 1, result.stdout + result.stderr);
   assert.equal(result.stdout, '');
   const output = JSON.parse(result.stderr);
@@ -151,7 +187,7 @@ test('fixtures accepts a dash-prefixed filename as its value', (t) => {
   );
   const result = spawnSync(
     process.execPath,
-    [cli, 'validate', f.output, '--fixtures', '-cases.json'],
+    [cli, 'validate', f.output, '--fixtures', '-cases.json', '--json'],
     {
       cwd: f.dir,
       encoding: 'utf8',
@@ -187,7 +223,7 @@ test('every command rejects extra positional arguments before doing work', () =>
     if (command.startsWith('publish')) args.push('--confirm-version', '1.0.0');
     assert.match(failure(args), /unexpected extra argument "extra"/);
   }
-  assert.match(failure(['--version', 'extra']), /unexpected extra argument/);
+  assert.match(run(['--version', 'extra']).stderr, /unexpected extra argument/);
 });
 
 test('global and command help are plain text and describe arguments and side effects', () => {
@@ -204,6 +240,13 @@ test('global and command help are plain text and describe arguments and side eff
       assert.match(result.stdout, /Arguments:\n/);
       for (const name of names) assert.ok(result.stdout.includes(`  ${name}  `));
       assert.match(result.stdout, /write|written|upload|deploy|caches/i);
+      assert.ok(
+        result.stdout.includes(
+          '--json  Print machine-readable JSON (stdout) and JSON errors (stderr).',
+        ),
+      );
+      if (command === 'preview')
+        assert.ok(result.stdout.includes('--diff  Print diffs for modified files.'));
     }
   }
   assert.match(run(['validate', '--help']).stdout, /--fixtures HTTP_CASES_JSON/);
@@ -268,7 +311,7 @@ test('single-target validation does not require tools from the omitted target', 
       assert.ok(executable, `required test tool ${tool} must be installed`);
       symlinkSync(executable, join(bin, tool));
     }
-    const result = run(['validate', f.output], { ...process.env, PATH: bin });
+    const result = run(['validate', f.output, '--json'], { ...process.env, PATH: bin });
     assert.equal(result.status, 0, result.stderr);
     const checks = JSON.parse(result.stdout).checks;
     assert.ok(checks.length > 0);
@@ -316,7 +359,7 @@ test('installed tools still report real validation failures', (t) => {
   const f = fixture(t);
   writeFileSync(join(f.output, 'php/src/Client.php'), '<?php function {');
   const message = failure(['validate', f.output]);
-  assert.match(message, /php -l src\/Client.php failed/);
+  assert.match(message, /PHP syntax failed in/);
   assert.doesNotMatch(message, /was not found/);
 });
 
@@ -358,6 +401,7 @@ test('release acknowledgment records approval while default preparation remains 
       f.output,
       destination,
       ...(approved ? ['--acknowledge-review'] : []),
+      '--json',
     ]);
     assert.equal(result.status, 0, result.stderr);
     const plan = JSON.parse(result.stdout);
@@ -382,4 +426,585 @@ test('release acknowledgment does not bypass semantic version policy', (t) => {
     /breaking changes require a new major version/,
   );
   assert.equal(existsSync(destination), false);
+});
+
+function fakeTools(f) {
+  const bin = join(f.dir, 'fake-bin');
+  mkdirSync(bin);
+  const script = `#!${process.execPath}
+import {writeFileSync} from 'node:fs';
+import {join,basename} from 'node:path';
+const args=process.argv.slice(2), tool=basename(process.argv[1]);
+if(process.env.SDK_CLI_FAIL_TOOL===tool) { console.error('synthetic tool failure'); process.exit(1); }
+if(tool==='npm' && args[0]==='pack') {
+  const index=args.indexOf('--pack-destination');
+  if(index>=0) writeFileSync(join(args[index+1],'todos-1.0.0.tgz'),'synthetic npm archive');
+  console.log(JSON.stringify([{filename:'todos-1.0.0.tgz'}]));
+} else if(tool==='composer' && args[0]==='archive') {
+  const dir=args.find(a=>a.startsWith('--dir=')).slice(6);
+  const file=args.find(a=>a.startsWith('--file=')).slice(7);
+  writeFileSync(join(dir,file+'.zip'),'synthetic Composer archive');
+} else console.log('synthetic tool success');
+`;
+  for (const tool of ['npm', 'composer']) {
+    const path = join(bin, tool);
+    writeFileSync(path, script);
+    chmodSync(path, 0o755);
+  }
+  return { ...process.env, PATH: bin + delimiter + process.env.PATH };
+}
+function withEnv(env, execute) {
+  const previous = process.env.PATH;
+  process.env.PATH = env.PATH;
+  try {
+    return execute();
+  } finally {
+    process.env.PATH = previous;
+  }
+}
+function jsonSuccess(args, expected, env) {
+  const result = run([...args, '--json'], env);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  assert.equal(result.stdout, stable(expected) + '\n');
+  return result;
+}
+function jsonFailure(args, execute, env) {
+  let error;
+  try {
+    execute();
+  } catch (caught) {
+    error = caught;
+  }
+  assert.ok(error instanceof Error);
+  const command = args[0];
+  const expected = {
+    error: error.message,
+    ...(command === 'diagnose'
+      ? {
+          valid: false,
+          diagnostics: (error instanceof DiagnosticGroup
+            ? error.findings
+            : error instanceof Diagnostic
+              ? [error]
+              : []
+          ).map((f) => ({ location: f.location, message: f.detail })),
+        }
+      : {}),
+  };
+  const result = run([...args, '--json'], env);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, '');
+  assert.equal(result.stderr, stable(expected) + '\n');
+  assert.deepEqual(JSON.parse(result.stderr), expected);
+}
+function casesFile(f) {
+  const path = join(f.dir, 'cases.json');
+  writeFileSync(
+    path,
+    JSON.stringify([
+      {
+        name: 'synthetic todo',
+        operation: 'listTodos',
+        input: {},
+        expected: { method: 'GET', path: '/v1/todos' },
+        responses: [{ status: 200, body: '"ok"' }],
+        data: 'ok',
+      },
+    ]),
+  );
+  return path;
+}
+
+test('--json preserves every command success byte for byte, including publication receipts', async (t) => {
+  const f = fixture(t, ['node', 'php']);
+  const env = fakeTools(f);
+  const contract = loadContract(f.api, f.sdk);
+  render(contract);
+  jsonSuccess(['diagnose', f.api, f.sdk], {
+    valid: true,
+    operations: 1,
+    contractHash: contract.hash,
+    targets: ['node', 'php'],
+  });
+  jsonSuccess(['effective', f.api, f.sdk], contract);
+  const humanEffective = run(['effective', f.api, f.sdk]);
+  assert.equal(humanEffective.stdout, stable(contract) + '\n');
+  assert.equal(humanEffective.status, 0);
+  const fresh = join(f.dir, 'fresh');
+  jsonSuccess(['preview', f.api, f.sdk, fresh], generate(contract, fresh, true));
+  assert.equal(existsSync(fresh), false);
+  const generated = generate(contract, fresh);
+  rmSync(fresh, { recursive: true });
+  jsonSuccess(['generate', f.api, f.sdk, fresh], generated);
+  const cases = casesFile(f);
+  const checks = withEnv(env, () => validate(f.output));
+  const fixtures = await validateFixtures(f.output, cases);
+  jsonSuccess(['validate', f.output, '--fixtures', cases], { checks, fixtures }, env);
+  const directory = join(f.dir, 'release');
+  const plan = withEnv(env, () => prepareRelease(f.output, directory));
+  rmSync(directory, { recursive: true });
+  jsonSuccess(['release', f.output, directory], plan, env);
+  const published = publishRelease(directory, '1.0.0', () => ({ status: 0 }));
+  rmSync(join(directory, 'publication.json'));
+  jsonSuccess(['publish', directory, '--confirm-version', '1.0.0'], published, env);
+  jsonSuccess(
+    ['publish', directory, '--confirm-version', '1.0.0'],
+    publishRelease(directory, '1.0.0', () => {
+      throw new Error('receipt must prevent re-publication');
+    }),
+    env,
+  );
+  const destination = join(f.dir, 'site');
+  const deployed = publishSite(directory, destination, '1.0.0');
+  rmSync(destination, { recursive: true });
+  rmSync(join(directory, 'site-publication.json'));
+  jsonSuccess(
+    ['publish-site', directory, destination, '--confirm-version', '1.0.0'],
+    deployed,
+    env,
+  );
+});
+
+test('--json preserves every command failure object and serialization', (t) => {
+  const f = fixture(t, ['node', 'php']);
+  const env = fakeTools(f);
+  const directory = join(f.dir, 'release');
+  withEnv(env, () => prepareRelease(f.output, directory));
+  const publishEnv = { ...env, SDK_CLI_FAIL_TOOL: 'npm' };
+  jsonFailure(
+    ['publish', directory, '--confirm-version', '1.0.0'],
+    () =>
+      publishRelease(directory, '1.0.0', () => ({ status: 1, stderr: 'synthetic tool failure\n' })),
+    publishEnv,
+  );
+  const destination = join(f.dir, 'site');
+  mkdirSync(destination);
+  jsonFailure(
+    ['publish-site', directory, destination, '--confirm-version', '1.0.0'],
+    () => publishSite(directory, destination, '1.0.0'),
+    env,
+  );
+  const contract = loadContract(f.api, f.sdk);
+  writeFileSync(join(f.output, 'node/index.js'), 'export const = ;');
+  jsonFailure(['validate', f.output], () => validate(f.output), env);
+  for (const command of ['preview', 'generate'])
+    jsonFailure([command, f.api, f.sdk, f.output], () =>
+      generate(contract, f.output, command === 'preview'),
+    );
+  jsonFailure(
+    ['release', f.output, join(f.dir, 'failed-release')],
+    () => prepareRelease(f.output, join(f.dir, 'failed-release')),
+    env,
+  );
+  f.config.version = 'invalid';
+  writeFileSync(f.sdk, JSON.stringify(f.config));
+  jsonFailure(['diagnose', f.api, f.sdk], () =>
+    loadContract(f.api, f.sdk, { collectDiagnostics: true }),
+  );
+  jsonFailure(['effective', f.api, f.sdk], () => loadContract(f.api, f.sdk));
+});
+
+test('human preview and generation summarize first generation and unchanged files', (t) => {
+  const f = fixture(t, ['node', 'php']);
+  const fresh = join(f.dir, 'new output');
+  const expected = `Files: 84 created (node 43, php 41); no previous generation\nCompatibility: not compared; no previous generation\n`;
+  for (const flags of [[], ['--diff']]) {
+    const result = run(['preview', f.api, f.sdk, fresh, ...flags]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stderr, '');
+    assert.equal(result.stdout, `Preview of ${fresh} (no files written)\n` + expected);
+    assert.ok(Buffer.byteLength(result.stdout) < 2048);
+    assert.doesNotMatch(result.stdout, /@@|\+\+\+|Created \(|Diffs \(/);
+    assert.equal(existsSync(fresh), false);
+  }
+  const generated = run(['generate', f.api, f.sdk, fresh]);
+  assert.equal(generated.status, 0, generated.stderr);
+  assert.equal(generated.stdout, `Generated ${fresh}\n` + expected);
+  for (const command of ['preview', 'generate']) {
+    const result = run([command, f.api, f.sdk, fresh]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(
+      result.stdout,
+      `${command === 'preview' ? `Preview of ${fresh} (no files written)` : `Generated ${fresh}`}\nFiles: no changes (84 unchanged)\nCompatibility: no findings\n`,
+    );
+    assert.ok(Buffer.byteLength(result.stdout) < 1024);
+  }
+  // Relative user paths retain their spelling.
+  const relative = spawnSync(
+    process.execPath,
+    [cli, 'preview', 'api.json', 'sdk.json', './relative output'],
+    { cwd: f.dir, encoding: 'utf8' },
+  );
+  assert.equal(relative.status, 0, relative.stderr);
+  assert.ok(relative.stdout.startsWith('Preview of ./relative output (no files written)\n'));
+});
+
+test('human regeneration lists sorted paths and every finding; --diff prints only modified library diffs', (t) => {
+  const f = fixture(t, ['node', 'php']);
+  f.config.targets = ['node'];
+  f.config.version = '2.0.0';
+  f.config.operations = { listTodos: { method: 'fetch' } };
+  writeFileSync(f.sdk, JSON.stringify(f.config));
+  const api = JSON.parse(readFileSync(f.api, 'utf8'));
+  api.paths['/todos'].get.responses['200'].content['application/json'].schema.type = 'integer';
+  writeFileSync(f.api, JSON.stringify(api));
+  const contract = loadContract(f.api, f.sdk);
+  const plan = preview(contract, f.output);
+  const plain = run(['preview', f.api, f.sdk, f.output]);
+  assert.equal(plain.status, 0, plain.stderr);
+  assert.match(plain.stdout, /Files: 4 created, 12 modified, 45 removed, 27 unchanged\n/);
+  assert.match(plain.stdout, /Modified \(12\):\n  node\/README.md\n/);
+  assert.match(plain.stdout, /\n  php\/README.md\n/);
+  assert.match(plain.stdout, /Compatibility: 6 breaking, 2 review, 0 additive\n/);
+  assert.match(
+    plain.stdout,
+    /  breaking  listTodos: Public method renamed without a compatible alias\n/,
+  );
+  const expectedFindings = ['breaking', 'review', 'additive'].flatMap((severity) =>
+    plan.compatibility
+      .filter((f) => f.severity === severity)
+      .map((f) => `  ${severity.padEnd(8)}  ${f.subject}: ${f.message}`),
+  );
+  assert.deepEqual(
+    plain.stdout.split('\n').filter((line) => /^  (breaking|review|additive) /.test(line)),
+    expectedFindings,
+  );
+  for (const [label, kind] of [
+    ['Created', 'created'],
+    ['Modified', 'modified'],
+    ['Removed', 'removed'],
+  ]) {
+    const paths = plan.changes
+      .filter((c) => c.kind === kind)
+      .map((c) => c.path)
+      .sort();
+    assert.ok(
+      plain.stdout.includes(
+        `${label} (${paths.length}):\n${paths.map((p) => '  ' + p).join('\n')}\n`,
+      ),
+    );
+  }
+  assert.doesNotMatch(plain.stdout, /@@|\+\+\+/);
+  assert.ok(
+    plain.stdout.endsWith(
+      'Use --diff to show modified-file diffs, or --json for the full report.\n',
+    ),
+  );
+  const diff = run(['preview', f.api, f.sdk, f.output, '--diff']);
+  assert.equal(diff.status, 0, diff.stderr);
+  assert.match(diff.stdout, /Diffs \(12 modified files\):\n/);
+  const libraryDiffs = generate(contract, f.output, true)
+    .changes.filter((c) => c.kind === 'modified')
+    .sort((a, b) => (a.path < b.path ? -1 : 1));
+  assert.ok(diff.stdout.endsWith(libraryDiffs.map((c) => c.diff).join('\n') + '\n'));
+  for (const change of libraryDiffs) assert.ok(diff.stdout.includes(`--- a/${change.path}\n`));
+  assert.doesNotMatch(diff.stdout, /\/dev\/null|Use --diff/);
+  const generated = run(['generate', f.api, f.sdk, f.output]);
+  assert.equal(generated.status, 0, generated.stderr);
+  assert.equal(
+    generated.stdout,
+    plain.stdout
+      .replace(`Preview of ${f.output} (no files written)`, `Generated ${f.output}`)
+      .replace('Use --diff to show modified-file diffs, or --json for the full report.\n', ''),
+  );
+  // Regeneration preserves the comparison baseline, so unchanged files keep their findings.
+  const again = run(['preview', f.api, f.sdk, f.output]);
+  assert.equal(again.status, 0, again.stderr);
+  assert.match(again.stdout, /\nFiles: no changes \(\d+ unchanged\)\n/);
+  assert.match(again.stdout, /\nCompatibility: 6 breaking, 2 review, 0 additive\n/);
+  assert.doesNotMatch(again.stdout, /no findings|Use --diff/);
+});
+
+test('human validation prints one line per finished check group and fixtures, hiding tool details', (t) => {
+  const f = fixture(t, ['node', 'php']);
+  const cases = casesFile(f);
+  const result = run(['validate', f.output, '--fixtures', cases]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  assert.equal(
+    result.stdout,
+    `Validating ${f.output}\n` +
+      [
+        '  passed  node  JavaScript syntax',
+        '  passed  node  npm package contents',
+        '  passed  node  module and descriptor loading',
+        '  passed  node  TypeScript examples (1 file)',
+        '  passed  php   PHP syntax (27 files)',
+        '  passed  php   Composer metadata',
+        '  passed  php   descriptor validation',
+        '  passed  node  HTTP fixtures (1 scenario)',
+        '  passed  php   HTTP fixtures (1 scenario)',
+        'Validation passed: 9 checks (node, php)',
+        '',
+      ].join('\n'),
+  );
+  assert.doesNotMatch(result.stdout, /SourceTextModule|"files"|"filename"|"path"/);
+});
+
+test('human validation reports a corrupted JavaScript file in a copy with a readable failure', (t) => {
+  const f = fixture(t, ['node']);
+  const output = join(f.dir, 'corrupt copy');
+  cpSync(f.output, output, { recursive: true });
+  writeFileSync(join(output, 'node/index.js'), 'export const = ;');
+  const result = spawnSync(process.execPath, [cli, 'validate', './corrupt copy'], {
+    cwd: f.dir,
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, 'Validating ./corrupt copy\n  FAILED  node  JavaScript syntax\n');
+  assert.ok(
+    result.stderr.startsWith('error: JavaScript syntax failed in ./corrupt copy/node:\n  '),
+  );
+  assert.match(result.stderr, /SyntaxError/);
+  assert.doesNotMatch(
+    result.stderr,
+    /import \{ readdirSync|--input-type|for \(const file|arguments:/,
+  );
+  for (const line of result.stderr.trimEnd().split('\n').slice(1)) assert.ok(line.startsWith('  '));
+});
+
+test('human errors and literal --json selection survive argument parsing failures', () => {
+  const human = run(['diagnoes']);
+  assert.equal(human.status, 1);
+  assert.equal(human.stdout, '');
+  assert.match(human.stderr, /^error: unknown command "diagnoes".*Did you mean "diagnose"/);
+  assert.doesNotMatch(human.stderr, /[{}]|arguments:/);
+  for (const args of [
+    ['diagnoes', '--json'],
+    ['diagnose', '--unknown', '--json'],
+    ['diagnose', '--json', '--unknown'],
+    ['--help', '--json'],
+    ['--version', '--json'],
+    ['generate', '--diff', '--json'],
+  ]) {
+    const result = run(args);
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, '');
+    assert.match(JSON.parse(result.stderr).error, /arguments: unknown/);
+  }
+  assert.equal(
+    JSON.parse(run(['preview', '--diff', '--json']).stderr).error,
+    'arguments: --diff applies to human output; --json already includes every diff',
+  );
+  const conflict = run(['preview', 'api', 'sdk', 'output', '--diff', '--json']);
+  assert.equal(conflict.status, 1);
+  assert.equal(conflict.stdout, '');
+  assert.deepEqual(JSON.parse(conflict.stderr), {
+    error: 'arguments: --diff applies to human output; --json already includes every diff',
+  });
+  for (const command of Object.keys(commandArguments).filter((c) => c !== 'preview')) {
+    const result = run([command, '--diff']);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /^error: unknown flag "--diff"/);
+  }
+  const literal = run(['generate', '--', '--json']);
+  assert.equal(literal.status, 1);
+  assert.match(literal.stderr, /^error: missing required argument SDK_JSON/);
+  const repeated = run(['diagnose', '--json', '--json']);
+  assert.equal(repeated.status, 1);
+  assert.match(JSON.parse(repeated.stderr).error, /provided more than once/);
+});
+
+test('human diagnose success and failure list counts and each location and message', (t) => {
+  const f = fixture(t, ['node', 'php']);
+  const success = run(['diagnose', f.api, f.sdk]);
+  assert.equal(success.status, 0, success.stderr);
+  assert.equal(
+    success.stdout,
+    `Valid: 1 operation; targets: node, php; contract hash: ${loadContract(f.api, f.sdk).hash}\n`,
+  );
+  f.config.version = 'bad';
+  f.config.operatons = {};
+  writeFileSync(f.sdk, JSON.stringify(f.config));
+  const result = run(['diagnose', f.api, f.sdk]);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /^Invalid: 2 findings\n/);
+  assert.match(result.stderr, /\n  config\/version: expected a semantic package version\n/);
+  assert.match(result.stderr, /\n  config\/operatons: unsupported setting/);
+  const findings = JSON.parse(run(['diagnose', f.api, f.sdk, '--json']).stderr).diagnostics;
+  assert.equal(
+    result.stderr,
+    'Invalid: 2 findings\n' + findings.map((f) => `  ${f.location}: ${f.message}\n`).join(''),
+  );
+});
+
+test('warnings use human text or the unchanged JSON format on stderr', (t) => {
+  const f = fixture(t, ['node']);
+  f.config.schemaSharing = 'named';
+  writeFileSync(f.sdk, JSON.stringify(f.config));
+  const warnings = [];
+  loadContract(f.api, f.sdk, { onWarning: (w) => warnings.push(w.message) });
+  for (const command of ['diagnose', 'effective', 'preview', 'generate']) {
+    const args = [
+      command,
+      f.api,
+      f.sdk,
+      ...(['preview', 'generate'].includes(command) ? [f.output] : []),
+    ];
+    const human = run(args);
+    assert.equal(human.status, 0, human.stderr);
+    assert.equal(human.stderr, warnings.map((w) => `warning: ${w}\n`).join(''));
+    const json = run([...args, '--json']);
+    assert.equal(json.status, 0, json.stderr);
+    assert.equal(json.stderr, warnings.map((w) => stable({ warning: w }) + '\n').join(''));
+  }
+});
+
+test('human release and publication formats include review state, receipts and next steps', (t) => {
+  const f = fixture(t, ['node', 'php']);
+  const env = fakeTools(f);
+  const directory = join(f.dir, 'release');
+  const result = run(['release', f.output, directory], env);
+  assert.equal(result.status, 0, result.stderr);
+  const plan = JSON.parse(readFileSync(join(directory, 'release-plan.json'), 'utf8'));
+  assert.equal(
+    result.stdout,
+    [
+      `Prepared release 1.0.0 in ${directory}. Nothing was published.`,
+      'Packages: npm @example/todos, Composer example/todos',
+      'Previous version: none',
+      'Compatibility: no findings',
+      'Review acknowledged: no',
+      `Artifacts: release-plan.json, CHANGELOG.md, MIGRATION.md, site/ (${Object.keys(plan.checksums).length} checksummed files)`,
+      `Next: sdk-generator publish ${directory} --confirm-version 1.0.0`,
+      `      sdk-generator publish-site ${directory} WEB_ROOT --confirm-version 1.0.0`,
+      '',
+    ].join('\n'),
+  );
+  const published = run(['publish', directory, '--confirm-version', '1.0.0'], env);
+  assert.equal(published.status, 0, published.stderr);
+  assert.equal(
+    published.stdout,
+    `Published 1.0.0 to npm. Receipt: ${directory}/publication.json\nComposer: ${plan.composer}\n`,
+  );
+  const destination = join(f.dir, 'web');
+  const deployed = run(['publish-site', directory, destination, '--confirm-version', '1.0.0'], env);
+  assert.equal(deployed.status, 0, deployed.stderr);
+  assert.equal(
+    deployed.stdout,
+    `Deployed site for 1.0.0 to ${destination}. Receipt: ${directory}/site-publication.json\nRun your hosting deployment step to serve it.\n`,
+  );
+});
+
+test('human release prints prior version, required review, acknowledgment and optional site base URL', (t) => {
+  const f = fixture(t);
+  const env = fakeTools(f);
+  f.config.version = '2.0.0';
+  f.config.operations = { listTodos: { method: 'fetch' } };
+  f.config.release = { baseUrl: 'https://sdk.example.invalid/' };
+  f.emit();
+  const directory = join(f.dir, 'php-release');
+  const result = run(['release', f.output, directory, '--acknowledge-review'], env);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Packages: Composer example\/todos\nPrevious version: 1.0.0\n/);
+  assert.match(
+    result.stdout,
+    /Compatibility: \d+ breaking, \d+ review, \d+ additive; review required\n/,
+  );
+  assert.match(result.stdout, /Review acknowledged: yes\n/);
+  assert.doesNotMatch(result.stdout, /sdk-generator publish /);
+  assert.match(result.stdout, /Next: sdk-generator publish-site /);
+  const deployed = run(
+    ['publish-site', directory, join(f.dir, 'web'), '--confirm-version', '2.0.0'],
+    env,
+  );
+  assert.equal(deployed.status, 0, deployed.stderr);
+  assert.match(
+    deployed.stdout,
+    /\nBase URL: https:\/\/sdk.example.invalid\/\nRun your hosting deployment step to serve it.\n$/,
+  );
+});
+
+test(
+  'human validation streams finished groups before the next tool completes',
+  { timeout: 15000 },
+  async (t) => {
+    const f = fixture(t, ['node']);
+    const env = fakeTools(f);
+    const waiting = join(f.dir, 'waiting'),
+      proceed = join(f.dir, 'proceed');
+    writeFileSync(
+      join(f.dir, 'fake-bin/npm'),
+      `#!${process.execPath}
+import {existsSync,writeFileSync} from 'node:fs';
+if (process.argv[2] === '--version') { console.log('0.0.0'); process.exit(0); }
+writeFileSync(${JSON.stringify(waiting)}, 'waiting');
+const deadline = Date.now() + 12000;
+while (!existsSync(${JSON.stringify(proceed)}) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
+if (!existsSync(${JSON.stringify(proceed)})) process.exit(1);
+console.log('[{"filename":"todos-1.0.0.tgz"}]');
+`,
+    );
+    const child = spawn(process.execPath, [cli, 'validate', f.output], { env });
+    t.after(() => {
+      child.kill();
+    });
+    let stdout = '',
+      stderr = '';
+    child.stdout.on('data', (data) => {
+      stdout += data;
+    });
+    child.stderr.on('data', (data) => {
+      stderr += data;
+    });
+    const exited = once(child, 'close');
+    const deadline = Date.now() + 10000;
+    while (!existsSync(waiting) || !stdout.includes('  passed  node  JavaScript syntax\n')) {
+      assert.ok(Date.now() < deadline, stdout + stderr);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(stdout, `Validating ${f.output}\n  passed  node  JavaScript syntax\n`);
+    writeFileSync(proceed, 'continue');
+    const [status] = await exited;
+    assert.equal(status, 0, stderr);
+    assert.match(stdout, /Validation passed: 4 checks \(node\)\n$/);
+  },
+);
+
+test('human fixture failures identify the finished failing target group', (t) => {
+  const f = fixture(t, ['node', 'php']);
+  const cases = casesFile(f);
+  const corpus = JSON.parse(readFileSync(cases, 'utf8'));
+  corpus[0].data = 'wrong';
+  writeFileSync(cases, JSON.stringify(corpus));
+  const result = run(['validate', f.output, '--fixtures', cases], fakeTools(f));
+  assert.equal(result.status, 1);
+  assert.ok(result.stdout.endsWith('  FAILED  node  HTTP fixtures\n'));
+  assert.doesNotMatch(result.stdout, /Validation passed:|passed  php   HTTP fixtures/);
+  assert.ok(result.stderr.startsWith('error: '));
+});
+
+test('human preview lists additive findings after the other severities', (t) => {
+  const f = fixture(t, ['node']);
+  f.config.operations = {
+    listTodos: { method: 'fetch', deprecated: 'Use the new todos operation.' },
+  };
+  writeFileSync(f.sdk, JSON.stringify(f.config));
+  const api = JSON.parse(readFileSync(f.api, 'utf8'));
+  api.paths['/new-todos'] = {
+    get: { ...structuredClone(api.paths['/todos'].get), operationId: 'newTodos' },
+  };
+  writeFileSync(f.api, JSON.stringify(api));
+  const result = run(['preview', f.api, f.sdk, f.output]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Compatibility: 2 breaking, 1 review, 1 additive\n/);
+  assert.deepEqual(
+    result.stdout.split('\n').filter((line) => /^  (breaking|review|additive) /.test(line)),
+    [
+      '  breaking  listTodos: Public method renamed without a compatible alias',
+      '  breaking  listTodos: Operation input/response types and capability helper names changed; a method alias does not preserve these exported interfaces.',
+      '  review    listTodos: Deprecation notice: Use the new todos operation.',
+      '  additive  newTodos: Operation added',
+    ],
+  );
+});
+
+test('a --json flag after an option that consumes "--" still selects JSON errors', () => {
+  const missing = join(tmpdir(), 'sdk-cli-missing-output');
+  const result = run(['validate', missing, '--fixtures', '--', '--json']);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, '');
+  assert.match(JSON.parse(result.stderr).error, /no generated packages found/);
 });

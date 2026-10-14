@@ -550,6 +550,7 @@ test('stale pin owners and absent or writeOnly fields fail after response entiti
       'diagnose',
       join(missing.directory, 'api.json'),
       join(missing.directory, 'sdk.json'),
+      '--json',
     ],
     { encoding: 'utf8' },
   );

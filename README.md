@@ -32,6 +32,8 @@ node dist/cli.js validate .generated/library
 | `generate` | Writes an npm package to `node/`, a Composer package to `php/`, and a private generation record. |
 | `validate` | Checks package syntax, examples and metadata for each generated target.                          |
 
+Commands print readable summaries by default. Automation that parses output must pass `--json`; JSON shapes are unchanged, and `effective` always prints JSON. Use `preview --diff` to review modified-file diffs. See [CLI output](docs/cli.md#output) for examples, streams and exit status.
+
 The bundled example targets Node and PHP, so `validate` needs PHP and Composer. For Node only, copy `examples/library.sdk.json`, add `"targets": ["node"]`, and pass the copy to `generate`.
 
 Keep `.generated/library/.sdk-generator.json`. It is private; regeneration and compatibility checks use it.

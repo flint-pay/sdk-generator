@@ -2072,6 +2072,33 @@ export function generate(contract: Contract, output: string, dryRun = false) {
       })),
       compatibility: plan.compatibility,
     };
+  return writeGeneration(contract, output, plan);
+}
+
+// CLI-only metadata; keep the library's serializable report unchanged.
+export function generateWithSummary(contract: Contract, output: string) {
+  const plan = preview(contract, output);
+  return {
+    report: writeGeneration(contract, output, plan),
+    files: [...plan.files.keys()],
+    firstGeneration: !plan.before,
+  };
+}
+
+export function modifiedFileDiffs(plan: ReturnType<typeof preview>, output: string): string[] {
+  return plan.changes
+    .filter((change) => change.kind === 'modified')
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+    .map((change) =>
+      unifiedDiff(
+        change.path,
+        readFileSync(join(output, change.path), 'utf8'),
+        plan.files.get(change.path) ?? '',
+      ),
+    );
+}
+
+function writeGeneration(contract: Contract, output: string, plan: ReturnType<typeof preview>) {
   output = resolve(output);
   if (output === dirname(output))
     throw new Diagnostic(output, 'cannot generate into filesystem root');
@@ -2165,7 +2192,42 @@ function selectedTargets(output: string): ('node' | 'php')[] {
 }
 
 export function validate(output: string): { command: string; output: string }[] {
+  return validateWithProgress(output);
+}
+
+export interface ValidationCheck {
+  target: 'node' | 'php';
+  label: string;
+  files?: number;
+}
+
+class ValidationFailure extends Diagnostic {
+  constructor(cwd: string, label: string, displayCwd: string, toolOutput: string) {
+    super(cwd, `${label} failed in ${displayCwd}:\n${toolOutput}`);
+    // Keep the diagnostic's location and type, without repeating the cwd prefix.
+    this.message = this.detail;
+  }
+}
+
+// Not re-exported by the library entry point. The CLI observes completed groups,
+// while library callers still receive the original per-tool results.
+export function validateWithProgress(
+  output: string,
+  onCheck?: (check: ValidationCheck, passed: boolean) => void,
+): { command: string; output: string }[] {
+  const displayOutput = output;
   const results: { command: string; output: string }[] = [];
+  let current: ValidationCheck;
+  function check(metadata: ValidationCheck, execute: () => void) {
+    current = metadata;
+    try {
+      execute();
+    } catch (error) {
+      onCheck?.(metadata, false);
+      throw error;
+    }
+    onCheck?.(metadata, true);
+  }
   function run(command: string, args: string[], cwd: string) {
     const result = spawnSync(command, args, {
       cwd,
@@ -2175,9 +2237,11 @@ export function validate(output: string): { command: string; output: string }[] 
       maxBuffer: 16 * 1024 * 1024,
     });
     if (result.error || result.status !== 0)
-      throw new Diagnostic(
+      throw new ValidationFailure(
         cwd,
-        `${command} ${args.join(' ')} failed: ${result.error?.message ?? result.stderr + result.stdout}`,
+        current.label,
+        `${displayOutput.replace(/[\\/]$/, '')}/${current.target}`,
+        (result.error?.message ?? result.stderr + result.stdout).trimEnd(),
       );
     results.push({ command: [command, ...args].join(' '), output: result.stdout.trim() });
   }
@@ -2188,13 +2252,14 @@ export function validate(output: string): { command: string; output: string }[] 
       requireTool(tool, target, output);
   if (targets.includes('node')) {
     // Parse modules without executing them or starting thousands of Node processes.
-    run(
-      process.execPath,
-      [
-        '--experimental-vm-modules',
-        '--input-type=module',
-        '-e',
-        `
+    check({ target: 'node', label: 'JavaScript syntax' }, () => {
+      run(
+        process.execPath,
+        [
+          '--experimental-vm-modules',
+          '--input-type=module',
+          '-e',
+          `
         import { readdirSync, readFileSync, existsSync } from 'node:fs';
         import { dirname, join, resolve } from 'node:path';
         import { SourceTextModule } from 'node:vm';
@@ -2214,16 +2279,20 @@ export function validate(output: string): { command: string; output: string }[] 
           else execFileSync(process.execPath, ['--check', file], { encoding: 'utf8' });
         }
       `,
-      ],
-      join(output, 'node'),
-    );
-    run('npm', ['pack', '--dry-run', '--ignore-scripts', '--json'], join(output, 'node'));
-    run(
-      'node',
-      [
-        '--input-type=module',
-        '-e',
-        `
+        ],
+        join(output, 'node'),
+      );
+    });
+    check({ target: 'node', label: 'npm package contents' }, () => {
+      run('npm', ['pack', '--dry-run', '--ignore-scripts', '--json'], join(output, 'node'));
+    });
+    check({ target: 'node', label: 'module and descriptor loading' }, () => {
+      run(
+        'node',
+        [
+          '--input-type=module',
+          '-e',
+          `
       import { readdirSync, existsSync, readFileSync } from 'node:fs';
       const sdk = await import('./index.js');
       if (existsSync('./descriptor-source.js')) {
@@ -2238,58 +2307,70 @@ export function validate(output: string): { command: string; output: string }[] 
         }
       }
     `,
-      ],
-      join(output, 'node'),
-    );
+        ],
+        join(output, 'node'),
+      );
+    });
   }
   if (targets.includes('node')) {
     const cwd = join(output, 'node');
     const examples = readdirSync(join(cwd, 'examples'))
       .filter((p) => p.endsWith('.ts'))
       .map((p) => join('examples', p));
-    run(
-      process.execPath,
-      [
-        require.resolve('typescript/bin/tsc'),
-        '--strict',
-        '--noEmit',
-        '--target',
-        'ES2022',
-        '--module',
-        'NodeNext',
-        '--moduleResolution',
-        'NodeNext',
-        '--types',
-        'node',
-        '--typeRoots',
-        dirname(dirname(require.resolve('@types/node/package.json'))),
-        ...examples,
-      ],
-      cwd,
-    );
+    check({ target: 'node', label: 'TypeScript examples', files: examples.length }, () => {
+      run(
+        process.execPath,
+        [
+          require.resolve('typescript/bin/tsc'),
+          '--strict',
+          '--noEmit',
+          '--target',
+          'ES2022',
+          '--module',
+          'NodeNext',
+          '--moduleResolution',
+          'NodeNext',
+          '--types',
+          'node',
+          '--typeRoots',
+          dirname(dirname(require.resolve('@types/node/package.json'))),
+          ...examples,
+        ],
+        cwd,
+      );
+    });
   }
   if (targets.includes('php')) {
-    for (const sub of ['src', 'examples'])
-      for (const file of readdirSync(join(output, 'php', sub), {
+    const files = ['src', 'examples'].flatMap((sub) =>
+      readdirSync(join(output, 'php', sub), {
         recursive: true,
         encoding: 'utf8',
-      }).filter((f) => f.endsWith('.php')))
-        run('php', ['-l', join(sub, file)], join(output, 'php'));
-    run('composer', ['validate', '--no-check-publish'], join(output, 'php'));
-    const namespace = readFileSync(join(output, 'php/src/Client.php'), 'utf8').match(
-      /^namespace ([A-Za-z][A-Za-z0-9\\]*);/m,
-    )?.[1];
-    if (!namespace) throw new Diagnostic(output, 'missing generated PHP namespace');
-    run(
-      'php',
-      [
-        '-d',
-        'memory_limit=128M',
-        '-r',
-        `require 'src/Runtime.php'; require 'src/Client.php'; $registry = ${php(namespace + '\\SchemaRegistry')}; if (method_exists($registry, 'source')) $registry::source()->validateAll();`,
-      ],
-      join(output, 'php'),
+      })
+        .filter((f) => f.endsWith('.php'))
+        .map((file) => join(sub, file)),
     );
+    check({ target: 'php', label: 'PHP syntax', files: files.length }, () => {
+      for (const file of files) run('php', ['-l', file], join(output, 'php'));
+    });
+    check({ target: 'php', label: 'Composer metadata' }, () => {
+      run('composer', ['validate', '--no-check-publish'], join(output, 'php'));
+    });
+    check({ target: 'php', label: 'descriptor validation' }, () => {
+      const namespace = readFileSync(join(output, 'php/src/Client.php'), 'utf8').match(
+        /^namespace ([A-Za-z][A-Za-z0-9\\]*);/m,
+      )?.[1];
+      if (!namespace) throw new Diagnostic(output, 'missing generated PHP namespace');
+      run(
+        'php',
+        [
+          '-d',
+          'memory_limit=128M',
+          '-r',
+          `require 'src/Runtime.php'; require 'src/Client.php'; $registry = ${php(namespace + '\\SchemaRegistry')}; if (method_exists($registry, 'source')) $registry::source()->validateAll();`,
+        ],
+        join(output, 'php'),
+      );
+    });
   }
   if (!results.length) throw new Diagnostic(output, 'no generated packages found');
   return results;

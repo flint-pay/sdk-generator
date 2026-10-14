@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { validateFixtures } from './fixtures.js';
+import { validateFixtures, validateFixturesWithProgress } from './fixtures.js';
 import {
   loadContract,
   generate,
@@ -7,12 +7,27 @@ import {
   prepareRelease,
   publishRelease,
   render,
+  preview,
+  generateWithSummary,
+  modifiedFileDiffs,
+  validateWithProgress,
 } from './generate.js';
+import {
+  generationText,
+  validationLine,
+  releaseText,
+  messageText,
+  errorMessage,
+} from './cli-output.js';
 import { DiagnosticGroup, suggestion } from './diagnostic.js';
 import { Diagnostic, stable } from './contract.js';
 import { publishSite } from './distribution.js';
 import { readFileSync } from 'node:fs';
 const args = process.argv.slice(2);
+// Select the error format before parsing, including unknown commands/flags;
+// parsed flags take over once arguments are accepted.
+const separator = args.indexOf('--');
+let jsonErrors = args.slice(0, separator < 0 ? args.length : separator).includes('--json');
 const command = args.shift();
 interface Command {
   arguments: string[];
@@ -33,7 +48,7 @@ const commands: Record<string, Command> = {
   },
   preview: {
     arguments: ['API_JSON', 'SDK_JSON', 'OUTPUT'],
-    flags: {},
+    flags: { '--diff': { description: 'Print diffs for modified files.' } },
     description:
       'Report proposed file changes, diffs and compatibility findings. No files are written.',
   },
@@ -90,6 +105,10 @@ const commands: Record<string, Command> = {
       'Verify and deploy the prepared Composer repository, archives and documentation to a dedicated local WEB_ROOT; write a publication receipt. Hosting deployment remains a separate step.',
   },
 };
+for (const definition of Object.values(commands))
+  definition.flags['--json'] = {
+    description: 'Print machine-readable JSON (stdout) and JSON errors (stderr).',
+  };
 const argumentDescriptions: Record<string, string> = {
   API_JSON: 'OpenAPI 3.0/3.1 JSON file.',
   SDK_JSON: 'SDK configuration JSON file.',
@@ -133,6 +152,11 @@ function parseArguments(definition: Command) {
       } else flags.set(arg, true);
     } else positional.push(arg);
   }
+  if (flags.has('--diff') && flags.has('--json'))
+    throw new Diagnostic(
+      'arguments',
+      '--diff applies to human output; --json already includes every diff',
+    );
   if (positional.length > definition.arguments.length)
     throw new Diagnostic(
       'arguments',
@@ -180,6 +204,8 @@ try {
         `unknown ${command.startsWith('-') ? 'flag' : 'command'} "${command}".${command.startsWith('-') ? '' : suggestion(command, Object.keys(commands))} Use --help for available commands.`,
       );
     const { positional, flags, help } = parseArguments(definition);
+    const json = flags.has('--json');
+    jsonErrors = json;
     if (help) {
       console.log(
         usage(command, definition) +
@@ -199,47 +225,90 @@ try {
     } else if (command === 'validate') {
       const output = positional[0]!;
       const fixtures = flags.get('--fixtures');
-      const checks = validate(output);
-      console.log(
-        stable({
-          checks,
-          ...(typeof fixtures === 'string'
-            ? { fixtures: await validateFixtures(output, fixtures) }
-            : {}),
-        }),
+      if (json) {
+        const checks = validate(output);
+        console.log(
+          stable({
+            checks,
+            ...(typeof fixtures === 'string'
+              ? { fixtures: await validateFixtures(output, fixtures) }
+              : {}),
+          }),
+        );
+      } else {
+        console.log(`Validating ${output}`);
+        let checks = 0;
+        const targets = new Set<string>();
+        validateWithProgress(output, (check, passed) => {
+          console.log(validationLine(check, passed));
+          if (passed) {
+            checks++;
+            targets.add(check.target);
+          }
+        });
+        if (typeof fixtures === 'string')
+          await validateFixturesWithProgress(output, fixtures, (target, scenarios, passed) => {
+            console.log(validationLine({ target, label: 'HTTP fixtures' }, passed, scenarios));
+            if (passed) {
+              checks++;
+              targets.add(target);
+            }
+          });
+        console.log(`Validation passed: ${checks} checks (${[...targets].join(', ')})`);
+      }
+    } else if (command === 'release') {
+      const plan = prepareRelease(
+        positional[0]!,
+        positional[1]!,
+        flags.has('--acknowledge-review'),
       );
-    } else if (command === 'release')
-      console.log(
-        stable(prepareRelease(positional[0]!, positional[1]!, flags.has('--acknowledge-review'))),
-      );
-    else if (command === 'publish' || command === 'publish-site') {
+      console.log(json ? stable(plan) : releaseText(plan, positional[1]!));
+    } else if (command === 'publish' || command === 'publish-site') {
       const version = flags.get('--confirm-version');
       if (typeof version !== 'string')
         throw new Diagnostic('arguments', 'missing confirmed version');
-      console.log(
-        stable(
-          command === 'publish'
-            ? publishRelease(positional[0]!, version)
-            : publishSite(positional[0]!, positional[1]!, version),
-        ),
-      );
+      if (command === 'publish') {
+        const result = publishRelease(positional[0]!, version);
+        console.log(
+          json
+            ? stable(result)
+            : `Published ${result.version} to npm. Receipt: ${positional[0]!}/publication.json\nComposer: ${result.composer}`,
+        );
+      } else {
+        const result = publishSite(positional[0]!, positional[1]!, version);
+        console.log(
+          json
+            ? stable(result)
+            : [
+                `Deployed site for ${result.version} to ${positional[1]!}. Receipt: ${positional[0]!}/site-publication.json`,
+                ...(result.baseUrl ? [`Base URL: ${result.baseUrl}`] : []),
+                'Run your hosting deployment step to serve it.',
+              ].join('\n'),
+        );
+      }
     } else {
       const contract = loadContract(positional[0]!, positional[1]!, {
         collectDiagnostics: command === 'diagnose',
-        onWarning: (warning) => console.error(stable({ warning: warning.message })),
+        onWarning: (warning) =>
+          console.error(
+            json ? stable({ warning: warning.message }) : messageText('warning', warning.message),
+          ),
       });
       // generate/preview already compile and render while inspecting the output.
       if (command === 'diagnose' || command === 'effective') render(contract);
-      if (command === 'diagnose')
+      if (command === 'diagnose') {
+        const result = {
+          valid: true,
+          operations: contract.operations.length,
+          contractHash: contract.hash,
+          targets: contract.config.targets ?? ['node', 'php'],
+        };
         console.log(
-          stable({
-            valid: true,
-            operations: contract.operations.length,
-            contractHash: contract.hash,
-            targets: contract.config.targets ?? ['node', 'php'],
-          }),
+          json
+            ? stable(result)
+            : `Valid: ${result.operations} ${result.operations === 1 ? 'operation' : 'operations'}; targets: ${result.targets.join(', ')}; contract hash: ${result.contractHash}`,
         );
-      else if (command === 'effective') {
+      } else if (command === 'effective') {
         const targets = contract.config.targets ?? ['node', 'php'];
         const config = { ...contract.config };
         // Resolved contracts retain metadata for saved-record compatibility.
@@ -247,26 +316,56 @@ try {
         if (!targets.includes('php')) Reflect.deleteProperty(config, 'composer');
         console.log(stable({ ...contract, config }));
       } else {
-        console.log(stable(generate(contract, positional[2]!, command === 'preview')));
+        const output = positional[2]!;
+        if (json) console.log(stable(generate(contract, output, command === 'preview')));
+        else if (command === 'preview') {
+          const plan = preview(contract, output);
+          console.log(
+            generationText(
+              'preview',
+              output,
+              plan,
+              [...plan.files.keys()],
+              !plan.before,
+              flags.has('--diff') ? modifiedFileDiffs(plan, output) : undefined,
+            ),
+          );
+        } else {
+          const { report, files, firstGeneration } = generateWithSummary(contract, output);
+          console.log(generationText('generate', output, report, files, firstGeneration));
+        }
       }
     }
   }
 } catch (error) {
-  console.error(
-    stable({
-      error: error instanceof Error ? error.message : String(error),
-      ...(command === 'diagnose'
-        ? {
-            valid: false,
-            diagnostics: (error instanceof DiagnosticGroup
-              ? error.findings
-              : error instanceof Diagnostic
-                ? [error]
-                : []
-            ).map((finding) => ({ location: finding.location, message: finding.detail })),
-          }
-        : {}),
-    }),
-  );
+  const diagnostics = (
+    error instanceof DiagnosticGroup ? error.findings : error instanceof Diagnostic ? [error] : []
+  ).map((finding) => ({ location: finding.location, message: finding.detail }));
+  if (jsonErrors)
+    console.error(
+      stable({
+        error: error instanceof Error ? error.message : String(error),
+        ...(command === 'diagnose'
+          ? {
+              valid: false,
+              diagnostics,
+            }
+          : {}),
+      }),
+    );
+  else if (
+    command === 'diagnose' &&
+    diagnostics.length &&
+    !(error instanceof Diagnostic && error.location === 'arguments')
+  )
+    console.error(
+      [
+        `Invalid: ${diagnostics.length} ${diagnostics.length === 1 ? 'finding' : 'findings'}`,
+        ...diagnostics.map(
+          (finding) => `  ${finding.location}: ${finding.message.replace(/\r?\n/g, '\n  ')}`,
+        ),
+      ].join('\n'),
+    );
+  else console.error(messageText('error', errorMessage(error)));
   process.exitCode = 1;
 }
