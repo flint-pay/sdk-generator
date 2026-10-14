@@ -612,9 +612,12 @@ const credentialValues = (credentials: ExampleCredentials): ExampleCredential[] 
 
 /** Whether an operation's success responses can carry a decoded body worth printing. */
 function hasResponseBody(op: Operation): boolean {
-  return Object.entries(op.responses).some(
+  const responses = Object.entries(op.responses);
+  // A default response describes success only when no explicit success status is declared.
+  const explicit = responses.some(([status]) => successStatus(status));
+  return responses.some(
     ([status, response]) =>
-      (successStatus(status) || status === 'default') &&
+      (successStatus(status) || (status === 'default' && !explicit)) &&
       response.schema !== undefined &&
       (response.bodyKind ?? 'json') !== 'empty',
   );
@@ -686,32 +689,41 @@ function exampleParts(
     return target === 'node' && client !== 'client' ? client + pascal(safe) : safe;
   };
   const baseUrl = target === 'node' && client !== 'client' ? client + 'BaseUrl' : 'baseUrl';
-  const credentialSetup = credentials.required
-    ? credentialValues(credentials)
-        .map(({ key, env }) =>
-          target === 'node'
-            ? `const ${local(key)} = process.env.${env};\nif (!${local(key)}) throw new Error(${js(`Set ${env}: this call requires a credential`)});\n`
-            : `$${local(key)} = getenv(${php(env)});\nif ($${local(key)} === false || $${local(key)} === '') throw new \\RuntimeException(${php(`Set ${env}: this call requires a credential`)});\n`,
-        )
-        .join('')
-    : '';
-  const credentialValue = ({ key, env }: ExampleCredential) =>
-    credentials.required
-      ? target === 'node'
-        ? local(key)
-        : '$' + local(key)
-      : target === 'node'
-        ? `process.env.${env} ?? ""`
-        : `getenv(${php(env)}) ?: ''`;
+  // Required credentials stop with a clear message; optional ones are sent only when set.
+  const credentialSetup = credentialValues(credentials)
+    .map(({ key, env }) =>
+      target === 'node'
+        ? `const ${local(key)} = process.env.${env};\n` +
+          (credentials.required
+            ? `if (!${local(key)}) throw new Error(${js(`Set ${env}: this call requires a credential`)});\n`
+            : '')
+        : credentials.required
+          ? `$${local(key)} = getenv(${php(env)});\nif ($${local(key)} === false || $${local(key)} === '') throw new \\RuntimeException(${php(`Set ${env}: this call requires a credential`)});\n`
+          : `$${local(key)} = getenv(${php(env)}) ?: null;\n`,
+    )
+    .join('');
+  const credentialValue = ({ key }: ExampleCredential) =>
+    target === 'node' ? local(key) : '$' + local(key);
+  const supplied = credentialValues(credentials)
+    .map((value) =>
+      target === 'node' ? credentialValue(value) : credentialValue(value) + ' !== null',
+    )
+    .join(' && ');
   const option = (name: string, value: string) =>
     target === 'node' ? (name === value ? name : `${name}: ${value}`) : `${name}: ${value}`;
   const authOptions =
     credentials.kind === 'mode'
       ? target === 'node'
-        ? `authMode: ${js(credentials.mode)},\n  credentials: {\n    [${js(credentials.mode)}]: {\n${credentials.values.map((value) => `      [${js(value.key)}]: ${credentialValue(value)},`).join('\n')}\n    },\n  }`
-        : `authMode: ${php(credentials.mode)},\n  credentials: [\n    ${php(credentials.mode)} => [\n${credentials.values.map((value) => `      ${php(value.key)} => ${credentialValue(value)},`).join('\n')}\n    ],\n  ]`
+        ? credentials.required
+          ? `authMode: ${js(credentials.mode)},\n  credentials: {\n    [${js(credentials.mode)}]: {\n${credentials.values.map((value) => `      [${js(value.key)}]: ${credentialValue(value)},`).join('\n')}\n    },\n  }`
+          : `...(${supplied}\n    ? {\n        authMode: ${js(credentials.mode)},\n        credentials: {\n          [${js(credentials.mode)}]: {\n${credentials.values.map((value) => `            [${js(value.key)}]: ${credentialValue(value)},`).join('\n')}\n          },\n        },\n      }\n    : {})`
+        : credentials.required
+          ? `authMode: ${php(credentials.mode)},\n  credentials: [\n    ${php(credentials.mode)} => [\n${credentials.values.map((value) => `      ${php(value.key)} => ${credentialValue(value)},`).join('\n')}\n    ],\n  ]`
+          : `authMode: ${supplied} ? ${php(credentials.mode)} : null,\n  credentials: ${supplied} ? [\n    ${php(credentials.mode)} => [\n${credentials.values.map((value) => `      ${php(value.key)} => ${credentialValue(value)},`).join('\n')}\n    ],\n  ] : []`
       : credentials.kind === 'option'
-        ? option(credentials.value.key, credentialValue(credentials.value))
+        ? target === 'node' && !credentials.required
+          ? `...(${supplied} ? { ${option(credentials.value.key, credentialValue(credentials.value))} } : {})`
+          : option(credentials.value.key, credentialValue(credentials.value))
         : '';
   const printed =
     (downloadExampleResult(op, target, result) ||
@@ -732,13 +744,22 @@ function exampleParts(
       : '');
   const assign =
     unused && !output ? '' : target === 'node' ? `const ${result} = ` : `$${result} = `;
+  const nodeArgumentSource =
+    target === 'node'
+      ? publicArguments(op, input, 'node', syntax, true, Boolean(requestOptions)) +
+        (requestOptions
+          ? `${requestArguments(op, input).length ? ',\n' : ''}  { ${requestOptions} },\n`
+          : '\n')
+      : '';
+  // Calls without arguments stay on one line.
+  const nodeArguments = nodeArgumentSource.trim() ? '\n' + nodeArgumentSource : '';
   if (target === 'node') {
     return {
       symbols,
       setup: `const ${baseUrl} = process.env.API_BASE_URL${c.defaultBaseUrl !== undefined ? ` ?? ${js(c.defaultBaseUrl)}` : ''};\n${c.defaultBaseUrl === undefined ? `if (${baseUrl} === undefined) throw new Error("Set API_BASE_URL: this SDK has no default server");\n` : ''}${credentialSetup}const ${client} = new Client({\n  ${option('baseUrl', baseUrl)},\n${authOptions ? '  ' + authOptions + ',\n' : ''}});\n`,
       call:
         key.keySetup +
-        `${assign}await ${client}.${op.resource}.${method}(\n${publicArguments(op, input, 'node', syntax, true, Boolean(requestOptions))}${requestOptions ? `${requestArguments(op, input).length ? ',\n' : ''}  { ${requestOptions} },\n` : '\n'});\n${output}` +
+        `${assign}await ${client}.${op.resource}.${method}(${nodeArguments});\n${output}` +
         (hasStream
           ? `if (${result}${op.response?.return === 'payload' ? '' : '.data'} instanceof EventStream) {\n  for await (const event of ${result}${op.response?.return === 'payload' ? '' : '.data'}) { console.log(event.event, event.id, event.data); break; }\n}\n`
           : ''),
@@ -939,7 +960,7 @@ function packageReadme(
     ? `## Pagination\n\nList operations such as \`${paginated.resource}.${paginated.method}\` also have \`${paginated.method}Items\` and \`${paginated.method}Pages\` methods that fetch pages lazily. See [pagination](RUNTIME.md#pagination-and-polling).\n\n`
     : '';
   const webhooks = c.config.webhook
-    ? `## Webhooks\n\nVerify each delivery with \`${node ? 'client.verifyWebhook' : '$client->verifyWebhook'}(rawBody, headers, secret)\` on the original request bytes, never re-encoded JSON. See [verifyWebhook examples and errors](RUNTIME.md#webhooks-and-recovery).\n\n`
+    ? `## Webhooks\n\nVerify each delivery with \`${node ? 'client.verifyWebhook(rawBody, headers, secrets)' : '$client->verifyWebhook($rawBody, $headers, $secrets)'}\` on the original request bytes, never re-encoded JSON. See [verifyWebhook examples and errors](RUNTIME.md#webhooks-and-recovery).\n\n`
     : '';
   const guides = Object.keys(c.config.documentation?.guides ?? {}).map(
     (slug) => `- [${slug}](guides/${slug}.md)\n`,

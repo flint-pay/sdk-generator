@@ -716,3 +716,122 @@ test('example credential locals avoid keywords and globals the examples use', as
     await new Promise((done) => server.close(done));
   }
 });
+
+test('examples send optional named-mode credentials only when set and skip unused results', async () => {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const { createServer } = await import('node:http');
+  const { mkdirSync } = await import('node:fs');
+  const { localExampleFile } = await import('./local-example.mjs');
+  const exec = promisify(execFile);
+  const local = join(dir, 'optional-modes');
+  mkdirSync(local);
+  const responses = {
+    204: { description: 'OK' },
+    default: {
+      description: 'Error',
+      content: {
+        'application/json': {
+          schema: { type: 'object', properties: { message: { type: 'string' } } },
+        },
+      },
+    },
+  };
+  const optionalApi = {
+    openapi: '3.1.0',
+    info: { title: 'Optional', version: 'v1' },
+    components: {
+      securitySchemes: {
+        Bearer: { type: 'http', scheme: 'bearer' },
+        Id: { type: 'apiKey', in: 'header', name: 'X-Id' },
+        Secret: { type: 'apiKey', in: 'header', name: 'X-Secret' },
+      },
+    },
+    paths: {
+      '/token': {
+        get: { operationId: 'tokenOptional', security: [{}, { Bearer: [] }], responses },
+      },
+      '/pair': {
+        get: { operationId: 'pairOptional', security: [{}, { Id: [], Secret: [] }], responses },
+      },
+    },
+  };
+  writeFileSync(join(local, 'api.json'), JSON.stringify(optionalApi));
+  writeFileSync(
+    join(local, 'sdk.json'),
+    JSON.stringify({
+      ...config,
+      responses: { return: 'payload' },
+      auth: {
+        modes: { merchant: { schemes: ['Bearer'] }, pair: { schemes: ['Id', 'Secret'] } },
+        shortcuts: { token: { mode: 'merchant', scheme: 'Bearer' } },
+      },
+    }),
+  );
+  const output = join(local, 'out');
+  generate(loadContract(join(local, 'api.json'), join(local, 'sdk.json')), output);
+  mkdirSync(join(output, 'php/vendor'));
+  writeFileSync(
+    join(output, 'php/vendor/autoload.php'),
+    "<?php require_once __DIR__ . '/../src/Runtime.php'; require_once __DIR__ . '/../src/Client.php';",
+  );
+  const seen = [];
+  const server = createServer((request, response) => {
+    seen.push([
+      request.url,
+      request.headers.authorization,
+      request.headers['x-id'],
+      request.headers['x-secret'],
+    ]);
+    response.writeHead(204);
+    response.end();
+  });
+  await new Promise((done) => server.listen(0, '127.0.0.1', done));
+  try {
+    const base = { ...process.env, API_BASE_URL: `http://127.0.0.1:${server.address().port}` };
+    for (const name of ['API_TOKEN', 'API_PAIR_ID', 'API_PAIR_SECRET']) delete base[name];
+    for (const target of ['node', 'php']) {
+      const ext = target === 'node' ? 'mjs' : 'php';
+      const files = ['api-tokenOptional', 'api-pairOptional'].map((name) =>
+        join(output, target, `examples/${name}.${ext}`),
+      );
+      for (const file of files) {
+        // A 204 success with a default error body has no result to print.
+        assert.doesNotMatch(readFileSync(file, 'utf8'), /result/);
+      }
+      const run = async (env) => {
+        const before = seen.length;
+        for (const file of files)
+          await exec(target === 'node' ? process.execPath : 'php', [localExampleFile(file)], {
+            env,
+          });
+        return seen.slice(before);
+      };
+      assert.deepEqual(
+        await run(base),
+        [
+          ['/token', undefined, undefined, undefined],
+          ['/pair', undefined, undefined, undefined],
+        ],
+        target,
+      );
+      assert.deepEqual(
+        await run({ ...base, API_TOKEN: 't', API_PAIR_ID: 'i', API_PAIR_SECRET: 's' }),
+        [
+          ['/token', 'Bearer t', undefined, undefined],
+          ['/pair', undefined, 'i', 's'],
+        ],
+        target,
+      );
+      // A partial credential set is not sent.
+      assert.deepEqual(
+        (await run({ ...base, API_PAIR_ID: 'i' }))[1],
+        ['/pair', undefined, undefined, undefined],
+        target,
+      );
+    }
+  } finally {
+    server.closeAllConnections();
+    await new Promise((done) => server.close(done));
+  }
+});

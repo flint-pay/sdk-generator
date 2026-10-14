@@ -548,7 +548,7 @@ node dist/cli.js validate .generated/payments --fixtures tests/fixtures/http-cas
 
 - Run Node examples from the generated `node/` package: `node examples/RESOURCE-METHOD.mjs`.
 - For PHP, run `composer install` in the generated `php/` package, then `php examples/RESOURCE-METHOD.php`. When copying an example into an application, update its `require` path to the application's `vendor/autoload.php`.
-- Single-scheme examples read `API_BASE_URL` and `API_TOKEN`; the token is optional only for operations that also allow anonymous access. Named-mode examples read `API_MODE_SCHEME` variables, with mode and scheme uppercased and punctuation replaced by underscores. Shortcut examples read the shortcut's uppercase snake-case variable, such as `API_KEY`. Examples stop with a `Set VARIABLE` error when a required credential variable is unset or empty. Client construction itself never reads environment variables.
+- Single-scheme examples read `API_BASE_URL` and `API_TOKEN`. Named-mode examples read `API_MODE_SCHEME` variables, with mode and scheme uppercased and punctuation replaced by underscores. Shortcut examples read the shortcut's uppercase snake-case variable, such as `API_KEY`. Examples stop with a `Set VARIABLE` error when a required credential variable is unset or empty. For operations that also allow anonymous access, examples send credentials only when all of the mode's variables are set. Client construction itself never reads environment variables.
 - Examples never enable insecure HTTP. Add `allowInsecureHttp` deliberately for local HTTP setups.
 
 ## Reference

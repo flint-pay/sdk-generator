@@ -394,6 +394,13 @@ test('package READMEs lead with install and print capability notes only when dec
       'Documentation',
     ]);
     assert.match(paymentReadme, /Calls return a Result/);
+    assert.ok(
+      paymentReadme.includes(
+        target === 'node'
+          ? '`client.verifyWebhook(rawBody, headers, secrets)`'
+          : '`$client->verifyWebhook($rawBody, $headers, $secrets)`',
+      ),
+    );
     assert.match(paymentReadme, /Set `API_BASE_URL` and `API_TOKEN`, then replace/);
     assert.match(readme, /Without a declared retry policy, GET, HEAD and OPTIONS/);
     assert.match(paymentReadme, /Operations with a declared retry policy follow it.*otherwise GET/);
