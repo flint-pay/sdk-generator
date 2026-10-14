@@ -1,15 +1,78 @@
-# Configuration and contract subset
+# Configuration
 
-The generator accepts OpenAPI **3.0/3.1 JSON**, not YAML or arbitrary JSON Schema. Keep upstream API semantics in the API document and SDK design/capabilities in a separate JSON file. Both inputs are local files. Relative local `$ref` files are resolved and hashed; vendor remote references before generation. Recursive object fields, array items and dictionary values resolve through named model definitions; nonproductive alias cycles are rejected. `$ref` siblings follow the version and object rules below. Validation bounds schema traversal at 256 steps and rejects cyclic caller objects before dispatch. Generated recursive graphs share named shapes to avoid repeated expansion.
+The generator reads two local files:
 
-Generation compiles the resolved definition and configuration into public declarations, codecs and operation settings. The configuration format and defaults are the same for both targets. Credentials and request options remain client inputs.
+| Input             | Format and purpose                                                                                       |
+| ----------------- | -------------------------------------------------------------------------------------------------------- |
+| API definition    | OpenAPI 3.0/3.1 **JSON** (not YAML or arbitrary JSON Schema). Holds the upstream API semantics.          |
+| SDK configuration | JSON. Holds SDK design and declared capabilities. The format and defaults are the same for both targets. |
+
+Credentials, runtime base URLs and request options are consumer inputs; they never go in the configuration.
+
+## Minimal configuration
 
 ```json
 {
-  "version": "1.0.0",
-  "targets": ["node", "php"],
-  "npm": { "name": "@acme/service" },
-  "composer": { "name": "acme/service", "namespace": "Acme\\Service" },
+  "version": "0.1.0",
+  "targets": ["node"],
+  "npm": { "name": "@acme/widgets" }
+}
+```
+
+```sh
+node dist/cli.js diagnose openapi.json sdk.json
+node dist/cli.js generate openapi.json sdk.json .generated/widgets
+node dist/cli.js validate .generated/widgets
+```
+
+- `version` is the generated package's SemVer version, independent of the generator and API versions.
+- `targets` defaults to `["node", "php"]`. Package metadata is required only for selected targets: `npm.name` for Node; `composer.name` and `composer.namespace` for PHP.
+- Every operation is generated unless you [select operations](#select-operations).
+- Names come from tags and operation IDs. With operations `createWidget` and `getWidget` tagged `widgets`, the SDK exposes `client.widgets.create()` and `client.widgets.get()`. See [names](#names).
+- Run `diagnose` first. It reports unsupported constructs and missing declarations with their source locations.
+
+## Configuration fields
+
+Unknown configuration keys fail with a source location. Capability declarations go under the relevant `operations` entry unless marked top-level below.
+
+| Top-level field        | Purpose and default                                                                                                                                             |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `version`              | Required generated package SemVer; independent of the generator version and API version.                                                                        |
+| `targets`              | `node`, `php`, or both; defaults to both.                                                                                                                       |
+| `npm`                  | `name` required for Node; optional `registry`, `access`, `homepage` and `repository`; see [publication metadata](#publication-metadata).                        |
+| `composer`             | `name` and `namespace` required for PHP.                                                                                                                        |
+| `license`              | Package license metadata; defaults to `Apache-2.0`. Bundled runtime license is retained.                                                                        |
+| `requests`             | Request argument style: `positional` (default) or `object`; see [request arguments](#request-arguments).                                                        |
+| `responses`            | Optional SDK-wide return mode (`payload` by default, or `result`) and payload path; see [payload returns](#payload-returns).                                    |
+| `operations`           | Public naming, aliases, examples and declared operation capabilities. Matching resource tags and operation IDs supply names; otherwise `api` and `operationId`. |
+| `include`, `audiences` | Optional operation filters; operation `hidden: true` excludes that operation.                                                                                   |
+| `models`               | Optional component-to-public-model name mapping.                                                                                                                |
+| `phpFieldClasses`      | Optional PHP response field class pins among structurally identical models; see [PHP response entity names](#php-response-entity-names).                        |
+| `overrides`            | Explicit root-document JSON Pointer replacements before reference resolution; see [overrides](#overrides).                                                      |
+| `validation`           | `encoding` by default; `schema` adds supported request bounds, lengths and patterns; see [validation](#validation).                                             |
+| `auth`                 | Optional security scheme selection or named modes. Required when multiple declared schemes need disambiguation; see [authentication](#authentication).          |
+| `errors`               | Optional provider error code/message/details paths and request-ID header; see [errors](#errors).                                                                |
+| `apiVersion`           | Optional pinned request header and value; see [API version pin](#api-version-pin).                                                                              |
+| `webhook`              | Optional signing format and event schemas; see [webhooks](#webhooks).                                                                                           |
+| `money`                | Optional explicit currency precision table; see [money](#money).                                                                                                |
+| `documentation`        | Optional Markdown overview, named guides and featured example operation IDs; see [documentation](#documentation-and-examples).                                  |
+| `release`              | Optional distribution `baseUrl` and compatibility `policy` (`review` by default or `semver`); see [release policy](releases.md#version-policy).                 |
+| `profiles`             | Optional local JSON profiles merged into this configuration; see [profiles](#profiles).                                                                         |
+
+Other validation rules:
+
+- Namespace segments and public names are validated. Collisions and reserved identifiers fail with source locations.
+- `license` changes distribution metadata only and must accurately describe the provider's package. Bundled Apache-2.0 code and notices stay included.
+- PHP-compatible prerelease versions use `alpha`, `beta` or `rc`, optionally with a numeric suffix, such as `1.2.0-beta.1`.
+
+See [CLI usage](cli.md) to diagnose or preview inputs, and [using generated SDKs](using-sdks.md) for client and request options.
+
+## Operations
+
+`operations` keys are exact upstream `operationId` values. A full entry:
+
+```json
+{
   "operations": {
     "createWidget": {
       "resource": "widgets",
@@ -34,164 +97,198 @@ Generation compiles the resolved definition and configuration into public declar
 }
 ```
 
-Request bodies support `application/json` and `application/merge-patch+json`. When exactly one supported representation is declared, it is selected automatically, even if unsupported representations are also present. If both are available, set `operations.<operationId>.requestMediaType` explicitly. The selector must name a declared supported media type; only its schema controls request encoding. For example, select `application/json` for an OAuth operation that also offers form encoding.
+Stale operation and model customization targets fail diagnosis.
 
-GET/HEAD request bodies are rejected when Node is a selected target because its built-in fetch transport cannot send them.
+### Names
 
-HTTP parameters require an explicit non-null scalar type, a supported scalar array, or a scalar-or-array union with the same scalar type. References and conjunctive schemas may supply that type and add constraints. An empty schema or an enum without a type is insufficient for parameter encoding and fails diagnosis; declare the intended type. Typeless schemas remain supported in JSON bodies and models.
+- `resource` and `method` set the public call; the HTTP method and path are unchanged. Explicit names always take precedence over inferred ones.
+- Without them, a uniquely matching operation tag supplies the resource: `createPaymentIntent` tagged `payment_intents` becomes `paymentIntents.create`.
+  - Tags are normalized from camelCase, snake_case or words. Singular and plural resource words are matched against the operation ID and removed from the method name.
+  - Acronyms become camelCase: `createAPIKey` tagged `api_keys` becomes `apiKeys.create`.
+  - Missing, unrelated or ambiguous tags fall back to resource `api` and the unchanged operation ID. Paths are never used to guess names.
+- Public name collisions fail diagnosis; resolve them with explicit names.
+- `models` maps component schema names to SDK names. Resolved names apply consistently to recursive references and dependencies.
+- Upstream model names ending in `Input` default to `Request` (`PaymentInput` becomes `PaymentRequest`), keeping the generated `PaymentRequestInput` helper distinct. Existing names and explicit mappings are reserved first; inferred collisions use `RequestModel`, then numbered suffixes.
+- Pin names explicitly when upgrading an existing SDK to keep its public interface.
 
-Package metadata is required only for selected targets. `targets` defaults to both. Namespace segments and public names are validated; collisions and reserved identifiers fail with source locations. `license` changes distribution metadata only and must accurately describe the provider's package; bundled Apache-2.0 code and notices remain included. PHP-compatible prerelease versions use `alpha`, `beta`, or `rc`, optionally with a numeric suffix, such as `1.2.0-beta.1`.
+### Aliases and deprecation
 
-## Reference siblings
+- `aliases` create deprecated methods that call the same wire operation.
+- `deprecated` supplies a migration message for an operation. OpenAPI `deprecated: true` also produces a notice.
+- TypeScript declarations include operation descriptions, usage examples and deprecation annotations.
 
-Both SDK targets use the same reference rules within the supported schema subset:
+### Select operations
 
-| Context                                                   | Sibling behavior                                                                                                                                                                          |
-| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| OpenAPI 3.1 Schema Object                                 | Referenced and sibling constraints all apply, including existing `allOf`, `anyOf`, `oneOf` and `not` constraints.                                                                         |
-| OpenAPI 3.0 Reference Object, including schema references | Siblings are ignored, including `description` and `nullable`. Ignored values do not load referenced files.                                                                                |
-| OpenAPI 3.1 Reference Object outside schemas              | Local `summary` and `description` override referenced metadata where the target object type supports those fields. Other siblings are ignored.                                            |
-| Path Item `$ref`, both versions                           | Nonoverlapping fields combine. A field present locally and in the referenced Path Item is a conflict, even if the values match. Operations and parameter lists are not implicitly merged. |
+- `include` selects operation IDs.
+- `audiences` selects operations whose declared `audiences` intersect it.
+- `hidden: true` excludes an operation.
+- Only models needed by selected operations and events are exported. Unselected unsupported components do not block a supported slice.
+- Selection never confers server authorization. The private generation record keeps the resolved selected contract and source hashes.
 
-For example, in OpenAPI 3.1 this schema applies both the constraints of `Name` and a maximum length of 40:
+### Request bodies and parameters
 
-```json
-{
-  "$ref": "#/components/schemas/Name",
-  "description": "Name shown on the receipt",
-  "maxLength": 40
-}
+- Request bodies support `application/json` and `application/merge-patch+json`. When exactly one supported type is declared, it is selected, even beside unsupported types. When both are declared, set `operations.<operationId>.requestMediaType` to a declared supported type; only its schema controls encoding. For example, select `application/json` for an OAuth operation that also offers form encoding.
+- GET/HEAD request bodies are rejected when Node is a selected target; its built-in fetch transport cannot send them.
+- HTTP parameters need an explicit non-null scalar type, a supported scalar array, or a union of a scalar with its array. References and conjunctive schemas may supply the type and add constraints. An empty schema or an untyped enum fails diagnosis; declare the type. Typeless schemas remain supported in JSON bodies and models.
+
+## Request arguments
+
+The default is `requests.style: "positional"` for both Node/TypeScript and PHP: path values in URL placeholder order, then flat params, then request options.
+
+```ts
+await client.paymentIntents.get(paymentIntentId);
+await client.orders.update(orderId, { metadata: { source: 'store' } }, { idempotencyKey });
+await client.customers.list({ page_size: 100, page_token: nextPageToken });
 ```
 
-A narrowing `type: "array"` sibling may use the item declaration supplied by its referenced `allOf` conjunct, including a conjunct that declares `items` without its own `type`. Generated TypeScript retains those element types and any permitted nullability. The element constraints remain in their original scope; a standalone array still requires `items`.
+- PHP uses the same order, with associative arrays for params and `new RequestOptions(...)` for options. Nested model values are supported.
+- Operations without a body or query/header parameters have no params argument: a path-only method takes `(id, options)`.
+- Other operations keep the params slot. Pass `undefined` (Node) or `null` (PHP) to omit optional params while supplying options.
+- Required request bodies need a params object, including `{}` / `[]` for an empty object. An omitted optional body sends no body; an explicitly empty params object sends `{}`.
+- With both an optional body and query/header parameters, params containing only those parameters send no body. Use object style to distinguish an empty body in that case.
+- Declared query/header names are reserved for those destinations; remaining params fields go into the body.
+- Positional style requires a non-null object body. Nonobject bodies and body fields colliding with declared query/header parameters fail diagnosis.
+- Typed additional-property dictionaries combined with query/header parameters require object style, because their TypeScript index signatures cannot exclude the parameter keys.
+- Aliases, `WithResponse`, `Pages`, `Items`, `Wait`, `PagesWithResponse` and `WaitWithResponse` use the primary method's argument order. The schema still controls path, query, header and body encoding.
 
-Sibling constraints cannot weaken the referenced schema. Adding properties does not open a referenced object with `additionalProperties: false`, and adding `null` to a sibling type does not make a non-null target nullable. Local descriptive metadata takes precedence for display. A true `readOnly`, `writeOnly` or `x-sensitive` flag on either side remains effective; contradictory read/write direction is rejected.
-
-For OpenAPI 3.0, put annotations and nullable behavior on an explicit wrapper:
-
-```json
-{
-  "description": "Optional name shown on the receipt",
-  "nullable": true,
-  "allOf": [{ "$ref": "#/components/schemas/Name" }]
-}
-```
-
-Relative references inside sibling fields resolve from the file declaring those fields, including siblings of external references. References retain operation selection, model customization and source hashing. Alias cycles that never descend through a property, item or dictionary value still fail diagnosis.
-
-## Configuration fields
-
-Unknown configuration keys fail with a source location. Capability declarations belong under the relevant `operations` entry unless the table marks them as top-level.
-
-| Top-level field        | Purpose and default                                                                                                                                             |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `version`              | Required generated package SemVer; independent of the generator version and API version.                                                                        |
-| `targets`              | `node`, `php`, or both; defaults to both.                                                                                                                       |
-| `npm`                  | `name` required for Node; optional `registry` and `access` control publication metadata.                                                                        |
-| `composer`             | `name` and `namespace` required for PHP.                                                                                                                        |
-| `license`              | Package license metadata; defaults to `Apache-2.0`. Bundled runtime license is retained.                                                                        |
-| `requests`             | Request argument style: `positional` (default) or `object`; see [request arguments](#request-arguments).                                                        |
-| `responses`            | Optional SDK-wide return mode (`payload` by default, or `result`) and payload path; see [payload returns](#payload-returns).                                    |
-| `operations`           | Public naming, aliases, examples and declared operation capabilities. Matching resource tags and operation IDs supply names; otherwise `api` and `operationId`. |
-| `include`, `audiences` | Optional operation filters; operation `hidden: true` excludes that operation.                                                                                   |
-| `models`               | Optional component-to-public-model name mapping.                                                                                                                |
-| `phpFieldClasses`      | Optional PHP response field class pins among structurally identical models; see [PHP response entity names](#php-response-entity-names).                        |
-| `overrides`            | Explicit root-document JSON Pointer replacements before reference resolution.                                                                                   |
-| `validation`           | `encoding` by default; `schema` adds supported request bounds, lengths and patterns.                                                                            |
-| `auth`                 | Optional explicit security scheme selection. Required when multiple declared schemes need disambiguation.                                                       |
-| `errors`               | Optional provider error code/message/details paths and request-ID header.                                                                                       |
-| `apiVersion`           | Optional pinned request header and value.                                                                                                                       |
-| `webhook`              | Optional signing format and event schemas.                                                                                                                      |
-| `money`                | Optional explicit currency precision table.                                                                                                                     |
-| `documentation`        | Optional Markdown overview, named guides and featured example operation IDs.                                                                                    |
-| `release`              | Optional distribution `baseUrl` and compatibility `policy` (`review` by default or `semver`); see [release policy](releases.md#version-policy).                 |
-
-See [CLI usage](cli.md) to diagnose or preview these inputs, and [using generated SDKs](using-sdks.md) for runtime client/request options. Credentials and runtime base URLs are supplied by consumers, not stored in the SDK configuration.
-
-## SDK customization
-
-`operations` keys are exact upstream `operationId` values. `resource` and `method` customize the public call while preserving HTTP method/path. `aliases` create deprecated methods invoking the same wire operation. Explicit resource, method and model names always take precedence over inferred defaults.
-
-Without overrides, a uniquely matching operation tag supplies the resource: `createPaymentIntent` tagged `payment_intents` becomes `paymentIntents.create`. Tags are normalized from camelCase, snake_case or words; singular/plural resource words are matched against the operation ID and removed from the method name. Acronyms normalize to camelCase (`createAPIKey` tagged `api_keys` becomes `apiKeys.create`). Missing, unrelated or ambiguous tags fall back to resource `api` and the unchanged operation ID. No path-based guessing is performed. Public collisions still fail diagnosis and can be resolved with explicit overrides.
-
-Upstream model names ending in `Input` default to `Request` (for example, `PaymentInput` becomes `PaymentRequest`), keeping the generator's `PaymentRequestInput` helper distinct. Existing names and explicit overrides are reserved first; inferred collisions use `RequestModel`, then numbered suffixes. Resolved model names apply consistently to recursive references and dependencies. Pin names explicitly when upgrading an existing SDK to preserve its public interface. Stale operation/model customization targets fail.
-
-`deprecated` supplies a migration message for an operation. OpenAPI `deprecated: true` also produces a notice. Generated TypeScript declarations include operation descriptions, usage examples and deprecation annotations. Tagged operation responses export an `is<Resource><Method>ResponseKnown` guard: check it before switching on known discriminator values; unknown variants remain available unchanged.
-
-A response union reached through `allOf`, including a resolved `$ref` with sibling constraints, also generates its known-variant guard. The guard checks the complete composed schema, including sibling required fields, bounds and `not` constraints, before narrowing. Tagged unions wrapped this way retain PHP variant classes; their constructors validate the selected branch together with the surrounding constraints and their getters include sibling fields. Normal response decoding and PHP response constructors retain the documented tolerance for business bounds and future fields.
-
-Providers can supply `documentation.overview` as Markdown and `documentation.guides` as a map of lowercase guide slugs to Markdown. The overview appears near the top of each package README; use it to link to your public SDK documentation. Both packages and the release site include version-matched guidance. Detailed SDK behavior lives in the linked `RUNTIME.md` guide, included in both packages and the release site. READMEs embed one complete quickstart followed by up to two short recipes that reuse its client, prioritizing configured examples and covering a create operation, a read operation and another resource when available. Set `documentation.examples` to an ordered list of operation IDs to feature specific workflows (for example, `["createPaymentIntent", "getPaymentIntent", "createRefund"]`). Operations outside the selected profile are omitted and remaining slots use automatic selection. Supply `operations.OPERATION_ID.example` with realistic SDK inputs to improve these examples. Keep workflow assumptions and provider-specific recovery instructions here, alongside operation examples.
-
-`errors` maps provider conventions: `codePath`, `messagePath` and `detailsPath` are dot-separated fields in JSON error bodies; `requestIdHeader` selects the response header. Defaults are `code`, `message`, the whole redacted error body, and `x-request-id`. For nested errors, use `{"codePath":"error.code","messagePath":"error.message","detailsPath":"error"}`. Paths traverse JSON objects and array indices; scalar values have no child fields. A nonempty JSON string at `messagePath` becomes the exception message after redaction; absent, blank or non-string values fall back to `API returned HTTP <status>`. Public error codes are redacted too; code-based retry matching uses the original JSON string at `codePath`. JSON numbers never become messages or provider codes and never match string retry codes, including decimal, exponent and large-integer tokens. Malformed or non-JSON errors retain status, metadata and explicit `raw` response access. `ClientOptions.redactFields` adds field names to recursive inspection and error message/code/detail redaction without altering response data.
-
-`include` selects operation IDs. `audiences` selects operations whose declared `audiences` intersect it. `hidden: true` excludes an operation. Selection never confers server authorization. Only models needed by selected operations/events are exported; the private generation record retains the resolved selected contract and source hashes. Unselected unsupported schema components do not prevent a supported slice from generating.
-
-`models` maps component schema names to SDK names. Public request and response types are compiled separately to preserve response extensibility. The same compilation produces the codecs bundled with each package. Node creates `Name`, `NameInput`, and `makeName` model helpers. PHP emits presence-aware `NameInput` classes plus operation input/response classes, PHPDoc shapes and native typed field accessors. Object inputs use `new OperationInput(['field' => null])`; scalar, array and nullable named model constructors accept their corresponding values and expose them with `jsonSerialize()`; omitted keys remain omitted. `has()` and `get()` distinguish a missing key from null. Getters for omitted optional fields throw, rather than inventing a value. TypeScript models field-absence constraints where possible; value-specific `not` constraints retain a broader input type and are enforced at runtime.
-
-Optional TypeScript fields named like inherited `Object` members (for example `toString`) include the inherited signature in their type so callers can omit the own field. Explicit own values still undergo runtime validation; functions are never serialized as strings. Required fields retain their declared types. The runtime reads only own request properties.
-
-`example`, `examples`, `default`, `enum`, and custom extension payloads retain literal JSON data, including fields named `$ref`. Internal `x-sdk-*` extensions are reserved and cannot be supplied in source definitions.
-
-`overrides` maps exact JSON Pointers in the root input document to replacement JSON values, for example:
+Use object style for the whole SDK or one operation:
 
 ```json
 {
-  "overrides": {
-    "/components/schemas/Update/properties/description": {
-      "type": ["string", "null"]
-    }
+  "requests": { "style": "positional" },
+  "operations": {
+    "replaceRawDocument": { "request": { "style": "object" } }
   }
 }
 ```
 
-Overrides replace the addressed value and apply before reference resolution. They are explicit provider corrections to API semantics and affect both targets. Pointers to missing values fail. To correct a local referenced schema, override its `$ref` occurrence or maintain a corrected vendored file. `effective` prints the resolved contract, customization results, source hashes and selected operations. Treat that output as private.
+Object style takes `(input, options)`, with path/query/header fields on `input` and the body under `input.body`. It also accepts the generated PHP operation input classes.
 
-## Schema representations
+Configuration `example` values, HTTP fixtures and exported operation `Input` shapes always use the canonical `{ pathField, queryField, body }` structure; generated runnable examples translate them to the selected call style. Changing styles or positional path order is a breaking change in compatibility checks. Profiles merge request styles under the usual conflict rules.
 
-| Contract                          | Node/TypeScript                       | PHP                                                | JSON wire              |
-| --------------------------------- | ------------------------------------- | -------------------------------------------------- | ---------------------- |
-| `integer` (without int64/uint64)  | Safe integer `number`                 | Safe-range `int`                                   | Integer token          |
-| `integer`, `format: int64/uint64` | Exact `string`                        | Exact `string`                                     | Unquoted integer token |
-| `number`, `format: decimal`       | Exact `string`                        | Exact `string`                                     | Unquoted decimal token |
-| `number`, plain/float/double      | `number`                              | `int\|float` input, `float` output                 | Number token           |
-| `string`, `format: date-time`     | `string\|Date` input, `string` output | `string\|DateTimeInterface` input, `string` output | JSON string            |
-| Other `string` formats            | `string`                              | `string`                                           | JSON string            |
-| Optional field                    | Omitted/undefined property            | Omitted array key                                  | Absent                 |
-| Nullable field                    | `T \| null`                           | Null value                                         | Explicit null          |
-| Object/array                      | Object/array                          | Typed response model, object or array              | Object/array           |
+## Payload returns
 
-Plain JSON `number` schemas and float/double formats use native numbers: TypeScript `number`, PHP `int|float` inputs and `float` outputs. Values must be finite; ordinary floating-point rounding applies. Use `format: "decimal"` for exact decimal strings and int64/uint64 for exact integer strings. Other integers retain the shared safe range ±9,007,199,254,740,991. Exact numeric strings may be larger. Currency support is optional and never inferred from a property name.
+New SDKs return the complete decoded body directly (`responses.return: "payload"`). Select `responses.return: "result"` for the `Result` envelope with `data`, `meta` and `raw`. Declare envelope paths explicitly; a field named `data` is never unwrapped automatically.
 
-`allOf` validates every branch, `anyOf` requires at least one matching branch, and `oneOf` requires exactly one. Matching numeric branches merge equivalent values using exact decimal comparison, so spellings such as `1.0` and `1e0` remain valid for `anyOf` combining decimal and exact-integer schemas. Numeric merging preserves the original request token; it does not turn JSON strings into numbers or relax `oneOf` exclusivity. Field-choice rules can use `required` and `not` without repeating an object shape or declaring a discriminator. An optional discriminator requires disjoint required string enum tags. Composition retains sibling constraints and exact numeric encoding. If the shared numeric interpretation invalidates every branch that supplied a numeric conversion, the SDK rejects the value before dispatch. Unknown response tags and enum values remain unchanged; they are not converted to a known result. Unknown numeric response fields use numbers for safe integers and strings for larger/decimal tokens. Response fields required by known schemas must exist and known field shapes must be representable. Request enums and unknown-property restrictions are enforced. Ordinary schema defaults are documentation, never silently inserted into a request. Generated quickstart inputs are validated during rendering; if an inferred or configured example cannot satisfy the schema, generation identifies `config/operations/<id>/example` so the provider can supply a valid example. OpenAPI 3.0 `nullable` is normalized before generation, including reference wrappers. Required readOnly fields are response requirements; sending them is rejected. Required writeOnly fields are input requirements and are excluded from response declarations and ordinary inspection. Untagged object response alternatives preserve future objects through an unknown-object branch; the generated known-variant guard verifies shape and sibling requirements before narrowing.
+```json
+{
+  "responses": { "return": "payload" },
+  "operations": {
+    "createPaymentIntent": { "response": { "payloadPath": "data" } },
+    "getPaymentIntent": { "response": { "payloadPath": "payment_intent" } },
+    "getReport": { "response": { "return": "result" } }
+  }
+}
+```
 
-Simple nullable wrappers with one explicitly typed non-null branch and one plain `type: "null"` branch retain that branch’s fields: TypeScript exposes the known value or null, and PHP response getters hydrate the existing named entity or an inline entity. Unknown fields and enum members remain preserved; malformed known values fail response decoding. Genuinely polymorphic alternatives retain their unknown-variant fallback.
-
-TypeScript shaped objects have no implicit index signature, including responses. Explicit `additionalProperties: true` or an additional-property schema retains open declarations, and unstructured objects remain dictionaries. This catches misspelled object literals and response property access without changing runtime additional-property rules. Unknown response fields are preserved; consumers must explicitly narrow or assert a dictionary type to inspect them. Unknown object alternatives require narrowing through the generated guards. TypeScript structural assignment can still accept variables with extra keys.
-
-Nested `x-sensitive: true` metadata affects model debug representations and parsed error details, not wire serialization. Explicit raw response/body access remains sensitive. Set top-level `"validation": "schema"` to check declared minimum/maximum, exclusive bounds, string lengths, patterns, array lengths, multipleOf, uniqueItems, contains and object property counts on requests and model factories. The default `"encoding"` policy retains required fields, declared types/enums, field choices, nullability, exact numeric representation and integer format ranges; business limits remain server checks. Alternative selection and known-variant guards use the full supported constraints so they never choose an incompatible wire representation. Responses retain values beyond these business constraints while still checking representable field shapes. Bounds and numeric enum membership use exact decimal comparisons without floating-point coercion of caller values. Numeric enums accept equivalent spellings such as `1`, `1.0` and `1e0`; generated TypeScript represents exact numeric enum inputs as strings and enforces membership at runtime, including single-element type arrays such as `type: ["number"], format: "decimal"`. Native-number enums use numeric literals. Integer formats int32/uint32/int64/uint64 enforce their request ranges; uint64 uses exact strings. String lengths count Unicode code points, not bytes or UTF-16 units. Patterns use a portable Unicode ECMAScript subset, translated for PHP: character classes, groups, alternation, anchors and quantifiers; lookarounds, backreferences, special groups and unsupported escapes receive diagnostics. Date-time inputs accept strings or native `Date`/`DateTimeInterface` values. Native dates serialize to UTC ISO 8601 with milliseconds; invalid Node dates are rejected. Date-time responses remain strings, and supplied strings retain their spelling. Other textual formats are annotations. OpenAPI 3.0 exclusive booleans normalize with their associated bounds. Unsupported validation keywords, including minContains and maxContains, fail with diagnostics. Numeric bound literals must be finite, with integer literals in the safe range of the generator's JSON parser.
-
-Source numeric constraints must preserve their decimal value through the generator's JSON parser. Equivalent spellings such as `0.1000` and `1e-1` are accepted; a literal such as `0.10000000000000001`, which would become `0.1`, receives a diagnostic at the constraint location. This applies to bounds, `multipleOf`, numeric enums, and numbers nested in `const`. Numeric values in SDK configuration and profiles must also retain their precision. An explicit provider override can replace a problematic source constraint. Ignored OpenAPI examples and excluded operations do not trigger this check. This source-literal limit does not reduce the precision of exact numeric strings passed to generated SDKs.
-
-Constraints apply wherever a value can appear, at every depth: array items, dictionary values and recursive fields, and types or bounds contributed by a separate `allOf` branch or `$ref` sibling. A named property can take its constraints from another branch's `additionalProperties` schema, and specializing a named property does not change the dictionary rule for other keys. Numeric interpretation follows the selected branch's declared representation, so a numeric-looking value in a string branch remains a JSON string, and exact-number strings keep their numeric JSON meaning throughout.
-
-Mutually dependent unions, where one branch's numeric interpretation depends on another's, are matched jointly. That search is bounded, and an unusually ambiguous schema can exhaust it and fail validation. Give each field's type and constraints together, or declare an explicit discriminator, to keep such a schema unambiguous.
-
-Diagnosis also rejects simple nested unbounded repetition, such as `(a+)+`, `(.*)*`, and `([a-z]+){2,}`. This conservative check targets repeated groups consisting of a single already unbounded repetition; it retains delimited patterns such as `(?:[.-][a-z0-9]+)*`. It is a limited safeguard, not a guarantee against expensive regex matching. It applies during generation, not to application-supplied schemas passed directly to runtime helpers.
-
-Portable patterns retain ECMAScript's ASCII meaning for `\d`, `\D`, `\w`, and `\W` in both targets, including inside character classes. For example, `^\w+$` rejects `é` and non-ASCII digits. Use explicit Unicode characters or ranges when those values should be accepted.
+- Settings merge at the SDK and operation levels. You may set an SDK-wide `responses.payloadPath`; an operation's `response.payloadPath: null` clears it, and `response.return: "result"` opts the operation out.
+- A dot-separated `payloadPath` must name required, declared properties through non-null objects in every successful JSON response. References and compositions are checked. Optional paths, array traversal and paths through empty, binary or streaming responses fail diagnosis. A nullable payload itself is allowed. Use whole-body or result mode for endpoints with incompatible shapes.
+- Unknown union variants keep conservative output types; consumers narrow them before assuming a payload shape.
+- Each payload-mode method and alias gets a `WithResponse` companion with identical inputs and options, returning `SdkResponse` with the full `body`, HTTP `meta` and `raw`. PHP uses the same names and properties. Each call makes its own request.
+- `Pages` and `Wait` follow the base method's mode. Payload-mode operations also get `PagesWithResponse` and `WaitWithResponse`. `Items` yields individual items. Companion names take part in collision checks.
+- Pagination and polling paths always address the original response body, so projection never loses continuation or state. HTTP fixtures assert the complete wire body, through `WithResponse` for payload-mode operations.
+- Return settings and payload types are recorded in the compiled contract. Enabling or disabling payload mode, or changing a payload path, is breaking under `semver`.
+- Regenerating an SDK that previously used `Result` returns with no `responses.return` produces a diagnostic. Set `"result"` to keep its API or `"payload"` to migrate. Operation-level explicit return choices also count.
+- Undeclared 2xx statuses need no configuration; see [response drift and recovery](using-sdks.md#successful-http-responses-and-schema-drift).
 
 ## Declared capabilities
 
-Pagination and polling fields may take their type from any conjunct, including a property constrained beside a response `$ref`, but every response alternative must supply that type somehow. Item declarations intersect all constraints on an element, so a constraint-only `items` sibling keeps the referenced element type; different response alternatives still produce a union of their item types.
+Only declared capabilities generate helpers. Pagination and polling fields may take their type from any conjunct, including a property constrained beside a response `$ref`, but every response alternative must supply that type. Item declarations intersect all constraints on an element, so a constraint-only `items` sibling keeps the referenced element type; different response alternatives produce a union of item types.
 
-- `retry`: all four fields are required. `maxAttempts` includes the initial attempt (1–10); client/request budgets are capped at this limit. Explicit policies replace defaults completely; use `maxAttempts: 1` to disable retries. Without a declaration, GET/HEAD/OPTIONS default to three total attempts for transport failures and HTTP 408, 429, 500, 502, 503 and 504 with a 100 ms exponential jitter base; other methods send once. Mutation retries require retry and idempotency declarations and a nonempty key. Missing optional keys reduce the call to one attempt; required keys remain required. Neither 409 nor 412 can appear in blanket retry statuses; specific 409 error codes can be declared through `errors` on the retry policy. 412 is never retried. Transport replay applies only to fully encoded JSON bodies.
-- `idempotency`: header name, retention and scope descriptions are mandatory. `auto` defaults false. An automatically generated key is stable only within one SDK call; persist a caller key for application resubmissions and recovery across restarts. Explicit keys supplied through operation header inputs, request headers, or `idempotencyKey` are preserved across retries; conflicting values fail before dispatch. Empty keys and keys with leading or trailing spaces or tabs are rejected before dispatch because HTTP transports can change their wire identity. Automatic keys are generated only when no explicit key was supplied, including when the declared header is required. Generated keys pass the same declared header validation as explicit keys; supply a compatible explicit key if the automatic format does not satisfy the schema. When the declared header is required, callers may supply it through `RequestOptions.idempotencyKey` or request headers instead of duplicating it in the input. Input types allow omission in that case, but runtime validation still rejects a missing required key before dispatch when automatic generation is disabled.
-- `pagination`: `{ "kind": "cursor", "items": "data.items", "next": "data.next", "parameter": "cursor" }`. Offset pagination uses the same form with `kind: offset` and a provider response field containing the next offset; the SDK never invents offset arithmetic. Link pagination uses `kind: link`, an explicit next-URL response field, and no query parameter. Links are resolved relative to the URL of the page that supplied them. GET only. Cursor parameters must be scalar strings; offset parameters must be scalar integers. An int64/uint64 continuation requires an int64/uint64 query parameter because it decodes to an exact string; incompatible declarations fail diagnosis. Ordinary integer continuations can feed either ordinary or exact integer parameters. Items/pages are lazy and bounded by optional caller limits. Each page request has its own deadline, including retries and decoding; consumer processing time does not count toward it. There is no overall iterator deadline.
-- `polling`: `{ "state": "status", "success": ["done"], "failure": ["failed"], "intervalMs": 100 }`. GET only; unknown states continue waiting within the deadline. Backoff caps at 10 seconds. Canceling a waiter does not cancel a remote job.
-- `conditional`: `{ "header": "If-Match" }` or `If-None-Match`. Callers use `ifMatch` or request headers to supply the declared precondition, including when the OpenAPI header parameter is required; it need not be duplicated in the input. Required preconditions still fail before dispatch when absent. The effective header value is validated against its declared schema. Declare 304 when conditional reads can return it. Conflicts never silently drop the precondition.
-- `apiVersion` (top level): `{ "header": "X-Api-Version", "value": "2026-09" }`. Pins a version header on every request, taking precedence over per-request headers. The pin satisfies a required OpenAPI header parameter without a duplicate input field and is validated against the declared header schema. Generated documentation reports this value as the API version, falling back to the schema's `info.version` when no pin is configured. Package versions remain independent semver versions. Generate from a spec for the same API version; setting a header does not transform the spec or generated types. This setting is optional and provider-specific; the generator has no global API version pin.
-- `money` (top level): `{ "currencies": { "USD": 2, "JPY": 0 } }`. Conversion accepts an exact major-unit decimal string and produces an exact minor-unit string. Whitespace, including trailing newlines, and excess precision are rejected; implicit rounding and guessed currency tables are absent.
-- `webhook` (top level): an HMAC-SHA256 signing format and event schemas. Other signing protocols fail with a diagnostic naming the unsupported protocol.
+### Retry
+
+All four fields (`maxAttempts`, `statuses`, `transport`, `baseDelayMs`) are required.
+
+- `maxAttempts` includes the initial attempt (1–10). Client and request budgets are capped at it.
+- A policy replaces the defaults completely. Use `maxAttempts: 1` to disable retries.
+- Without a policy, GET/HEAD/OPTIONS use the [default read retries](using-sdks.md#errors-and-retries) and other methods send once.
+- Mutation retries need retry and idempotency declarations and a nonempty key. A missing optional key reduces the call to one attempt; required keys stay required.
+- 409 and 412 cannot appear in `statuses`. 412 is never retried.
+- Transport replay applies only to fully encoded JSON bodies.
+
+Retry specific 409 error codes by adding `errors` to the policy:
+
+```json
+{
+  "retry": {
+    "maxAttempts": 3,
+    "statuses": [503],
+    "transport": true,
+    "baseDelayMs": 100,
+    "errors": [{ "status": 409, "codes": ["IDEMPOTENCY_KEY_IN_PROGRESS"] }]
+  }
+}
+```
+
+Use the provider's code and set top-level `errors.codePath` (for example `error.code`). These matches obey the same attempt, deadline and idempotency limits. Other 409 codes stay conflicts. A 409 rule requires declared idempotency and cannot be used for conditional updates.
+
+### Idempotency
+
+`header`, `retention` and `scope` are required; `auto` defaults to `false`.
+
+- Automatic keys are generated only when no explicit key was supplied, including for required headers. They pass the same header validation as explicit keys.
+- Explicit keys from operation header inputs, request headers or `idempotencyKey` are preserved across retries. See [errors and retries](using-sdks.md#errors-and-retries) for key lifetime and conflicts.
+- Empty keys and keys with leading or trailing spaces or tabs fail before dispatch, because transports can change their wire identity.
+- Callers may supply a required header through `RequestOptions.idempotencyKey` or request headers instead of the input. Input types allow omission, but a missing required key still fails before dispatch when `auto` is off.
+
+### Pagination
+
+```json
+{
+  "pagination": {
+    "kind": "cursor",
+    "items": "data.items",
+    "next": "data.next",
+    "parameter": "cursor"
+  }
+}
+```
+
+| `kind`   | `next` field                          | `parameter`                |
+| -------- | ------------------------------------- | -------------------------- |
+| `cursor` | Next cursor                           | Scalar string query param  |
+| `offset` | Next offset, supplied by the provider | Scalar integer query param |
+| `link`   | Next URL                              | None                       |
+
+- GET only. The SDK never computes offsets.
+- Links resolve relative to the URL of the page that supplied them.
+- An int64/uint64 continuation decodes to an exact string, so it needs an int64/uint64 query parameter; incompatible declarations fail diagnosis. Ordinary integer continuations can feed ordinary or exact integer parameters.
+- Consumer behavior, limits and deadlines: [pagination and polling](using-sdks.md#pagination-and-polling).
+
+### Polling
+
+```json
+{ "polling": { "state": "status", "success": ["done"], "failure": ["failed"], "intervalMs": 100 } }
+```
+
+GET only. Unknown states keep waiting within the deadline. Backoff caps at 10 seconds. Canceling a waiter does not cancel the remote job.
+
+### Conditional requests
+
+`{ "conditional": { "header": "If-Match" } }`, or `If-None-Match`.
+
+- Callers supply the precondition through `ifMatch` or request headers, even when the OpenAPI header parameter is required; it need not be duplicated in the input. A missing required precondition fails before dispatch.
+- The effective value is validated against the declared header schema.
+- Declare 304 when conditional reads can return it. Conflicts never drop the precondition silently.
+
+### API version pin
+
+Top level: `{ "apiVersion": { "header": "X-Api-Version", "value": "2026-09" } }`.
+
+- Sends the header on every request, overriding per-request headers.
+- Satisfies a required OpenAPI header parameter without a duplicate input field, and is validated against that header's schema.
+- Generated documentation reports this value as the API version, or the schema's `info.version` without a pin. Package versions stay independent.
+- Generate from a spec for the same API version; the header does not transform the spec or types. The generator has no global version pin.
+
+### Money
+
+Top level: `{ "money": { "currencies": { "USD": 2, "JPY": 0 } } }`.
+
+Conversion takes an exact major-unit decimal string and returns an exact minor-unit string. Whitespace, including trailing newlines, and excess precision are rejected. There is no implicit rounding or guessed currency table, and currency support is never inferred from a property name.
+
+## Webhooks
+
+Top level `webhook`: an HMAC-SHA256 signing format and event schemas. Other signing protocols fail with a diagnostic naming the protocol.
 
 ```json
 {
@@ -216,119 +313,32 @@ Pagination and polling fields may take their type from any conjunct, including a
 }
 ```
 
-The default format (`hex`) is a plain hex HMAC-SHA256 signature over `timestamp + separator + raw request body bytes`, with timestamp in a separate header. Select a format explicitly for a provider; a plain hex signature is not interchangeable with a structured signature header. Verification checks all supplied rotation secrets, timestamp tolerance and payload parsing. Unknown event types return `known: false`.
+| `format`            | Settings                                                                                                          | Signature                                                                                                                                                   |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hex` (default)     | `header`, `timestampHeader`, `separator`                                                                          | Plain hex HMAC-SHA256 over `timestamp + separator + raw body bytes`.                                                                                        |
+| `standard-webhooks` | `header: "webhook-signature"`, `timestampHeader: "webhook-timestamp"`, `idHeader: "webhook-id"`, `separator: "."` | Space-separated `v1,<base64>` over `id.timestamp.rawBody`, keyed by the 32 bytes decoded from a canonical `whsec_` secret.                                  |
+| `timestamped-hex`   | `header` (for example `"X-Signature"`), no `timestampHeader`, `separator: "."`                                    | `t=<timestamp>,v1=<hex>` over `timestamp.rawBody` using the full UTF-8 secret. Multiple signatures allow rotation; duplicate timestamp fields are rejected. |
 
-Generated `verifyWebhook` accepts a single signing secret or an array for rotation. Node accepts original `Buffer`/`Uint8Array` bytes with Fetch `Headers` or Node/Express header records; PHP accepts original body strings with scalar or PSR-7 array headers. `known` requires both a registered event name and a matching declared envelope. Unknown names and unmatched variants remain authenticated but untyped. See [verification examples and error codes](using-sdks.md#webhook-verification). No new configuration is needed.
+- Required: `algorithm: "hmac-sha256"`, `header`, `separator`, `toleranceSeconds`, `typeField` and `events`.
+- Select the provider's format with `format`; a plain hex signature is not interchangeable with a structured signature header.
+- Verification checks every supplied rotation secret, timestamp tolerance and payload parsing.
+- Top-level OpenAPI `webhooks` are incoming contracts and never generate client methods. Effective literal event types bind incoming payload schemas to the verifier; incompatible explicit bindings fail diagnosis.
 
-Generated `examples/webhook-inbox.*` implement a durable SQLite inbox and outbox. `receiveWebhook` verifies and commits before acknowledgement; `processInbox` fetches current state through a supplied callback and atomically applies synchronous database effects with the processed marker. Unknown event names and unmatched envelopes remain pending for review. `enqueueEffect` deduplicates a stable business-action identity across multiple event IDs. `deliverOutbox` retries the same identity after failures/restarts; the downstream service must honor that idempotency contract. The application supplies provider-specific state/version checks and owns acknowledgement, retention and connections. These examples are optional dependencies, not part of the default SDK transport. Existing example databases predating the `known` column need an explicit application migration; do not reinterpret unknown stored events as verified known events.
+Consumer usage, `known` event matching and error codes: [webhook verification](using-sdks.md#webhook-verification).
 
-Additional formats use `separator: "."`:
+### Webhook inbox examples
 
-- `standard-webhooks`: set `header: "webhook-signature"`, `timestampHeader: "webhook-timestamp"`, and `idHeader: "webhook-id"`. Verifies space-separated `v1,<base64>` signatures over `id.timestamp.rawBody`, using the 32-byte key decoded from a canonical `whsec_` secret. The supported key profile requires exactly 32 decoded bytes.
-- `timestamped-hex`: set `header` to the provider's signature header (for example `"X-Signature"`) and omit `timestampHeader`. Verifies `t=<timestamp>,v1=<hex>`, allowing multiple signatures for rotation, over `timestamp.rawBody` using the complete UTF-8 secret. Duplicate timestamp fields are rejected.
+Generated `examples/webhook-inbox.*` implement an optional durable SQLite inbox and outbox, outside the default SDK transport:
 
-Retry policies can declare `errors: [{ "status": 409, "codes": ["IDEMPOTENCY_KEY_IN_PROGRESS"] }]` alongside `statuses`. Use the provider's own error code and configure the top-level `errors.codePath` (for example `error.code` for nested errors). These exact matches are subject to the same attempt, deadline and idempotency limits. Other 409 codes remain conflicts without retry. A 409 rule requires declared idempotency and cannot be used for conditional updates; 412 is never eligible.
-
-## Authentication and client options
-
-Supported credentials are HTTP bearer or a header API key. When the definition declares multiple schemes, select one using `"auth": { "scheme": "BearerAuth" }`. Every protected selected operation must offer that scheme as a complete standalone security alternative. Selecting one part of an AND requirement is rejected. `security: []` is anonymous; an anonymous alternative alongside the selected scheme sends authentication only when the caller supplies a token. Combined credentials require the named `auth.modes` configuration described below. Cookie authentication, OAuth refresh and implicit credential discovery remain unsupported.
-
-The first top-level OpenAPI `servers` URL becomes the generated client’s default `baseUrl`; an explicit client value overrides it. Missing or empty `servers` requires callers to supply `baseUrl`. Server URLs must be absolute HTTP/HTTPS URLs without credentials, query, fragment or template variables. Relative URLs, server-variable expansion and path/operation server overrides are unsupported and produce diagnostics. HTTP defaults still require the consumer’s explicit `allowInsecureHttp: true`. Credentials come from the consumer's `token` or `credentials` client options; the generator never takes a credential in configuration. The [consumer guide](using-sdks.md#client-and-request-options) documents the client and request options, their defaults and the language differences. Two behaviors are worth noting when declaring capabilities: the overall deadline is rechecked after response decoding and model construction, so an overrun returns a deadline error with response metadata instead of a late success, and attempts default to the operation's declared retry policy, or one attempt when none is declared.
-
-Origin checks ignore HTTP/HTTPS scheme and host capitalization and normalize default ports (`https:443` and `http:80`). Other ports remain distinct origins, including for pagination links. Supply explicit `allowedOrigins` as canonical origin strings, such as `https://example.invalid`, omitting default ports.
-
-Privileged injected transports must honor timeout/cancellation and destination constraints, and must disable their own redirects/retries. Node uses the fetch signature. PHP receives `{url, method, headers, body, timeoutMs, cancellation}` and returns `{status, headers, body}`. The SDK does not close caller-owned transports. PHP's built-in reusable cURL handle is SDK-owned and released on close/destruction. Node uses the built-in fetch pool and does not own a separate pool to dispose.
-
-## HTTP fixture format
-
-`validate OUTPUT --fixtures FILE` accepts a nonempty JSON array like the [shared HTTP cases](../tests/fixtures/http-cases.json). Each case contains `name`, `operation`, `input`, optional request `options`, `expected` HTTP method/path/headers/body, a sequence of `responses`, and expected `data` or structured `error`. `attempts` includes the initial attempt and defaults to one. `transportError: true` models losing a response; no network is used. Optional per-scenario `baseUrl` selects the fixture API base; its default is `https://api.example.invalid/v1` and token is `test-token`. Header expectations use lowercase names. `empty: true` expects no response body. Use only synthetic credentials in fixtures.
-
-These checks invoke generated public clients in the selected targets, including their input and response models. Fixture execution does not review the provider's expectations or run against a sandbox. Do both separately.
-
-## Running operation examples
-
-Generated scripts read `API_BASE_URL` and optional `API_TOKEN` explicitly for legacy authentication. Named-mode examples read `API_MODE_SCHEME` variables, with the mode and scheme converted to uppercase and punctuation replaced by underscores; client construction itself does not read environment variables. Run Node examples from the generated `node/` package with `node examples/RESOURCE-METHOD.mjs`. For PHP, run `composer install` inside the generated `php/` package first, then `php examples/RESOURCE-METHOD.php`. When copying a PHP example into an application, update its `require` path to the application's `vendor/autoload.php`.
-
-Generated examples never enable insecure HTTP automatically. The `allowInsecureHttp` client option is available for explicit local test setups; add it deliberately when using an HTTP server default or override.
-
-## Nested models and ambiguous representations
-
-Named model factories can be nested in TypeScript client inputs through `InputValue<T>`. For models that also permit nonobjects, passing an object preserves its declared object branch in the factory return type so it can be used in object-constrained fields, including recursive references. Factories normalize nested wrappers into plain typed values, and request serialization revalidates them. PHP wrappers unwrap nested models into plain values for typed getters and preserve object/array/scalar/null shapes; `toArray()` applies only to array or object models. In object/array alternatives, PHP lists (including `[]`) represent JSON arrays, associative arrays represent JSON objects, and `(object) []` explicitly represents an empty JSON object. A directly declared object input still accepts `[]` as an empty object. Responses retain the object/array distinction from JSON decoding. Cyclic values, including opaque additional fields, fail before HTTP dispatch.
-
-Exact-number/string alternatives automatically use `ExactNumber` at ambiguous input paths: plain strings remain JSON strings and `new ExactNumber("1.2500")` selects a JSON number. This also applies inside objects, arrays and dictionaries. Other exact numeric inputs keep their string representation; distinct required tags can separate alternatives without wrappers. Numeric intersections requiring inconsistent SDK representations still fail diagnosis. Safe-integer/string alternatives remain distinct and supported.
-
-## Request identification
-
-Generated clients send a User-Agent containing the provider-selected package name, package version and runtime. This identifies the installed SDK without machine identifiers or credentials. Per-request `headers` can override it. Both targets have this default; it is independent of provider-specific profiles.
-
-## Publication metadata
-
-`npm.registry` optionally selects an HTTPS registry URL without embedded credentials, query or fragment. `npm.access` optionally selects `public` or `restricted`; npm requires a scoped package for restricted access. Defaults are the public npm registry and public access. These settings appear in package publishConfig and the reviewable release plan. Publishing requires a separate explicit command and version acknowledgement; credentials are supplied by the caller's npm configuration. See [release policy](releases.md#version-policy) for `release.policy` and [distribution](releases.md#coordinated-composer-and-documentation-distribution) for `release.baseUrl`.
-
-`npm.homepage` and `npm.repository` optionally describe the generated SDK's public documentation and source repository. Both are omitted from package metadata when absent; they are never inferred from the generator's repository. The homepage must be an HTTPS URL. The repository uses `{ "type": "git", "url": "…", "directory": "…" }`, with an HTTPS or git+HTTPS URL. Neither URL may contain embedded credentials. For a package in a monorepo, `directory` is its relative path within the repository, using forward slashes without leading/trailing slashes or `.`/`..` segments; omit it for a repository-root package.
-
-```json
-{
-  "npm": {
-    "name": "@example/library",
-    "homepage": "https://sdk.example.com/library/",
-    "repository": {
-      "type": "git",
-      "url": "git+https://github.com/example/library-sdk.git",
-      "directory": "packages/node"
-    }
-  }
-}
-```
-
-Generated README documentation links remain relative. For repository-backed links on npm, commit the README and its referenced documentation together at the configured package location. A homepage alone does not establish destinations for those relative links.
-
-## Full contracts, authentication modes, and profile composition
-
-`profiles` lists local JSON profiles relative to the configuration file. Compatible settings merge, operation selections and mode bindings form unions, and conflicting scalar settings fail diagnosis. A referenced profile without `include` contributes the full operation selection. The final configuration may supply its own explicit selection. Profile cycles fail diagnosis.
-
-Use `auth.modes` to name complete OpenAPI security alternatives. Each mode has `schemes` and optional `operations` bindings. A checkout ID and secret belong in the same scheme list. Modes sharing a bearer destination may represent different roles; bind those roles to their allowed operation IDs. One selected mode supplies the complete credential set for a request.
-
-```json
-{
-  "auth": {
-    "modes": {
-      "merchant": { "schemes": ["BearerAuth"] },
-      "checkout": { "schemes": ["CheckoutId", "CheckoutSecret"] }
-    }
-  }
-}
-```
-
-Configure public credential shortcuts alongside the modes:
-
-```json
-{
-  "auth": {
-    "modes": {
-      "merchant": { "schemes": ["BearerAuth"] },
-      "checkout": { "schemes": ["CheckoutId", "CheckoutSecret"] }
-    },
-    "shortcuts": {
-      "apiKey": { "mode": "merchant", "scheme": "BearerAuth" }
-    }
-  }
-}
-```
-
-This generates `apiKey` on client and request options in Node and PHP. Rename it to `apiToken` if that matches your product terminology. Each shortcut must target the sole scheme of a declared mode; combined credentials still use explicit mode options. Names must start with a lowercase ASCII letter, contain only ASCII letters/digits, and avoid existing option names, except the exact name `token`. A `token` shortcut reuses the legacy client field and also generates a request option; it must explicitly map to a single-scheme mode. Profiles merge shortcut mappings and reject conflicting targets.
-
-A request shortcut overrides client authentication for that call. An explicit request mode also overrides a client shortcut. Only one shortcut may be supplied per options object, and it cannot be combined with explicit `authMode` or `credentials` there. Endpoint mode restrictions still apply; anonymous endpoints omit client credentials. Generated examples use shortcuts when available and read their uppercase snake-case environment variable (such as `API_KEY`) explicitly.
-
-Legacy `auth: { "scheme": "BearerAuth" }` and `token` remain supported. A composed client rejects `token` during construction unless `auth.shortcuts.token` explicitly maps it; it never guesses between modes. An ambiguous request needs an explicit mode. An incomplete scheme set, contradictory header override, or inapplicable mode fails before dispatch. Anonymous operations do not acquire a client default credential mode unless the operation permits it.
-
-`numericUnions: "explicit"` and `schemaSharing: "named"` are deprecated compatibility aliases. Both behaviors are automatic; omit these settings in new profiles. Existing values remain accepted, invalid values still fail diagnosis, and the CLI reports a deprecation warning on stderr. Library callers can receive warnings through `loadContract(..., { onWarning })`.
-
-Named payload dependencies are retained as local compiled references automatically. Library consumers inspecting `loadContract` schemas should follow `x-sdk-ref` through `contract.definitions`. When passing a schema to standalone runtime helpers, supply its definitions too: `serialize(value, { ...schema, "x-sdk-definitions": contract.definitions })` or `redact(value, schema, [], contract.definitions)`. Generated clients and model helpers supply these automatically. This bounds repeated schema expansion without removing operations or constraints. Large exports can require a larger generator heap, for example `node --max-old-space-size=3072 dist/cli.js generate API.json SDK.json OUTPUT`. Installed clients do not need that setting. Top-level OpenAPI `webhooks` are incoming contracts and never generate outbound client methods. When HMAC verification is configured, effective literal event types bind the incoming payload schemas to the verifier. Incompatible explicit bindings fail diagnosis.
+- `receiveWebhook` verifies and commits before acknowledgement.
+- `processInbox` fetches current state through a supplied callback and applies synchronous database effects atomically with the processed marker. Unknown names and unmatched envelopes stay pending for review.
+- `enqueueEffect` deduplicates a stable business-action identity across event IDs. `deliverOutbox` retries that identity after failures and restarts; the downstream service must honor it.
+- The application supplies provider-specific state and version checks and owns acknowledgement, retention and connections.
+- Databases created before the `known` column need an explicit application migration. Never reinterpret stored unknown events as verified known events.
 
 ## Event stream configuration
 
-A declared successful `text/event-stream` response produces a closeable event stream. Optional operation configuration supplies limits and explicit event payload schemas:
+A declared successful `text/event-stream` response produces a closeable event stream. Optional operation settings add limits and event payload schemas:
 
 ```json
 {
@@ -344,73 +354,321 @@ A declared successful `text/event-stream` response produces a closeable event st
 }
 ```
 
-Only configured event names have JSON payload decoding. Unknown event names retain raw strings. The media schema is not interpreted as a per-event JSON contract. Default limits are 30 seconds of idle reading and 1 MiB per event. Request options `streamIdleTimeoutMs` and `streamLifetimeMs` control idle reading and optional total lifetime. Connection setup uses the usual timeout/deadline; the stream owns its connection after the method returns. Resume uses the operation's declared last-event-ID input. Reconnection is caller-controlled; no event is automatically replayed.
+- Defaults: 30 seconds of idle reading and 1 MiB per event.
+- Only configured event names get JSON payload decoding; others keep raw strings. The media schema is not a per-event contract.
+- Request options `streamIdleTimeoutMs` and `streamLifetimeMs` control idle reading and optional total lifetime.
+- Connection setup uses the usual timeout and deadline; the stream owns its connection after the method returns.
+- Resume uses the operation's declared last-event-ID input. Reconnection is caller-controlled; nothing is replayed automatically.
 
-## Payload returns
+## Authentication
 
-For successful responses, exact status declarations and then `default` remain authoritative. An otherwise undeclared 2xx can reuse the sole declared JSON 2xx response; multiple JSON declarations remain ambiguous. This behavior needs no configuration and preserves strict required fields. See [response drift and recovery](using-sdks.md#successful-http-responses-and-schema-drift).
+Supported credentials: HTTP bearer and header API keys. Cookie authentication, OAuth refresh and implicit credential discovery are unsupported. Consumers pass credentials through `token`, shortcuts or `credentials`; the configuration never holds one.
 
-New SDKs return the complete decoded body directly by default (`responses.return: "payload"`). Select `responses.return: "result"` to retain the `Result` envelope with `data`, `meta` and `raw`. Declare envelope paths explicitly; the generator never automatically unwraps a field because it is named `data`.
+### Single scheme
+
+With one declared scheme, clients take `token`. With several, select one: `"auth": { "scheme": "BearerAuth" }`.
+
+- Every protected selected operation must offer that scheme as a complete standalone security alternative. Selecting one part of an AND requirement is rejected.
+- `security: []` is anonymous. An anonymous alternative beside the selected scheme sends authentication only when the caller supplies a token.
+- Combined credentials need named modes.
+
+### Named modes and shortcuts
+
+`auth.modes` names complete OpenAPI security alternatives. Each mode has `schemes` and optional `operations` bindings. One mode supplies the complete credential set for a request.
 
 ```json
 {
-  "responses": { "return": "payload" },
-  "operations": {
-    "createPaymentIntent": { "response": { "payloadPath": "data" } },
-    "getPaymentIntent": { "response": { "payloadPath": "payment_intent" } },
-    "getLegacyReport": { "response": { "return": "result" } }
+  "auth": {
+    "modes": {
+      "merchant": { "schemes": ["BearerAuth"] },
+      "checkout": { "schemes": ["CheckoutId", "CheckoutSecret"] }
+    },
+    "shortcuts": {
+      "apiKey": { "mode": "merchant", "scheme": "BearerAuth" }
+    }
   }
 }
 ```
 
-These settings merge at the SDK and operation levels. With payload mode and no `payloadPath`, methods return the complete decoded body directly. You may also set an SDK-wide `responses.payloadPath`. An operation's `response.payloadPath: null` clears that inherited path; `response.return: "result"` opts the operation out entirely.
+- Put combined credentials, such as a checkout ID and secret, in one mode's scheme list.
+- Modes sharing a bearer destination can represent different roles; bind each to its allowed operation IDs.
+- `shortcuts` generate client and request options in Node and PHP (`apiKey` above; rename it to match your product, such as `apiToken`). Each targets the sole scheme of a mode; combined credentials use explicit mode options.
+- Shortcut names start with a lowercase ASCII letter, contain only ASCII letters and digits, and avoid existing option names, except `token`.
+- A `token` shortcut reuses the client `token` field, adds a request option, and must map to a single-scheme mode. Without it, composed clients reject `token`; they never guess between modes.
+- A request shortcut overrides client authentication for that call, and an explicit request mode overrides a client shortcut. One shortcut per options object, never combined with `authMode` or `credentials` there.
+- Endpoint mode restrictions apply. Anonymous operations omit client credentials and take no default mode unless the operation permits it.
+- An ambiguous request needs an explicit mode. Incomplete scheme sets, contradictory header overrides and inapplicable modes fail before dispatch.
+- Profiles merge shortcut mappings and reject conflicting targets.
 
-A dot-separated `payloadPath` must identify required, declared properties through non-null objects in every successful JSON response. References and schema compositions are checked. Optional paths, array traversal, and paths through empty, binary or streaming responses receive diagnostics. A nullable payload itself is allowed. Use whole-body mode or a result-mode override for endpoints with incompatible response shapes. Unknown union variants retain conservative output types; consumers must narrow them before assuming a known payload shape.
+### Servers
 
-Each payload-mode method and deprecated alias also gets a `WithResponse` companion accepting identical inputs/options. For example, `client.paymentIntents.create(input)` returns the payload, while `client.paymentIntents.createWithResponse(input)` returns `SdkResponse` with the full decoded `body`, HTTP `meta`, and `raw`. PHP exposes the same method names and properties. Each call makes its own request; choose one form for an action. These companions are generated only for payload-mode operations, and their names participate in collision checks.
+- The first top-level `servers` URL becomes the client's default `baseUrl`; a client value overrides it. Without `servers`, callers must supply `baseUrl`.
+- Server URLs must be absolute HTTP/HTTPS URLs without credentials, query, fragment or template variables. Relative URLs, server variables and path or operation server overrides fail diagnosis.
+- HTTP defaults still require the consumer's `allowInsecureHttp: true`.
 
-`Pages` and `Wait` follow the base method's return mode: payload values in payload mode, full `Result` envelopes in result mode. Payload-mode operations also expose `PagesWithResponse` and `WaitWithResponse`, returning `SdkResponse` with complete `body`, HTTP `meta`, and `raw`. Their inputs and options match the corresponding helpers, and their names participate in collision checks. `Items` continues yielding individual items. Pagination and polling paths always address the original response body, so payload projection does not discard continuation or state information. Existing HTTP fixtures also assert the complete wire body, via `WithResponse` for payload-mode operations.
+Client and request options, origins, deadlines and transports are in the [consumer guide](using-sdks.md#client-and-request-options).
 
-Return settings and generated payload types are recorded in the compiled contract. Enabling or disabling payload mode, or changing a payload path, is a breaking SDK change under the semver release policy. When regenerating an existing Result SDK, an omitted return mode produces an actionable diagnostic instead of silently changing returns. Set `responses.return: "result"` to preserve its API, or explicitly select `"payload"` to migrate. Operation-level explicit return choices also count as migration choices. Generated documentation, examples and Node/PHP declarations reflect the selected mode.
+## Errors
 
-## Request arguments
+`errors` maps provider error conventions:
 
-The default is `requests.style: "positional"` for both Node/TypeScript and PHP. Path values come first, in URL placeholder order, followed by flat params and request options:
+| Field             | Default                       | Meaning                              |
+| ----------------- | ----------------------------- | ------------------------------------ |
+| `codePath`        | `code`                        | Dot path to the provider error code. |
+| `messagePath`     | `message`                     | Dot path to the server message.      |
+| `detailsPath`     | The whole redacted error body | Dot path to error details.           |
+| `requestIdHeader` | `x-request-id`                | Response header with the request ID. |
 
-```ts
-await flint.paymentIntents.get(paymentIntentId);
-await flint.orders.update(orderId, { metadata: { source: 'store' } }, { idempotencyKey });
-await flint.customers.list({ page_size: 100, page_token: nextPageToken });
-```
+For nested errors: `{"codePath":"error.code","messagePath":"error.message","detailsPath":"error"}`. Paths traverse JSON objects and array indices. See [errors and retries](using-sdks.md#errors-and-retries) for how messages, codes and details are read and redacted.
 
-PHP follows the same order, using associative arrays for params and `new RequestOptions(...)` for options. Nested model values remain supported. Operations without a body or query/header parameters omit the params argument, so a path-only method accepts `(id, options)`. Other operations keep the params slot: use `undefined` in Node or `null` in PHP to omit optional params while supplying options. Required request bodies require a params object, including `{}` / `[]` for an empty object. An omitted optional body sends no body; an explicitly empty params object sends `{}`. For operations with both an optional body and query/header parameters, params containing only those parameters omit the body; use object style if you need to distinguish an empty body in that case.
+## Documentation and examples
 
-Aliases, `WithResponse`, `Pages`, `Items`, `Wait`, `PagesWithResponse`, and `WaitWithResponse` use the same argument order as the primary method. The schema still controls path, query, header and body encoding.
+- `documentation.overview`: Markdown shown near the top of each package README. Use it to link to your public SDK documentation.
+- `documentation.guides`: a map of lowercase guide slugs to Markdown, included in both packages and the release site.
+- `documentation.examples`: an ordered list of operation IDs to feature, such as `["createPaymentIntent", "getPaymentIntent", "createRefund"]`. Operations outside the selected profile are skipped; remaining slots are chosen automatically.
+- `operations.<operationId>.example`: realistic SDK inputs for that operation's examples. Generated quickstart inputs are validated during rendering; an invalid inferred or configured example fails generation at `config/operations/<id>/example`.
 
-Use the object style for an entire SDK or an individual operation:
+READMEs embed one complete quickstart and up to two short recipes reusing its client, preferring configured examples and covering a create operation, a read operation and another resource when available. Detailed behavior is in each package's `RUNTIME.md`, also on the release site. Keep workflow assumptions and provider-specific recovery instructions in the overview and guides.
+
+`example`, `examples`, `default`, `enum` and custom extension payloads keep literal JSON, including fields named `$ref`. Internal `x-sdk-*` extensions are reserved and cannot appear in source definitions.
+
+## Overrides
+
+`overrides` maps exact JSON Pointers in the root input document to replacement JSON values:
 
 ```json
 {
-  "requests": { "style": "positional" },
-  "operations": {
-    "replaceRawDocument": { "request": { "style": "object" } }
+  "overrides": {
+    "/components/schemas/Update/properties/description": {
+      "type": ["string", "null"]
+    }
   }
 }
 ```
 
-Object style accepts `(input, options)`, with path/query/header fields on `input` and the request body under `input.body`. It also supports the generated PHP operation input classes. Positional style requires a non-null object body; nonobject bodies and body fields colliding with declared query/header parameters receive diagnostics. Declared query/header names are reserved for those destinations; remaining params fields go into the body. Typed additional-property dictionaries combined with query/header parameters require object style because their TypeScript index signatures cannot exclude the parameter keys. Use the operation override for those contracts.
+- Overrides replace the addressed value before reference resolution. They are explicit provider corrections and affect both targets.
+- Pointers to missing values fail.
+- To correct a referenced local schema, override its `$ref` occurrence or vendor a corrected file.
+- `effective` prints the resolved contract, customization results, source hashes and selected operations. Treat that output as private.
 
-Configuration `example` values, HTTP fixtures, and exported operation `Input` shapes retain the canonical `{ pathField, queryField, body }` structure. Generated runnable examples translate those inputs into the selected public call style. Changing styles or positional path order is reported as a breaking SDK change by release compatibility checks. Profiles merge request styles using the usual conflict rules.
+## Profiles
 
-## Generated package loading
+`profiles` lists local JSON profiles, relative to the configuration file.
 
-Descriptor grouping and deferred loading are automatic and require no configuration flag. Existing operation selection, naming, request style, response return and schema-sharing settings retain their meaning. Node packages additionally export `resources/<resource>` scoped clients. PHP packages use class-based Composer autoloading. See [SDK loading](using-sdks.md#sdk-loading-and-selective-node-imports) for consumer usage.
+- Compatible settings merge. Operation selections and mode bindings form unions. Conflicting scalar settings fail diagnosis.
+- A profile without `include` contributes the full operation selection. The final configuration may set its own selection.
+- Profile cycles fail diagnosis.
+
+## Validation
+
+`"validation": "encoding"` (default) checks required fields, declared types and enums, field choices, nullability, exact numeric representation and integer format ranges. Business limits stay server checks.
+
+`"validation": "schema"` also checks, on requests and model factories:
+
+- `minimum`/`maximum`, exclusive bounds and `multipleOf`.
+- String lengths, counted in Unicode code points (not bytes or UTF-16 units).
+- Patterns (see [patterns](#patterns)).
+- Array lengths, `uniqueItems` and `contains`.
+- Object property counts.
+
+Rules for both policies:
+
+- Alternative selection and known-variant guards use the full supported constraints, so they never choose an incompatible wire representation.
+- Responses keep values beyond business constraints but still check representable field shapes.
+- Bounds and numeric enum membership use exact decimal comparison without floating-point coercion.
+- Integer formats int32/uint32/int64/uint64 enforce their request ranges; uint64 uses exact strings.
+- OpenAPI 3.0 exclusive booleans are normalized with their bounds.
+- Unsupported validation keywords, including `minContains` and `maxContains`, fail diagnosis.
+- Other textual formats are annotations.
+
+## Publication metadata
+
+| Field            | Default             | Rules                                                                                             |
+| ---------------- | ------------------- | ------------------------------------------------------------------------------------------------- |
+| `npm.registry`   | Public npm registry | HTTPS URL without embedded credentials, query or fragment.                                        |
+| `npm.access`     | `public`            | `public` or `restricted`; npm requires a scoped package for `restricted`.                         |
+| `npm.homepage`   | Omitted             | HTTPS URL of the SDK's public documentation. Never inferred from the generator's repository.      |
+| `npm.repository` | Omitted             | `{ "type": "git", "url": "…", "directory": "…" }` with an HTTPS or git+HTTPS URL. Never inferred. |
+
+```json
+{
+  "npm": {
+    "name": "@example/library",
+    "homepage": "https://sdk.example.com/library/",
+    "repository": {
+      "type": "git",
+      "url": "git+https://github.com/example/library-sdk.git",
+      "directory": "packages/node"
+    }
+  }
+}
+```
+
+- No URL may contain embedded credentials.
+- `directory` is the package's relative path in a monorepo, with forward slashes and no leading or trailing slashes or `.`/`..` segments. Omit it for a repository-root package.
+- Registry and access appear in package `publishConfig` and the release plan. Publishing is a separate command with a version acknowledgement, using the caller's npm credentials. See [release policy](releases.md#version-policy) for `release.policy` and [Composer distribution](releases.md#publish-the-composer-repository-and-documentation) for `release.baseUrl`.
+- Generated README links stay relative. For working links on npm, commit the README and its referenced documentation together at the configured package location; a homepage alone does not resolve them.
+
+## HTTP fixture format
+
+Fixtures state expected wire behavior independently of the schema, and should be reviewed by the provider. Run them through the generated public clients without network access:
+
+```sh
+node dist/cli.js generate tests/fixtures/payment-api.json tests/fixtures/payment-sdk.json .generated/payments
+node dist/cli.js validate .generated/payments --fixtures tests/fixtures/http-cases.json
+```
+
+`validate OUTPUT --fixtures FILE` accepts a nonempty JSON array like the [shared HTTP cases](../tests/fixtures/http-cases.json). Each case contains:
+
+| Field            | Meaning                                                                                             |
+| ---------------- | --------------------------------------------------------------------------------------------------- |
+| `name`           | Scenario name.                                                                                      |
+| `operation`      | Operation to call.                                                                                  |
+| `input`          | Canonical operation input.                                                                          |
+| `options`        | Optional request options.                                                                           |
+| `expected`       | Expected HTTP method, path, headers (lowercase names) and body.                                     |
+| `responses`      | Sequence of responses to return.                                                                    |
+| `data` / `error` | Expected decoded data or structured error.                                                          |
+| `attempts`       | Expected attempts, including the first. Defaults to 1.                                              |
+| `transportError` | `true` models a lost response.                                                                      |
+| `empty`          | `true` expects no response body.                                                                    |
+| `baseUrl`        | Optional fixture API base. Defaults to `https://api.example.invalid/v1`; the token is `test-token`. |
+
+- Fixtures exercise generated clients in the selected targets, including input and response models.
+- The bundled synthetic scenarios test the generator; they do not prove server correctness. Fixture execution doesn't review the provider's expectations or run against a sandbox; do both separately.
+- Use only synthetic credentials. Installation and package tooling may consult configured registries.
+
+## Running operation examples
+
+- Run Node examples from the generated `node/` package: `node examples/RESOURCE-METHOD.mjs`.
+- For PHP, run `composer install` in the generated `php/` package, then `php examples/RESOURCE-METHOD.php`. When copying an example into an application, update its `require` path to the application's `vendor/autoload.php`.
+- Single-scheme examples read `API_BASE_URL` and optional `API_TOKEN`. Named-mode examples read `API_MODE_SCHEME` variables, with mode and scheme uppercased and punctuation replaced by underscores. Shortcut examples read the shortcut's uppercase snake-case variable, such as `API_KEY`. Client construction itself never reads environment variables.
+- Examples never enable insecure HTTP. Add `allowInsecureHttp` deliberately for local HTTP setups.
+
+## Reference
+
+### Input files and references
+
+- Inputs are local files. Relative local `$ref` files are resolved and hashed; vendor remote references before generation.
+- Relative references inside sibling fields resolve from the file declaring those fields, including siblings of external references. References keep operation selection, model customization and source hashing.
+- Recursive object fields, array items and dictionary values resolve through named model definitions. Nonproductive alias cycles, which never descend through a property, item or dictionary value, fail diagnosis. Generated recursive graphs share named shapes.
+- Validation bounds schema traversal at 256 steps and rejects cyclic caller objects before dispatch.
+- Generation compiles the resolved definition and configuration into public declarations, codecs and operation settings.
+
+### Reference siblings
+
+Both targets use the same `$ref` sibling rules:
+
+| Context                                                   | Sibling behavior                                                                                                                                                                          |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OpenAPI 3.1 Schema Object                                 | Referenced and sibling constraints all apply, including existing `allOf`, `anyOf`, `oneOf` and `not` constraints.                                                                         |
+| OpenAPI 3.0 Reference Object, including schema references | Siblings are ignored, including `description` and `nullable`. Ignored values do not load referenced files.                                                                                |
+| OpenAPI 3.1 Reference Object outside schemas              | Local `summary` and `description` override referenced metadata where the target object type supports those fields. Other siblings are ignored.                                            |
+| Path Item `$ref`, both versions                           | Nonoverlapping fields combine. A field present locally and in the referenced Path Item is a conflict, even if the values match. Operations and parameter lists are not implicitly merged. |
+
+In OpenAPI 3.1 this schema applies the constraints of `Name` and a maximum length of 40:
+
+```json
+{
+  "$ref": "#/components/schemas/Name",
+  "description": "Name shown on the receipt",
+  "maxLength": 40
+}
+```
+
+- Siblings cannot weaken the referenced schema. Adding properties does not open a referenced object with `additionalProperties: false`, and adding `null` to a sibling type does not make a non-null target nullable.
+- Local descriptive metadata takes precedence for display. A true `readOnly`, `writeOnly` or `x-sensitive` on either side stays effective; contradictory read/write direction is rejected.
+- A narrowing `type: "array"` sibling may use the `items` of its referenced `allOf` conjunct, even when that conjunct has no `type`. TypeScript keeps those element types and permitted nullability; element constraints stay in their original scope. A standalone array still requires `items`.
+
+For OpenAPI 3.0, put annotations and nullability on an explicit wrapper:
+
+```json
+{
+  "description": "Optional name shown on the receipt",
+  "nullable": true,
+  "allOf": [{ "$ref": "#/components/schemas/Name" }]
+}
+```
+
+### Schema representations
+
+| Contract                          | Node/TypeScript                       | PHP                                                | JSON wire              |
+| --------------------------------- | ------------------------------------- | -------------------------------------------------- | ---------------------- |
+| `integer` (without int64/uint64)  | Safe integer `number`                 | Safe-range `int`                                   | Integer token          |
+| `integer`, `format: int64/uint64` | Exact `string`                        | Exact `string`                                     | Unquoted integer token |
+| `number`, `format: decimal`       | Exact `string`                        | Exact `string`                                     | Unquoted decimal token |
+| `number`, plain/float/double      | `number`                              | `int\|float` input, `float` output                 | Number token           |
+| `string`, `format: date-time`     | `string\|Date` input, `string` output | `string\|DateTimeInterface` input, `string` output | JSON string            |
+| Other `string` formats            | `string`                              | `string`                                           | JSON string            |
+| Optional field                    | Omitted/undefined property            | Omitted array key                                  | Absent                 |
+| Nullable field                    | `T \| null`                           | Null value                                         | Explicit null          |
+| Object/array                      | Object/array                          | Typed response model, object or array              | Object/array           |
+
+- Plain numbers must be finite; ordinary floating-point rounding applies.
+- Other integers use the shared safe range ±9,007,199,254,740,991. Exact numeric strings may be larger.
+- Unknown numeric response fields use numbers for safe integers and strings for larger or decimal tokens.
+- OpenAPI 3.0 `nullable` is normalized before generation, including reference wrappers.
+- Required `readOnly` fields are response requirements; sending them is rejected. Required `writeOnly` fields are input requirements, excluded from response declarations and ordinary inspection.
+- Nested `x-sensitive: true` affects model debug output and parsed error details, not wire serialization. Explicit raw response and body access stays sensitive.
+- Schema defaults are documentation and are never inserted into requests.
+
+### Compositions and unions
+
+- `allOf` validates every branch, `anyOf` requires at least one match, and `oneOf` requires exactly one.
+- Matching numeric branches merge equivalent values by exact decimal comparison, so `1.0` and `1e0` stay valid for an `anyOf` combining decimal and exact-integer schemas. Merging preserves the request token, never turns JSON strings into numbers, and doesn't relax `oneOf` exclusivity. If the shared numeric interpretation invalidates every branch that supplied a numeric conversion, the value is rejected before dispatch.
+- Field-choice rules can use `required` and `not` without repeating an object shape or declaring a discriminator. An optional discriminator needs disjoint required string enum tags.
+- Composition keeps sibling constraints and exact numeric encoding.
+- Unknown response tags and enum values stay unchanged and are never converted to a known result. Required fields of known schemas must exist and known field shapes must be representable. Request enums and unknown-property restrictions are enforced.
+- Untagged object response alternatives keep future objects through an unknown-object branch.
+- Tagged operation responses export an `is<Resource><Method>ResponseKnown` guard. Check it before switching on known discriminator values; unknown variants stay available.
+- A response union reached through `allOf`, including a `$ref` with sibling constraints, also gets a guard:
+  - The guard checks the complete composed schema, including sibling required fields, bounds and `not`, before narrowing.
+  - Tagged unions wrapped this way keep PHP variant classes. Their constructors validate the branch with the surrounding constraints, and their getters include sibling fields.
+  - Normal decoding and PHP response constructors stay tolerant of business bounds and future fields.
+- A nullable wrapper with one explicitly typed non-null branch and one plain `type: "null"` branch keeps that branch's fields; see [TypeScript object types](using-sdks.md#typescript-object-types) and [PHP models](using-sdks.md#php-models).
+- Constraints apply at every depth: array items, dictionary values, recursive fields, and types or bounds from another `allOf` branch or `$ref` sibling. A named property can take constraints from another branch's `additionalProperties`; specializing a named property doesn't change the dictionary rule for other keys.
+- Numeric interpretation follows the selected branch's representation: a numeric-looking value in a string branch stays a JSON string, and exact-number strings keep their numeric meaning.
+- Mutually dependent unions, where one branch's numeric interpretation depends on another's, are matched jointly under a bounded search. An unusually ambiguous schema can exhaust it and fail validation. Give each field's type and constraints together, or declare a discriminator.
+
+### Numeric literals and enums
+
+- Numeric enums accept equivalent spellings such as `1`, `1.0` and `1e0`. TypeScript represents exact numeric enum inputs as strings and checks membership at runtime, including single-element type arrays such as `type: ["number"], format: "decimal"`. Native-number enums use numeric literals.
+- Numeric bound literals must be finite, with integer literals in the safe range of the generator's JSON parser.
+- Source numeric constraints must keep their decimal value through that parser:
+  - `0.1000` and `1e-1` are accepted. `0.10000000000000001`, which would become `0.1`, fails at the constraint location.
+  - The check covers bounds, `multipleOf`, numeric enums, numbers inside `const`, and numeric values in configuration and profiles.
+  - Ignored OpenAPI examples and excluded operations are not checked.
+  - Use an override to replace a problematic constraint.
+  - Exact numeric strings passed to generated SDKs are unaffected.
+
+### Patterns
+
+- Patterns use a portable Unicode ECMAScript subset, translated for PHP: character classes, groups, alternation, anchors and quantifiers. Lookarounds, backreferences, special groups and unsupported escapes fail diagnosis.
+- `\d`, `\D`, `\w` and `\W` keep ECMAScript's ASCII meaning in both targets, including inside classes: `^\w+$` rejects `é` and non-ASCII digits. Use explicit Unicode characters or ranges to accept them.
+- Diagnosis rejects simple nested unbounded repetition such as `(a+)+`, `(.*)*` and `([a-z]+){2,}`: repeated groups made of a single unbounded repetition. Delimited patterns such as `(?:[.-][a-z0-9]+)*` are accepted. This is a limited safeguard against expensive matching, applied during generation only, not to schemas passed to runtime helpers.
+
+### Nested models and ambiguous representations
+
+- Node creates `Name`, `NameInput` and `makeName` helpers per model. PHP emits presence-aware `NameInput` classes, operation input and response classes, PHPDoc shapes and typed field accessors. Request and response types are compiled separately to keep responses extensible.
+- PHP object inputs use `new OperationInput(['field' => null])`. Scalar, array and nullable named model constructors accept their values and expose them with `jsonSerialize()`. Omitted keys stay omitted; `has()` and `get()` distinguish missing from null; getters for omitted optional fields throw.
+- TypeScript models field-absence constraints where possible; value-specific `not` constraints keep a broader input type and are enforced at runtime.
+- Named model factories nest in TypeScript inputs through `InputValue<T>`. For models that also permit nonobjects, passing an object keeps the object branch in the factory return type, so it fits object-constrained fields, including recursive references. Factories normalize nested wrappers into plain values, and serialization revalidates them.
+- PHP wrappers unwrap nested models into plain values and keep object/array/scalar/null shapes; `toArray()` applies only to array or object models. In object/array alternatives, PHP lists (including `[]`) are JSON arrays, associative arrays are objects, and `(object) []` is an empty object. A directly declared object input still accepts `[]`. Responses keep the JSON object/array distinction.
+- Cyclic values, including opaque additional fields, fail before dispatch.
+- Exact-number/string alternatives use `ExactNumber` at ambiguous input paths, including inside objects, arrays and dictionaries: plain strings stay JSON strings, and `new ExactNumber("1.2500")` selects a JSON number. Other exact numeric inputs stay strings; distinct required tags can separate alternatives without wrappers. Numeric intersections needing inconsistent representations fail diagnosis. Safe-integer/string alternatives are supported.
+
+### TypeScript declarations
+
+Shaped objects, including responses, have no implicit index signature. `additionalProperties: true` or an additional-property schema keeps a declaration open, and unstructured objects stay dictionaries. Consumer effects: [TypeScript object types](using-sdks.md#typescript-object-types).
 
 ### PHP response entity names
 
-Configured component model names also name reusable PHP response entities. Inline response objects derive their names from the owning model and property path. PHP accessors normalize separators and camel-case words (`request_id` becomes `getRequestId()`), while serialized field names remain unchanged. Webhook classes derive from event keys (`payment_intent.succeeded` becomes `WebhookEventPaymentIntentSucceeded`). Names are checked case-insensitively; collisions produce diagnostics identifying both fields or events. These names and hydrated dictionary representations are part of the generated package's compatibility contract.
+- Configured component model names also name reusable PHP response entities. Inline response objects are named from the owning model and property path.
+- Accessor and webhook class naming: [PHP models](using-sdks.md#php-models).
+- Names are checked case-insensitively; collisions fail with both fields or events identified.
+- These names and hydrated dictionary representations are part of the package's compatibility contract.
 
-Structurally identical component schemas can share one generated PHP class, so a response field can return a class other than the one its `$ref` names. Annotations beside a `$ref`, such as `description` or `readOnly`, never change that class. To keep the class an existing PHP SDK already returns for a field, pin it with `phpFieldClasses`. Here `Location` and `Place` are identical components, and the pin keeps `Venue::getMailingAddress()` returning `Location`:
+Structurally identical component schemas can share one PHP class, so a field can return a class other than the one its `$ref` names. Annotations beside a `$ref`, such as `description` or `readOnly`, never change the class. To keep the class an existing PHP SDK returns, pin it with `phpFieldClasses`. Here `Location` and `Place` are identical, and the pin keeps `Venue::getMailingAddress()` returning `Location`:
 
 ```json
 {
@@ -420,8 +678,31 @@ Structurally identical component schemas can share one generated PHP class, so a
 }
 ```
 
-Owner keys are exact generated PHP response class names without a namespace: component model, operation response, variant and webhook event classes. `Input` classes cannot be owners. Field keys are serialized JSON property names, not accessor names. Values are generated public model names after `models` mapping. The field must hold a single response entity, directly or as a nullable value; lists, dictionaries, other unions and scalars cannot be pinned. The pinned model must be structurally identical to the field's default model. Root-level `description`, `title`, `deprecated`, `readOnly` and `writeOnly` are ignored; any other difference, including nested fields, `required`, constraints, enums and `x-sensitive`, fails diagnosis. A pin matching the default class is allowed and still validated.
+- Owner keys are generated PHP response class names without a namespace: component model, operation response, variant and webhook event classes. `Input` classes cannot be owners.
+- Field keys are serialized JSON property names, not accessor names. `writeOnly` fields are not response fields.
+- Values are generated public model names after `models` mapping.
+- The field must hold a single response entity, directly or nullable. Lists, dictionaries, other unions and scalars cannot be pinned.
+- The pinned model must be structurally identical to the default. Root-level `description`, `title`, `deprecated`, `readOnly` and `writeOnly` are ignored; any other difference, including nested fields, `required`, constraints, enums and `x-sensitive`, fails diagnosis. A pin matching the default is allowed and validated.
+- Pins apply before default classes are built, so output doesn't depend on build order, and an unused default class is not generated.
+- Pins change only PHP response getter types and hydrated classes. Input classes, Node declarations, schema definitions and wire serialization are unchanged.
+- Generation fails when `targets` excludes `php`, the owner isn't a generated PHP response class, the owner has no such response field, or the value isn't a generated, structurally identical model.
+- Profiles merge matching pins; different classes for the same owner and field conflict. Pins are keyed by PHP class, so the same source field reached through another class needs its own entry.
+- Regeneration reports changed PHP field classes as [compatibility findings](releases.md#migrating-php-entity-representations); use them to find fields to pin.
 
-Pins apply before default classes are built, so output does not depend on build order, and a default class that no other field uses is not generated. Pins change only PHP response getter types and hydrated classes. Input classes, Node declarations, schema definitions and wire serialization are unchanged.
+### Generated package loading
 
-Generation fails when `targets` excludes `php`, the owner is not a generated PHP response class, the owner has no response field with that name, or the value is not a generated model or not structurally identical to the default. `writeOnly` fields are not response fields and cannot be pinned. Profiles merge matching pins; different classes for the same owner and field fail as conflicting settings. Pins are keyed by PHP class, so the same source field reached through another generated class needs its own entry. Regeneration records changed PHP field classes as [compatibility findings](releases.md#migrating-php-entity-representations); use them to find fields that need pins when upgrading an existing SDK.
+Descriptor grouping and deferred loading are automatic. Node packages also export `resources/<resource>` scoped clients; PHP packages use class-based Composer autoloading. See [SDK loading](using-sdks.md#sdk-loading-and-selective-node-imports).
+
+### Request identification
+
+Generated clients send a User-Agent with the configured package name, package version and runtime, without machine identifiers or credentials. Per-request `headers` can override it.
+
+### Library schemas and large exports
+
+- Named payload dependencies are kept as local compiled references. Library consumers inspecting `loadContract` schemas follow `x-sdk-ref` through `contract.definitions`.
+- When passing such a schema to standalone runtime helpers, supply its definitions: `serialize(value, { ...schema, "x-sdk-definitions": contract.definitions })` or `redact(value, schema, [], contract.definitions)`. Generated clients and model helpers do this automatically. Shared references bound repeated schema expansion without removing operations or constraints.
+- Large exports can need a larger generator heap, for example `node --max-old-space-size=3072 dist/cli.js generate API.json SDK.json OUTPUT`. Installed clients don't.
+
+### Deprecated settings
+
+`numericUnions: "explicit"` and `schemaSharing: "named"` are deprecated aliases for automatic behavior; omit them. They are still accepted, invalid values fail diagnosis, and the CLI prints a deprecation warning on stderr. Library callers receive warnings through `loadContract(..., { onWarning })`.

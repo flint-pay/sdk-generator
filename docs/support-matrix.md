@@ -56,7 +56,7 @@ OpenAPI 3.1 schema `$ref` siblings intersect with the referenced constraints. Op
 
 Descriptions, examples and defaults are metadata, not evidence of server behavior. Declared exact formats determine serialization. Generated inputs preserve presence without inferring whether a null clears data on the server.
 
-For null-only values, use `type: "null"`. The legacy `type: ["null"]` form permits non-null values in Node but rejects them in PHP; see [schema-taking helpers](using-sdks.md#schema-taking-helpers).
+For null-only values, use `type: "null"`. The `type: ["null"]` form permits non-null values in Node but rejects them in PHP; see [schema-taking helpers](using-sdks.md#schema-taking-helpers).
 
 Exact numeric enum membership and numeric composition merging compare mathematical values, including equivalent decimal/exponent spellings. Exact numeric enum inputs use strings for `number` with `format: "decimal"`, `int64`, and `uint64`, including single-element type arrays. Plain number/float/double inputs use native numbers, including numeric enums. Their outputs use floating-point precision; overflow to a non-finite value produces a protocol error. Mutually dependent unions are matched jointly under a bounded search; an unusually ambiguous schema can exhaust it and fail validation.
 

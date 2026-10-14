@@ -18,6 +18,7 @@
     "templates",
     "LICENSE",
     "README.md",
+    "CHANGELOG.md",
     "docs/architecture.md",
     "docs/cli.md",
     "docs/configuration.md",
@@ -38,7 +39,7 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node tests/run.mjs",
     "prepack": "npm run build",
-    "format": "prettier --write src templates tests examples README.md CONTRIBUTING.md SECURITY.md docs .github tsconfig.json package.json"
+    "format": "prettier --write src templates tests examples README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md docs .github tsconfig.json package.json"
   },
   "dependencies": {
     "@types/node": "22.20.1",
