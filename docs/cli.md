@@ -33,7 +33,7 @@ First generation reports target file counts without path lists or a compatibilit
 
 ```text
 Preview of .generated/library (no files written)
-Files: 88 created (node 45, php 43); no previous generation
+Files: 87 created (node 44, php 43); no previous generation
 Compatibility: not compared; no previous generation
 ```
 

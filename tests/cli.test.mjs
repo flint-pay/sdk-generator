@@ -1000,3 +1000,11 @@ test('human preview lists additive findings after the other severities', (t) => 
     ],
   );
 });
+
+test('a --json flag after an option that consumes "--" still selects JSON errors', () => {
+  const missing = join(tmpdir(), 'sdk-cli-missing-output');
+  const result = run(['validate', missing, '--fixtures', '--', '--json']);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, '');
+  assert.match(JSON.parse(result.stderr).error, /no generated packages found/);
+});

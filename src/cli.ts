@@ -24,9 +24,10 @@ import { Diagnostic, stable } from './contract.js';
 import { publishSite } from './distribution.js';
 import { readFileSync } from 'node:fs';
 const args = process.argv.slice(2);
-// Select the error format before parsing, including unknown commands/flags.
+// Select the error format before parsing, including unknown commands/flags;
+// parsed flags take over once arguments are accepted.
 const separator = args.indexOf('--');
-const jsonErrors = args.slice(0, separator < 0 ? args.length : separator).includes('--json');
+let jsonErrors = args.slice(0, separator < 0 ? args.length : separator).includes('--json');
 const command = args.shift();
 interface Command {
   arguments: string[];
@@ -204,6 +205,7 @@ try {
       );
     const { positional, flags, help } = parseArguments(definition);
     const json = flags.has('--json');
+    jsonErrors = json;
     if (help) {
       console.log(
         usage(command, definition) +
