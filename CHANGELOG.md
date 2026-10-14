@@ -33,11 +33,14 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 - CommonJS `require()` of the package root and resource subpaths on Node.js 22.12+.
 - Optional `npm.repository` and `npm.homepage` metadata.
 - Node resource subpaths, split declaration files and individual PHP class files with deferred descriptor loading. See [modular generated packages](docs/releases.md#modular-generated-packages).
+- Generator CLI `<command> --help`, `--version` and `release --acknowledge-review`.
 
 ### Fixed
 
 - Pagination iterators apply `deadlineMs` to each page request, including retries and decoding, instead of across the whole backfill. Bound an iteration with cancellation, `maxPages` or `maxItems`. Polling keeps its overall deadline.
 - PHP normalizes HTTP/HTTPS scheme capitalization before omitting default ports, matching Node origin checks.
+- Generator CLI errors name the cause: unknown command or flag, missing, empty or extra argument, a missing PHP or Composer tool for a selected target, and the JSON parse position. Hand-edit detection reports every edited file.
+- Diagnostic locations escape JSON Pointer segments, for example `/paths/~1todos/get`.
 - Optional idempotency keys: mutations without a key send once instead of failing because retries were declared.
 - Generated examples no longer use a fabricated sandbox fallback URL.
 - Generated examples use the effective retry policy instead of disabling retries.
