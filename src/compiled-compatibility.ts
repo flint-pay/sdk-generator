@@ -55,6 +55,13 @@ export function compareCompiledContracts(
       message: 'Default API destination changed; review clients that omit baseUrl in both targets.',
     });
   if (node) {
+    for (const [event, name] of Object.entries(previous.node.eventTypes ?? {}))
+      if (next.node.eventTypes?.[event] !== name)
+        findings.push({
+          severity: 'breaking',
+          subject: 'webhook.' + event,
+          message: 'Exported webhook event type removed or renamed',
+        });
     // Historical plans emitted unrestricted runtime options. Narrowing those
     // exports is breaking even when the API and its credential modes are unchanged.
     if (stable(previous.node.authentication) !== stable(next.node.authentication))

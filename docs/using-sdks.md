@@ -293,14 +293,31 @@ Never rebuild the body with `JSON.stringify` or `json_encode`. Whitespace, prope
 `known` requires a registered event name and a matching declared envelope. Checking it narrows the Node event type; then switch on the event-name field. For an illustrative provider using `event_type`:
 
 ```ts
-const verified = client.verifyWebhook(rawBody, headers, [currentSecret, previousSecret]);
+import type {
+  VerifiedWebhook,
+  KnownWebhookEvent,
+  WebhookEventPaymentIntentSucceeded,
+} from '@example/provider-sdk';
+
+function handleSucceeded(event: WebhookEventPaymentIntentSucceeded): void {
+  // Persist and process event.data idempotently.
+}
+
+const verified: VerifiedWebhook = client.verifyWebhook(rawBody, headers, [
+  currentSecret,
+  previousSecret,
+]);
 if (verified.known) {
-  const event = verified.event; // Declared event union.
-  // Switch on event.event_type for this provider's individual event payloads.
+  const event: KnownWebhookEvent = verified.event;
+  if (event.event_type === 'payment_intent.succeeded') handleSucceeded(event);
 } else {
   const event = verified.event; // unknown: validate before accessing fields.
 }
 ```
+
+Node exports `VerifiedWebhook`, `KnownWebhookEvent` and one `WebhookEvent<EventName>` type per declared event from the package root. Per-event types use the PHP event naming rule: `payment_intent.succeeded` becomes `WebhookEventPaymentIntentSucceeded`. Names match where PHP emits an event class; multi-variant events have a named Node union without a corresponding PHP event class. These types are unavailable from `resources/*`; `KnownWebhookEvent` is `never` when no events are declared.
+
+Use indexed access for payload annotations, for example `type SucceededPayload = WebhookEventPaymentIntentSucceeded['data']`. A top-level `typeField` supports exhaustive `switch` narrowing with a `never` default. For a dotted path such as `meta.name`, annotate a handler with the named event type or use `Extract<KnownWebhookEvent, { meta: { name: 'payment_intent.succeeded' } }>`.
 
 - Authenticated unknown names and unmatched envelopes return `known: false`. Keep them for review.
 - Malformed declared payloads produce a `protocol` error.

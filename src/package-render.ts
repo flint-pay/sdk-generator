@@ -158,6 +158,7 @@ export function splitNodeDeclarations(
   put: Put,
   publicModels: ReadonlySet<string> = new Set(),
   modelCodecs: ReadonlyMap<string, CodecPlan> = new Map(),
+  rootOnlyTypes: ReadonlySet<string> = new Set(),
 ): Map<string, Set<string>> {
   const source = ts.createSourceFile('index.d.ts', text, ts.ScriptTarget.Latest, true);
   const importStatements = source.statements.filter(ts.isImportDeclaration);
@@ -225,7 +226,8 @@ export function splitNodeDeclarations(
       throw new Error('Missing resource declaration ' + group);
     const names = refs([property], 'Client');
     const prefix = (group[0]?.toUpperCase() ?? '') + group.slice(1);
-    for (const name of symbols.keys()) if (name.startsWith(prefix)) names.add(name);
+    for (const name of symbols.keys())
+      if (name.startsWith(prefix) && !rootOnlyTypes.has(name)) names.add(name);
     names.add('ClientOptions');
     roots.set(group, names);
     const resourceName = group[0]?.toUpperCase() + group.slice(1) + 'Resource';
@@ -310,7 +312,9 @@ export function splitNodeDeclarations(
       ts.canHaveModifiers(node) &&
       ts.getModifiers(node)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
     if (publicSymbol)
-      rootExports.push(`export { ${name} } from './declarations/${file(name)}.js';`);
+      rootExports.push(
+        `export ${rootOnlyTypes.has(name) ? 'type ' : ''}{ ${name} } from './declarations/${file(name)}.js';`,
+      );
   }
   put('index.d.ts', rootExports.join('\n') + '\n');
   // Retain component exports reached through the previous shared name, including

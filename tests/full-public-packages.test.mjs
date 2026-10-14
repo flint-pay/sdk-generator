@@ -1,5 +1,6 @@
 import { npmPackResult } from '../dist/distribution.js';
 import { measureSdkWeight } from './helpers/sdk-weight.mjs';
+import { measureWebhookTypes } from './helpers/webhook-types.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -64,9 +65,11 @@ test(
         script,
         `import {loadContract,generate,preview} from ${JSON.stringify(new URL('../dist/index.js', import.meta.url).href)};
 import {writeFileSync} from 'node:fs';
+import {webhookEventTypeName} from ${JSON.stringify(new URL('../dist/naming.js', import.meta.url).href)};
 const started=performance.now();
 const c=loadContract(${JSON.stringify(api)},${JSON.stringify(config)});
 generate(c,${JSON.stringify(output)});
+writeFileSync(${JSON.stringify(join(dir, 'webhook-names.json'))},JSON.stringify(Object.fromEntries(Object.keys(c.config.webhook.events).map(event=>[event,webhookEventTypeName(event)]))));
 writeFileSync(${JSON.stringify(join(dir, 'summary.json'))},JSON.stringify({operations:c.operations.map(o=>o.id),methods:c.operations.map(o=>({resource:o.resource,method:o.method,payload:o.response?.return==='payload',pagination:Boolean(o.pagination),polling:Boolean(o.polling)})),incoming:c.incoming.map(o=>({name:o.name,model:o.model})),events:Object.keys(c.config.webhook.events),modes:c.authentication,elapsedMs:performance.now()-started,maxRSS:process.resourceUsage().maxRSS,definitions:Object.keys(c.definitions).length}));
 `,
       );
@@ -93,6 +96,16 @@ writeFileSync(${JSON.stringify(join(dir, 'summary.json'))},JSON.stringify({opera
         inventory.incoming.map((o) => o.key).sort(),
       );
       assert.equal(summary.events.length, 191);
+      const names = JSON.parse(readFileSync(join(dir, 'webhook-names.json')));
+      const phpWebhook = JSON.parse(readFileSync(join(output, 'php/src/descriptors/webhook.json')));
+      const webhookTypeMetrics = measureWebhookTypes(
+        join(output, 'node'),
+        names,
+        phpWebhook.webhook.eventModels,
+        'event_type',
+      );
+      assert.equal(webhookTypeMetrics.namedPhpEvents, 51);
+      console.log('Webhook type budget ' + JSON.stringify(webhookTypeMetrics));
       assert.equal(summary.incoming.length, 191);
       assert.ok(summary.definitions > 100);
       assert.ok(

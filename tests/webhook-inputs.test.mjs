@@ -408,8 +408,8 @@ client.verifyWebhook({event_type:'payment.updated'},headers,secret);
       consumer,
     ]);
     const declarations = readFileSync(join(out, 'node/declarations/Client.d.ts'), 'utf8');
-    assert.match(declarations, /_SdkWebhookEnvelope/);
-    assert.ok(declarations.match(/verifyWebhook[^\n]+/)[0].length < 1000);
+    assert.match(declarations, /verifyWebhook\([^\n]+\): VerifiedWebhook;/);
+    assert.ok(declarations.match(/verifyWebhook[^\n]+/)[0].length <= 200);
   });
 }
 

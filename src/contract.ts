@@ -1,6 +1,6 @@
 import { validateRequestStyle, validatePositional, type RequestStyle } from './request-style.js';
 import { validateResponseReturn, payloadSchemas, type ResponseReturn } from './response-return.js';
-import { operationNames, modelNames, isPublicName } from './naming.js';
+import { operationNames, modelNames, isPublicName, webhookEventTypeName } from './naming.js';
 import { shareContractSchemas } from './schema-sharing.js';
 import { schemaAnnotations, isSchemaAnnotation } from './schema-annotations.js';
 import { SourceJson } from './source-json.js';
@@ -2925,13 +2925,18 @@ export function loadContract(
           fail(declaration.pointer, 'incoming event conflicts with configured binding for ' + type);
         w.events[type] = declaration.schema;
       }
-    for (const [k, v] of Object.entries(w.events))
-      schema(
-        v,
-        `config/webhook/events/${pointerSegment(k)}`,
-        false,
-        config.numericUnions === 'explicit',
-      );
+    const eventNames = new Map<string, string>();
+    for (const [k, v] of Object.entries(w.events)) {
+      const path = `config/webhook/events/${pointerSegment(k)}`;
+      if (!/[A-Za-z0-9]/.test(k))
+        fail(path, 'webhook event name must contain ASCII letters or digits');
+      const name = webhookEventTypeName(k);
+      const previous = eventNames.get(name.toLowerCase());
+      if (previous !== undefined)
+        fail(path, `webhook event type name \`${name}\` is shared by \`${previous}\` and \`${k}\``);
+      eventNames.set(name.toLowerCase(), k);
+      schema(v, path, false, config.numericUnions === 'explicit');
+    }
   }
   if (config.money) {
     keys(config.money, ['currencies'], 'config/money');
