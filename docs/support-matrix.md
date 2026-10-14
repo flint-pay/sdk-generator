@@ -2,6 +2,8 @@
 
 A capability must be declared to generate its public helper. Both targets implement the declared contract through bundled compiled codecs, with the target differences described below. A missing provider capability is not inferred from a payment resource name or field name. GET/HEAD/OPTIONS have bounded default retries; mutation retries and idempotency still require declarations.
 
+`include` selects named operations before validating their wire capabilities and skips operations without a nonempty `operationId`. Without `include`, unnamed operations fail diagnosis; `hidden` and audience declarations need an operation ID. Declared IDs must remain unique throughout the document. Request bodies declaring only unsupported media types fail directly; exclude those operations with `include` or `hidden`.
+
 | Capability                 | Node.js/TypeScript                                                                              | PHP                                                                            |
 | -------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | Runtime/package            | Node 22+ ESM, 22.12+ `require()`; TypeScript 5.9+ with consumer-installed Node types (22.16.0+) | PHP 8.2+, Composer, ext-json/ext-curl                                          |

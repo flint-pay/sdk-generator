@@ -16,6 +16,7 @@ Release preparation:
 
 - Checks generated file integrity and recomputes compatibility with the current generator.
 - Combines fresh and recorded findings for version-policy checks, the release plan and migration notes, even when generated files are unchanged.
+- Includes publication settings and instructions only for selected targets. The release plan's `packages.npm` or `packages.composer` is `null` for an unselected target.
 - Does not rerun a fixture file; run `validate --fixtures` first.
 - Does not establish that a version was published.
 

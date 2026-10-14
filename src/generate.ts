@@ -1012,7 +1012,6 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       'descriptor-source.js',
       'descriptor-source.d.ts',
       'package-plan.js',
-      'package-plan.d.ts',
       'codec-plan.js',
       'codec-plan.d.ts',
       'php-value-plan.js',
@@ -2397,12 +2396,20 @@ export function prepareRelease(output: string, destination: string, acknowledgeR
           : null,
       },
       publication: commands,
-      npm: {
-        registry: record.interface.config.npm.registry ?? 'https://registry.npmjs.org',
-        access: record.interface.config.npm.access ?? 'public',
-      },
-      composer:
-        'Deploy the prepared site with publish-site, then configure a Composer repository pointing to its packages.json. VCS/Packagist distribution is also supported independently.',
+      ...(targets.includes('node')
+        ? {
+            npm: {
+              registry: record.interface.config.npm.registry ?? 'https://registry.npmjs.org',
+              access: record.interface.config.npm.access ?? 'public',
+            },
+          }
+        : {}),
+      ...(targets.includes('php')
+        ? {
+            composer:
+              'Deploy the prepared site with publish-site, then configure a Composer repository pointing to its packages.json. VCS/Packagist distribution is also supported independently.',
+          }
+        : {}),
       documentation:
         'The prepared site contains matching versioned documentation, examples, changelog, migrations and archives; deploy with publish-site.',
       approved: acknowledgeReview,
