@@ -42,6 +42,7 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 - Optional `npm.repository` and `npm.homepage` metadata.
 - Node resource subpaths, split declaration files and individual PHP class files with deferred descriptor loading. See [modular generated packages](docs/releases.md#modular-generated-packages).
 - Generator CLI `<command> --help`, `--version` and `release --acknowledge-review`.
+- `documentation.authShortcut` selects the authentication shortcut shown in README and operation examples.
 
 ### Fixed
 
@@ -50,6 +51,9 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 - `effective` omits unselected package metadata, and release plans omit unselected publication settings and instructions. Private records retain compatibility placeholders for existing comparisons.
 - Node packages omit the unused `package-plan.d.ts`; transitive runtime dependencies, including `php-value-plan`, remain bundled.
 - Node response types keep the component name referenced by the source schema when a structurally identical component shares its codec, so inferred return types match the reference (for example `CreatePaymentIntentResult`).
+- Generated package READMEs start with a fenced install command and the quickstart, followed by short errors, pagination and webhook sections and documentation links. Pagination and webhook sections, the return-mode note and the idempotency note appear only when relevant; Node READMEs mention `client.close()` only for clients with streaming operations. Titles drop the `(node)`/`(php)` suffix.
+- Example scripts and README samples stop with a `Set VARIABLE` error when a required credential variable is unset, instead of passing an empty credential that the client rejects at call time. Payload examples without printable ID fields print the result, empty descriptions no longer leave blank lines, and Node examples use double quotes throughout.
+- `RUNTIME.md` uses short bullet sections ordered by task, with request-option and pagination snippets; numeric, PHP model and schema-helper details move to the end.
 - Pagination iterators apply `deadlineMs` to each page request, including retries and decoding, instead of across the whole backfill. Bound an iteration with cancellation, `maxPages` or `maxItems`. Polling keeps its overall deadline.
 - PHP normalizes HTTP/HTTPS scheme capitalization before omitting default ports, matching Node origin checks.
 - Generator CLI errors name the cause: unknown command or flag, missing, empty or extra argument, a missing PHP or Composer tool for a selected target, and the JSON parse position. Hand-edit detection reports every edited file.

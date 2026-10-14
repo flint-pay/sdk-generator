@@ -122,8 +122,11 @@ test('Flint READMEs lead with SDK docs and include one quickstart and concise pa
     assert.ok(readme.includes(docs));
     assert.ok(!readme.includes('allowInsecureHttp'));
     assert.ok(!readme.includes('...(process.env.API_TOKEN'));
-    if (target === 'node') assert.ok(readme.includes("token: process.env.API_TOKEN ?? ''"));
-    assert.ok(readme.indexOf(docs) < readme.indexOf('## Installation'));
+    assert.doesNotMatch(readme, /process\.env\.API_TOKEN \?\?|getenv\('API_TOKEN'\) \?:/);
+    assert.match(readme, /Set API_TOKEN: this call requires a credential/);
+    assert.ok(readme.indexOf(docs) < readme.indexOf('## Install\n'));
+    assert.ok(readme.indexOf('## Install\n') < readme.indexOf('## Quickstart'));
+    assert.ok(readme.startsWith('# Flint Public API SDK\n'));
     assert.ok(readme.includes('[Runtime guide](RUNTIME.md)'));
     assert.ok(!readme.includes('## Client and request options'));
     assert.ok(!readme.includes('Mutually dependent numeric alternatives'));

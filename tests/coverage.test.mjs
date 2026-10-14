@@ -260,11 +260,17 @@ test('README example selection honors profile order and rejects malformed config
   definition.config.documentation.examples = ['outsideThisProfile', operation.id];
   const files = render(definition);
   for (const target of ['node', 'php']) {
-    const headings = [...files.get(`${target}/README.md`).matchAll(/^### (.+)$/gm)].map(
-      (m) => m[1],
+    const readme = files.get(`${target}/README.md`);
+    const quickstart = readme.split('## Quickstart')[1].split('## ')[0];
+    const call = target === 'node' ? 'client.' : '$client->';
+    const separator = target === 'node' ? '.' : '->';
+    assert.ok(
+      quickstart.includes(`${call}${operation.resource}${separator}${operation.method}(`),
+      quickstart,
     );
-    assert.equal(headings[0], `${operation.resource}.${operation.method}`);
-    assert.equal(headings.length, Math.min(3, definition.operations.length));
+    const headings = [...readme.matchAll(/^### (.+)$/gm)].map((m) => m[1]);
+    assert.ok(!headings.includes(`${operation.resource}.${operation.method}`));
+    assert.equal(headings.length, Math.min(3, definition.operations.length) - 1);
     assert.equal(new Set(headings).size, headings.length);
   }
   const config = JSON.parse(readFileSync('tests/fixtures/payment-sdk.json', 'utf8'));

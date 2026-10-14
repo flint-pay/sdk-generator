@@ -391,7 +391,7 @@ new Client({baseUrl:'https://example.invalid',accessKey:'x'});
     join(process.cwd(), 'node_modules/@types'),
     types,
   ]);
-  assert.match(readFileSync(join(output, 'node/README.md'), 'utf8'), /apiKey:/);
+  assert.match(readFileSync(join(output, 'node/README.md'), 'utf8'), /\n  apiKey,\n/);
   const { compileSdkContract } = await import('../dist/target-plan.js');
   const { assertRuntimePlan } = await import('../dist/runtime-plan.js');
   const { plan } = compileSdkContract(load(settings));
@@ -536,4 +536,76 @@ test('HTTP fixtures forward configured shortcuts in both targets', async () => {
     { target: 'node', scenarios: 2 },
     { target: 'php', scenarios: 2 },
   ]);
+});
+
+test('documentation.authShortcut selects example credentials, which fail fast when unset', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const { mkdirSync } = await import('node:fs');
+  const local = join(dir, 'documented-shortcut');
+  mkdirSync(local);
+  const documentedApi = {
+    ...api,
+    paths: {
+      '/both': operation('bothCall', [{ Merchant: [] }, { Customer: [] }]),
+      '/merchant': operation('merchantCall', [{ Merchant: [] }]),
+    },
+  };
+  const settings = (authShortcut) => ({
+    ...config,
+    auth: {
+      modes: { merchant: { schemes: ['Merchant'] }, customer: { schemes: ['Customer'] } },
+      shortcuts: {
+        token: { mode: 'merchant', scheme: 'Merchant' },
+        customerToken: { mode: 'customer', scheme: 'Customer' },
+      },
+    },
+    documentation: { examples: ['bothCall'], authShortcut },
+  });
+  const load = (authShortcut) => {
+    writeFileSync(join(local, 'api.json'), JSON.stringify(documentedApi));
+    writeFileSync(join(local, 'sdk.json'), JSON.stringify(settings(authShortcut)));
+    return loadContract(join(local, 'api.json'), join(local, 'sdk.json'));
+  };
+  for (const name of ['missing', 7])
+    assert.throws(() => load(name), /config\/documentation\/authShortcut/);
+  const output = join(local, 'out');
+  generate(load('customerToken'), output);
+  mkdirSync(join(output, 'php/vendor'));
+  writeFileSync(
+    join(output, 'php/vendor/autoload.php'),
+    "<?php require_once __DIR__ . '/../src/Runtime.php'; require_once __DIR__ . '/../src/Client.php';",
+  );
+  for (const target of ['node', 'php']) {
+    const quickstart = readFileSync(join(output, target, 'README.md'), 'utf8')
+      .split('## Quickstart')[1]
+      .split('[Run the standalone example]')[0];
+    assert.match(quickstart, /Set `API_BASE_URL`, `CUSTOMER_TOKEN`/);
+    const code = quickstart.split('```')[1];
+    assert.match(
+      code,
+      target === 'node' ? /\n {2}customerToken,\n/ : /customerToken: \$customerToken/,
+    );
+    assert.doesNotMatch(code, /API_TOKEN/);
+    const ext = target === 'node' ? 'mjs' : 'php';
+    const examples = readFileSync(join(output, target, 'REFERENCE.md'), 'utf8').match(
+      /\(examples\/([^)]+)\)/g,
+    );
+    const script = (call) =>
+      examples
+        .map((link) => link.slice(1, -1))
+        .find((path) => path.includes(call) && path.endsWith(ext));
+    // The merchant-only operation cannot use the documented shortcut and keeps the default rule.
+    assert.match(readFileSync(join(output, target, script('merchantCall')), 'utf8'), /API_TOKEN/);
+    const both = join(output, target, script('bothCall'));
+    assert.match(readFileSync(both, 'utf8'), /CUSTOMER_TOKEN/);
+    assert.throws(
+      () =>
+        execFileSync(target === 'node' ? process.execPath : 'php', [both], {
+          env: { ...process.env, API_BASE_URL: 'https://example.invalid', CUSTOMER_TOKEN: '' },
+          stdio: 'pipe',
+        }),
+      (error) =>
+        error.stderr.toString().includes('Set CUSTOMER_TOKEN: this call requires a credential'),
+    );
+  }
 });
