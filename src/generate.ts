@@ -620,6 +620,22 @@ function hasResponseBody(op: Operation): boolean {
   );
 }
 
+/**
+ * Names a credential local must not take in Node or PHP examples: keywords, globals the
+ * examples call, and the examples' own variables.
+ */
+const reservedExampleNames = new Set(
+  (
+    'abstract and arguments array as await baseUrl break callable case catch class clone const ' +
+    'continue crypto debugger declare default delete die do echo else elseif empty enum eval exit ' +
+    'export extends false final finally fn for foreach function global goto if implements import ' +
+    'in include input instanceof insteadof interface isset let list match namespace new null or ' +
+    'package print private protected public readonly require return static super switch this ' +
+    'throw trait true try typeof unset use var void while with xor yield process console client ' +
+    'result error event item page idempotencyKey undefined'
+  ).split(' '),
+);
+
 function exampleParts(
   c: Contract,
   op: Operation,
@@ -666,9 +682,7 @@ function exampleParts(
   const local = (name: string) => {
     const base = name.replace(/[^A-Za-z0-9_]/g, '');
     const plain = /^[A-Za-z_]/.test(base) ? base[0]!.toLowerCase() + base.slice(1) : '_' + base;
-    const safe = ['baseUrl', 'client', 'result', 'input', 'idempotencyKey'].includes(plain)
-      ? plain + 'Credential'
-      : plain;
+    const safe = reservedExampleNames.has(plain) ? plain + 'Credential' : plain;
     return target === 'node' && client !== 'client' ? client + pascal(safe) : safe;
   };
   const baseUrl = target === 'node' && client !== 'client' ? client + 'BaseUrl' : 'baseUrl';
@@ -893,8 +907,8 @@ function packageReadme(
   const authLink = c.authentication ? ' ([authentication](RUNTIME.md#authentication))' : '';
   const setup =
     c.defaultBaseUrl === undefined
-      ? `Set ${markdownList(['`API_BASE_URL`', ...environment])}${authLink} and replace the sample values with your own.`
-      : `${environment.length ? `Set ${markdownList(environment)}${authLink} and replace` : 'Replace'} the sample values with your own. Set \`API_BASE_URL\` to use another environment.`;
+      ? `Set ${markdownList(['`API_BASE_URL`', ...environment])}${authLink}, then replace the sample values with your own.`
+      : `${environment.length ? `Set ${markdownList(environment)}${authLink}, then replace` : 'Replace'} the sample values with your own. Set \`API_BASE_URL\` to use another environment.`;
   const resultData = node ? 'result.data' : '$result->data';
   const resultMeta = node ? 'result.meta' : '$result->meta';
   const returnMode =
@@ -911,6 +925,15 @@ function packageReadme(
       ? 'Call `await client.close()` when finished to release open streams.'
       : ''
     : 'Call `$client->close()` when finished to release the cURL handle.';
+  const declaredRetries = c.operations.filter((op) => op.retry !== undefined).length;
+  const defaultRetries =
+    'GET, HEAD and OPTIONS calls make up to three attempts and other methods send once';
+  const retries =
+    declaredRetries === 0
+      ? `Without a declared retry policy, ${defaultRetries}.`
+      : declaredRetries === c.operations.length
+        ? 'Each operation retries according to its declared policy; the [API reference](REFERENCE.md) lists its attempt limit.'
+        : `Operations with a declared retry policy follow it, as listed in the [API reference](REFERENCE.md); otherwise ${defaultRetries}.`;
   const paginated = c.operations.find((op) => op.pagination);
   const pagination = paginated
     ? `## Pagination\n\nList operations such as \`${paginated.resource}.${paginated.method}\` also have \`${paginated.method}Items\` and \`${paginated.method}Pages\` methods that fetch pages lazily. See [pagination](RUNTIME.md#pagination-and-polling).\n\n`
@@ -926,7 +949,7 @@ function packageReadme(
     (returnMode || close ? [returnMode, close].filter(Boolean).join(' ') + '\n\n' : '') +
     recipes +
     (recipes ? '\n' : '') +
-    `## Errors and retries\n\nFailed calls throw \`SdkError\` with \`${node ? 'message' : 'getMessage()'}\`, \`kind\`, \`status\`, \`${node ? 'code' : 'errorCode'}\` and the request ID in \`meta\`. An \`outcome\` of \`unknown\` means the request may have succeeded, so check the current state before resubmitting. Without a declared retry policy, GET, HEAD and OPTIONS calls make up to three attempts and other methods send once. See [errors](RUNTIME.md#responses-and-errors) and [retries](RUNTIME.md#retries-and-idempotency).\n\n` +
+    `## Errors and retries\n\nFailed calls throw \`SdkError\` with \`${node ? 'message' : 'getMessage()'}\`, \`kind\`, \`status\`, \`${node ? 'code' : 'errorCode'}\` and the request ID in \`meta\`. An \`outcome\` of \`unknown\` means the request may have succeeded, so check the current state before resubmitting. ${retries} See [errors](RUNTIME.md#responses-and-errors) and [retries](RUNTIME.md#retries-and-idempotency).\n\n` +
     pagination +
     webhooks +
     `## Documentation\n\n- [API reference](REFERENCE.md): every operation, with examples\n- [Models](MODELS.md): fields and descriptions\n- [Runtime guide](RUNTIME.md): request options, errors, retries${c.config.webhook ? ', pagination and webhooks' : ' and pagination'}\n${guides.join('')}- \`examples/\`: a runnable script per operation. ${node ? 'Run `node examples/RESOURCE-METHOD.mjs`; TypeScript versions are alongside.' : 'Run `composer install`, then `php examples/RESOURCE-METHOD.php`.'}\n\nPackage ${c.config.version}, generated for API ${c.apiVersion}.\n`
@@ -2814,7 +2837,7 @@ export async function verifyWebhookRequest(client, request, secrets) {
   return client.verifyWebhook(rawBody, request.headers, secrets);
 }
 \`\`\`\n\n### Express\n\nRegister this route before app.use(express.json()). req.headers is accepted directly. Supply client and webhookSecret from your application configuration:\n\n\`\`\`js
-app.post('/webhooks', express.raw({ type: 'application/json' }), (req, res, next) => {
+app.post("/webhooks", express.raw({ type: "application/json" }), (req, res, next) => {
   try {
     const verified = client.verifyWebhook(req.body, req.headers, webhookSecret);
     // Persist verified.event and verified.known in your durable inbox before acknowledging.
@@ -3043,7 +3066,7 @@ function responseRecoveryGuide(target: 'node' | 'php'): string {
     "Exact HTTP status declarations take precedence, followed by a declared `default`. If neither exists for an actual 2xx response, the SDK reuses the sole declared JSON 2xx response, including its codec and PHP model class. Metadata retains the actual status. Multiple JSON success declarations remain ambiguous, even when their schemas match; binary, streaming, empty and redirect responses are never inferred.\n\nRequired fields and value types remain enforced. Schema failures are non-retryable `protocol` errors with `outcome: response`; the top-level message includes codec diagnostics such as `response.payment.id: required field is missing`, and the original cause remains available. The server may already have created the payment. Buffered JSON response failures and payload-extraction errors retain `raw` for explicit recovery; raw bodies are omitted from ordinary error inspection and diagnostics.\n\nInside a catch block, a synthetic create response with a top-level string `id` can be recovered as below. Use the actual endpoint's ID path and reconcile its state before continuing. This parses an unvalidated body only to recover the ID; it does not restore the SDK's typed guarantees or justify resubmitting the mutation.";
   const example =
     target === 'node'
-      ? "if (error instanceof SdkError && error.kind === 'protocol' &&\n    error.status >= 200 && error.status < 300 && error.raw) {\n  let body;\n  try { body = JSON.parse(error.raw); } catch { throw error; }\n  const paymentId = typeof body?.id === 'string' ? body.id : undefined;\n  if (!paymentId) throw error;\n  // Reconcile this payment ID with the provider; do not submit another create.\n} else {\n  throw error;\n}"
+      ? 'if (error instanceof SdkError && error.kind === "protocol" &&\n    error.status >= 200 && error.status < 300 && error.raw) {\n  let body;\n  try { body = JSON.parse(error.raw); } catch { throw error; }\n  const paymentId = typeof body?.id === "string" ? body.id : undefined;\n  if (!paymentId) throw error;\n  // Reconcile this payment ID with the provider; do not submit another create.\n} else {\n  throw error;\n}'
       : "if ($error instanceof SdkError && $error->kind === 'protocol' &&\n    $error->status >= 200 && $error->status < 300 && $error->raw !== null) {\n    try {\n        $body = json_decode($error->raw, true, 512, JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING);\n    } catch (\\JsonException) {\n        throw $error;\n    }\n    $paymentId = is_array($body) && is_string($body['id'] ?? null) ? $body['id'] : null;\n    if ($paymentId === null) throw $error;\n    // Reconcile this payment ID with the provider; do not submit another create.\n} else {\n    throw $error;\n}";
   return explanation + '\n\n```' + (target === 'node' ? 'js' : 'php') + '\n' + example + '\n```';
 }

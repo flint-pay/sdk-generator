@@ -609,3 +609,110 @@ test('documentation.authShortcut selects example credentials, which fail fast wh
     );
   }
 });
+
+test('example credential locals avoid keywords and globals the examples use', async () => {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const { createServer } = await import('node:http');
+  const { mkdirSync } = await import('node:fs');
+  const { localExampleFile } = await import('./local-example.mjs');
+  const exec = promisify(execFile);
+  const local = join(dir, 'reserved-locals');
+  mkdirSync(local);
+  const reservedApi = {
+    openapi: '3.1.0',
+    info: { title: 'Reserved', version: 'v1' },
+    components: {
+      securitySchemes: {
+        Default: { type: 'apiKey', in: 'header', name: 'X-Default' },
+        This: { type: 'apiKey', in: 'header', name: 'X-This' },
+        Merchant: { type: 'http', scheme: 'bearer' },
+      },
+    },
+    paths: {
+      '/default': operation('defaultCall', [{ Default: [], This: [] }]),
+      '/pay': {
+        post: {
+          operationId: 'pay',
+          security: [{ Merchant: [] }],
+          responses: { 204: { description: 'OK' } },
+        },
+      },
+    },
+  };
+  writeFileSync(join(local, 'api.json'), JSON.stringify(reservedApi));
+  writeFileSync(
+    join(local, 'sdk.json'),
+    JSON.stringify({
+      ...config,
+      auth: {
+        modes: { pair: { schemes: ['Default', 'This'] }, merchant: { schemes: ['Merchant'] } },
+        shortcuts: { crypto: { mode: 'merchant', scheme: 'Merchant' } },
+      },
+      operations: {
+        pay: {
+          idempotency: { header: 'Idempotency-Key', retention: '1 day', scope: 'operation' },
+        },
+      },
+    }),
+  );
+  const output = join(local, 'out');
+  generate(loadContract(join(local, 'api.json'), join(local, 'sdk.json')), output);
+  mkdirSync(join(output, 'php/vendor'));
+  writeFileSync(
+    join(output, 'php/vendor/autoload.php'),
+    "<?php require_once __DIR__ . '/../src/Runtime.php'; require_once __DIR__ . '/../src/Client.php';",
+  );
+  const seen = [];
+  const server = createServer((request, response) => {
+    seen.push(request.headers);
+    response.writeHead(204);
+    response.end();
+  });
+  await new Promise((done) => server.listen(0, '127.0.0.1', done));
+  try {
+    const env = {
+      ...process.env,
+      API_BASE_URL: `http://127.0.0.1:${server.address().port}`,
+      API_PAIR_DEFAULT: 'default-value',
+      API_PAIR_THIS: 'this-value',
+      CRYPTO: 'merchant-value',
+    };
+    for (const target of ['node', 'php']) {
+      const ext = target === 'node' ? 'mjs' : 'php';
+      const files = ['api-defaultCall', 'api-pay'].map((name) =>
+        join(output, target, `examples/${name}.${ext}`),
+      );
+      const [pair, pay] = files.map((file) => readFileSync(file, 'utf8'));
+      assert.match(
+        pair,
+        target === 'node' ? /const defaultCredential = / : /\$defaultCredential = /,
+      );
+      assert.match(pair, target === 'node' ? /const thisCredential = / : /\$thisCredential = /);
+      assert.match(
+        pay,
+        target === 'node' ? /crypto: cryptoCredential/ : /crypto: \$cryptoCredential/,
+      );
+      const before = seen.length;
+      for (const file of files)
+        await exec(target === 'node' ? process.execPath : 'php', [localExampleFile(file)], { env });
+      assert.deepEqual(
+        seen
+          .slice(before)
+          .map((headers) => [
+            headers['x-default'],
+            headers['x-this'],
+            headers.authorization,
+            typeof headers['idempotency-key'],
+          ]),
+        [
+          ['default-value', 'this-value', undefined, 'undefined'],
+          [undefined, undefined, 'Bearer merchant-value', 'string'],
+        ],
+      );
+    }
+  } finally {
+    server.closeAllConnections();
+    await new Promise((done) => server.close(done));
+  }
+});

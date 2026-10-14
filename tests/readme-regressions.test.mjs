@@ -359,9 +359,15 @@ test('package READMEs lead with install and print capability notes only when dec
   const library = render(
     loadContract('examples/library.openapi.json', 'examples/library.sdk.json'),
   );
-  const payments = render(
-    loadContract('tests/fixtures/payment-api.json', 'tests/fixtures/payment-sdk.json'),
+  const paymentContract = loadContract(
+    'tests/fixtures/payment-api.json',
+    'tests/fixtures/payment-sdk.json',
   );
+  const payments = render(paymentContract);
+  const retried = structuredClone(paymentContract);
+  const policy = retried.operations.find((op) => op.retry).retry;
+  for (const op of retried.operations) op.retry ??= policy;
+  const allRetried = render(retried);
   for (const target of ['node', 'php']) {
     const readme = library.get(`${target}/README.md`);
     assert.ok(readme.startsWith('# Library SDK\n\n'), readme.slice(0, 80));
@@ -388,6 +394,14 @@ test('package READMEs lead with install and print capability notes only when dec
       'Documentation',
     ]);
     assert.match(paymentReadme, /Calls return a Result/);
+    assert.match(paymentReadme, /Set `API_BASE_URL` and `API_TOKEN`, then replace/);
+    assert.match(readme, /Without a declared retry policy, GET, HEAD and OPTIONS/);
+    assert.match(paymentReadme, /Operations with a declared retry policy follow it.*otherwise GET/);
+    assert.match(
+      allRetried.get(`${target}/README.md`),
+      /Each operation retries according to its declared policy/,
+    );
+    assert.doesNotMatch(allRetried.get(`${target}/README.md`), /three attempts/);
     assert.doesNotMatch(paymentReadme, /\n\n\n/);
     assert.equal(paymentReadme.includes('close()'), target === 'php');
     const runtime = payments.get(`${target}/RUNTIME.md`);
