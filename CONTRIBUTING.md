@@ -20,7 +20,7 @@ When changing shared semantics, update the owning compiler decision and the affe
 
 For bug reports, include generator/package/runtime versions, a minimal sanitized API/configuration example, the expected and observed wire behavior, and a request ID when safe. Explain whether the reproduction uses local fixtures, a sandbox or a live provider. Redact credentials and sensitive bodies.
 
-The generator is pre-1.0 and has no paid support SLA. Support covers the published capability and runtime matrix. Record deprecations and breaking changes in release notes, with the effect on both targets described. A new language or provider capability starts from a concrete contract and its tests.
+The generator is pre-1.0 and has no paid support SLA. Support covers the published capability and runtime matrix. Record deprecations and breaking changes in [CHANGELOG.md](CHANGELOG.md), with the effect on both targets described. A new language or provider capability starts from a concrete contract and its tests.
 
 ## Scope and maintenance
 
@@ -64,10 +64,10 @@ For a semantic PR, explain the changed guarantee, its owner, public/configuratio
 
 ## Documentation and package checks
 
-Update the [configuration guide](docs/configuration.md), [consumer guide](docs/using-sdks.md) and support matrix whenever public behavior changes. Package README/reference text is emitted from `src/generate.ts`; update that text too when the change affects generated consumers. Keep working notes, provider acceptance logs and local investigation artifacts out of public documentation and package contents.
+Update the [configuration guide](docs/configuration.md), [consumer guide](docs/using-sdks.md) and support matrix whenever public behavior changes. Reference docs describe current behavior; record what changed in [CHANGELOG.md](CHANGELOG.md) and upgrade steps in [releases](docs/releases.md#upgrade-an-existing-sdk). Package README/reference text is emitted from `src/generate.ts`; update that text too when the change affects generated consumers. Keep working notes, provider acceptance logs and local investigation artifacts out of public documentation and package contents.
 
 ```sh
-npx prettier --check README.md CONTRIBUTING.md SECURITY.md docs tests/providers/flint/README.md
+npx prettier --check README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md docs tests/providers/flint/README.md
 npm pack --dry-run
 ```
 
