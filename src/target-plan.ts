@@ -12,6 +12,7 @@ import { schemaComment } from './schema-documentation.js';
 import { codecSharing } from './codec-sharing.js';
 import { Diagnostic } from './diagnostic.js';
 import { valueScopes } from './schema-intersections.js';
+import { parameterExampleEligible } from './parameter-example-policy.js';
 import type { Contract, Operation, Parameter, Schema } from './contract.js';
 import { stable } from './canonical.js';
 import {
@@ -1263,35 +1264,6 @@ export class ExactNumberSample {
   constructor(readonly token: string) {}
 }
 
-/** Credential-name tokens exclude new parameter-level example copying. */
-function credentialName(name: string): boolean {
-  const tokens = name
-    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
-    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
-    .toLowerCase()
-    .split(/[^a-z0-9]+/);
-  return (
-    tokens.some((token) =>
-      [
-        'password',
-        'passwd',
-        'secret',
-        'token',
-        'apikey',
-        'authorization',
-        'credential',
-        'signature',
-        'cookie',
-      ].includes(token),
-    ) || /(?:^|_)(?:api_key|client_secret|private_key|access_key)(?:_|$)/.test(tokens.join('_'))
-  );
-}
-function sensitiveSample(schema: Schema, definitions: Record<string, Schema>): boolean {
-  return [schema, ...valueScopes(schema, definitions)].some(
-    (shape) =>
-      shape['x-sensitive'] === true || shape.writeOnly === true || shape.format === 'password',
-  );
-}
 export type SampleValidator = (value: unknown, codec: CodecPlan) => boolean;
 
 /** Formats ignored by wire codecs still need valid documentation sample values. */
@@ -1404,24 +1376,13 @@ function validSample(
   );
 }
 
-function sensitiveParameter(parameter: Parameter, definitions: Record<string, Schema>): boolean {
-  return (
-    credentialName(parameter.name) ||
-    sensitiveSample(parameter.schema, definitions) ||
-    Reflect.get(parameter, 'x-sensitive') === true ||
-    Reflect.get(parameter, 'writeOnly') === true ||
-    Reflect.get(parameter, 'format') === 'password'
-  );
-}
-
 /** Parameter metadata is already literal source data; do not annotate the schema or contract. */
 export function parameterExample(
   parameter: Parameter,
   definitions: Record<string, Schema>,
   accepts: SampleValidator,
 ): { value: unknown } | undefined {
-  if (!['path', 'query'].includes(parameter.in) || sensitiveParameter(parameter, definitions))
-    return undefined;
+  if (!parameterExampleEligible(parameter, definitions)) return undefined;
   const examples: unknown = Reflect.get(parameter, 'examples');
   const first =
     examples && typeof examples === 'object' && !Array.isArray(examples)

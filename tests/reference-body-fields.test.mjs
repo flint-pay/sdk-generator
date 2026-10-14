@@ -10,7 +10,7 @@ import ts from 'typescript';
 import { loadContract } from '../dist/index.js';
 import { render } from '../dist/generate.js';
 import { bodyReference, referenceType } from '../dist/sdk-documentation.js';
-import { compileSdkContract } from '../dist/target-plan.js';
+import { compileSdkContract, parameterExample } from '../dist/target-plan.js';
 
 const root = mkdtempSync(join(tmpdir(), 'sdk-reference-body-'));
 after(() => rmSync(root, { recursive: true, force: true }));
@@ -106,6 +106,163 @@ function everySample(files, present = [], absent = []) {
     for (const value of absent) assert.ok(!source.includes(value), `${name}: copied ${value}`);
   }
 }
+function noGeneratedMarker(files, marker) {
+  for (const target of ['node', 'php']) {
+    const generated = [...files].filter(([name]) => name.startsWith(`${target}/`));
+    assert.ok(generated.length > 0);
+    for (const [name, source] of generated)
+      assert.ok(!source.includes(marker), `${name}: copied ${marker}`);
+  }
+}
+
+for (const location of ['query', 'header', 'cookie'])
+  test(`unselected ${location} API-key scheme excludes matching query examples regardless of case`, () => {
+    const marker = 'synthetic-unselected-scheme-marker';
+    const { files } = fixture({
+      api: {
+        components: {
+          securitySchemes: {
+            Access: { type: 'apiKey', in: 'header', name: 'X-Access' },
+            Unselected: { type: 'apiKey', in: location, name: 'KeY' },
+          },
+        },
+      },
+      config: { auth: { scheme: 'Access' } },
+      parameters: [query('key', { type: 'string' }, { example: marker })],
+    });
+    noGeneratedMarker(files, marker);
+    everySample(files, ['example']);
+  });
+
+for (const name of ['PaSsWoRd', 'ApiKeY', 'X_Api_Key', 'prefixTOKENsuffix', 'SessionId'])
+  test(`normalized credential substring ${name} excludes parameter examples in every generated file`, () => {
+    const marker = 'synthetic-mixed-case-marker';
+    const { files } = fixture({
+      parameters: [query(name, { type: 'string' }, { example: marker })],
+    });
+    noGeneratedMarker(files, marker);
+    everySample(files, ['example']);
+  });
+
+test('credential substrings exclude named examples without changing safe parameter examples', () => {
+  const marker = 'synthetic-named-credential-marker';
+  const { files } = fixture({
+    parameters: [
+      ...[
+        'password',
+        'passwd',
+        'secret',
+        'token',
+        'apikey',
+        'clientsecret',
+        'privatekey',
+        'accesskey',
+        'authorization',
+        'credential',
+        'signature',
+        'cookie',
+        'session',
+      ].map((token) =>
+        query(
+          `prefix_${token.toUpperCase()}_suffix`,
+          { type: 'string' },
+          {
+            examples: { first: { value: marker } },
+          },
+        ),
+      ),
+      query('label', { type: 'string' }, { example: 'synthetic-safe-parameter' }),
+    ],
+  });
+  noGeneratedMarker(files, marker);
+  everySample(files, ['synthetic-safe-parameter']);
+});
+
+for (const annotation of [{ 'x-sensitive': true }, { writeOnly: true }, { format: 'password' }])
+  for (const referenced of [false, true])
+    test(`sensitive array items ${JSON.stringify(annotation)} (${referenced ? 'reference' : 'inline'}) exclude parameter examples in every generated file`, () => {
+      const marker = 'synthetic-sensitive-item-marker';
+      const item = { type: 'string', ...annotation };
+      const { files } = fixture({
+        schemas: referenced ? { SensitiveItem: item } : {},
+        parameters: [
+          query(
+            'values',
+            {
+              type: 'array',
+              minItems: 1,
+              items: referenced ? { $ref: '#/components/schemas/SensitiveItem' } : item,
+            },
+            { example: [marker] },
+          ),
+        ],
+      });
+      noGeneratedMarker(files, marker);
+      everySample(files, ['example']);
+    });
+
+for (const keyword of ['allOf', 'anyOf', 'oneOf'])
+  test(`sensitivity in any ${keyword} branch rejects the whole parameter example`, () => {
+    const marker = 'synthetic-sensitive-branch-marker';
+    const { files } = fixture({
+      schemas: { SensitiveItem: { type: 'string', 'x-sensitive': true } },
+      parameters: [
+        query(
+          'value',
+          {
+            [keyword]:
+              keyword === 'allOf'
+                ? [{ type: 'string' }, { type: 'string', writeOnly: true }]
+                : [
+                    { type: 'string' },
+                    {
+                      type: 'array',
+                      items: { $ref: '#/components/schemas/SensitiveItem' },
+                    },
+                  ],
+          },
+          { examples: { first: { value: marker } } },
+        ),
+      ],
+    });
+    noGeneratedMarker(files, marker);
+    everySample(files, ['example']);
+  });
+
+// Some of these schema shapes are unsupported as wire parameters (notably
+// prefixItems and objects). Exercise the selection boundary directly as well.
+for (const schema of [
+  { type: 'array', items: { type: 'string' }, prefixItems: [{ format: 'password' }] },
+  { type: 'array', items: { type: 'string' }, contains: { writeOnly: true } },
+  { type: 'object', properties: { nested: { properties: { value: { 'x-sensitive': true } } } } },
+  { type: 'object', additionalProperties: { items: { format: 'password' } } },
+  { type: 'string', not: { writeOnly: true } },
+  { type: 'string', if: { 'x-sensitive': true } },
+  { type: 'string', then: { 'x-sensitive': true } },
+  { type: 'string', else: { 'x-sensitive': true } },
+  { 'x-sdk-ref': 'Sensitive', 'x-sensitive': false, writeOnly: false },
+])
+  test(`deep sensitive schema excludes parameter metadata: ${JSON.stringify(schema)}`, () => {
+    const definitions = {
+      Sensitive: {
+        properties: {
+          cycle: { 'x-sdk-ref': 'Sensitive' },
+          hidden: { 'x-sdk-ref': 'Password' },
+        },
+      },
+      Password: { type: 'string', format: 'password' },
+    };
+    assert.equal(
+      parameterExample(
+        query('value', schema, { example: 'synthetic-deep-marker' }),
+        definitions,
+        () => {
+          assert.fail('sensitive metadata must be rejected before validation');
+        },
+      ),
+      undefined,
+    );
+  });
 
 test('parameter-level examples fill placeholders; enums and omitted optional fields retain main behavior', () => {
   const { files } = fixture({

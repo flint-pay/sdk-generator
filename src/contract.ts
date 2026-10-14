@@ -3,6 +3,7 @@ import { validateResponseReturn, payloadSchemas, type ResponseReturn } from './r
 import { operationNames, modelNames, isPublicName, webhookEventTypeName } from './naming.js';
 import { shareContractSchemas } from './schema-sharing.js';
 import { schemaAnnotations, isSchemaAnnotation } from './schema-annotations.js';
+import { parameterExampleEligible } from './parameter-example-policy.js';
 import { SourceJson } from './source-json.js';
 import {
   Diagnostic,
@@ -2203,6 +2204,13 @@ export function loadContract(
   let auth: Auth | undefined;
   let authentication: Record<string, AuthenticationMode> | undefined;
   const schemes = doc.components?.securitySchemes ?? {};
+  const apiKeyNames = new Set<string>();
+  for (const declaration of Object.values(schemes)) {
+    if (!declaration || typeof declaration !== 'object') continue;
+    const name: unknown = Reflect.get(declaration, 'name');
+    if (Reflect.get(declaration, 'type') === 'apiKey' && typeof name === 'string')
+      apiKeyNames.add(name.toLowerCase());
+  }
   const compileScheme = (key: string): Auth & { name: string } => {
     if (!Object.hasOwn(schemes, key)) fail('config/auth', 'select an existing security scheme');
     const declaration = schemes[key];
@@ -2464,6 +2472,13 @@ export function loadContract(
             config.numericUnions === 'explicit',
           );
           parameterType(param.schema, `${p}/parameters/${pointerSegment(param.name)}`);
+          // Reject unsafe parameter metadata before it can enter descriptors or
+          // examples. Include every declared API-key name, even unselected schemes
+          // and schemes in locations unsupported by authentication compilation.
+          if (!parameterExampleEligible(param, definitions, apiKeyNames)) {
+            Reflect.deleteProperty(param, 'example');
+            Reflect.deleteProperty(param, 'examples');
+          }
           const style = param.style ?? (param.in === 'query' ? 'form' : 'simple');
           if (style !== (param.in === 'query' ? 'form' : 'simple'))
             fail(p, `unsupported parameter style ${style}`);
