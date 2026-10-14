@@ -189,7 +189,13 @@ export interface Config {
     detailsPath?: string;
     requestIdHeader?: string;
   };
-  documentation?: { overview?: string; guides?: Record<string, string>; examples?: string[] };
+  documentation?: {
+    overview?: string;
+    guides?: Record<string, string>;
+    examples?: string[];
+    /** Auth shortcut shown in README and operation examples where the operation permits it. */
+    authShortcut?: string;
+  };
   release?: { baseUrl?: string; policy?: 'review' | 'semver' };
 }
 export interface Contract {
@@ -1637,8 +1643,26 @@ export function loadContract(
   checkConfig(['documentation'], () => {
     if (config.documentation !== undefined) {
       diagnostics.check(() =>
-        keys(config.documentation!, ['overview', 'guides', 'examples'], 'config/documentation'),
+        keys(
+          config.documentation!,
+          ['overview', 'guides', 'examples', 'authShortcut'],
+          'config/documentation',
+        ),
       );
+      diagnostics.check(() => {
+        const name = config.documentation!.authShortcut;
+        if (name === undefined) return;
+        const auth: unknown = config.auth;
+        const shortcuts =
+          auth && typeof auth === 'object' && 'shortcuts' in auth ? auth.shortcuts : undefined;
+        if (
+          typeof name !== 'string' ||
+          !shortcuts ||
+          typeof shortcuts !== 'object' ||
+          !Object.hasOwn(shortcuts, name)
+        )
+          fail('config/documentation/authShortcut', 'name a shortcut declared in auth.shortcuts');
+      });
       diagnostics.check(() => {
         if (
           config.documentation!.examples !== undefined &&

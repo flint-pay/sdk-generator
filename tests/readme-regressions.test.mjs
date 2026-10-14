@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { createServer } from 'node:http';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { loadContract, generate } from '../dist/index.js';
+import { loadContract, generate, render } from '../dist/index.js';
 import { localExampleSource } from './local-example.mjs';
 const exec = promisify(execFile);
 const root = mkdtempSync(join(tmpdir(), 'sdk-readme-regressions-'));
@@ -352,4 +352,76 @@ test('README client reuse follows the selected shortcut rather than the first pe
       );
     }
   });
+});
+
+test('package READMEs lead with install and print capability notes only when declared', () => {
+  const sections = (readme) => [...readme.matchAll(/^## (.+)$/gm)].map((m) => m[1]);
+  const library = render(
+    loadContract('examples/library.openapi.json', 'examples/library.sdk.json'),
+  );
+  const paymentContract = loadContract(
+    'tests/fixtures/payment-api.json',
+    'tests/fixtures/payment-sdk.json',
+  );
+  const payments = render(paymentContract);
+  const retried = structuredClone(paymentContract);
+  const policy = retried.operations.find((op) => op.retry).retry;
+  for (const op of retried.operations) op.retry ??= policy;
+  const allRetried = render(retried);
+  for (const target of ['node', 'php']) {
+    const readme = library.get(`${target}/README.md`);
+    assert.ok(readme.startsWith('# Library SDK\n\n'), readme.slice(0, 80));
+    assert.deepEqual(sections(readme), [
+      'Install',
+      'Quickstart',
+      'Errors and retries',
+      'Documentation',
+    ]);
+    assert.match(readme, /## Install\n\n```sh\n(?:npm install|composer require) /);
+    // Every operation uses the default payload mode and none declares idempotency.
+    assert.doesNotMatch(readme, /idempotency key|result-mode|Calls return a Result/);
+    assert.doesNotMatch(readme, /\n\n\n/);
+    assert.equal(readme.includes('close()'), target === 'php');
+    assert.match(readme, /Package 1\.0\.0, generated for API 1\./);
+    const paymentReadme = payments.get(`${target}/README.md`);
+    assert.deepEqual(sections(paymentReadme), [
+      'Install',
+      'Quickstart',
+      'More examples',
+      'Errors and retries',
+      'Pagination',
+      'Webhooks',
+      'Documentation',
+    ]);
+    assert.match(paymentReadme, /Calls return a Result/);
+    assert.ok(
+      paymentReadme.includes(
+        target === 'node'
+          ? '`client.verifyWebhook(rawBody, headers, secrets)`'
+          : '`$client->verifyWebhook($rawBody, $headers, $secrets)`',
+      ),
+    );
+    assert.match(paymentReadme, /Set `API_BASE_URL` and `API_TOKEN`, then replace/);
+    assert.match(readme, /Without a declared retry policy, GET, HEAD and OPTIONS/);
+    assert.match(paymentReadme, /Operations with a declared retry policy follow it.*otherwise GET/);
+    assert.match(
+      allRetried.get(`${target}/README.md`),
+      /Each operation retries according to its declared policy/,
+    );
+    assert.doesNotMatch(allRetried.get(`${target}/README.md`), /three attempts/);
+    assert.doesNotMatch(paymentReadme, /\n\n\n/);
+    assert.equal(paymentReadme.includes('close()'), target === 'php');
+    const runtime = payments.get(`${target}/RUNTIME.md`);
+    assert.ok(runtime.startsWith('# Example Payments (not a Flint contract) runtime guide\n'));
+    assert.match(
+      runtime,
+      target === 'node'
+        ? /## Pagination and polling\n\n```typescript\nfor await \(const item of client\.payments\.linksItems\(/
+        : /## Pagination and polling\n\n```php\nforeach \(\$client->payments->linksItems\(/,
+    );
+    assert.ok(
+      runtime.indexOf('## Retries and idempotency') <
+        runtime.indexOf('## Input and response values'),
+    );
+  }
 });

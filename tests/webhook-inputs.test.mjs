@@ -297,7 +297,7 @@ for (const format of ['hex', 'timestamped-hex', 'standard-webhooks']) {
       secret,
     );
     assert.deepEqual(JSON.parse(JSON.stringify(received)), ok);
-    const expressExample = blocks.find((body) => body.includes("app.post('/webhooks'"));
+    const expressExample = blocks.find((body) => body.includes('app.post("/webhooks"'));
     let handler, forwarded, nextError;
     const order = [];
     const app = {

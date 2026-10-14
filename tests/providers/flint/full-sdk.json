@@ -7,6 +7,9 @@
     "full-checkout-sdk.json",
     "full-invoice-sdk.json"
   ],
+  "documentation": {
+    "authShortcut": "apiKey"
+  },
   "operations": {
     "streamWebhookEvents": {
       "stream": {

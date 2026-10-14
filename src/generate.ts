@@ -251,11 +251,11 @@ function downloadExampleResult(op: Operation, target: 'node' | 'php', result: st
       : '$' + result + (payload ? (kind === 'redirect' ? '->body' : '') : '->data');
   if (kind === 'binary')
     return target === 'node'
-      ? `// Choose a destination path; PDF bytes must not be decoded as text.\nconst ${result}Path = process.env.API_DOWNLOAD_PATH ?? 'download.pdf';\nawait (await import('node:fs/promises')).writeFile(${result}Path, ${data});\nconsole.log('Saved', ${data}.byteLength, 'bytes to', ${result}Path);\n`
+      ? `// Choose a destination path; PDF bytes must not be decoded as text.\nconst ${result}Path = process.env.API_DOWNLOAD_PATH ?? "download.pdf";\nawait (await import("node:fs/promises")).writeFile(${result}Path, ${data});\nconsole.log("Saved", ${data}.byteLength, "bytes to", ${result}Path);\n`
       : `// Choose a destination path; PHP strings preserve every PDF byte.\n$${result}Path = getenv('API_DOWNLOAD_PATH') ?: 'download.pdf';\nif (file_put_contents($${result}Path, ${data}) === false) throw new \\RuntimeException('Could not save PDF');\necho 'Saved ' . strlen(${data}) . ' bytes to ' . $${result}Path . PHP_EOL;\n`;
   if (kind === 'redirect')
     return target === 'node'
-      ? `// Location may be relative or use another origin. The SDK does not follow it.\n// Validate the destination before a separate download; do not forward API credentials.\nconsole.log(${result}.meta.status, ${data}.location ?? 'No Location header');\n`
+      ? `// Location may be relative or use another origin. The SDK does not follow it.\n// Validate the destination before a separate download; do not forward API credentials.\nconsole.log(${result}.meta.status, ${data}.location ?? "No Location header");\n`
       : `// Location may be relative or use another origin. The SDK does not follow it.\n// Validate the destination before a separate download; do not forward API credentials.\necho $${result}->meta['status'] . ' ' . (${data}->location ?? 'No Location header') . PHP_EOL;\n`;
   return '';
 }
@@ -516,7 +516,7 @@ function exampleKey(
   if (op.idempotency || parameters.length) {
     const create = requiresSuppliedKey
       ? target === 'node'
-        ? "(process.env.API_IDEMPOTENCY_KEY ?? '')"
+        ? '(process.env.API_IDEMPOTENCY_KEY ?? "")'
         : "(getenv('API_IDEMPOTENCY_KEY') === false ? '' : getenv('API_IDEMPOTENCY_KEY'))"
       : target === 'node'
         ? 'crypto.randomUUID()'
@@ -529,7 +529,7 @@ function exampleKey(
       if (requiresSuppliedKey)
         keySetup +=
           target === 'node'
-            ? `if (!${key}) throw new Error('Set API_IDEMPOTENCY_KEY to a new key matching the header schema, or reuse the key saved with this action');\n`
+            ? `if (!${key}) throw new Error("Set API_IDEMPOTENCY_KEY to a new key matching the header schema, or reuse the key saved with this action");\n`
             : `if ($${key} === '') throw new \\RuntimeException('Set API_IDEMPOTENCY_KEY to a new key matching the header schema, or reuse the key saved with this action');\n`;
       keySetup += '\n';
     }
@@ -546,14 +546,98 @@ interface ExampleParts {
   call: string;
   close: string;
 }
+/**
+ * Choose the credential shown by examples: the configured documentation shortcut when the
+ * operation permits its mode, then `token`, then other shortcuts by name, then the first mode.
+ */
 function exampleAuthentication(c: Contract, op: Operation) {
+  const preferred = c.config.documentation?.authShortcut;
+  const rank = (name: string) => (name === preferred ? 0 : name === 'token' ? 1 : 2);
   const shortcutEntry = Object.entries(c.authShortcuts ?? {})
-    .sort(([a], [b]) => (a === b ? 0 : a === 'token' ? -1 : b === 'token' ? 1 : a < b ? -1 : 1))
+    .sort(([a], [b]) => rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0))
     .find(([, value]) => op.authModes?.includes(value.mode));
   const shortcut = shortcutEntry?.[0];
   const mode = shortcutEntry?.[1].mode ?? op.authModes?.[0];
   return { mode, shortcut };
 }
+
+interface ExampleCredential {
+  /** Client option, or the scheme key inside a mode's credential map. */
+  key: string;
+  env: string;
+}
+/** How an example authenticates: one client option, or a named mode's credential map. */
+type ExampleCredentials = { required: boolean } & (
+  | { kind: 'option'; value: ExampleCredential }
+  | { kind: 'mode'; mode: string; values: ExampleCredential[] }
+  | { kind: 'none' }
+);
+/** Credential environment variables read by an operation example. */
+function exampleCredentials(c: Contract, op: Operation): ExampleCredentials {
+  const { mode, shortcut } = exampleAuthentication(c, op);
+  const authentication = mode ? c.authentication?.[mode] : undefined;
+  const required = op.authenticated;
+  if (shortcut)
+    return {
+      required,
+      kind: 'option',
+      value: {
+        key: shortcut,
+        env:
+          shortcut === 'token'
+            ? 'API_TOKEN'
+            : shortcut.replace(/([a-z])([A-Z])/g, '$1_$2').toUpperCase(),
+      },
+    };
+  if (mode && authentication)
+    return {
+      required,
+      kind: 'mode',
+      mode,
+      values: authentication.schemes.map((scheme) => ({
+        key: scheme.name,
+        env: ('API_' + mode + '_' + scheme.name).replace(/[^A-Za-z0-9_]/g, '_').toUpperCase(),
+      })),
+    };
+  return op.authenticated
+    ? { required, kind: 'option', value: { key: 'token', env: 'API_TOKEN' } }
+    : { required, kind: 'none' };
+}
+const credentialValues = (credentials: ExampleCredentials): ExampleCredential[] =>
+  credentials.kind === 'option'
+    ? [credentials.value]
+    : credentials.kind === 'mode'
+      ? credentials.values
+      : [];
+
+/** Whether an operation's success responses can carry a decoded body worth printing. */
+function hasResponseBody(op: Operation): boolean {
+  const responses = Object.entries(op.responses);
+  // A default response describes success only when no explicit success status is declared.
+  const explicit = responses.some(([status]) => successStatus(status));
+  return responses.some(
+    ([status, response]) =>
+      (successStatus(status) || (status === 'default' && !explicit)) &&
+      response.schema !== undefined &&
+      (response.bodyKind ?? 'json') !== 'empty',
+  );
+}
+
+/**
+ * Names a credential local must not take in Node or PHP examples: keywords, globals the
+ * examples call, and the examples' own variables.
+ */
+const reservedExampleNames = new Set(
+  (
+    'abstract and arguments array as await baseUrl break callable case catch class clone const ' +
+    'continue crypto debugger declare default delete die do echo else elseif empty enum eval exit ' +
+    'export extends false final finally fn for foreach function global goto if implements import ' +
+    'in include input instanceof insteadof interface isset let list match namespace new null or ' +
+    'package print private protected public readonly require return static super switch this ' +
+    'throw trait true try typeof unset use var void while with xor yield process console client ' +
+    'result error event item page idempotencyKey undefined'
+  ).split(' '),
+);
 
 function exampleParts(
   c: Contract,
@@ -571,12 +655,7 @@ function exampleParts(
   const client = options.client ?? 'client';
   const result = options.result ?? 'result';
   const input = exampleInput(op, c.definitions ?? {});
-  const { mode, shortcut } = exampleAuthentication(c, op);
-  const authentication = mode ? c.authentication?.[mode] : undefined;
-  const shortcutEnv =
-    shortcut === 'token'
-      ? 'API_TOKEN'
-      : shortcut?.replace(/([a-z])([A-Z])/g, '$1_$2').toUpperCase();
+  const credentials = exampleCredentials(c, op);
   const hasStream = Object.values(op.responses).some((response) => response.bodyKind === 'sse');
   const withResponse = op.response?.return === 'payload' && downloadExampleKind(op) === 'redirect';
   const method = op.method + (withResponse ? 'WithResponse' : '');
@@ -602,39 +681,97 @@ function exampleParts(
     ...(hasStream ? ['EventStream'] : []),
   ];
   const requestOptions = key.requestOption ?? '';
+  // Local names: the primary client uses plain names; additional README clients prefix theirs.
+  const local = (name: string) => {
+    const base = name.replace(/[^A-Za-z0-9_]/g, '');
+    const plain = /^[A-Za-z_]/.test(base) ? base[0]!.toLowerCase() + base.slice(1) : '_' + base;
+    const safe = reservedExampleNames.has(plain) ? plain + 'Credential' : plain;
+    return target === 'node' && client !== 'client' ? client + pascal(safe) : safe;
+  };
+  const baseUrl = target === 'node' && client !== 'client' ? client + 'BaseUrl' : 'baseUrl';
+  // Required credentials stop with a clear message; optional ones are sent only when set.
+  const credentialSetup = credentialValues(credentials)
+    .map(({ key, env }) =>
+      target === 'node'
+        ? `const ${local(key)} = process.env.${env};\n` +
+          (credentials.required
+            ? `if (!${local(key)}) throw new Error(${js(`Set ${env}: this call requires a credential`)});\n`
+            : '')
+        : credentials.required
+          ? `$${local(key)} = getenv(${php(env)});\nif ($${local(key)} === false || $${local(key)} === '') throw new \\RuntimeException(${php(`Set ${env}: this call requires a credential`)});\n`
+          : `$${local(key)} = getenv(${php(env)}) ?: null;\n`,
+    )
+    .join('');
+  const credentialValue = ({ key }: ExampleCredential) =>
+    target === 'node' ? local(key) : '$' + local(key);
+  const supplied = credentialValues(credentials)
+    .map((value) =>
+      target === 'node' ? credentialValue(value) : credentialValue(value) + ' !== null',
+    )
+    .join(' && ');
+  const option = (name: string, value: string) =>
+    target === 'node' ? (name === value ? name : `${name}: ${value}`) : `${name}: ${value}`;
+  const authOptions =
+    credentials.kind === 'mode'
+      ? target === 'node'
+        ? credentials.required
+          ? `authMode: ${js(credentials.mode)},\n  credentials: {\n    [${js(credentials.mode)}]: {\n${credentials.values.map((value) => `      [${js(value.key)}]: ${credentialValue(value)},`).join('\n')}\n    },\n  }`
+          : `...(${supplied}\n    ? {\n        authMode: ${js(credentials.mode)},\n        credentials: {\n          [${js(credentials.mode)}]: {\n${credentials.values.map((value) => `            [${js(value.key)}]: ${credentialValue(value)},`).join('\n')}\n          },\n        },\n      }\n    : {})`
+        : credentials.required
+          ? `authMode: ${php(credentials.mode)},\n  credentials: [\n    ${php(credentials.mode)} => [\n${credentials.values.map((value) => `      ${php(value.key)} => ${credentialValue(value)},`).join('\n')}\n    ],\n  ]`
+          : `authMode: ${supplied} ? ${php(credentials.mode)} : null,\n  credentials: ${supplied} ? [\n    ${php(credentials.mode)} => [\n${credentials.values.map((value) => `      ${php(value.key)} => ${credentialValue(value)},`).join('\n')}\n    ],\n  ] : []`
+      : credentials.kind === 'option'
+        ? target === 'node' && !credentials.required
+          ? `...(${supplied} ? { ${option(credentials.value.key, credentialValue(credentials.value))} } : {})`
+          : option(credentials.value.key, credentialValue(credentials.value))
+        : '';
+  const printed =
+    (downloadExampleResult(op, target, result) ||
+      exampleResult(op, c.definitions ?? {}, target, result)) +
+    (op.response?.return === 'payload' && !withResponse
+      ? ''
+      : target === 'node'
+        ? `console.log(${result}.meta.requestId);\n`
+        : `echo ($${result}->meta['requestId'] ?? '') . PHP_EOL;\n`);
+  // Print a payload with no recognizable ID fields; skip the variable for empty responses.
+  const unused = !printed && !hasStream;
+  const output =
+    printed ||
+    (unused && hasResponseBody(op)
+      ? target === 'node'
+        ? `console.log(${result});\n`
+        : `echo json_encode($${result}, JSON_THROW_ON_ERROR) . PHP_EOL;\n`
+      : '');
+  const assign =
+    unused && !output ? '' : target === 'node' ? `const ${result} = ` : `$${result} = `;
+  const nodeArgumentSource =
+    target === 'node'
+      ? publicArguments(op, input, 'node', syntax, true, Boolean(requestOptions)) +
+        (requestOptions
+          ? `${requestArguments(op, input).length ? ',\n' : ''}  { ${requestOptions} },\n`
+          : '\n')
+      : '';
+  // Calls without arguments stay on one line.
+  const nodeArguments = nodeArgumentSource.trim() ? '\n' + nodeArgumentSource : '';
   if (target === 'node') {
-    const authOptions = shortcut
-      ? `${shortcut}: process.env.${shortcutEnv} ?? ''`
-      : mode && authentication
-        ? `authMode: ${js(mode)},\n  credentials: {\n    [${js(mode)}]: {\n${authentication.schemes.map((scheme) => `      [${js(scheme.name)}]: process.env.${('API_' + mode + '_' + scheme.name).replace(/[^A-Za-z0-9_]/g, '_').toUpperCase()} ?? '',`).join('\n')}\n    },\n  }`
-        : op.authenticated
-          ? `token: process.env.API_TOKEN ?? ''`
-          : '';
     return {
       symbols,
-      setup: `const ${client}BaseUrl = process.env.API_BASE_URL${c.defaultBaseUrl !== undefined ? ` ?? ${js(c.defaultBaseUrl)}` : ''};\n${c.defaultBaseUrl === undefined ? `if (${client}BaseUrl === undefined) throw new Error("Set API_BASE_URL: this SDK has no default server");\n` : ''}const ${client} = new Client({\n  baseUrl: ${client}BaseUrl,\n${authOptions ? '  ' + authOptions + ',\n' : ''}});\n`,
+      setup: `const ${baseUrl} = process.env.API_BASE_URL${c.defaultBaseUrl !== undefined ? ` ?? ${js(c.defaultBaseUrl)}` : ''};\n${c.defaultBaseUrl === undefined ? `if (${baseUrl} === undefined) throw new Error("Set API_BASE_URL: this SDK has no default server");\n` : ''}${credentialSetup}const ${client} = new Client({\n  ${option('baseUrl', baseUrl)},\n${authOptions ? '  ' + authOptions + ',\n' : ''}});\n`,
       call:
         key.keySetup +
-        `const ${result} = await ${client}.${op.resource}.${method}(\n${publicArguments(op, input, 'node', syntax, true, Boolean(requestOptions))}${requestOptions ? `${requestArguments(op, input).length ? ',\n' : ''}  { ${requestOptions} },\n` : '\n'});\n${downloadExampleResult(op, 'node', result) || exampleResult(op, c.definitions ?? {}, 'node', result)}${op.response?.return === 'payload' && !withResponse ? '' : `console.log(${result}.meta.requestId);\n`}` +
+        `${assign}await ${client}.${op.resource}.${method}(${nodeArguments});\n${output}` +
         (hasStream
           ? `if (${result}${op.response?.return === 'payload' ? '' : '.data'} instanceof EventStream) {\n  for await (const event of ${result}${op.response?.return === 'payload' ? '' : '.data'}) { console.log(event.event, event.id, event.data); break; }\n}\n`
           : ''),
       close: hasStream ? `await ${client}.close();\n` : '',
     };
   }
-  const authOptions = shortcut
-    ? `${shortcut}: getenv('${shortcutEnv}') ?: ''`
-    : mode && authentication
-      ? `authMode: ${php(mode)},\n  credentials: [\n    ${php(mode)} => [\n${authentication.schemes.map((scheme) => `      ${php(scheme.name)} => getenv(${php(('API_' + mode + '_' + scheme.name).replace(/[^A-Za-z0-9_]/g, '_').toUpperCase())}) ?: '',`).join('\n')}\n    ],\n  ]`
-      : op.authenticated
-        ? "token: getenv('API_TOKEN') ?: ''"
-        : '';
   return {
     symbols,
-    setup: `$baseUrl = getenv('API_BASE_URL');\n${c.defaultBaseUrl !== undefined ? `if ($baseUrl === false) $baseUrl = ${php(c.defaultBaseUrl)};\n` : 'if ($baseUrl === false) throw new \\RuntimeException("Set API_BASE_URL: this SDK has no default server");\n'}$${client} = new Client(new ClientOptions(\n  baseUrl: $baseUrl,\n${authOptions ? '  ' + authOptions + ',\n' : ''}));\n`,
+    setup: `$baseUrl = getenv('API_BASE_URL');\n${c.defaultBaseUrl !== undefined ? `if ($baseUrl === false) $baseUrl = ${php(c.defaultBaseUrl)};\n` : "if ($baseUrl === false) throw new \\RuntimeException('Set API_BASE_URL: this SDK has no default server');\n"}${credentialSetup}$${client} = new Client(new ClientOptions(\n  baseUrl: $baseUrl,\n${authOptions ? '  ' + authOptions + ',\n' : ''}));\n`,
     call:
       key.keySetup +
-      `${positional(op) ? '' : `$input = ${phpExampleSource(input, 0, true, syntax)};\n`}$${result} = $${client}->${op.resource}->${method}(${positional(op) ? publicArguments(op, input, 'php', syntax, false, Boolean(requestOptions)) : '$input'}${requestOptions ? `${requestArguments(op, input).length ? ', ' : ''}new RequestOptions(${requestOptions})` : ''});\n${downloadExampleResult(op, 'php', result) || exampleResult(op, c.definitions ?? {}, 'php', result)}${op.response?.return === 'payload' && !withResponse ? '' : `echo ($${result}->meta['requestId'] ?? '') . PHP_EOL;\n`}` +
+      `${positional(op) ? '' : `$input = ${phpExampleSource(input, 0, true, syntax)};\n`}${assign}$${client}->${op.resource}->${method}(${positional(op) ? publicArguments(op, input, 'php', syntax, false, Boolean(requestOptions)) : '$input'}${requestOptions ? `${requestArguments(op, input).length ? ', ' : ''}new RequestOptions(${requestOptions})` : ''});\n${output}` +
       (hasStream
         ? `if ($${result}${op.response?.return === 'payload' ? '' : '->data'} instanceof ${qualify('EventStream')}) {\n  foreach ($${result}${op.response?.return === 'payload' ? '' : '->data'} as $event) { echo $event->event; break; }\n  $${result}${op.response?.return === 'payload' ? '' : '->data'}->close();\n}\n`
         : ''),
@@ -648,7 +785,7 @@ function exampleImports(
   standalone: boolean,
 ): string {
   return target === 'node'
-    ? `import { ${[...new Set(symbols)].join(', ')} } from ${php(c.config.npm.name)};\n`
+    ? `import { ${[...new Set(symbols)].join(', ')} } from ${js(c.config.npm.name)};\n`
     : `<?php\ndeclare(strict_types=1);\nrequire __DIR__ . ${php(standalone ? '/../vendor/autoload.php' : '/vendor/autoload.php')};\nuse ${c.config.composer.namespace}\\{${[...new Set(symbols)].join(', ')}};\n`;
 }
 
@@ -668,8 +805,8 @@ function downloadGuide(c: Contract, target: 'node' | 'php'): string {
   );
 }
 
-/** Keep the landing page useful without embedding hundreds of operation scripts. */
-function readmeExamples(c: Contract, target: 'node' | 'php'): string {
+/** Select the README quickstart and up to two recipes, preferring configured examples. */
+function readmeOperations(c: Contract): Operation[] {
   const candidates = [...c.operations].sort(
     (a, b) => Number(Boolean(b.example)) - Number(Boolean(a.example)),
   );
@@ -689,81 +826,173 @@ function readmeExamples(c: Contract, target: 'node' | 'php'): string {
     if (selected.length >= 3) break;
     add(op);
   }
+  return selected;
+}
+
+/** Keep the landing page useful without embedding hundreds of operation scripts. */
+function readmeExamples(
+  c: Contract,
+  target: 'node' | 'php',
+  selected: readonly Operation[],
+): { quickstart: string; recipes: string } {
   const extension = target === 'node' ? 'mjs' : 'php';
+  const fence = target === 'node' ? 'typescript' : 'php';
   const first = selected[0];
   const firstMode = first ? exampleAuthentication(c, first).mode : undefined;
+  const blocks = selected.map((op, index) => {
+    const path = `examples/${op.resource}-${op.method}.${extension}`;
+    const modeChanged =
+      exampleAuthentication(c, op).mode !== firstMode || op.authenticated !== first?.authenticated;
+    const client = index > 0 && modeChanged ? op.resource + pascal(op.method) + 'Client' : 'client';
+    const result =
+      target === 'node' && index > 0 ? op.resource + pascal(op.method) + 'Result' : 'result';
+    const key = index === 0 ? 'idempotencyKey' : op.resource + pascal(op.method) + 'IdempotencyKey';
+    const { fields, omitFields, requestOption, keySetup } = exampleKey(
+      op,
+      target,
+      key,
+      false,
+      c.definitions ?? {},
+    );
+    const parts = exampleParts(c, op, target, {
+      client,
+      result,
+      fields,
+      omitFields,
+      requestOption,
+      qualifiedPhp: index > 0,
+    });
+    let call = keySetup + parts.call;
+    if (index === 0) {
+      const symbols =
+        target === 'node'
+          ? selected.flatMap((operation) => exampleParts(c, operation, target).symbols)
+          : parts.symbols;
+      const setup = exampleImports(c, target, [...symbols, 'SdkError'], false) + parts.setup;
+      const catchBody =
+        target === 'node'
+          ? `} catch (error) {\n  if (!(error instanceof SdkError)) throw error;\n  console.error(error.message, error.status, error.kind, error.code, error.meta?.requestId);\n  if (error.outcome === "unknown") {\n    // Reconcile with the API before resubmitting this action.\n    console.error("The request may have succeeded; check its current state.");\n  }\n  throw error;\n}\n`
+          : `} catch (SdkError $error) {\n  error_log($error->getMessage() . ' status=' . ($error->status ?? 'none') . ' code=' . ($error->errorCode ?? '') . ' request=' . ($error->meta['requestId'] ?? 'unknown'));\n  if ($error->outcome === 'unknown') {\n    // Reconcile with the API before resubmitting this action.\n    error_log('The request may have succeeded; check its current state.');\n  }\n  throw $error;\n}\n`;
+      call =
+        setup +
+        '\n' +
+        keySetup +
+        'try {\n' +
+        parts.call
+          .trimEnd()
+          .split('\n')
+          .map((line) => '  ' + line)
+          .join('\n') +
+        '\n' +
+        catchBody;
+    } else if (modeChanged) {
+      call = parts.setup + '\n' + call;
+    }
+    const code = `\`\`\`${fence}\n${call}\`\`\`\n\n[Run the standalone example](${path})\n`;
+    return index === 0
+      ? code
+      : `### ${op.resource}.${op.method}\n\n${op.description ? op.description + '\n\n' : ''}${code}`;
+  });
+  return {
+    quickstart: blocks[0] ?? '',
+    recipes: blocks.length > 1 ? '## More examples\n\n' + blocks.slice(1).join('\n') : '',
+  };
+}
+
+const markdownList = (items: readonly string[]) =>
+  items.length < 2
+    ? items.join('')
+    : items.slice(0, -1).join(', ') + (items.length > 2 ? ',' : '') + ' and ' + items.at(-1);
+
+/** Render the package landing page: install, quickstart, then declared capabilities. */
+function packageReadme(
+  c: Contract,
+  target: 'node' | 'php',
+  returns: { payload: number; total: number },
+): string {
+  const node = target === 'node';
+  const selected = readmeOperations(c);
+  const { quickstart, recipes } = readmeExamples(c, target, selected);
+  const api = /\bAPI$/i.test(c.title) ? c.title : c.title + ' API';
+  const description =
+    c.config.documentation?.overview ??
+    `${node ? 'TypeScript and JavaScript' : 'PHP'} client for the ${api}.`;
+  const install = node
+    ? `\`\`\`sh\nnpm install ${c.config.npm.name}\n\`\`\`\n\nRequires Node.js 22+, or Node.js 22.12+ to \`require()\` from CommonJS. TypeScript projects need TypeScript 5.9+ with NodeNext module resolution and \`npm install --save-dev @types/node@22\` (22.16.0+).`
+    : `\`\`\`sh\ncomposer require ${c.config.composer.name}\n\`\`\`\n\nRequires PHP 8.2+ with ext-json and ext-curl. PHPDoc types target PHPStan 2.2+.`;
+  const environment = [
+    ...new Set(
+      selected.flatMap((op) => credentialValues(exampleCredentials(c, op)).map((v) => v.env)),
+    ),
+  ].map((env) => '`' + env + '`');
+  const authLink = c.authentication ? ' ([authentication](RUNTIME.md#authentication))' : '';
+  const setup =
+    c.defaultBaseUrl === undefined
+      ? `Set ${markdownList(['`API_BASE_URL`', ...environment])}${authLink}, then replace the sample values with your own.`
+      : `${environment.length ? `Set ${markdownList(environment)}${authLink}, then replace` : 'Replace'} the sample values with your own. Set \`API_BASE_URL\` to use another environment.`;
+  const resultData = node ? 'result.data' : '$result->data';
+  const resultMeta = node ? 'result.meta' : '$result->meta';
+  const returnMode =
+    returns.payload === returns.total
+      ? ''
+      : returns.payload === 0
+        ? `Calls return a Result: \`${resultData}\` is the response body and \`${resultMeta}\` is HTTP metadata.`
+        : `Methods return the decoded body, except result-mode operations, which return \`${resultData}\` and \`${resultMeta}\`; the [API reference](REFERENCE.md) lists each operation's mode.`;
+  const streaming = c.operations.some((op) =>
+    Object.values(op.responses).some((response) => response.bodyKind === 'sse'),
+  );
+  const close = node
+    ? streaming
+      ? 'Call `await client.close()` when finished to release open streams.'
+      : ''
+    : 'Call `$client->close()` when finished to release the cURL handle.';
+  const declaredRetries = c.operations.filter((op) => op.retry !== undefined).length;
+  const defaultRetries =
+    'GET, HEAD and OPTIONS calls make up to three attempts and other methods send once';
+  const retries =
+    declaredRetries === 0
+      ? `Without a declared retry policy, ${defaultRetries}.`
+      : declaredRetries === c.operations.length
+        ? 'Each operation retries according to its declared policy; the [API reference](REFERENCE.md) lists its attempt limit.'
+        : `Operations with a declared retry policy follow it, as listed in the [API reference](REFERENCE.md); otherwise ${defaultRetries}.`;
+  const paginated = c.operations.find((op) => op.pagination);
+  const pagination = paginated
+    ? `## Pagination\n\nList operations such as \`${paginated.resource}.${paginated.method}\` also have \`${paginated.method}Items\` and \`${paginated.method}Pages\` methods that fetch pages lazily. See [pagination](RUNTIME.md#pagination-and-polling).\n\n`
+    : '';
+  const webhooks = c.config.webhook
+    ? `## Webhooks\n\nVerify each delivery with \`${node ? 'client.verifyWebhook(rawBody, headers, secrets)' : '$client->verifyWebhook($rawBody, $headers, $secrets)'}\` on the original request bytes, never re-encoded JSON. See [verifyWebhook examples and errors](RUNTIME.md#webhooks-and-recovery).\n\n`
+    : '';
+  const guides = Object.keys(c.config.documentation?.guides ?? {}).map(
+    (slug) => `- [${slug}](guides/${slug}.md)\n`,
+  );
   return (
-    'Replace sample IDs with values from your account. Each new action gets a unique idempotency key. Save it with the action if retries need to survive a process restart.\n\n' +
-    selected
-      .map((op, index) => {
-        const path = `examples/${op.resource}-${op.method}.${extension}`;
-        const modeChanged =
-          exampleAuthentication(c, op).mode !== firstMode ||
-          op.authenticated !== first?.authenticated;
-        const client =
-          index > 0 && modeChanged ? op.resource + pascal(op.method) + 'Client' : 'client';
-        const result =
-          target === 'node' && index > 0 ? op.resource + pascal(op.method) + 'Result' : 'result';
-        const key =
-          index === 0 ? 'idempotencyKey' : op.resource + pascal(op.method) + 'IdempotencyKey';
-        const { fields, omitFields, requestOption, keySetup } = exampleKey(
-          op,
-          target,
-          key,
-          false,
-          c.definitions ?? {},
-        );
-        const parts = exampleParts(c, op, target, {
-          client,
-          result,
-          fields,
-          omitFields,
-          requestOption,
-          qualifiedPhp: index > 0,
-        });
-        let call = keySetup + parts.call;
-        if (index === 0) {
-          const symbols =
-            target === 'node'
-              ? selected.flatMap((operation) => exampleParts(c, operation, target).symbols)
-              : parts.symbols;
-          const setup = exampleImports(c, target, ['SdkError', ...symbols], false) + parts.setup;
-          const catchBody =
-            target === 'node'
-              ? `} catch (error) {\n  if (!(error instanceof SdkError)) throw error;\n  console.error(error.message, error.status, error.kind, error.code, error.meta?.requestId);\n  if (error.outcome === 'unknown') {\n    // Reconcile with the API before resubmitting this action.\n    console.error('The request may have succeeded; check its current state.');\n  }\n  throw error;\n}\n`
-              : `} catch (SdkError $error) {\n  error_log($error->getMessage() . ' status=' . ($error->status ?? 'none') . ' code=' . ($error->errorCode ?? '') . ' request=' . ($error->meta['requestId'] ?? 'unknown'));\n  if ($error->outcome === 'unknown') {\n    // Reconcile with the API before resubmitting this action.\n    error_log('The request may have succeeded; check its current state.');\n  }\n  throw $error;\n}\n`;
-          call =
-            setup +
-            '\n' +
-            keySetup +
-            'try {\n' +
-            parts.call
-              .trimEnd()
-              .split('\n')
-              .map((line) => '  ' + line)
-              .join('\n') +
-            '\n' +
-            catchBody;
-        } else if (modeChanged) {
-          call = parts.setup + '\n' + call;
-        }
-        return `${index === 1 ? '## More examples\n\nReuse the client above. Each recipe represents a separate business action.\n\n' : ''}### ${op.resource}.${op.method}\n\n${op.description}\n\n\`\`\`${target === 'node' ? 'typescript' : 'php'}\n${call}\`\`\`\n\n[Run the standalone example](${path})\n`;
-      })
-      .join('\n') +
-    `\n${target === 'php' || c.operations.some((op) => Object.values(op.responses).some((r) => r.bodyKind === 'sse')) ? `Close the client when finished with ${target === 'node' ? '\`await client.close()\`' : '\`$client->close()\`'}. ` : ''}For retry and error details, see the [runtime guide](RUNTIME.md).\n\n`
+    `# ${c.title} SDK\n\n${description}\n\n## Install\n\n${install}\n\n## Quickstart\n\n${setup}\n\n${quickstart}\n` +
+    (returnMode || close ? [returnMode, close].filter(Boolean).join(' ') + '\n\n' : '') +
+    recipes +
+    (recipes ? '\n' : '') +
+    `## Errors and retries\n\nFailed calls throw \`SdkError\` with \`${node ? 'message' : 'getMessage()'}\`, \`kind\`, \`status\`, \`${node ? 'code' : 'errorCode'}\` and the request ID in \`meta\`. An \`outcome\` of \`unknown\` means the request may have succeeded, so check the current state before resubmitting. ${retries} See [errors](RUNTIME.md#responses-and-errors) and [retries](RUNTIME.md#retries-and-idempotency).\n\n` +
+    pagination +
+    webhooks +
+    `## Documentation\n\n- [API reference](REFERENCE.md): every operation, with examples\n- [Models](MODELS.md): fields and descriptions\n- [Runtime guide](RUNTIME.md): request options, errors, retries${c.config.webhook ? ', pagination and webhooks' : ' and pagination'}\n${guides.join('')}- \`examples/\`: a runnable script per operation. ${node ? 'Run `node examples/RESOURCE-METHOD.mjs`; TypeScript versions are alongside.' : 'Run `composer install`, then `php examples/RESOURCE-METHOD.php`.'}\n\nPackage ${c.config.version}, generated for API ${c.apiVersion}.\n`
   );
 }
 
-function convenienceReference(c: Contract, op: Operation, target: 'node' | 'php'): string {
-  const parts = exampleParts(c, op, target);
+/** Render one call on an existing `client` with request options, plus any key setup it needs. */
+function operationCall(c: Contract, op: Operation, target: 'node' | 'php') {
   const input = exampleInput(op, c.definitions ?? {});
   const key = exampleKey(op, target, 'idempotencyKey', false, c.definitions ?? {});
   const source = publicArguments(op, input, target, key, false, true);
-  const setup = parts.setup + key.keySetup;
   const call = (method: string, options: string) =>
     target === 'node'
       ? `client.${op.resource}.${method}(${source}${source ? ', ' : ''}{ ${[key.requestOption, options].filter(Boolean).join(', ')} })`
       : `$client->${op.resource}->${method}(${source}${source ? ', ' : ''}new RequestOptions(${[key.requestOption, options].filter(Boolean).join(', ')}))`;
+  return { keySetup: key.keySetup, call };
+}
+
+function convenienceReference(c: Contract, op: Operation, target: 'node' | 'php'): string {
+  const parts = exampleParts(c, op, target);
+  const { keySetup, call } = operationCall(c, op, target);
+  const setup = parts.setup + keySetup;
   const examples: string[] = [];
   const payload = op.response?.return === 'payload';
   const access = (variable: string, path: string[]) =>
@@ -827,7 +1056,7 @@ function recoveryReference(c: Contract, target: 'node' | 'php'): string {
   });
   const setup =
     target === 'node'
-      ? `const idempotencyKey = process.env.API_IDEMPOTENCY_KEY;\nif (!idempotencyKey) throw new Error('Set API_IDEMPOTENCY_KEY to the key saved with this action');\n`
+      ? `const idempotencyKey = process.env.API_IDEMPOTENCY_KEY;\nif (!idempotencyKey) throw new Error("Set API_IDEMPOTENCY_KEY to the key saved with this action");\n`
       : `$idempotencyKey = getenv('API_IDEMPOTENCY_KEY');\nif (!$idempotencyKey) throw new \\RuntimeException('Set API_IDEMPOTENCY_KEY to the key saved with this action');\n`;
   return `\n## Resume an action with its saved key\n\nUse this only after reconciling the previous outcome and confirming the provider permits resubmission. Read the key and the original input from your saved action; keep both unchanged. The environment variable below stands in for your application's durable action record. Do not generate a new key when retrying that action. This example makes one request attempt.\n\n\`\`\`${target === 'node' ? 'typescript' : 'php'}\n${exampleImports(c, target, parts.symbols, false)}${parts.setup}${setup}${parts.call}${parts.close}\`\`\`\n`;
 }
@@ -1475,29 +1704,24 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     }
   }
   for (const target of targets) {
-    const guides = Object.entries(c.config.documentation?.guides ?? {});
-    const guidance =
-      (c.config.documentation?.overview ? c.config.documentation.overview + '\n\n' : '') +
-      '[API reference and operation examples](REFERENCE.md) · [Models and field descriptions](MODELS.md)' +
-      guides.map(([slug]) => ` · [${slug}](guides/${slug}.md)`).join('') +
-      '\n\n';
-    const resultData = target === 'node' ? 'result.data' : '$result->data';
-    const resultMeta = target === 'node' ? 'result.meta' : '$result->meta';
-    const nestedData = target === 'node' ? 'result.data.data' : '$result->data->data';
-    const responseGuidance = hasPayloadReturns
-      ? `Payload-mode calls return the decoded payload directly. Use the corresponding WithResponse method for the complete body and HTTP metadata; see the [WithResponse example](RUNTIME.md#response-return-modes). Each invocation makes its own request; choose one form per action. Operations configured for result mode retain \`${resultData}\` and \`${resultMeta}\`. The API reference describes the return mode for each operation.`
-      : `Each call returns a Result: \`${resultData}\` is the complete API response body and \`${resultMeta}\` is HTTP metadata. If the provider also wraps its payload in \`data\`, access it through \`${nestedData}\`. The examples show each endpoint's exact response path.`;
     files.set(
       `${target}/README.md`,
-      `# ${c.title} SDK (${target})\n\nPackage ${c.config.version}; generated for API ${c.apiVersion}.\n\n${guidance}## Installation\n\n${target === 'node' ? `Requires Node.js 22+ for ESM imports, or Node.js 22.12+ for \`require()\` from CommonJS. ESM JavaScript and declarations ship together. TypeScript consumers require TypeScript 5.9+ with NodeNext module resolution and a compatible \`@types/node\` version (22.16.0+), installed as a development dependency, for example \`npm install --save-dev @types/node@22\`. Node types are an optional peer dependency; JavaScript consumers do not need TypeScript or Node types.\n\nInstall: \`npm install ${c.config.npm.name}\`` : `Requires PHP 8.2+, ext-json and ext-curl; framework independent. PHPDoc types target PHPStan 2.2+ (development tooling only).\n\nInstall: \`composer require ${c.config.composer.name}\``}\n\n## Quickstart\n\n${c.defaultBaseUrl !== undefined ? `The default API base URL is \`${c.defaultBaseUrl}\`, the first server declared by the API. Set \`API_BASE_URL\` to override it for another environment.` : 'Set `API_BASE_URL` to your API environment; this SDK has no default server.'} Replace the sample IDs below with values from your account. ${c.authentication ? 'Set the credential environment variables shown below; the [authentication guide](RUNTIME.md#authentication) lists every mode and required credential key.' : c.auth ? 'Set `API_TOKEN` to your API credential.' : ''} The example scripts read these variables explicitly.\n\n${target === 'node' ? 'Copy an example into an ESM application, or run a packaged script with `node examples/RESOURCE-METHOD.mjs`. TypeScript examples are included alongside the JavaScript files.' : 'Copy an example into your application with its `vendor/autoload.php` path, or run `composer install` in the generated package, then `php examples/RESOURCE-METHOD.php`.'} Examples use the client and operation defaults.\n\n${responseGuidance}\n\n${readmeExamples(c, target)}## More documentation\n\n- [API reference and all operation examples](REFERENCE.md)\n- [Runtime guide](RUNTIME.md): request options, errors, retries, pagination and webhooks.\n${c.config.webhook ? '- [verifyWebhook examples and errors](RUNTIME.md#webhooks-and-recovery)\n' : ''}`,
+      packageReadme(c, target, {
+        payload: Object.keys(payloadReturns).length,
+        total: c.operations.length,
+      }),
     );
+    files.set(`${target}/RUNTIME.md`, runtimeGuide(c, target));
     files.set(
       `${target}/RUNTIME.md`,
-      `# ${c.title} runtime guide (${target})\n\nPackage ${c.config.version}; API ${c.apiVersion}.\n\n[Back to the quickstart](README.md) · [API reference](REFERENCE.md)\n\n## Client and request options\n\n${c.defaultBaseUrl !== undefined ? `The default baseUrl is \`${c.defaultBaseUrl}\`; pass baseUrl to select another environment.` : 'Pass baseUrl: this SDK has no default server.'} Legacy authenticated clients accept token. Composed clients accept configured shortcuts or authMode and credentials keyed by mode and scheme; requests can select a mode with request-local credentials. A combined scheme set must be complete. The SDK does not discover credentials or read environment variables; the operation example scripts read API_BASE_URL and their named credential variables explicitly. Pass per-request options as the last method argument: a plain object in Node, or RequestOptions in PHP. Defaults are timeoutMs: 10000 per attempt and deadlineMs: 30000 for the overall duration (not an absolute timestamp). Request values override client defaults. maxAttempts is a positive safe integer budget, capped at the operation limit. Request budgets override client budgets. Without an explicit policy, GET/HEAD/OPTIONS allow three total attempts; other methods allow one. Mutations without an optional key send once. Set maxAttempts: 1 to opt out of retries. Request headers carry tenant context without shared mutable state.\n\n## Authentication\n\n${authenticationGuide(c)}## Responses and errors\n\nMethods return the decoded body directly by default. A configured payloadPath explicitly selects a nested payload. WithResponse companions expose the full body, meta and raw response. Operations configured with return: result instead return Result, whose data is the complete decoded HTTP response body and meta is HTTP metadata. A provider may also wrap its payload in a data field, making result.data.data the provider payload. For example, create may wrap a payment_intent while get returns that entity directly. The operation examples show the exact access path. The SDK preserves these shapes; do not assume all operations share an envelope.\n\nResults expose data, meta and explicit raw response access. JSON raw values are text; PDF data/raw are Uint8Array in Node and binary-safe strings in PHP. SSE data is a closeable iterable carrying event names, IDs, decoded data and rawData. Node metadata uses properties; PHP metadata uses array keys. SdkError exposes the server message (message in Node, getMessage() in PHP), status, kind, outcome, retryAllowed and optional metadata; provider codes use code in Node and errorCode in PHP. The configured errors.messagePath selects the message (default message); missing, blank or non-string values fall back to API returned HTTP followed by the status code. Error paths traverse JSON objects and array indices; scalar values have no child fields. Server messages and provider codes require original JSON strings; JSON numeric tokens never match string retry codes. Parsed details retain their usual exact numeric representation. HTTP 404 uses kind not_found; HTTP 500–599 uses server. Status is undefined in Node or null in PHP when no response is available. Provider-specific details remain unknown in TypeScript. outcome is not_sent, response or unknown. Reconcile an unknown mutation outcome with the provider and the original persisted idempotency key before resubmitting.\n\n${responseRecoveryGuide(target)}\n\n${downloadGuide(c, target)}## Input and response values\n\nAPI responses and verified webhook payloads use the same numeric codecs. Their schemas determine representation independently: int64/uint64 fields decode to exact strings; plain integers decode to native safe integers and reject larger values. Plain number, float and double fields use finite native numbers (PHP int/float inputs and float outputs), with ordinary floating-point precision. Exact decimal fields require format: decimal; int64/uint64 also retain exact strings. Date-time inputs accept strings or Date in Node and DateTimeInterface in PHP. Native dates serialize to UTC ISO 8601 with milliseconds without mutation; responses remain strings. Invalid Node dates are rejected.\n\nShaped TypeScript objects have no implicit index signature: misspelled input literals and response fields are errors. Explicitly open objects and dictionaries remain open; variables can still carry extra keys under structural typing. Runtime request rules are unchanged and unknown response fields are preserved, requiring explicit narrowing or a dictionary assertion to inspect them. Unknown object variants require a known-variant guard. Simple nullable wrappers preserve the known branch or null: TypeScript permits optional field access and PHP getters hydrate the existing named entity. Unknown fields and enum members are retained; malformed known values fail response decoding.\n\nOptional properties distinguish omission from null. PHP methods accept associative arrays or presence-aware typed input objects constructed from arrays: omit a key to omit it; include a key with null to clear only where permitted. PHP models expose presence through has()/get() and generated hasField() methods. Use valueOrDefault("field", fallback) for optional values; explicit null stays null. Response getters return generated entities for declared nested objects, lists of entities, and typed PHP arrays for dictionaries. Generated getters, get(), and property access return the same public values. Getters throw with the field name when a field is omitted. toArray() and jsonSerialize() retain raw normalized objects and lists, including empty JSON objects. In object/array alternatives, PHP lists (including []) represent JSON arrays; use (object) [] for an empty JSON object.\n\nExact numeric enum inputs use strings for decimal/int64/uint64 schemas; membership compares exact values, so equivalent decimal/exponent spellings are accepted. Numeric anyOf branches merge equivalent values exactly and preserve the request token; oneOf still requires exactly one matching branch. Numeric conversions supported only by branches that stop matching fail validation before dispatch. Mutually dependent numeric alternatives use joint matching, limited to 256 combinations per value path; exceeding this limit fails validation.\n\nLarge integers (int64) and decimals use exact strings, including numeric JSON wire values. Ambiguous numeric inputs automatically use new ExactNumber("1.2500") and plain strings retain their JSON string meaning. Integer responses accept integral decimal/exponent notation without rounding. Sparse Node input arrays fail before dispatch. Timestamp responses remain strings. Unknown response fields, enum members, and tagged variants are retained.\n\nPHP response wrapper class names include status codes and, for tagged alternatives, branch positions. Nested entities reuse configured component names; inline entities use their owning model and property path. Getters normalize wire names: request_id becomes getRequestId() and hasRequestId(). Webhook class names use event names, for example WebhookEventPaymentIntentSucceeded. This replaces underscore getters and numbered webhook classes without aliases; update class checks and dictionary access when upgrading. Adding a status can introduce a new return class even with an identical JSON shape; consult migration notes before upgrading class-based dispatch.\n\nPortable digit/word pattern escapes retain their ASCII ECMAScript meaning in both targets, including inside character classes. Full request encoding checks run locally; server business effects require provider tests.\n\n## Retries and idempotency\n\nRetries count total attempts, include jitter and Retry-After, and never exceed the effective policy. Without a declared retry policy, GET/HEAD/OPTIONS retry transport failures and HTTP 408, 429, 500, 502, 503 and 504, with three total attempts and a 100 ms exponential jitter base. Explicit policies replace these defaults. Mutation retries require both declared retry and idempotency support plus a valid key; without an optional key the call sends once. Required keys remain required. idempotencyKey is supported only on operations declaring that capability; TypeScript method options enforce this, and PHP validates it at runtime. Persist an idempotency key across process restarts and submissions within the server's documented retention/scope. Automatic keys cover one SDK call only and can satisfy required idempotency headers; generated keys must pass the declared header validation. Explicit keys from operation inputs, request headers or idempotencyKey are preserved; conflicting values fail before dispatch. A timeout after dispatch can leave the remote outcome unknown; inspect SdkError.outcome. Disable nested transport/application retries to avoid multiplied attempts. 409/412 are distinct conflicts and never automatically overwritten.\n\n## Timeouts, streaming and cancellation\n\nTimeout is per attempt, including buffered body consumption. For SSE, timeout/deadline bound connection setup; streamIdleTimeoutMs controls idle reads and streamLifetimeMs optionally bounds stream lifetime. Close the returned stream (Result.data in result mode) or the client to release a stream; breaking iteration also closes it. Unknown event names retain raw strings. Reconnect and persist resume cursors explicitly; no yielded event is retried automatically.\n\nDeadline covers attempts and retry waits for each request. Each pagination page gets a fresh deadline, including decoding; time spent processing yielded values does not consume it. Pagination has no overall iterator deadline; use cancellation or maxPages/maxItems to bound iteration. Polling shares an overall deadline. Cancellation stops local work, not the remote operation. Node uses AbortSignal. PHP uses a Cancellation token checked during cURL progress and between waits; synchronous calls need an external signal handler to cancel while blocked.\n\n### Pagination and polling\n\nPagination is lazy, supports maxPages/maxItems, and does not guarantee a stable snapshot or durable continuation. Generation rejects incompatible continuation/query representations, including an int64/uint64 continuation with an ordinary integer query parameter. Configured money helpers reject whitespace, including trailing newlines, and excess precision when converting exact major-unit strings to minor units.\n\n## Destinations and API versions\n\nExplicit allowedOrigins govern all destinations, including pagination. HTTP/HTTPS scheme and host capitalization are ignored, and default ports are normalized; other ports remain distinct origins. Supply explicit allowedOrigins as canonical origin strings with default ports omitted. HTTPS is required, including on anonymous APIs, unless allowInsecureHttp is set for deliberate local tests. HTTP rejection names that option; a rejected origin names allowedOrigins. Declared 302/307 responses return Location metadata without following redirects; undeclared redirects are rejected. Authentication is attached only after destination validation. API version headers are pinned when configured; changing them does not update generated types. Credential headers and configured API-version headers are omitted from method inputs; credentials and the version pin supply their values. Declared idempotency and conditional headers remain optional input fields as well as request options. errors.requestIdHeader selects response metadata and does not supply an outgoing request ID. Required conditional headers may be supplied through ifMatch or request headers without duplicating them in the input. Effective managed header values are validated before dispatch.\n\n## Client lifecycle and transports\n\nClients perform no network I/O at import/construction. Node clients reuse the runtime's fetch connection pool; injected transports remain caller-owned and must honor AbortSignal and disable redirects/retries. PHP owns a reusable cURL handle, released by close()/destruction; a client supports sequential calls within one PHP execution context. Do not concurrently share a PHP client across threads/fibers. Node requests keep headers/context local and support concurrent calls. No SDK telemetry is sent. Requests use the media type selected by the provider profile. Schema validation counts encoded object properties, including explicit nulls, after optional-field omission. Requests identify the selected package name/version and runtime through an overridable User-Agent header.\n\n## Diagnostics and sensitive data\n\nDiagnostics run once per attempted HTTP request, including transport failures, with operation, request ID, status, timing, attempt count and error kind only; hook failures are ignored. Bodies and credentials are excluded. Error inspection includes the message, status, provider code, redacted details and stack frames; PHP debug traces omit arguments. Message extraction, provider codes and details honor schema and redactFields redaction. Raw response text and headers require explicit access. Binary/stream result inspection omits raw headers and URLs; event inspection omits payloads.\n\nNode Model.toJSON() returns a defensive copy of the public JSON representation, with exact numbers represented as strings. Rebuilding from that copy treats these as JSON strings in number/string alternatives. To edit a Node input, retain the original input values, including ExactNumber instances, and construct a new model from the updated input. If editing a toJSON() copy, explicitly restore ExactNumber at fields intended to be JSON numbers in ambiguous alternatives. PHP model accessors also return defensive copies; use toInputArray()/toInputValue() to edit and rebuild inputs while preserving exact numeric kinds. Model debug printing redacts declared sensitive fields and additional field names supplied in ClientOptions.redactFields; printing arbitrary raw values is application responsibility. Injected transports are privileged and see credentials/bodies.\n\n## Schema helpers\n\n${target === 'node' ? 'The package exports serialize(value, schema), new Model(value, schema), and redact(value, schema) for application-supplied schemas.' : 'The base Model constructor, Codec::normalize and Codec::redact accept application-supplied schemas. Codec::encode writes normalized values as JSON.'} These helpers use the package's local value execution rules and require no generator installation or schema registry service. Generated clients defer descriptor loading until first use and reuse validated descriptors across clients. Node resource subpaths (resources/RESOURCE) export scoped clients with the same resource methods. PHP uses class-based Composer autoloading and individual class files; including vendor/autoload.php does not eagerly include SDK implementation files. Generated methods and factories use the codecs included in the package. For a null-only schema, use {"type":"null"}. The legacy form {"type":["null"]} also permits non-null values in Node; PHP rejects them.\n\n## Package upgrades\n\nReview provider release notes before upgrading. Compatibility checks account for public declarations, required response values and PHP class identities. Complex schema changes can still require manual review.\n\n## Webhooks and recovery\n\n${webhookGuide(c, target)}\n\n## Custom helpers\n\nCustom helpers belong in custom/; they survive regeneration. Multi-call helpers are not atomic and must expose partial completion. See [reference](REFERENCE.md).\n`,
-    );
-    files.set(
-      `${target}/RUNTIME.md`,
-      files.get(`${target}/RUNTIME.md`)! + recoveryReference(c, target),
+      files
+        .get(`${target}/RUNTIME.md`)!
+        .replace(
+          '## Pagination and polling\n',
+          () =>
+            recoveryReference(c, target).replace(/^\n/, '').replace(/\n$/, '\n\n') +
+            '## Pagination and polling\n',
+        ),
     );
     files.set(
       `${target}/MODELS.md`,
@@ -1513,7 +1737,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
           .sort((a, b) => a.resource.localeCompare(b.resource) || a.method.localeCompare(b.method))
           .map(
             (op, index, operations) =>
-              `${index === 0 || operations[index - 1]!.resource !== op.resource ? `## Resource: ${op.resource}\n\n` : ''}### ${op.resource}.${op.method}\n\n${op.description}\n\n\`${op.verb} ${op.path}\`\n\n${
+              `${index === 0 || operations[index - 1]!.resource !== op.resource ? `## Resource: ${op.resource}\n\n` : ''}### ${op.resource}.${op.method}\n\n${op.description ? op.description + '\n\n' : ''}\`${op.verb} ${op.path}\`\n\n${
                 positional(op)
                   ? `Call: \`${op.method}(${target === 'php' ? callPlan(op, targetPlan, 'RequestOptions').phpSignature : callPlan(op, targetPlan, 'RequestOptions').nodeSignature})\`\n\nPath arguments: ${
                       pathParameters(op)
@@ -1548,17 +1772,12 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         (target === 'node'
           ? `const response = await client.${op.resource}.${op.method}WithResponse(${args});\nconsole.log(response.body, response.meta.requestId);`
           : `$response = $client->${op.resource}->${op.method}WithResponse(${args});\necho $response->meta['requestId'] ?? '';\n// $response->body is the complete decoded body.`);
-      const guide = `## Response return modes\n\nPayload-mode methods return the decoded body, or their explicitly configured payload path, directly. Their WithResponse companions return SdkResponse with body, meta and raw, without unwrapping. Each invocation makes its own request; choose one form per action. Result-mode operations keep their existing data/meta/raw envelope. Pages and Wait follow the base method return mode: payload values in payload mode, full Results in result mode. Payload-mode PagesWithResponse and WaitWithResponse expose complete bodies, metadata and raw access. Items helpers yield individual items; pagination and polling paths still address the original body.\n\n\`\`\`${target === 'node' ? 'typescript' : 'php'}\n${call}\n\`\`\`\n\n`;
+      const guide = `### Response return modes\n\nPayload-mode methods return the decoded body, or their explicitly configured payload path, directly. Their WithResponse companions return SdkResponse with body, meta and raw, without unwrapping. Each invocation makes its own request; choose one form per action. Result-mode operations keep their existing data/meta/raw envelope. Pages and Wait follow the base method return mode: payload values in payload mode, full Results in result mode. Payload-mode PagesWithResponse and WaitWithResponse expose complete bodies, metadata and raw access. Items helpers yield individual items; pagination and polling paths still address the original body.\n\n\`\`\`${target === 'node' ? 'typescript' : 'php'}\n${call}\n\`\`\`\n\n`;
       files.set(
         `${target}/RUNTIME.md`,
         files
           .get(`${target}/RUNTIME.md`)!
-          .replace(
-            /The SDK envelope is Result[\s\S]*?The SDK preserves these shapes; do not assume all operations share an envelope\./,
-            'Payload-mode methods return the decoded payload directly. Their WithResponse methods expose the full body, meta and raw. Result-mode operations retain the data/meta/raw envelope. See Response return modes below.',
-          ) +
-          '\n' +
-          guide,
+          .replace('### Errors\n\n', () => guide + '### Errors\n\n'),
       );
       files.set(
         `${target}/REFERENCE.md`,
@@ -2639,7 +2858,7 @@ export async function verifyWebhookRequest(client, request, secrets) {
   return client.verifyWebhook(rawBody, request.headers, secrets);
 }
 \`\`\`\n\n### Express\n\nRegister this route before app.use(express.json()). req.headers is accepted directly. Supply client and webhookSecret from your application configuration:\n\n\`\`\`js
-app.post('/webhooks', express.raw({ type: 'application/json' }), (req, res, next) => {
+app.post("/webhooks", express.raw({ type: "application/json" }), (req, res, next) => {
   try {
     const verified = client.verifyWebhook(req.body, req.headers, webhookSecret);
     // Persist verified.event and verified.known in your durable inbox before acknowledging.
@@ -2708,12 +2927,167 @@ try {
   );
 }
 
+const bullets = (items: readonly string[]) => items.map((item) => '- ' + item + '\n').join('');
+
+/** Runtime guide: common tasks first, each with a short snippet where one applies. */
+function runtimeGuide(c: Contract, target: 'node' | 'php'): string {
+  const node = target === 'node';
+  const fence = node ? 'typescript' : 'php';
+  const snippet = (
+    op: Operation,
+    method: string,
+    options: string,
+    body: (call: string) => string,
+  ) => {
+    const { keySetup, call } = operationCall(c, op, target);
+    return `\`\`\`${fence}\n${keySetup}${body(call(method, options))}\`\`\`\n\n`;
+  };
+  const sample = c.operations.find((op) => op.verb === 'GET') ?? c.operations[0];
+  const requestOptions = sample
+    ? snippet(
+        sample,
+        sample.method,
+        'timeoutMs: 5000, deadlineMs: 15000, maxAttempts: 1',
+        (call) => (node ? `const result = await ${call};\n` : `$result = ${call};\n`),
+      )
+    : '';
+  const paginated = c.operations.find((op) => op.pagination);
+  const pagination = paginated
+    ? snippet(paginated, paginated.method + 'Items', 'maxItems: 100', (call) =>
+        node
+          ? `for await (const item of ${call}) {\n  console.log(item);\n}\n`
+          : `foreach (${call} as $item) {\n  // Process $item before the next page is requested.\n}\n`,
+      )
+    : '';
+  return (
+    `# ${c.title} runtime guide\n\nPackage ${c.config.version}; API ${c.apiVersion}.\n\n[Back to the quickstart](README.md) · [API reference](REFERENCE.md)\n\n` +
+    `## Client and request options\n\n${c.defaultBaseUrl !== undefined ? `The default baseUrl is \`${c.defaultBaseUrl}\`; pass baseUrl to select another environment.` : 'Pass baseUrl: this SDK has no default server.'} Pass per-request options as the last method argument: a plain object in Node, or RequestOptions in PHP.\n\n${requestOptions}` +
+    bullets([
+      'Defaults are timeoutMs: 10000 per attempt and deadlineMs: 30000 for the overall duration (not an absolute timestamp). Request values override client defaults.',
+      'maxAttempts is a positive safe integer budget, capped at the operation limit. Request budgets override client budgets. Set maxAttempts: 1 to opt out of retries.',
+      'Without an explicit policy, GET/HEAD/OPTIONS allow three total attempts; other methods allow one. Mutations without an optional key send once.',
+      'Request headers carry tenant context without shared mutable state.',
+      'Legacy authenticated clients accept token. Composed clients accept configured shortcuts or authMode and credentials keyed by mode and scheme; requests can select a mode with request-local credentials. A combined scheme set must be complete.',
+      'The SDK does not discover credentials or read environment variables; the operation example scripts read API_BASE_URL and their named credential variables explicitly.',
+    ]) +
+    `\n## Authentication\n\n${authenticationGuide(c)}` +
+    `## Responses and errors\n\n` +
+    bullets([
+      'Methods return the decoded body directly by default. A configured payloadPath explicitly selects a nested payload. WithResponse companions expose the full body, meta and raw response.',
+      'Operations configured with return: result instead return Result, whose data is the complete decoded HTTP response body and meta is HTTP metadata. A provider may also wrap its payload in a data field, making result.data.data the provider payload. For example, create may wrap a payment_intent while get returns that entity directly. The operation examples show the exact access path. The SDK preserves these shapes; do not assume all operations share an envelope.',
+      'Results expose data, meta and explicit raw response access. JSON raw values are text; PDF data/raw are Uint8Array in Node and binary-safe strings in PHP. SSE data is a closeable iterable carrying event names, IDs, decoded data and rawData. Node metadata uses properties; PHP metadata uses array keys.',
+    ]) +
+    `\n### Errors\n\n` +
+    bullets([
+      'SdkError exposes the server message (message in Node, getMessage() in PHP), status, kind, outcome, retryAllowed and optional metadata; provider codes use code in Node and errorCode in PHP.',
+      'outcome is not_sent, response or unknown. Reconcile an unknown mutation outcome with the provider and the original persisted idempotency key before resubmitting.',
+      'HTTP 404 uses kind not_found; HTTP 500–599 uses server. Status is undefined in Node or null in PHP when no response is available. Provider-specific details remain unknown in TypeScript.',
+      'The configured errors.messagePath selects the message (default message); missing, blank or non-string values fall back to API returned HTTP followed by the status code. Error paths traverse JSON objects and array indices; scalar values have no child fields.',
+      'Server messages and provider codes require original JSON strings; JSON numeric tokens never match string retry codes. Parsed details retain their usual exact numeric representation.',
+    ]) +
+    `\n### Undeclared and invalid responses\n\n${responseRecoveryGuide(target)}\n\n` +
+    `## Retries and idempotency\n\n` +
+    bullets([
+      'Retries count total attempts, include jitter and Retry-After, and never exceed the effective policy.',
+      'Without a declared retry policy, GET/HEAD/OPTIONS retry transport failures and HTTP 408, 429, 500, 502, 503 and 504, with three total attempts and a 100 ms exponential jitter base. Explicit policies replace these defaults.',
+      'Mutation retries require both declared retry and idempotency support plus a valid key; without an optional key the call sends once. Required keys remain required.',
+      'idempotencyKey is supported only on operations declaring that capability; TypeScript method options enforce this, and PHP validates it at runtime.',
+      "Persist an idempotency key across process restarts and submissions within the server's documented retention/scope. Automatic keys cover one SDK call only and can satisfy required idempotency headers; generated keys must pass the declared header validation.",
+      'Explicit keys from operation inputs, request headers or idempotencyKey are preserved; conflicting values fail before dispatch.',
+      'A timeout after dispatch can leave the remote outcome unknown; inspect SdkError.outcome. Disable nested transport/application retries to avoid multiplied attempts. 409/412 are distinct conflicts and never automatically overwritten.',
+    ]) +
+    `\n## Pagination and polling\n\n${pagination}` +
+    bullets([
+      'Pagination is lazy, supports maxPages/maxItems, and does not guarantee a stable snapshot or durable continuation.',
+      'Each pagination page gets a fresh deadline, including decoding; time spent processing yielded values does not consume it. Pagination has no overall iterator deadline; use cancellation or maxPages/maxItems to bound iteration.',
+      'Polling shares an overall deadline.',
+      'Generation rejects incompatible continuation/query representations, including an int64/uint64 continuation with an ordinary integer query parameter.',
+    ]) +
+    `\n## Timeouts, streaming and cancellation\n\n` +
+    bullets([
+      'Timeout is per attempt, including buffered body consumption. Deadline covers attempts and retry waits for each request.',
+      'For SSE, timeout/deadline bound connection setup; streamIdleTimeoutMs controls idle reads and streamLifetimeMs optionally bounds stream lifetime.',
+      'Close the returned stream (Result.data in result mode) or the client to release a stream; breaking iteration also closes it. Unknown event names retain raw strings. Reconnect and persist resume cursors explicitly; no yielded event is retried automatically.',
+      'Cancellation stops local work, not the remote operation. Node uses AbortSignal. PHP uses a Cancellation token checked during cURL progress and between waits; synchronous calls need an external signal handler to cancel while blocked.',
+    ]) +
+    `\n## Webhooks and recovery\n\n${webhookGuide(c, target)}\n\n` +
+    downloadGuide(c, target) +
+    `## Destinations and API versions\n\n` +
+    bullets([
+      'Explicit allowedOrigins govern all destinations, including pagination. HTTP/HTTPS scheme and host capitalization are ignored, and default ports are normalized; other ports remain distinct origins. Supply explicit allowedOrigins as canonical origin strings with default ports omitted.',
+      'HTTPS is required, including on anonymous APIs, unless allowInsecureHttp is set for deliberate local tests. HTTP rejection names that option; a rejected origin names allowedOrigins.',
+      'Declared 302/307 responses return Location metadata without following redirects; undeclared redirects are rejected. Authentication is attached only after destination validation.',
+      'API version headers are pinned when configured; changing them does not update generated types. Credential headers and configured API-version headers are omitted from method inputs; credentials and the version pin supply their values. Declared idempotency and conditional headers remain optional input fields as well as request options. errors.requestIdHeader selects response metadata and does not supply an outgoing request ID. Required conditional headers may be supplied through ifMatch or request headers without duplicating them in the input. Effective managed header values are validated before dispatch.',
+    ]) +
+    `\n## Client lifecycle and transports\n\n` +
+    bullets([
+      'Clients perform no network I/O at import/construction. No SDK telemetry is sent.',
+      "Node clients reuse the runtime's fetch connection pool; injected transports remain caller-owned and must honor AbortSignal and disable redirects/retries. Node requests keep headers/context local and support concurrent calls.",
+      'PHP owns a reusable cURL handle, released by close()/destruction; a client supports sequential calls within one PHP execution context. Do not concurrently share a PHP client across threads/fibers.',
+      'Requests use the media type selected by the provider profile. Schema validation counts encoded object properties, including explicit nulls, after optional-field omission.',
+      'Requests identify the selected package name/version and runtime through an overridable User-Agent header.',
+    ]) +
+    `\n## Diagnostics and sensitive data\n\n` +
+    bullets([
+      'Diagnostics run once per attempted HTTP request, including transport failures, with operation, request ID, status, timing, attempt count and error kind only; hook failures are ignored. Bodies and credentials are excluded.',
+      'Error inspection includes the message, status, provider code, redacted details and stack frames; PHP debug traces omit arguments. Message extraction, provider codes and details honor schema and redactFields redaction.',
+      'Raw response text and headers require explicit access. Binary/stream result inspection omits raw headers and URLs; event inspection omits payloads.',
+      'Model debug printing redacts declared sensitive fields and additional field names supplied in ClientOptions.redactFields; printing arbitrary raw values is application responsibility. Injected transports are privileged and see credentials/bodies.',
+    ]) +
+    `\n## Custom helpers\n\nCustom helpers belong in custom/; they survive regeneration. Multi-call helpers are not atomic and must expose partial completion. See [reference](REFERENCE.md).\n\n` +
+    `## Package upgrades\n\nReview provider release notes before upgrading. Compatibility checks account for public declarations, required response values and PHP class identities. Complex schema changes can still require manual review.\n\n` +
+    `## Input and response values\n\n### Numbers and dates\n\n` +
+    bullets([
+      'API responses and verified webhook payloads use the same numeric codecs. Their schemas determine representation independently: int64/uint64 fields decode to exact strings; plain integers decode to native safe integers and reject larger values. Plain number, float and double fields use finite native numbers (PHP int/float inputs and float outputs), with ordinary floating-point precision. Exact decimal fields require format: decimal; int64/uint64 also retain exact strings.',
+      'Large integers (int64) and decimals use exact strings, including numeric JSON wire values. Ambiguous numeric inputs automatically use new ExactNumber("1.2500") and plain strings retain their JSON string meaning. Integer responses accept integral decimal/exponent notation without rounding.',
+      'Exact numeric enum inputs use strings for decimal/int64/uint64 schemas; membership compares exact values, so equivalent decimal/exponent spellings are accepted.',
+      'Numeric anyOf branches merge equivalent values exactly and preserve the request token; oneOf still requires exactly one matching branch. Numeric conversions supported only by branches that stop matching fail validation before dispatch.',
+      'Mutually dependent numeric alternatives use joint matching, limited to 256 combinations per value path; exceeding this limit fails validation.',
+      'Configured money helpers reject whitespace, including trailing newlines, and excess precision when converting exact major-unit strings to minor units.',
+      'Date-time inputs accept strings or Date in Node and DateTimeInterface in PHP. Native dates serialize to UTC ISO 8601 with milliseconds without mutation; responses remain strings. Invalid Node dates are rejected. Timestamp responses remain strings.',
+      'Sparse Node input arrays fail before dispatch.',
+    ]) +
+    `\n### Objects, optional fields and unknown values\n\n` +
+    bullets([
+      'Shaped TypeScript objects have no implicit index signature: misspelled input literals and response fields are errors. Explicitly open objects and dictionaries remain open; variables can still carry extra keys under structural typing.',
+      'Runtime request rules are unchanged and unknown response fields are preserved, requiring explicit narrowing or a dictionary assertion to inspect them. Unknown object variants require a known-variant guard.',
+      'Simple nullable wrappers preserve the known branch or null: TypeScript permits optional field access and PHP getters hydrate the existing named entity.',
+      'Unknown response fields, enum members, and tagged variants are retained; malformed known values fail response decoding.',
+      'Optional properties distinguish omission from null.',
+      'Portable digit/word pattern escapes retain their ASCII ECMAScript meaning in both targets, including inside character classes. Full request encoding checks run locally; server business effects require provider tests.',
+    ]) +
+    `\n### PHP inputs and models\n\n` +
+    bullets([
+      'PHP methods accept associative arrays or presence-aware typed input objects constructed from arrays: omit a key to omit it; include a key with null to clear only where permitted.',
+      'PHP models expose presence through has()/get() and generated hasField() methods. Use valueOrDefault("field", fallback) for optional values; explicit null stays null.',
+      'Response getters return generated entities for declared nested objects, lists of entities, and typed PHP arrays for dictionaries. Generated getters, get(), and property access return the same public values. Getters throw with the field name when a field is omitted.',
+      'toArray() and jsonSerialize() retain raw normalized objects and lists, including empty JSON objects. In object/array alternatives, PHP lists (including []) represent JSON arrays; use (object) [] for an empty JSON object.',
+      'PHP response wrapper class names include status codes and, for tagged alternatives, branch positions. Nested entities reuse configured component names; inline entities use their owning model and property path.',
+      'Getters normalize wire names: request_id becomes getRequestId() and hasRequestId(). Webhook class names use event names, for example WebhookEventPaymentIntentSucceeded. This replaces underscore getters and numbered webhook classes without aliases; update class checks and dictionary access when upgrading.',
+      'Adding a status can introduce a new return class even with an identical JSON shape; consult migration notes before upgrading class-based dispatch.',
+    ]) +
+    `\n### Model copies\n\n` +
+    bullets([
+      'Node Model.toJSON() returns a defensive copy of the public JSON representation, with exact numbers represented as strings. Rebuilding from that copy treats these as JSON strings in number/string alternatives.',
+      'To edit a Node input, retain the original input values, including ExactNumber instances, and construct a new model from the updated input. If editing a toJSON() copy, explicitly restore ExactNumber at fields intended to be JSON numbers in ambiguous alternatives.',
+      'PHP model accessors also return defensive copies; use toInputArray()/toInputValue() to edit and rebuild inputs while preserving exact numeric kinds.',
+    ]) +
+    `\n## Schema helpers\n\n${node ? 'The package exports serialize(value, schema), new Model(value, schema), and redact(value, schema) for application-supplied schemas.' : 'The base Model constructor, Codec::normalize and Codec::redact accept application-supplied schemas. Codec::encode writes normalized values as JSON.'} These helpers use the package's local value execution rules and require no generator installation or schema registry service.\n\n` +
+    bullets([
+      'Generated clients defer descriptor loading until first use and reuse validated descriptors across clients. Generated methods and factories use the codecs included in the package.',
+      'Node resource subpaths (resources/RESOURCE) export scoped clients with the same resource methods.',
+      'PHP uses class-based Composer autoloading and individual class files; including vendor/autoload.php does not eagerly include SDK implementation files.',
+      'For a null-only schema, use {"type":"null"}. The legacy form {"type":["null"]} also permits non-null values in Node; PHP rejects them.',
+    ])
+  );
+}
+
 function responseRecoveryGuide(target: 'node' | 'php'): string {
   const explanation =
     "Exact HTTP status declarations take precedence, followed by a declared `default`. If neither exists for an actual 2xx response, the SDK reuses the sole declared JSON 2xx response, including its codec and PHP model class. Metadata retains the actual status. Multiple JSON success declarations remain ambiguous, even when their schemas match; binary, streaming, empty and redirect responses are never inferred.\n\nRequired fields and value types remain enforced. Schema failures are non-retryable `protocol` errors with `outcome: response`; the top-level message includes codec diagnostics such as `response.payment.id: required field is missing`, and the original cause remains available. The server may already have created the payment. Buffered JSON response failures and payload-extraction errors retain `raw` for explicit recovery; raw bodies are omitted from ordinary error inspection and diagnostics.\n\nInside a catch block, a synthetic create response with a top-level string `id` can be recovered as below. Use the actual endpoint's ID path and reconcile its state before continuing. This parses an unvalidated body only to recover the ID; it does not restore the SDK's typed guarantees or justify resubmitting the mutation.";
   const example =
     target === 'node'
-      ? "if (error instanceof SdkError && error.kind === 'protocol' &&\n    error.status >= 200 && error.status < 300 && error.raw) {\n  let body;\n  try { body = JSON.parse(error.raw); } catch { throw error; }\n  const paymentId = typeof body?.id === 'string' ? body.id : undefined;\n  if (!paymentId) throw error;\n  // Reconcile this payment ID with the provider; do not submit another create.\n} else {\n  throw error;\n}"
+      ? 'if (error instanceof SdkError && error.kind === "protocol" &&\n    error.status >= 200 && error.status < 300 && error.raw) {\n  let body;\n  try { body = JSON.parse(error.raw); } catch { throw error; }\n  const paymentId = typeof body?.id === "string" ? body.id : undefined;\n  if (!paymentId) throw error;\n  // Reconcile this payment ID with the provider; do not submit another create.\n} else {\n  throw error;\n}'
       : "if ($error instanceof SdkError && $error->kind === 'protocol' &&\n    $error->status >= 200 && $error->status < 300 && $error->raw !== null) {\n    try {\n        $body = json_decode($error->raw, true, 512, JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING);\n    } catch (\\JsonException) {\n        throw $error;\n    }\n    $paymentId = is_array($body) && is_string($body['id'] ?? null) ? $body['id'] : null;\n    if ($paymentId === null) throw $error;\n    // Reconcile this payment ID with the provider; do not submit another create.\n} else {\n    throw $error;\n}";
   return explanation + '\n\n```' + (target === 'node' ? 'js' : 'php') + '\n' + example + '\n```';
 }

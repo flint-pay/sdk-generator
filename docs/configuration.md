@@ -429,9 +429,10 @@ For nested errors: `{"codePath":"error.code","messagePath":"error.message","deta
 - `documentation.overview`: Markdown shown near the top of each package README. Use it to link to your public SDK documentation.
 - `documentation.guides`: a map of lowercase guide slugs to Markdown, included in both packages and the release site.
 - `documentation.examples`: an ordered list of operation IDs to feature, such as `["createPaymentIntent", "getPaymentIntent", "createRefund"]`. Operations outside the selected profile are skipped; remaining slots are chosen automatically.
+- `documentation.authShortcut`: an `auth.shortcuts` name that README and operation examples use wherever the operation permits its mode, such as `"apiKey"`. Without it, examples prefer `token`, then other shortcuts by name, then the operation's first permitted mode. Diagnosis checks the name against the merged configuration, so set it in a profile or configuration that also declares or includes that shortcut, not in a shared base profile used alone by profiles without it.
 - `operations.<operationId>.example`: realistic SDK inputs for that operation's examples. Generated quickstart inputs are validated during rendering; an invalid inferred or configured example fails generation at `config/operations/<id>/example`.
 
-READMEs embed one complete quickstart and up to two short recipes reusing its client, preferring configured examples and covering a create operation, a read operation and another resource when available. Detailed behavior is in each package's `RUNTIME.md`, also on the release site. Keep workflow assumptions and provider-specific recovery instructions in the overview and guides.
+READMEs start with the install command and one complete quickstart, then up to two short recipes reusing its client, preferring configured examples and covering a create operation, a read operation and another resource when available. Short errors, pagination and webhook sections follow; pagination and webhooks appear only when declared. Detailed behavior is in each package's `RUNTIME.md`, also on the release site. Keep workflow assumptions and provider-specific recovery instructions in the overview and guides.
 
 `example`, `examples`, `default`, `enum` and custom extension payloads keep literal JSON, including fields named `$ref`. Internal `x-sdk-*` extensions are reserved and cannot appear in source definitions.
 
@@ -547,7 +548,7 @@ node dist/cli.js validate .generated/payments --fixtures tests/fixtures/http-cas
 
 - Run Node examples from the generated `node/` package: `node examples/RESOURCE-METHOD.mjs`.
 - For PHP, run `composer install` in the generated `php/` package, then `php examples/RESOURCE-METHOD.php`. When copying an example into an application, update its `require` path to the application's `vendor/autoload.php`.
-- Single-scheme examples read `API_BASE_URL` and optional `API_TOKEN`. Named-mode examples read `API_MODE_SCHEME` variables, with mode and scheme uppercased and punctuation replaced by underscores. Shortcut examples read the shortcut's uppercase snake-case variable, such as `API_KEY`. Client construction itself never reads environment variables.
+- Single-scheme examples read `API_BASE_URL` and `API_TOKEN`. Named-mode examples read `API_MODE_SCHEME` variables, with mode and scheme uppercased and punctuation replaced by underscores. Shortcut examples read the shortcut's uppercase snake-case variable, such as `API_KEY`. Examples stop with a `Set VARIABLE` error when a required credential variable is unset or empty. For operations that also allow anonymous access, examples send credentials only when all of the mode's variables are set. Client construction itself never reads environment variables.
 - Examples never enable insecure HTTP. Add `allowInsecureHttp` deliberately for local HTTP setups.
 
 ## Reference
