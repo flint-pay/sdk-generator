@@ -2,6 +2,7 @@ import ts from 'typescript';
 import { codecClosure, packagePlan } from './package-plan.js';
 import type { CompiledRuntimePlan } from './runtime-plan.js';
 import type { CodecPlan } from './codec-plan.js';
+import { stable } from './canonical.js';
 
 export type Put = (path: string, value: string) => void;
 const json = (value: unknown) => JSON.stringify(value);
@@ -155,6 +156,8 @@ export function splitNodeDeclarations(
   text: string,
   groups: string[],
   put: Put,
+  publicModels: ReadonlySet<string> = new Set(),
+  modelCodecs: ReadonlyMap<string, CodecPlan> = new Map(),
 ): Map<string, Set<string>> {
   const source = ts.createSourceFile('index.d.ts', text, ts.ScriptTarget.Latest, true);
   const importStatements = source.statements.filter(ts.isImportDeclaration);
@@ -245,10 +248,12 @@ export function splitNodeDeclarations(
       const shape = alias.type.getText(source);
       const existing = shapes.get(shape);
       if (existing && shape.length > existing.length) {
-        const start = alias.type.getStart(source) - alias.getFullStart();
-        const end = alias.type.getEnd() - alias.getFullStart();
-        body = body.slice(0, start) + existing + body.slice(end);
-        names = new Set([existing]);
+        if (!publicModels.has(name)) {
+          const start = alias.type.getStart(source) - alias.getFullStart();
+          const end = alias.type.getEnd() - alias.getFullStart();
+          body = body.slice(0, start) + existing + body.slice(end);
+          names = new Set([existing]);
+        }
       } else shapes.set(shape, name);
     }
     if (name === 'Client') {
@@ -273,10 +278,20 @@ export function splitNodeDeclarations(
       rootExports.push(`export { ${name} } from './declarations/${file(name)}.js';`);
   }
   put('index.d.ts', rootExports.join('\n') + '\n');
+  // Retain component exports reached through the previous shared name, including
+  // resource subpaths, while methods use their owning source component's name.
+  const equivalentModels = new Map<string, string[]>();
+  for (const [name, codec] of modelCodecs) {
+    const key = stable(codec);
+    equivalentModels.set(key, [...(equivalentModels.get(key) ?? []), name]);
+  }
+  const peers = new Map(
+    [...equivalentModels.values()].flatMap((names) => names.map((name) => [name, names] as const)),
+  );
   // Include the type dependency closure in selective entry points without importing the root.
   for (const [group, names] of roots) {
     const visit = (name: string): void => {
-      for (const dependency of refs(symbols.get(name) ?? [], name))
+      for (const dependency of [...(peers.get(name) ?? []), ...refs(symbols.get(name) ?? [], name)])
         if (!names.has(dependency)) {
           names.add(dependency);
           visit(dependency);

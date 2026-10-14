@@ -2107,6 +2107,11 @@ class CompiledRuntime {
     let path = op.path;
     const query: string[] = [];
     for (const p of op.parameters) {
+      if (p.source === 'authentication') {
+        if (Object.hasOwn(input, p.name))
+          bad(p.name, 'supply this header through authentication options');
+        continue;
+      }
       let value = Object.hasOwn(input, p.name) ? input[p.name] : undefined;
       if (
         value === undefined &&
@@ -2243,6 +2248,13 @@ class CompiledRuntime {
       );
     }
     if (apiVersion) setHeader(apiVersion.header, apiVersion.value);
+    for (const p of op.parameters) {
+      if (p.source !== 'authentication') continue;
+      const value = headers[p.name.toLowerCase()];
+      if (value === undefined) {
+        if (p.required) bad(p.name, 'required parameter is missing');
+      } else this.decode(value, p.codec, { mode: 'request', path: p.name });
+    }
     if (options.ifMatch !== undefined) {
       if (!op.conditional) bad('ifMatch', 'operation does not declare conditional requests');
       setHeader(op.conditional!.header, options.ifMatch);

@@ -142,6 +142,7 @@ export function compileSchemaPolicy(
     'writeOnly',
     'x-sensitive',
     'x-sdk-ref',
+    'x-sdk-type-name',
   ]);
   return {
     kinds: acceptedKinds(schema, direction),

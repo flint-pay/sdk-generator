@@ -41,6 +41,7 @@ import type {
   IncomingWebhook,
   AuthenticationMode,
   AuthShortcuts,
+  Parameter,
 } from './contract.js';
 import {
   compileCodec,
@@ -69,6 +70,26 @@ export interface RuntimeContract {
   webhook?: Webhook;
   money?: { currencies: Record<string, number> };
   errors?: Config['errors'];
+}
+
+/** Headers supplied by the client have no independent operation input value. */
+export function parameterSource(
+  op: Operation,
+  parameter: Pick<Parameter, 'in' | 'name'>,
+  settings: Pick<RuntimeContract, 'auth' | 'authentication' | 'apiVersion'>,
+): 'input' | 'authentication' | 'api-version' {
+  if (parameter.in !== 'header') return 'input';
+  const name = parameter.name.toLowerCase();
+  if (settings.apiVersion?.header.toLowerCase() === name) return 'api-version';
+  if (
+    Object.values(settings.authentication ?? {}).some((mode) =>
+      mode.schemes.some((scheme) => scheme.header.toLowerCase() === name),
+    ) ||
+    (settings.auth?.header.toLowerCase() === name &&
+      (op.authenticated || op.optionalAuthentication))
+  )
+    return 'authentication';
+  return 'input';
 }
 
 /** Shared defaults also rendered into the PHP dynamic-contract adapter. */
@@ -107,7 +128,11 @@ export interface CompiledOperation
   retry: Retry;
   replay: 'safe' | 'idempotency';
   streamEventCodecs?: Record<string, CodecPlan>;
-  parameters: (Omit<Operation['parameters'][number], 'schema'> & { codec: CodecPlan })[];
+  parameters: (Omit<Operation['parameters'][number], 'schema'> & {
+    codec: CodecPlan;
+    /** Absent in historical descriptors and for ordinary input parameters. */
+    source?: 'authentication';
+  })[];
   body?: CodecPlan;
   /** Sole JSON 2xx declaration eligible for an otherwise undeclared success. */
   successJsonFallback?: string;
@@ -179,6 +204,9 @@ export function compileRuntimePlan(contract: RuntimeContract): CompiledRuntimePl
         parameters: parameters.map(({ schema, ...parameter }) => ({
           ...parameter,
           codec: root(schema),
+          ...(parameterSource(op, parameter, contract) === 'authentication'
+            ? { source: 'authentication' as const }
+            : {}),
         })),
         ...(body ? { body: root(body) } : {}),
         responses: Object.fromEntries(
@@ -349,7 +377,8 @@ export function assertRuntimePlan(
       if (
         typeof field.name !== 'string' ||
         !['path', 'query', 'header'].includes(String(field.in)) ||
-        field.schema !== undefined
+        field.schema !== undefined ||
+        (field.source !== undefined && (field.source !== 'authentication' || field.in !== 'header'))
       )
         throw new Error(`${op.id}: invalid compiled parameter`);
       assertCodecPlan(field.codec, `${op.id}.parameter.${field.name}`);

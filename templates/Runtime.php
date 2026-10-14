@@ -3334,6 +3334,13 @@ class Runtime
                 }
             }
             foreach ($op['parameters'] as $parameter) {
+                if (
+                    array_key_exists('source', $parameter) &&
+                    ($parameter['source'] !== 'authentication' ||
+                        ($parameter['in'] ?? null) !== 'header')
+                ) {
+                    throw new \InvalidArgumentException('Invalid compiled parameter source');
+                }
                 Codec::assertPlan($parameter['codec'], $op['id'] . '.parameter');
             }
             if (isset($op['body'])) {
@@ -3602,6 +3609,12 @@ class Runtime
         $path = $op['path'];
         $query = [];
         foreach ($op['parameters'] as $p) {
+            if (($p['source'] ?? null) === 'authentication') {
+                if (array_key_exists($p['name'], $input)) {
+                    Codec::fail($p['name'], 'supply this header through authentication options');
+                }
+                continue;
+            }
             $present = array_key_exists($p['name'], $input);
             $value = $present ? $input[$p['name']] : null;
             if (
@@ -3832,6 +3845,19 @@ class Runtime
         }
         if (isset($this->contract['apiVersion'])) {
             $set($this->contract['apiVersion']['header'], $this->contract['apiVersion']['value']);
+        }
+        foreach ($op['parameters'] as $p) {
+            if (($p['source'] ?? null) !== 'authentication') {
+                continue;
+            }
+            $value = $headers[strtolower($p['name'])] ?? null;
+            if ($value === null) {
+                if ($p['required'] ?? false) {
+                    Codec::fail($p['name'], 'required parameter is missing');
+                }
+            } else {
+                $this->decode($value, $p['codec'], ['path' => $p['name']]);
+            }
         }
         if ($o->ifMatch !== null) {
             if (!isset($op['conditional'])) {

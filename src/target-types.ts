@@ -180,8 +180,9 @@ export function typescriptType(
       ')';
     return hasDateInput(s, definitions) ? `(${declaration}) | globalThis.Date` : declaration;
   }
-  if (s['x-sdk-ref']) {
-    const reference = s['x-sdk-ref'] + (response ? '' : 'Input');
+  const typeName = response && !known ? s['x-sdk-type-name'] : undefined;
+  if (typeName || s['x-sdk-ref']) {
+    const reference = typeName ?? s['x-sdk-ref'] + (response ? '' : 'Input');
     if (!objectContext) return reference;
     // A recursive alias may also admit nonobjects. Filter it at this use site
     // without expanding the recursive graph or narrowing the alias globally.

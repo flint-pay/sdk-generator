@@ -22,6 +22,8 @@ import { createHash } from 'node:crypto';
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export type Schema = {
   'x-sdk-ref'?: string;
+  /** Source component name for Node declarations; codecs retain their shared reference. */
+  'x-sdk-type-name'?: string;
   'x-sdk-definitions'?: Record<string, Schema>;
   type?: string | string[];
   properties?: Record<string, Schema>;
@@ -1046,15 +1048,24 @@ function pointer(root: unknown, pointer: string, p: string): any {
 /** Clone owned JSON containers while reusing immutable primitive values.
  * structuredClone copies string storage too, multiplying large enum annotations
  * each time a resolved response schema is instantiated. */
-function cloneJson(value: unknown, referenceNames?: WeakMap<object, string>): unknown {
+function cloneJson(
+  value: unknown,
+  referenceNames?: WeakMap<object, string>,
+  typeNames?: WeakMap<object, string>,
+): unknown {
   if (value === null || typeof value !== 'object') return value;
   const copy = Array.isArray(value)
-    ? value.map((child) => cloneJson(child, referenceNames))
+    ? value.map((child) => cloneJson(child, referenceNames, typeNames))
     : Object.fromEntries(
-        Object.entries(value).map(([key, child]) => [key, cloneJson(child, referenceNames)]),
+        Object.entries(value).map(([key, child]) => [
+          key,
+          cloneJson(child, referenceNames, typeNames),
+        ]),
       );
   const name = referenceNames?.get(value);
   if (name) referenceNames?.set(copy, name);
+  const typeName = typeNames?.get(value);
+  if (typeName) typeNames?.set(copy, typeName);
   return copy;
 }
 
@@ -1073,6 +1084,7 @@ export function loadContract(
   const cycles = new Map<string, string>();
   // Keep use-site identity outside the expanded schema until validation finishes.
   const referenceNames = new WeakMap<object, string>();
+  const typeNames = new WeakMap<object, string>();
   // Context follows the use site, including when the target is an external fragment.
   // Map keys and annotation values are data, never OpenAPI keywords.
   type Context = string;
@@ -1180,6 +1192,11 @@ export function loadContract(
       fail(path, 'x-sdk-* extensions are reserved for resolved generator metadata');
     if (!map && '$ref' in value) {
       const applySiblings = (result: any): any => {
+        if (context === 'schema' && target === resolve(definitionPath) && modelMatch)
+          typeNames.set(
+            result,
+            publicModel(modelMatch[1]!.replace(/~1/g, '/').replace(/~0/g, '~')),
+          );
         if (raw.openapi.startsWith('3.0.')) return result;
         const { $ref, ...siblings } = value;
         if (context === 'schema') {
@@ -1202,6 +1219,8 @@ export function loadContract(
                 combined,
                 publicModel(modelMatch[1]!.replace(/~1/g, '/').replace(/~0/g, '~')),
               );
+            const typeName = typeNames.get(result);
+            if (typeName) typeNames.set(combined, typeName);
             return combined;
           }
           // Preserve keyword scope (especially additionalProperties and alternatives).
@@ -1284,7 +1303,7 @@ export function loadContract(
       const cached = resolved.get(cacheKey);
       if (cached) {
         for (const model of cached.models) references.push({ path, model });
-        return applySiblings(cloneJson(cached.value, referenceNames));
+        return applySiblings(cloneJson(cached.value, referenceNames, typeNames));
       }
       const before = references.length;
       const result = deref(
@@ -1298,7 +1317,7 @@ export function loadContract(
         value: result,
         models: [...new Set(references.slice(before).map((ref) => ref.model))],
       });
-      return applySiblings(cloneJson(result, referenceNames));
+      return applySiblings(cloneJson(result, referenceNames, typeNames));
     }
     const result = Object.fromEntries(
       Object.entries(value).map(([k, v]) => [
@@ -2982,7 +3001,7 @@ export function loadContract(
   // are collectible instead of remaining rooted through doc.paths/selectedPaths.
   for (const path of Object.keys(selectedPaths)) delete selectedPaths[path];
   streamSchemas.clear();
-  if (config.schemaSharing === 'named') shareContractSchemas(contract, referenceNames);
+  if (config.schemaSharing === 'named') shareContractSchemas(contract, referenceNames, typeNames);
   contract.hash = hash(stable(contract));
   return contract;
 }
