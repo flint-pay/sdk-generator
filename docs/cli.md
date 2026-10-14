@@ -9,6 +9,7 @@ From a source checkout, run `npm ci` and `npm run build`, then invoke `node dist
 | `node dist/cli.js --help`                                                                     | Print plain-text usage for all commands.                                                                                                                                                                                                    |
 | `node dist/cli.js COMMAND --help`                                                             | Print plain-text usage, arguments, options and side effects for one command without executing it.                                                                                                                                           |
 | `node dist/cli.js --version`                                                                  | Print the generator package version as plain text.                                                                                                                                                                                          |
+| `node dist/cli.js init API_JSON SDK_JSON [--targets node\|php\|node,php] [--json]`            | Write a minimal configuration to a new `SDK_JSON`, then diagnose the pair. Defaults to both targets; no other files are written. The configuration is kept if diagnosis fails.                                                              |
 | `node dist/cli.js diagnose API_JSON SDK_JSON [--json]`                                        | Load and render-check the selected contract; print validity, operation count, contract hash and targets. No output files are written.                                                                                                       |
 | `node dist/cli.js effective API_JSON SDK_JSON [--json]`                                       | Print the resolved contract, selected operations, configuration and source hashes. This output can contain private API details. No output files are written.                                                                                |
 | `node dist/cli.js preview API_JSON SDK_JSON OUTPUT [--diff] [--json]`                         | Report proposed file changes and compatibility findings without writing; `--diff` also prints modified-file diffs. Existing output is checked for ownership conflicts.                                                                      |
@@ -22,6 +23,21 @@ From a source checkout, run `npm ci` and `npm run build`, then invoke `node dist
 Arguments are positional; named options may appear before or after them. Required paths must be nonempty. Quote paths containing spaces. Use `--` before positional paths beginning with `-`. Value-taking options consume the next argument even when it begins with `-` (for example, `--fixtures -cases.json`); an absent or empty value fails. Unknown commands and flags, missing arguments or option values, repeated options and unexpected extra positional arguments fail before execution. Unknown commands suggest close spellings.
 
 ## Output
+
+`init` derives package names from `info.title` using ASCII kebab-case words and a matching PascalCase PHP namespace. Empty names fall back to `sdk` / `Sdk`. A namespace segment beginning with a digit gets an `Sdk` prefix: `123 Widgets` becomes `Example\Sdk123Widgets`. The shared package slug is shortened at a word boundary so the full scoped npm name is at most 214 characters, without a trailing hyphen; a first word longer than the available space is cut to fit. It writes version `0.1.0`, the selected targets and only their package metadata, using `@example` / `example` placeholder vendors.
+
+It refuses an existing destination, including symlinks; there is no `--force`. Invalid JSON and unsupported OpenAPI versions fail before writing. After writing, unsupported constructs exit with status 1 and the same findings as `diagnose`. Fix the specification or edit the configuration, including `include` / `hidden` operation selection, then rerun `diagnose`.
+
+```text
+Wrote sdk.json (targets: node, php)
+Valid: 12 operations; targets: node, php; contract hash: <hash>
+Next: replace the @example/example package names, then run
+  sdk-generator generate openapi.json sdk.json OUTPUT
+```
+
+The suggested command uses POSIX single quotes for paths containing spaces or shell metacharacters, escaping embedded single quotes.
+
+With `--json`, `init` prints `{ "written": "<path>", "config": {...}, "diagnose": {...} }`, where `diagnose` is the same report as `diagnose --json`. Success goes to stdout; if diagnosis fails after writing, the envelope containing the failure report goes to stderr. Errors before writing use the ordinary JSON error format.
 
 Commands print readable, plain ASCII summaries by default, with no color or TTY detection. `validate` streams one line per finished check group. Results go to stdout; errors and warnings go to stderr. Success exits with status 0, including compatibility findings; any failure exits with status 1.
 
@@ -127,6 +143,8 @@ console.log(validate('.generated/library'));
 ```
 
 An installed generator exposes these exports from `@public-sdk/generator`. `render(contract)` returns a map of relative paths to contents without writing. `preview(contract, output)` returns the rendered files, previous record, changes and compatibility findings; `generate(contract, output, true)` adds unified diffs to its serializable report. `compare(before, after)` compiles and compares resolved contracts using current compiler semantics. It cannot establish arbitrary historical runtime behavior; generation and release preparation use the saved compiled baseline when available. `prepareRelease`, `publishRelease` and `publishSite` perform the corresponding release operations; the latter two take an explicit confirmed version. `validateFixtures` is asynchronous; the other listed functions are synchronous. Failures throw errors, including `Diagnostic` with a source/configuration location.
+
+`initialConfig(apiPath, { targets: ['node'] })` returns the minimal editable configuration without writing files or diagnosing API capabilities. The options may be omitted to select both targets. It uses the same local JSON loader and OpenAPI version checks as contract loading; unselected package metadata is omitted.
 
 ## Troubleshooting
 

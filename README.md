@@ -38,7 +38,11 @@ The bundled example targets Node and PHP, so `validate` needs PHP and Composer. 
 
 Keep `.generated/library/.sdk-generator.json`. It is private; regeneration and compatibility checks use it.
 
-To generate from your own API, replace the two input paths with your OpenAPI JSON and [SDK configuration](docs/configuration.md#minimal-configuration).
+Start from your own OpenAPI JSON with `init`, then replace the placeholder names in the [SDK configuration](docs/configuration.md#minimal-configuration):
+
+```sh
+node dist/cli.js init openapi.json sdk.json
+```
 
 ## Use the generated SDK
 

@@ -7,6 +7,7 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 ### Breaking changes for generator automation
 
 - **CLI output.** Commands print readable summaries by default. Pass `--json` to keep the previous JSON on stdout and JSON errors and warnings on stderr; JSON shapes are unchanged. `effective` still prints JSON. Library functions are unchanged.
+- **npm package names.** Configuration validation now rejects `npm.name` values over 214 characters, including the scope. Shorten any oversized names before generation.
 
 ### Breaking changes for regenerated SDKs
 
@@ -31,6 +32,7 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ### Added
 
+- `init API_JSON SDK_JSON [--targets node|php|node,php] [--json]` writes a minimal configuration with placeholder package names, refuses overwrites and reports diagnosis while keeping the file on diagnostic failure. Library callers can use `initialConfig` without writing files.
 - `preview --diff`.
 - Node exports `VerifiedWebhook`, `KnownWebhookEvent` and `WebhookEvent<EventName>`; `verifyWebhook` returns `VerifiedWebhook`.
 
@@ -49,6 +51,7 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ### Fixed
 
+- `init` prefixes digit-leading PHP namespace segments with `Sdk`, shortens package slugs to fit npm's 214-character name limit and quotes shell-sensitive paths in its human `generate` suggestion.
 - Generated examples and README inputs can replace inferred placeholders with validated, non-sensitive path/query parameter examples. Existing schema example/enum selection and default metadata behavior are preserved, as is explicit SDK configuration precedence. Added format-valid placeholders for UUID, URI, hostname and IP addresses, with the existing sampler retained when a format placeholder conflicts with schema constraints. Exact numeric-string parameter tokens are preserved; parsed exact numeric literals fall back.
 - Node and PHP operation references list request body fields and inline alternative variants without schema examples. Variant tables combine parent and branch field declarations, requiredness and constraints. Long unions are indented, `Record<…>` expressions stay intact, and idempotency scope text no longer gains a doubled period.
 - IPv4 and IPv6 formats are accepted as textual annotations, with format-valid inferred sample values; SDK wire validation is unchanged.

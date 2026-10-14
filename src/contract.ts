@@ -5,6 +5,7 @@ import { shareContractSchemas } from './schema-sharing.js';
 import { schemaAnnotations, isSchemaAnnotation } from './schema-annotations.js';
 import { parameterExampleEligible } from './parameter-example-policy.js';
 import { SourceJson } from './source-json.js';
+import { openApiObject, assertOpenApiVersion, readInput } from './openapi-input.js';
 import {
   Diagnostic,
   DiagnosticGroup,
@@ -16,7 +17,6 @@ import { valueInstruction, exactValue, discriminatorBindings } from './codec-pla
 import { stable } from './canonical.js';
 import { successStatus, isAuthShortcutName, isDefaultBaseUrl } from './runtime-plan.js';
 import { visitIntersectedProperties } from './schema-intersections.js';
-import { readFileSync } from 'node:fs';
 import { resolve, dirname, relative as relativePath } from 'node:path';
 import { createHash } from 'node:crypto';
 
@@ -1152,13 +1152,8 @@ export function loadContract(
   function load(file: string): any {
     file = resolve(file);
     if (!documents.has(file)) {
-      let content: string;
-      try {
-        content = readFileSync(file, 'utf8');
-      } catch {
-        return fail(file, 'cannot read input');
-      }
-      documents.set(file, sourceJson.parse(content, file));
+      const { content, value } = readInput(file, sourceJson);
+      documents.set(file, value);
       sources[
         file.startsWith(rootDir + '/')
           ? file.slice(rootDir.length + 1)
@@ -1396,8 +1391,7 @@ export function loadContract(
     return result;
   }
   const raw = load(resolve(definitionPath));
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw))
-    fail('/', 'expected an OpenAPI object');
+  openApiObject(raw);
   const mergeProfiles = (left: unknown, right: unknown, path: string): unknown => {
     if (left === undefined) return structuredClone(right);
     if (stable(left) === stable(right)) return structuredClone(left);
@@ -1782,10 +1776,7 @@ export function loadContract(
         keys(config.composer, ['name', 'namespace'], 'config/composer');
       });
   });
-  diagnostics.check(() => {
-    if (!/^3\.[01]\.\d+$/.test(raw.openapi ?? ''))
-      fail('/openapi', 'supported input is OpenAPI 3.0 or 3.1 JSON');
-  });
+  diagnostics.check(() => assertOpenApiVersion(raw.openapi));
   diagnostics.check(() => {
     if (
       !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?$/.test(
@@ -1799,6 +1790,11 @@ export function loadContract(
       diagnostics.check(() => {
         if (!/^(@[a-z0-9._-]+\/)?[a-z0-9][a-z0-9._-]*$/.test(config.npm?.name ?? ''))
           fail('config/npm/name', 'expected an npm package name');
+        if (config.npm.name.length > 214)
+          fail(
+            'config/npm/name',
+            'npm package names must be at most 214 characters, including scope',
+          );
       });
   });
   checkConfig(['composer'], () => {

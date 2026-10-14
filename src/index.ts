@@ -1,4 +1,5 @@
 export { DiagnosticGroup } from './diagnostic.js';
+export { initialConfig } from './initial-config.js';
 export {
   loadContract,
   Diagnostic,
