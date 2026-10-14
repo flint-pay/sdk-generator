@@ -236,16 +236,17 @@ function name(value: unknown, path: string, method = false): asserts value is st
       'choose an identifier that is not a JavaScript/PHP reserved word or SDK runtime member',
     );
 }
-function keys(object: object, allowed: string[], path: string) {
+const pointerSegment = (value: string): string => value.replaceAll('~', '~0').replaceAll('/', '~1');
+function keys(object: object, allowed: string[], path: string, hint = '') {
   if (!object || typeof object !== 'object' || Array.isArray(object))
     fail(path, 'expected an object');
   const findings = Object.keys(object)
     .filter((k) => !allowed.includes(k))
     .map(
-      (k) =>
+      (k, index) =>
         new Diagnostic(
           `${path}/${k}`,
-          `unsupported setting.${suggestion(k, allowed)} Valid settings: ${allowed.join(', ')}`,
+          `unsupported setting.${suggestion(k, allowed)}${index === 0 ? ` Valid settings: ${allowed.join(', ')}${hint}` : ''}`,
         ),
     );
   if (findings.length === 1) throw findings[0];
@@ -1122,11 +1123,7 @@ export function loadContract(
       } catch {
         return fail(file, 'cannot read input');
       }
-      try {
-        documents.set(file, sourceJson.parse(content, file));
-      } catch {
-        return fail(file, 'expected valid JSON; YAML is not supported');
-      }
+      documents.set(file, sourceJson.parse(content, file));
       sources[
         file.startsWith(rootDir + '/')
           ? file.slice(rootDir.length + 1)
@@ -1290,7 +1287,7 @@ export function loadContract(
     const result = Object.fromEntries(
       Object.entries(value).map(([k, v]) => [
         k,
-        deref(v, file, `${path}/${k}`, stack, childContext(context, k)),
+        deref(v, file, `${path}/${pointerSegment(k)}`, stack, childContext(context, k)),
       ]),
     );
     if (context === 'schema' && value.discriminator?.mapping !== undefined) {
@@ -1480,6 +1477,9 @@ export function loadContract(
         'release',
       ],
       'config',
+      Object.hasOwn(config, 'openapi') || Object.hasOwn(config, 'paths')
+        ? ' SDK_JSON looks like an OpenAPI document; check whether the API_JSON and SDK_JSON arguments are swapped.'
+        : '',
     );
   });
   diagnostics.check(() => {
@@ -1870,7 +1870,7 @@ export function loadContract(
   for (const [path, item] of Object.entries(raw.paths ?? {})) {
     const valid = diagnostics.check(() => {
       for (const [verb, field] of Object.entries(
-        pathFields(item, resolve(definitionPath), '/paths/' + path),
+        pathFields(item, resolve(definitionPath), '/paths/' + pointerSegment(path)),
       ))
         if (
           ['get', 'post', 'put', 'patch', 'delete', 'head', 'options'].includes(verb) &&
@@ -1906,13 +1906,13 @@ export function loadContract(
   const streamSchemas = new Map<string, Record<string, Schema>>();
   const selectedPaths = Object.fromEntries(
     Object.entries(raw.paths ?? {}).map(([path, item]) => {
-      const fields = pathFields(item, resolve(definitionPath), '/paths/' + path);
+      const fields = pathFields(item, resolve(definitionPath), '/paths/' + pointerSegment(path));
       let selectedAny = false;
       const entries = Object.entries(fields)
         .filter(([key]) => key !== 'parameters')
         .map(([verb, field]) => {
           const { value: op, file } = field;
-          const p = '/paths/' + path + '/' + verb;
+          const p = '/paths/' + pointerSegment(path) + '/' + pointerSegment(verb);
           if (!['get', 'post', 'put', 'patch', 'delete', 'head', 'options'].includes(verb))
             return [verb, deref(op, file, p, [], childContext('pathItem', verb))];
           record(op, p);
@@ -1954,7 +1954,7 @@ export function loadContract(
           deref(
             parameters.value,
             parameters.file,
-            '/paths/' + path + '/parameters',
+            '/paths/' + pointerSegment(path) + '/parameters',
             [],
             'parameter',
           ),
@@ -2217,7 +2217,10 @@ export function loadContract(
     if (
       !diagnostics.check(() => {
         if (!path.startsWith('/') || path.startsWith('//') || /[\\\s?#]/.test(path))
-          fail(`/paths/${path}`, 'expected an absolute API path without query or fragment');
+          fail(
+            `/paths/${pointerSegment(path)}`,
+            'expected an absolute API path without query or fragment',
+          );
       })
     )
       continue;
@@ -2225,8 +2228,11 @@ export function loadContract(
       if (['parameters', 'summary', 'description'].includes(verb)) continue;
       try {
         if (!['get', 'post', 'put', 'patch', 'delete', 'head', 'options'].includes(verb))
-          fail(`/paths/${path}/${verb}`, 'unsupported path construct');
-        const p = `/paths/${path}/${verb}`;
+          fail(
+            `/paths/${pointerSegment(path)}/${pointerSegment(verb)}`,
+            'unsupported path construct',
+          );
+        const p = `/paths/${pointerSegment(path)}/${pointerSegment(verb)}`;
         record(op, p);
         const id = op.operationId;
         if (typeof id !== 'string' || !id || ids.has(id))
@@ -2334,7 +2340,7 @@ export function loadContract(
             fail(`${p}/${forbidden}`, 'unsupported operation construct');
         if (item.servers !== undefined)
           fail(
-            `/paths/${path}/servers`,
+            `/paths/${pointerSegment(path)}/servers`,
             'path-level servers are unsupported; declare a top-level server or pass baseUrl',
           );
         const params = new Map<string, Parameter>();
@@ -2842,8 +2848,8 @@ export function loadContract(
   const dependencyPrefixes = new Map<string, Set<string>>();
   for (const op of operations) {
     for (const prefix of [
-      `/paths/${op.path}/${op.verb.toLowerCase()}/`,
-      `/paths/${op.path}/parameters/`,
+      `/paths/${pointerSegment(op.path)}/${op.verb.toLowerCase()}/`,
+      `/paths/${pointerSegment(op.path)}/parameters/`,
     ]) {
       if (dependencyPrefixes.has(prefix)) continue;
       let node = referenceRoot;
@@ -2877,8 +2883,8 @@ export function loadContract(
     ...(cycles.size ? { definitions } : {}),
     modelDependencies: Object.fromEntries(
       operations.map((op) => {
-        const operationPath = `/paths/${op.path}/${op.verb.toLowerCase()}/`;
-        const sharedParameters = `/paths/${op.path}/parameters/`;
+        const operationPath = `/paths/${pointerSegment(op.path)}/${op.verb.toLowerCase()}/`;
+        const sharedParameters = `/paths/${pointerSegment(op.path)}/parameters/`;
         return [
           op.id,
           [

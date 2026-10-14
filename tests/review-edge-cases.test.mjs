@@ -87,7 +87,7 @@ test('pagination diagnoses incompatible continuation representations and query t
       );
       assert.throws(
         () => loadContract(f.api, f.profile),
-        /\/paths\/\/values\/get: offset pagination returns exact integer strings/,
+        /\/paths\/~1values\/get: offset pagination returns exact integer strings/,
       );
     }
   }
