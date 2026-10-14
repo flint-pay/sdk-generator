@@ -1,12 +1,12 @@
 {
-  "description": "Pre-named-webhook-type executable Node modules/descriptors, complete PHP output and root symbol exports from synthetic payment and public Flint slice fixtures. PHP reference baselines include body field tables and type formatting; separate executable PHP hashes retain origin/main bytes.",
+  "description": "Reviewed additive SDK error subclasses and Node standalone webhook verification: executable Node modules now export the errors namespace and verifier, PHP class files/autoload maps include the Errors sub-namespace, and both verifiers return reasons for unrecognized deliveries. Runtime/declaration consumer tests independently verify these changes. Existing root exports remain and errors/verifyWebhook are added. The predecessor compiled-public baseline retains its historical bytes. The PHP standalone decision adds Webhooks::verify to declared packages and shares the compiled verification implementation with Client::verifyWebhook, preserving guarded invalid-input errors and client redaction. Node executable and declaration hashes are unchanged by these decisions.",
   "fixtures": [
     {
       "name": "payment",
       "api": "tests/fixtures/payment-api.json",
       "config": "tests/fixtures/payment-sdk.json",
-      "nodeRuntimeSha256": "03c5e29f1be9087b6c41785105fdd42ba3cd7f70fb8a12fb4e5a0bc167d32e51",
-      "phpSha256": "3cd14219abac30dc9aab6f242130727afc7fa947062cf3f408b359eb03d4cce7",
+      "nodeRuntimeSha256": "c96562e746dbb9f1f09a9b9b241402897a33e578e78ca8410d740ef70bcd604a",
+      "phpSha256": "066ac142dc69d744d0d51b22d2d98bea5f8f95c95e608f83b6115b2718520954",
       "rootExports": [
         "SdkError",
         "Model",
@@ -41,20 +41,22 @@
         "PaymentsRefundResponse",
         "PaymentsUpdateInput",
         "PaymentsUpdateResponse",
-        "Client"
+        "Client",
+        "errors",
+        "verifyWebhook"
       ],
       "singleTarget": {
-        "node": "03c5e29f1be9087b6c41785105fdd42ba3cd7f70fb8a12fb4e5a0bc167d32e51",
-        "php": "3cd14219abac30dc9aab6f242130727afc7fa947062cf3f408b359eb03d4cce7"
+        "node": "c96562e746dbb9f1f09a9b9b241402897a33e578e78ca8410d740ef70bcd604a",
+        "php": "066ac142dc69d744d0d51b22d2d98bea5f8f95c95e608f83b6115b2718520954"
       },
-      "phpRuntimeSha256": "88d66c2b70b9f7a746b66ff90824b15c4f6daeaeb44baeb8a28a695d52d2794a"
+      "phpRuntimeSha256": "51e649b99e0fa31f73f05ca643bdda67a885c088e6457c9189b2575d8d2db71a"
     },
     {
       "name": "flint",
       "api": "tests/providers/flint/openapi.json",
       "config": "tests/providers/flint/sdk.json",
-      "nodeRuntimeSha256": "6b06043bbc15e163b47d32bb1a41beaef98bc267ec5f103437ebc8e01ec84661",
-      "phpSha256": "9fb1510d7fb8f360d146c38d0516f2eb8fde76f97f3998193e7ea796d369866a",
+      "nodeRuntimeSha256": "4a9e351cb73c38ee70388b3f079b97e5380c254bcd76ee7771f62e3168dffdb6",
+      "phpSha256": "3da2e522bd9de23516c1e01b5ce6e9767420f13c58a57eb74cdc698678af7e99",
       "rootExports": [
         "SdkError",
         "Model",
@@ -356,13 +358,15 @@
         "PaymentIntentsListResponse",
         "RefundsListInput",
         "RefundsListResponse",
-        "Client"
+        "Client",
+        "errors",
+        "verifyWebhook"
       ],
       "singleTarget": {
-        "node": "70de9570e4b82ce7640975c0ca68c2c791b8fb3091ef071e7168db6b71bb253d",
-        "php": "9fb1510d7fb8f360d146c38d0516f2eb8fde76f97f3998193e7ea796d369866a"
+        "node": "e49bffce6f9edf3337f0e8761633bc3c23e4c4dc68e80589c179689e71302aee",
+        "php": "3da2e522bd9de23516c1e01b5ce6e9767420f13c58a57eb74cdc698678af7e99"
       },
-      "phpRuntimeSha256": "86f5ff8ac85ae6eda84400a8a1d122e8a020288f5a3f5101ec0fd65abc1a18d4"
+      "phpRuntimeSha256": "4afea66557b30ba4427fb66ba8ef2b55f173b6036ffb4363498c19eb3db4e55c"
     }
   ]
 }

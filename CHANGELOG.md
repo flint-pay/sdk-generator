@@ -33,6 +33,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 ### Added
 
 - `init API_JSON SDK_JSON [--targets node|php|node,php] [--json]` writes a minimal configuration with placeholder package names, refuses overwrites and reports diagnosis while keeping the file on diagnostic failure. Library callers can use `initialConfig` without writing files.
+- SDK errors now have one subclass per `kind`: Node exposes them through the root/resource `errors` namespace and PHP through the `Errors` sub-namespace. `SdkError` and `kind` remain authoritative, and `instanceof SdkError` keeps working. Node `error.name` and inspection now show the subclass name (for example `NotFoundError`), a visible change.
+- Webhook results with `known: false` include `reason: 'unknown_event' | 'unmatched_envelope'` in both targets. Packages with verification declared expose standalone Node `verifyWebhook` and PHP `Webhooks::verify`, requiring no client options, base URL or API credentials; client methods delegate to the shared verifier. PHP keeps guarded `mixed` arguments so invalid inputs produce SDK error subclasses.
 - `preview --diff`.
 - Node exports `VerifiedWebhook`, `KnownWebhookEvent` and `WebhookEvent<EventName>`; `verifyWebhook` returns `VerifiedWebhook`.
 

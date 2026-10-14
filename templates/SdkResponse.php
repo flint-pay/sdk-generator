@@ -37,7 +37,7 @@ final class SdkResponse
             } elseif ($value instanceof \stdClass && property_exists($value, $key)) {
                 $value = $value->{$key};
             } else {
-                throw new SdkError(
+                throw SdkError::create(
                     'protocol',
                     'Missing configured response payload: ' . implode('.', $path),
                     'response',

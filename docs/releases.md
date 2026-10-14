@@ -162,6 +162,7 @@ A matching existing shape produces a review finding for its HTTP semantics, unle
 
 ### Saved baselines
 
+- Error subclasses and unrecognized-webhook reasons are recorded as additive runtime APIs; Node and PHP standalone verification are additive when declared. Existing `SdkError` catches and `kind` checks keep working. Node error names and inspection now show the subclass name.
 - Node webhook event types are public identities. Removing or renaming a recorded `WebhookEvent<EventName>` export is breaking. Additions follow the existing event-configuration compatibility check.
 - The first regeneration with named Node webhook types produces the existing `webhook` declaration and `compiled codecs` review findings. The equivalent named return shape preserves consumers; the declaration upgrade alone produces no breaking finding. Older records without the event-name map remain readable.
 

@@ -3,7 +3,7 @@ declare(strict_types=1);
 namespace SdkNamespace;
 require_once __DIR__ . '/SchemaAdapter.php';
 
-final class SdkError extends \RuntimeException
+class SdkError extends \RuntimeException
 {
     public readonly ?int $status;
 
@@ -21,6 +21,45 @@ final class SdkError extends \RuntimeException
     ) {
         parent::__construct($message, 0, $previous);
         $this->status = $meta['status'] ?? null;
+    }
+    /** @param array{status?: int, requestId?: string|null, attempts?: int, durationMs?: float, ...}|null $meta */
+    public static function create(
+        string $kind,
+        string $message,
+        string $outcome = 'not_sent',
+        bool $retryAllowed = false,
+        ?array $meta = null,
+        ?string $errorCode = null,
+        mixed $details = null,
+        ?\Throwable $previous = null,
+        ?string $raw = null,
+    ): self {
+        $class = match ($kind) {
+            'transport' => Errors\ConnectionError::class,
+            'authentication' => Errors\AuthenticationError::class,
+            'validation' => Errors\ValidationError::class,
+            'rate_limit' => Errors\RateLimitError::class,
+            'not_found' => Errors\NotFoundError::class,
+            'conflict' => Errors\ConflictError::class,
+            'server' => Errors\ServerError::class,
+            'api' => Errors\ApiError::class,
+            'protocol' => Errors\ProtocolError::class,
+            'cancelled' => Errors\CancelledError::class,
+            'deadline' => Errors\DeadlineError::class,
+            'destination' => Errors\DestinationError::class,
+            default => self::class,
+        };
+        return new $class(
+            $kind,
+            $message,
+            $outcome,
+            $retryAllowed,
+            $meta,
+            $errorCode,
+            $details,
+            $previous,
+            $raw,
+        );
     }
     public function __debugInfo(): array
     {
@@ -238,7 +277,7 @@ final class CurlByteStream implements ByteStream
                 // Before delivery, Runtime owns retry classification.
                 throw new \RuntimeException('Streaming connection failed');
             }
-            throw new SdkError('transport', 'Streaming transport failed', 'unknown');
+            throw SdkError::create('transport', 'Streaming transport failed', 'unknown');
         }
     }
     private function checkRequestTimeout(): void
@@ -265,10 +304,10 @@ final class CurlByteStream implements ByteStream
     {
         $this->checkRequestTimeout();
         if (($this->request['cancellation'] ?? null)?->isCancelled()) {
-            throw new SdkError('cancelled', 'Stream cancelled', 'response');
+            throw SdkError::create('cancelled', 'Stream cancelled', 'response');
         }
         if ($this->streaming && self::now() - $waitStart >= $timeout) {
-            throw new SdkError(
+            throw SdkError::create(
                 'deadline',
                 'Stream idle or connection timeout exceeded',
                 'response',
@@ -279,7 +318,7 @@ final class CurlByteStream implements ByteStream
             isset($this->request['streamLifetimeMs']) &&
             self::now() - $this->started >= $this->request['streamLifetimeMs']
         ) {
-            throw new SdkError('deadline', 'Stream lifetime exceeded', 'response');
+            throw SdkError::create('deadline', 'Stream lifetime exceeded', 'response');
         }
         if ($this->multi === null) {
             return;
@@ -290,7 +329,7 @@ final class CurlByteStream implements ByteStream
                 // Before delivery, Runtime owns retry classification.
                 throw new \RuntimeException('Streaming connection failed');
             }
-            throw new SdkError('transport', 'Streaming transport failed', 'unknown');
+            throw SdkError::create('transport', 'Streaming transport failed', 'unknown');
         }
         while ($info = curl_multi_info_read($this->multi)) {
             $this->done = true;
@@ -315,7 +354,7 @@ final class CurlByteStream implements ByteStream
             while ($this->handle !== null) {
                 $this->checkRequestTimeout();
                 if (($this->request['cancellation'] ?? null)?->isCancelled()) {
-                    throw new SdkError('cancelled', 'Stream cancelled', 'response');
+                    throw SdkError::create('cancelled', 'Stream cancelled', 'response');
                 }
                 if ($this->pending !== null) {
                     $chunk = $this->pending;
@@ -410,7 +449,7 @@ final class EventStream implements \IteratorAggregate
     public function getIterator(): \Traversable
     {
         if ($this->started) {
-            throw new SdkError('validation', 'A stream can only be consumed once');
+            throw SdkError::create('validation', 'A stream can only be consumed once');
         }
         $this->started = true;
         $line = '';
@@ -424,7 +463,7 @@ final class EventStream implements \IteratorAggregate
         try {
             while (!$this->closed) {
                 if (($this->settings['cancellation'] ?? null)?->isCancelled()) {
-                    throw new SdkError(
+                    throw SdkError::create(
                         'cancelled',
                         'Stream cancelled',
                         'response',
@@ -436,7 +475,7 @@ final class EventStream implements \IteratorAggregate
                     isset($this->settings['lifetimeMs']) &&
                     hrtime(true) / 1000000 - $this->created >= $this->settings['lifetimeMs']
                 ) {
-                    throw new SdkError(
+                    throw SdkError::create(
                         'deadline',
                         'Stream lifetime exceeded',
                         'response',
@@ -447,7 +486,7 @@ final class EventStream implements \IteratorAggregate
                 $wait = hrtime(true) / 1000000;
                 $chunk = $this->source->read();
                 if (($this->settings['cancellation'] ?? null)?->isCancelled()) {
-                    throw new SdkError(
+                    throw SdkError::create(
                         'cancelled',
                         'Stream cancelled',
                         'response',
@@ -456,7 +495,7 @@ final class EventStream implements \IteratorAggregate
                     );
                 }
                 if (hrtime(true) / 1000000 - $wait >= $this->settings['idleTimeoutMs']) {
-                    throw new SdkError(
+                    throw SdkError::create(
                         'deadline',
                         'Stream idle timeout exceeded',
                         'response',
@@ -466,7 +505,7 @@ final class EventStream implements \IteratorAggregate
                 }
                 if ($chunk === null) {
                     if (preg_match('//u', $line) !== 1) {
-                        throw new SdkError(
+                        throw SdkError::create(
                             'protocol',
                             'Invalid UTF-8 stream',
                             'response',
@@ -482,7 +521,7 @@ final class EventStream implements \IteratorAggregate
                     $index++
                 ) {
                     if (($this->settings['cancellation'] ?? null)?->isCancelled()) {
-                        throw new SdkError(
+                        throw SdkError::create(
                             'cancelled',
                             'Stream cancelled',
                             'response',
@@ -494,7 +533,7 @@ final class EventStream implements \IteratorAggregate
                         isset($this->settings['lifetimeMs']) &&
                         hrtime(true) / 1000000 - $this->created >= $this->settings['lifetimeMs']
                     ) {
-                        throw new SdkError(
+                        throw SdkError::create(
                             'deadline',
                             'Stream lifetime exceeded',
                             'response',
@@ -510,7 +549,7 @@ final class EventStream implements \IteratorAggregate
                         }
                     }
                     if (++$bytes > $this->settings['maxEventBytes']) {
-                        throw new SdkError(
+                        throw SdkError::create(
                             'protocol',
                             'SSE event exceeds configured size limit',
                             'response',
@@ -530,7 +569,7 @@ final class EventStream implements \IteratorAggregate
                         }
                     }
                     if (preg_match('//u', $line) !== 1) {
-                        throw new SdkError(
+                        throw SdkError::create(
                             'protocol',
                             'Invalid UTF-8 stream',
                             'response',
@@ -580,7 +619,7 @@ final class EventStream implements \IteratorAggregate
             if ($error->kind !== 'validation') {
                 throw $error;
             }
-            throw new SdkError(
+            throw SdkError::create(
                 'protocol',
                 'Invalid SSE event payload',
                 'response',
@@ -589,7 +628,7 @@ final class EventStream implements \IteratorAggregate
                 previous: $error,
             );
         } catch (\Throwable $error) {
-            throw new SdkError(
+            throw SdkError::create(
                 'protocol',
                 'Invalid or interrupted SSE stream',
                 'response',
@@ -817,7 +856,7 @@ class Model implements \JsonSerializable
     public function get(string $field): mixed
     {
         if (!$this->has($field)) {
-            throw new SdkError(
+            throw SdkError::create(
                 'validation',
                 'Field ' .
                     $field .
@@ -855,7 +894,7 @@ class Model implements \JsonSerializable
     public function toArray(): array
     {
         if (!is_object($this->values) && !is_array($this->values)) {
-            throw new SdkError(
+            throw SdkError::create(
                 'validation',
                 'This model contains a scalar; use jsonSerialize() to access its value',
             );
@@ -1108,7 +1147,7 @@ final class Codec
     public static function fail(string $path, string $reason): never
     {
         $message = "$path: $reason";
-        $error = new SdkError('validation', $message);
+        $error = SdkError::create('validation', $message);
         self::$validationFailures ??= new \WeakMap();
         self::$validationFailures[$error] = $message;
         throw $error;
@@ -3161,7 +3200,7 @@ class Runtime
         ) {
             $shortcuts = array_keys($this->contract['authShortcuts'] ?? []);
             sort($shortcuts);
-            throw new SdkError(
+            throw SdkError::create(
                 'authentication',
                 'token is not configured for this SDK; use ' .
                     ($shortcuts ? implode(', ', $shortcuts) : 'authMode and credentials'),
@@ -3516,29 +3555,29 @@ class Runtime
             isset($p['pass']) ||
             isset($p['fragment'])
         ) {
-            throw new SdkError(
+            throw SdkError::create(
                 'destination',
                 'Invalid destination: embedded credentials and fragments are not allowed',
             );
         }
         $scheme = strtolower($p['scheme'] ?? '');
         if (!in_array($scheme, ['https', 'http'], true)) {
-            throw new SdkError('destination', 'Unsupported destination protocol; use HTTPS');
+            throw SdkError::create('destination', 'Unsupported destination protocol; use HTTPS');
         }
         if ($scheme === 'http' && !$this->options->allowInsecureHttp) {
-            throw new SdkError(
+            throw SdkError::create(
                 'destination',
                 'HTTP is disabled; set allowInsecureHttp: true for deliberate local testing',
             );
         }
         if (!in_array(self::origin($url), $this->allowed, true)) {
-            throw new SdkError('destination', 'Destination origin is not in allowedOrigins');
+            throw SdkError::create('destination', 'Destination origin is not in allowedOrigins');
         }
     }
     private static function checkCancel(?Cancellation $c, string $outcome = 'unknown'): void
     {
         if ($c?->isCancelled()) {
-            throw new SdkError(
+            throw SdkError::create(
                 'cancelled',
                 'Local waiting cancelled; this does not cancel the remote operation',
                 $outcome,
@@ -3780,7 +3819,7 @@ class Runtime
                                 ($options instanceof RequestOptions ||
                                     $options->credentials !== []))))
                 ) {
-                    throw new SdkError(
+                    throw SdkError::create(
                         'authentication',
                         'Use one authentication shortcut or explicit authMode/credentials, not both',
                     );
@@ -3796,7 +3835,7 @@ class Runtime
                 $modeName = $permitted[0];
             }
             if ($modeName === null && $op['authenticated']) {
-                throw new SdkError(
+                throw SdkError::create(
                     'authentication',
                     'Select an explicit authentication mode for ' .
                         $op['id'] .
@@ -3810,7 +3849,7 @@ class Runtime
                 $modeName !== null &&
                 ($selected === null || !in_array($modeName, $permitted, true))
             ) {
-                throw new SdkError(
+                throw SdkError::create(
                     'authentication',
                     'Authentication mode is not permitted for ' .
                         $op['id'] .
@@ -3833,7 +3872,7 @@ class Runtime
                         $credential === '' ||
                         preg_match('/[\r\n]/', $credential)
                     ) {
-                        throw new SdkError(
+                        throw SdkError::create(
                             'authentication',
                             'Missing or invalid credential ' .
                                 $scheme['name'] .
@@ -3849,7 +3888,7 @@ class Runtime
                 foreach ($mode['schemes'] as $scheme) {
                     $name = strtolower($scheme['header']);
                     if (isset($headers[$name]) && $headers[$name] !== ($expected[$name] ?? null)) {
-                        throw new SdkError(
+                        throw SdkError::create(
                             'authentication',
                             'Request headers conflict with the selected authentication mode',
                         );
@@ -3865,7 +3904,7 @@ class Runtime
         ) {
             $auth = $this->contract['auth'] ?? null;
             if (!$auth || !$this->options->token) {
-                throw new SdkError('authentication', 'Explicit API credentials are required');
+                throw SdkError::create('authentication', 'Explicit API credentials are required');
             }
             $set(
                 $auth['header'],
@@ -3940,7 +3979,7 @@ class Runtime
             self::checkCancel($o->cancellation, $attempt === 1 ? 'not_sent' : 'unknown');
             $remaining = $deadline - self::now();
             if ($remaining <= 0) {
-                throw new SdkError(
+                throw SdkError::create(
                     'deadline',
                     'Overall deadline exceeded',
                     $attempt === 1 ? 'not_sent' : 'unknown',
@@ -4018,7 +4057,7 @@ class Runtime
                         if ($source instanceof ByteStream) {
                             $source->close();
                         }
-                        throw new SdkError(
+                        throw SdkError::create(
                             'protocol',
                             'Expected an SSE response stream',
                             'response',
@@ -4072,7 +4111,7 @@ class Runtime
                     }
                 } catch (\Throwable $cause) {
                     if ($status >= 200 && $status < 300) {
-                        throw new SdkError(
+                        throw SdkError::create(
                             'protocol',
                             'Invalid JSON success response',
                             'response',
@@ -4084,7 +4123,7 @@ class Runtime
                     }
                 }
                 if ($status >= 300 && $status < 400 && $status !== 304 && !$redirect) {
-                    throw new SdkError(
+                    throw SdkError::create(
                         'destination',
                         'Redirects are not followed; explicitly configure an approved endpoint',
                         'response',
@@ -4095,7 +4134,7 @@ class Runtime
                 if (($status >= 200 && $status < 300) || $status === 304 || $redirect) {
                     $declared = $declaredResponse;
                     if ($declared === null) {
-                        throw new SdkError(
+                        throw SdkError::create(
                             'protocol',
                             'Undeclared success status',
                             'response',
@@ -4178,7 +4217,7 @@ class Runtime
                             }
                         }
                     } catch (\Throwable $cause) {
-                        throw new SdkError(
+                        throw SdkError::create(
                             'protocol',
                             'Response cannot be represented by the declared schema' .
                                 (($reason = Codec::validationFailureMessage($cause)) !== null
@@ -4195,7 +4234,7 @@ class Runtime
                     // timeouts cannot interrupt them. Include them in the deadline.
                     $meta['durationMs'] = self::now() - $start;
                     if (self::now() >= $deadline) {
-                        throw new SdkError(
+                        throw SdkError::create(
                             'deadline',
                             'Response decoding exceeded the overall deadline',
                             'response',
@@ -4240,7 +4279,7 @@ class Runtime
                     $details = self::field($details, $this->contract['errors']['detailsPath']);
                 }
                 $diagnosticError = $kind;
-                $error = new SdkError(
+                $error = SdkError::create(
                     $kind,
                     // Match JavaScript trim's Unicode whitespace without changing the message.
                     is_string($message) &&
@@ -4281,7 +4320,7 @@ class Runtime
                     : (self::now() >= $deadline
                         ? 'deadline'
                         : 'transport');
-                $error = new SdkError(
+                $error = SdkError::create(
                     $diagnosticError,
                     'Request did not produce a usable response; remote outcome is unknown',
                     'unknown',
@@ -4317,7 +4356,7 @@ class Runtime
                 random_int(0, (int) ($policy['baseDelayMs'] * 2 ** ($attempt - 1))),
             );
             if (self::now() + $wait >= $deadline) {
-                throw new SdkError(
+                throw SdkError::create(
                     'deadline',
                     'Retry wait would exceed the overall deadline',
                     $error->outcome,
@@ -4427,7 +4466,7 @@ class Runtime
         }
         $parts = parse_url($link);
         if ($parts === false) {
-            throw new SdkError('destination', 'Invalid continuation URL');
+            throw SdkError::create('destination', 'Invalid continuation URL');
         }
         $path = str_starts_with($link, '/')
             ? $parts['path'] ?? '/'
@@ -4476,7 +4515,7 @@ class Runtime
                 return;
             }
             if ($p['kind'] === 'link' && !is_string($next)) {
-                throw new SdkError('protocol', 'Expected a pagination URL', 'response');
+                throw SdkError::create('protocol', 'Expected a pagination URL', 'response');
             }
             if ($p['kind'] === 'link') {
                 $next = self::resolveLink($next, $result->meta['url']);
@@ -4488,7 +4527,7 @@ class Runtime
                     (string) $next === (string) $previous) ||
                 ($p['kind'] === 'link' && $next === $result->meta['url'])
             ) {
-                throw new SdkError(
+                throw SdkError::create(
                     'protocol',
                     'Pagination returned a non-advancing continuation',
                     'response',
@@ -4516,7 +4555,7 @@ class Runtime
         foreach ($this->pages($id, $input, $options) as $page) {
             $items = self::field($page->data, $p['items']);
             if (!is_array($items)) {
-                throw new SdkError(
+                throw SdkError::create(
                     'protocol',
                     'Pagination items field is not an array',
                     'response',
@@ -4543,7 +4582,7 @@ class Runtime
         while (true) {
             $remaining = $deadline - self::now();
             if ($remaining <= 0) {
-                throw new SdkError(
+                throw SdkError::create(
                     'deadline',
                     'Polling deadline exceeded; remote operation may still be running',
                     'unknown',
@@ -4555,7 +4594,7 @@ class Runtime
                 return $result;
             }
             if (in_array($state, $p['failure'], true)) {
-                throw new SdkError(
+                throw SdkError::create(
                     'api',
                     'Operation reached a declared failure state',
                     'response',
@@ -4569,7 +4608,7 @@ class Runtime
     }
     private static function webhookError(string $kind, string $code, string $message): never
     {
-        throw new SdkError($kind, $message, errorCode: 'webhook_' . $code);
+        throw SdkError::create($kind, $message, errorCode: 'webhook_' . $code);
     }
     private static function webhookHeaderValues(array $headers, string $name): array
     {
@@ -4632,9 +4671,38 @@ class Runtime
         mixed $secrets,
         mixed $nowSeconds = null,
     ): array {
-        $w = $this->descriptors
-            ? $this->descriptors->webhook()
-            : $this->contract['webhook'] ?? null;
+        return self::verifyWebhookFromPlan(
+            $this->descriptors ?? $this->contract,
+            $rawBody,
+            $headers,
+            $secrets,
+            $nowSeconds,
+            $this->options->redactFields,
+        );
+    }
+    /** Verify compiled webhook descriptors without constructing an HTTP runtime. */
+    public static function verifyWebhookFromPlan(
+        array|Internal\DescriptorSource $source,
+        mixed $rawBody,
+        mixed $headers,
+        mixed $secrets,
+        mixed $nowSeconds = null,
+        array $redactFields = [],
+    ): array {
+        $w =
+            $source instanceof Internal\DescriptorSource
+                ? $source->webhook()
+                : $source['webhook'] ?? null;
+        $decode = static fn(mixed $value, array $codec, array $context): mixed => Codec::execute(
+            $value,
+            $codec,
+            $context + [
+                'definitions' =>
+                    $source instanceof Internal\DescriptorSource
+                        ? $source->definitions()
+                        : $source['definitions'] ?? [],
+            ],
+        );
         if (!$w) {
             Codec::fail('webhook', 'capability is not declared');
         }
@@ -4796,7 +4864,7 @@ class Runtime
         try {
             $event = Codec::parse($rawBody, true);
         } catch (\Throwable $cause) {
-            throw new SdkError(
+            throw SdkError::create(
                 'protocol',
                 'Invalid webhook JSON',
                 'response',
@@ -4809,7 +4877,7 @@ class Runtime
         $known = false;
         if ($schema) {
             try {
-                $decoded = $this->decode($event, $schema, [
+                $decoded = $decode($event, $schema, [
                     'mode' => 'response',
                     'path' => 'event',
                 ]);
@@ -4817,7 +4885,7 @@ class Runtime
                 if ($cause->kind !== 'validation') {
                     throw $cause;
                 }
-                throw new SdkError(
+                throw SdkError::create(
                     'protocol',
                     'Invalid webhook payload' .
                         (($reason = Codec::validationFailureMessage($cause)) !== null
@@ -4828,7 +4896,7 @@ class Runtime
                 );
             }
             try {
-                $this->decode($event, $schema, [
+                $decode($event, $schema, [
                     'mode' => 'match',
                     'direction' => 'response',
                     'path' => 'event',
@@ -4850,11 +4918,12 @@ class Runtime
             is_object($event)
         ) {
             $class = __NAMESPACE__ . '\\' . $w['eventModels'][$eventType];
-            $event = new $class((array) $event, $this->options->redactFields);
+            $event = new $class((array) $event, $redactFields);
         }
         return [
             'event' => $event,
             'known' => $known,
+            ...$known ? [] : ['reason' => $schema ? 'unmatched_envelope' : 'unknown_event'],
         ];
     }
     public function money(string $currency, string $major): array

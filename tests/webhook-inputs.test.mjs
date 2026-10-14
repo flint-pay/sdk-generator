@@ -86,7 +86,9 @@ for (const format of ['hex', 'timestamped-hex', 'standard-webhooks']) {
     writeFileSync(profile, JSON.stringify(config));
     const out = join(dir, format);
     generate(loadContract(join(dir, 'api.json'), profile), out);
-    const { Client, SdkError } = await import(pathToFileURL(join(out, 'node/index.js')));
+    const { Client, SdkError, errors, verifyWebhook } = await import(
+      pathToFileURL(join(out, 'node/index.js'))
+    );
     const client = new Client({ baseUrl: 'https://example.invalid' });
     const key = format === 'standard-webhooks' ? Buffer.alloc(32, 17) : 'synthetic-webhook-secret';
     const secret = format === 'standard-webhooks' ? 'whsec_' + key.toString('base64') : key;
@@ -138,6 +140,11 @@ for (const format of ['hex', 'timestamped-hex', 'standard-webhooks']) {
       { ...base, body: raw + ' ', expected: failure('invalid_signature') },
       { ...base, body: JSON.stringify(JSON.parse(raw)), expected: failure('invalid_signature') },
       { ...base, body: JSON.parse(raw), expected: failure('invalid_input', 'validation') },
+      ...[null, 42, true].map((body) => ({
+        ...base,
+        body,
+        expected: failure('invalid_input', 'validation'),
+      })),
       { ...base, headers: {}, expected: failure('missing_header') },
       {
         ...base,
@@ -149,8 +156,12 @@ for (const format of ['hex', 'timestamped-hex', 'standard-webhooks']) {
         headers: { ...headers, 'Webhook-Signature': [42] },
         expected: failure('invalid_input', 'validation'),
       },
-      { ...base, headers: null, expected: failure('invalid_input', 'validation') },
-      ...[[], '', [123], null].map((secrets) => ({
+      ...[null, 42, true, 'headers'].map((headers) => ({
+        ...base,
+        headers,
+        expected: failure('invalid_input', 'validation'),
+      })),
+      ...[[], '', [123], null, 42, true].map((secrets) => ({
         ...base,
         secrets,
         expected: failure('invalid_secret', 'validation'),
@@ -177,7 +188,14 @@ for (const format of ['hex', 'timestamped-hex', 'standard-webhooks']) {
         ...base,
         body,
         headers: sign(body),
-        expected: { known: false, event: JSON.parse(body) },
+        expected: {
+          known: false,
+          event: JSON.parse(body),
+          reason:
+            JSON.parse(body)?.event_type === 'payment.updated'
+              ? 'unmatched_envelope'
+              : 'unknown_event',
+        },
       });
     }
     if (format !== 'timestamped-hex') {
@@ -217,28 +235,39 @@ for (const format of ['hex', 'timestamped-hex', 'standard-webhooks']) {
           : '0'.repeat(64);
     const repeated = { ...arrays, 'webhook-signature': [headers['Webhook-Signature'], additional] };
     cases.push({ ...base, headers: repeated });
-    for (const [index, c] of cases.entries()) {
-      let actual;
-      try {
-        actual = JSON.parse(
-          JSON.stringify(
-            client.verifyWebhook(
-              typeof c.body === 'string' ? Buffer.from(c.body) : c.body,
-              c.headers,
-              c.secrets,
-              c.now,
+    for (const verifier of [verifyWebhook, client.verifyWebhook.bind(client)])
+      for (const [index, c] of cases.entries()) {
+        let actual;
+        try {
+          actual = JSON.parse(
+            JSON.stringify(
+              verifier(
+                typeof c.body === 'string' ? Buffer.from(c.body) : c.body,
+                c.headers,
+                c.secrets,
+                c.now,
+              ),
             ),
-          ),
-        );
-      } catch (error) {
-        assert.ok(error instanceof SdkError, String(error));
-        assert.ok(!error.message.includes(secret));
-        assert.ok(!error.message.includes(raw));
-        assert.ok(!error.message.includes(headers['Webhook-Signature']));
-        actual = { error: error.kind, code: error.code ?? null };
+          );
+        } catch (error) {
+          assert.ok(error instanceof SdkError, String(error));
+          assert.ok(
+            error instanceof
+              errors[
+                {
+                  validation: 'ValidationError',
+                  authentication: 'AuthenticationError',
+                  protocol: 'ProtocolError',
+                }[c.expected.error]
+              ],
+          );
+          assert.ok(!error.message.includes(secret));
+          assert.ok(!error.message.includes(raw));
+          assert.ok(!error.message.includes(headers['Webhook-Signature']));
+          actual = { error: error.kind, code: error.code ?? null };
+        }
+        assert.deepEqual(actual, c.expected, `case ${index}`);
       }
-      assert.deepEqual(actual, c.expected, `case ${index}`);
-    }
     for (const record of [headers, repeated]) {
       const fetchHeaders = new Headers();
       for (const [name, value] of Object.entries(record))
@@ -269,14 +298,40 @@ for (const format of ['hex', 'timestamped-hex', 'standard-webhooks']) {
     });
     const caseFile = join(dir, format + '-cases.json');
     writeFileSync(caseFile, JSON.stringify(cases));
-    const php = String.raw`require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';$c=new Example\Webhooks\Client(new Example\Webhooks\ClientOptions(baseUrl:'https://example.invalid'));$out=[];foreach(json_decode(file_get_contents($argv[2]),true) as $case){try{$out[]=$c->verifyWebhook($case['body'],$case['headers'],$case['secrets'],$case['now']);}catch(Example\Webhooks\SdkError $e){$sensitive=array_merge((array)$case['secrets'],(array)($case['headers']['Webhook-Signature']??[]),is_string($case['body'])?[$case['body']]:[]);foreach($sensitive as $value){if(is_string($value)&&strlen($value)>8&&str_contains($e->getMessage(),$value))throw new \RuntimeException('Webhook error exposed a sensitive fixture value');}$out[]=['error'=>$e->kind,'code'=>$e->errorCode];}}echo json_encode($out,JSON_THROW_ON_ERROR);`;
+    const php = String.raw`declare(strict_types=1);
+require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
+use Example\Webhooks\{Client,ClientOptions,Webhooks,SdkError};
+$cases=json_decode(file_get_contents($argv[2]),true);$results=[];
+foreach(['standalone','client'] as $mode) {
+  // Standalone verification completes before any client/options are constructed.
+  $verifier=$mode==='standalone' ? Webhooks::verify(...) : (new Client(new ClientOptions(baseUrl:'https://example.invalid')))->verifyWebhook(...);
+  $out=[];
+  foreach($cases as $case) {
+    try{$out[]=$verifier($case['body'],$case['headers'],$case['secrets'],$case['now']);}
+    catch(SdkError $e) {
+      $class='Example\\Webhooks\\Errors\\'.(['authentication'=>'AuthenticationError','validation'=>'ValidationError','protocol'=>'ProtocolError'][$case['expected']['error']]);
+      if(!$e instanceof $class)throw new \RuntimeException('Wrong webhook error class');
+      $sensitive=array_merge((array)$case['secrets'],(array)($case['headers']['Webhook-Signature']??[]),is_string($case['body'])?[$case['body']]:[]);
+      foreach($sensitive as $value){if(is_string($value)&&strlen($value)>8&&str_contains($e->getMessage(),$value))throw new \RuntimeException('Webhook error exposed a sensitive fixture value');}
+      $out[]=['error'=>$e->kind,'code'=>$e->errorCode];
+    }
+  }
+  $results[$mode]=$out;
+}
+echo json_encode($results,JSON_THROW_ON_ERROR);`;
+    const phpResults = JSON.parse(run('php', ['-r', php, join(out, 'php'), caseFile]));
     assert.deepEqual(
-      JSON.parse(run('php', ['-r', php, join(out, 'php'), caseFile])),
+      phpResults.standalone,
       cases.map((c) => c.expected),
+    );
+    assert.deepEqual(phpResults.client, phpResults.standalone);
+    assert.match(
+      readFileSync(join(out, 'php/src/classes/Webhooks.php'), 'utf8'),
+      /public static function verify\(mixed \$rawBody, mixed \$headers, mixed \$secrets, mixed \$nowSeconds = null\): array/,
     );
     assert.match(
       readFileSync(join(out, 'php/src/classes/Client.php'), 'utf8'),
-      /array\{known: false, event: mixed\}/,
+      /array\{known: false, event: mixed, reason: 'unknown_event'\|'unmatched_envelope'\}/,
     );
     // Exercise the actual generated documentation, including middleware order.
     const guide = readFileSync(join(out, 'node/RUNTIME.md'), 'utf8');

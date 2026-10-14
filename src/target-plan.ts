@@ -464,14 +464,14 @@ function compileRequestCall(op: Operation, c: Contract, optionsType: string) {
   let phpPrelude = `$input = [${paths.map((p, i) => `${php(p.name)} => $${names[i]}`).join(', ')}]; `;
   if (hasParams(op)) {
     phpPrelude +=
-      "$params = $params instanceof Model ? $params->toInputArray() : $params; $rest = $params ?? []; if ($rest && array_is_list($rest)) throw new SdkError('validation', 'Expected associative params', 'not_sent'); ";
+      "$params = $params instanceof Model ? $params->toInputArray() : $params; $rest = $params ?? []; if ($rest && array_is_list($rest)) throw SdkError::create('validation', 'Expected associative params', 'not_sent'); ";
     for (const p of fields)
       phpPrelude += `if (array_key_exists(${php(p.name)}, $rest)) { $input[${php(p.name)}] = $rest[${php(p.name)}]; unset($rest[${php(p.name)}]); } `;
     if (op.body)
       phpPrelude += `if (${op.bodyRequired ? 'true' : '$params !== null && (!$params || $rest)'}) $input['body'] = (object) $rest; `;
     else
       phpPrelude +=
-        "foreach ($rest as $name => $value) { if (array_key_exists($name, $input)) throw new SdkError('validation', 'Path values belong in positional arguments', 'not_sent'); $input[$name] = $value; } ";
+        "foreach ($rest as $name => $value) { if (array_key_exists($name, $input)) throw SdkError::create('validation', 'Path values belong in positional arguments', 'not_sent'); $input[$name] = $value; } ";
   }
   return {
     nodeArgs,
@@ -507,6 +507,10 @@ export interface CompiledSdkContract {
   targets: ('node' | 'php')[];
   runtime: CompiledRuntimePlan;
   node: {
+    /** Absent in historical records predating these additive runtime APIs. */
+    errorClasses?: true;
+    webhookReasons?: true;
+    standaloneWebhook?: true;
     authentication?: NodeAuthenticationPlan;
     clientOptions?: { declaration: string; optional: boolean };
     responseReturnDeclarations?: string;
@@ -543,6 +547,9 @@ export interface CompiledSdkContract {
     eventTypes?: Record<string, string>;
   };
   php: {
+    errorClasses?: true;
+    webhookReasons?: true;
+    standaloneWebhook?: true;
     runtime: CompiledRuntimePlan;
     models: PhpModelPlan[];
     operations: Record<string, { output: string; items: string }>;
@@ -669,7 +676,7 @@ function webhookDeclarations(
   }
   declarations.push(
     `export type KnownWebhookEvent = ${Object.values(eventTypes).join(' | ') || 'never'};\n`,
-    'export type VerifiedWebhook = { known: true; event: KnownWebhookEvent } | { known: false; event: unknown };\n',
+    'export type VerifiedWebhook = { known: true; event: KnownWebhookEvent } | { known: false; event: unknown; reason: "unknown_event" | "unmatched_envelope" };\n',
   );
   return { eventType: 'KnownWebhookEvent', eventDeclarations: declarations.join(''), eventTypes };
 }
@@ -780,6 +787,8 @@ export function compileSdkContract(source: Contract): {
     targets: [...(c.config.targets ?? ['node', 'php'])],
     runtime,
     node: {
+      errorClasses: true,
+      ...(c.config.webhook ? { webhookReasons: true, standaloneWebhook: true } : {}),
       clientOptions: {
         declaration: compileClientOptions(c),
         optional: c.defaultBaseUrl !== undefined,
@@ -868,6 +877,8 @@ export function compileSdkContract(source: Contract): {
       ...webhookDeclarations(c, models, Object.keys(source.config.webhook?.events ?? {})),
     },
     php: {
+      errorClasses: true,
+      ...(c.config.webhook ? { webhookReasons: true, standaloneWebhook: true } : {}),
       runtime: phpRuntime,
       models: [
         ...Object.entries(models).map(([name, s]) =>
