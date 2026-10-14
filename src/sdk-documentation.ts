@@ -100,6 +100,7 @@ export function schemaFields(
   schema: Schema,
   definitions: Record<string, Schema>,
   seen = new Set<string>(),
+  intersect = false,
 ): { fields: Record<string, Schema>; required: Set<string> } {
   const fields: Record<string, Schema> = Object.assign(Object.create(null), schema.properties);
   const required = new Set(schema.required ?? []);
@@ -110,8 +111,18 @@ export function schemaFields(
     branches.push(definitions[ref]!);
   }
   for (const branch of branches) {
-    const nested = schemaFields(branch, definitions, seen);
-    for (const [key, value] of Object.entries(nested.fields)) fields[key] ??= value;
+    const nested = schemaFields(branch, definitions, seen, intersect);
+    for (const [key, value] of Object.entries(nested.fields)) {
+      const previous = fields[key];
+      fields[key] =
+        intersect && previous && stable(previous) !== stable(value)
+          ? {
+              allOf: [previous, value],
+              ...(previous.readOnly || value.readOnly ? { readOnly: true } : {}),
+              ...(previous.writeOnly || value.writeOnly ? { writeOnly: true } : {}),
+            }
+          : (previous ?? value);
+    }
     for (const key of nested.required) required.add(key);
   }
   return { fields, required };
@@ -133,6 +144,11 @@ function modelName(schema: Schema, definitions: Record<string, Schema>): string 
 function typeDescription(s: Schema, definitions: Record<string, Schema> = {}): string {
   const name = modelName(s, definitions);
   if (name) return `[${name}](MODELS.md#${anchor(name)})`;
+  if (s.allOf) {
+    const { allOf, ...base } = s;
+    const types = [...new Set([base, ...allOf].map((part) => typeDescription(part, definitions)))];
+    return types.filter((type) => type !== 'any').join(' and ') || 'any';
+  }
   if (s.oneOf || s.anyOf) return 'Alternative shapes (see declared variants)';
   if (s.type === 'array') return `Array of ${typeDescription(s.items ?? {}, definitions)}`;
   const types = Array.isArray(s.type) ? s.type : [s.type ?? 'any'];
@@ -159,7 +175,14 @@ export function fieldTable(
     '| Field | Presence | Type | Description |\n| --- | --- | --- | --- |\n' +
     Object.entries(fields)
       .map(([name, child]) => {
-        const values = child.enum?.map((value) => JSON.stringify(value));
+        // Effective body fields retain conjuncts rather than overwriting parent
+        // constraints with branch annotations. Render every retained declaration.
+        const declarations = (s: Schema): Schema[] => [s, ...(s.allOf ?? []).flatMap(declarations)];
+        const parts = includeExamples ? [child] : declarations(child);
+        const enumSets = parts.flatMap((part) =>
+          part.enum ? [part.enum.map((value) => JSON.stringify(value))] : [],
+        );
+        const values = enumSets[0]?.filter((value) => enumSets.every((set) => set.includes(value)));
         const heading = `${scope} ${name} values`;
         const longEnum = values && values.join(', ').length > 140;
         if (longEnum)
@@ -167,7 +190,15 @@ export function fieldTable(
             `#### ${heading}\n\n${values.map((value) => '- ' + literal(value)).join('\n')}\n\n`,
           );
         const notes = [
-          markdownNotes(includeExamples ? child : withoutExamples(child), true),
+          [
+            ...new Set(
+              parts.map((part) =>
+                markdownNotes(includeExamples ? part : withoutExamples(part), true),
+              ),
+            ),
+          ]
+            .filter(Boolean)
+            .join(' '),
           longEnum
             ? `Values: [${values.length} declared values](#${anchor(heading)}).`
             : values
@@ -192,8 +223,14 @@ function withoutExamples({ example, examples, ...schema }: Schema): Schema {
 export function bodyReference(op: Operation, definitions: Record<string, Schema>): string {
   if (!op.body) return '';
   const body = op.body;
-  const document = (schema: Schema, label: string, seen = new Set<string>()): string => {
-    const shape = schemaFields(directionalSchema(schema, false), definitions);
+  const document = (
+    schema: Schema,
+    label: string,
+    seen = new Set<string>(),
+    inherited: Schema = {},
+  ): string => {
+    const effective = { allOf: [inherited, schema] };
+    const shape = schemaFields(directionalSchema(effective, false), definitions, new Set(), true);
     const table = fieldTable(
       {
         properties: Object.fromEntries(
@@ -209,22 +246,25 @@ export function bodyReference(op: Operation, definitions: Record<string, Schema>
       ? `Body model: ${typeDescription(schema, definitions)}.\n\n`
       : '';
     if (table) output += `#### ${label} fields\n\n${table}`;
+    // Carry only the common field view into alternatives. Reusing the enclosing
+    // graph would traverse the same references/compositions again at every level.
+    const parent = { properties: shape.fields, required: [...shape.required] };
     for (const keyword of ['oneOf', 'anyOf'] as const)
       for (const [index, variant] of (schema[keyword] ?? []).entries()) {
         const title = `${label} ${keyword} variant ${index + 1}`;
         output += `#### ${title}\n\n${markdownNotes(withoutExamples(variant))}\n\n`;
         output +=
-          document(variant, title, seen) ||
+          document(variant, title, seen, parent) ||
           `Body shape: ${typeDescription(variant, definitions)}.\n\n`;
       }
     for (const branch of schema.allOf ?? [])
       if (branch.oneOf || branch.anyOf || branch['x-sdk-ref'])
-        output += document(branch, label, seen);
+        output += document(branch, label, seen, parent);
     const ref = schema['x-sdk-ref'];
     if (ref && definitions[ref] && !seen.has(ref)) {
       const target = definitions[ref]!;
       if (target.oneOf || target.anyOf || target.allOf)
-        output += document(target, label, new Set(seen).add(ref));
+        output += document(target, label, new Set(seen).add(ref), parent);
     }
     return output;
   };

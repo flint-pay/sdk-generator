@@ -54,7 +54,7 @@
       "api": "tests/providers/flint/openapi.json",
       "config": "tests/providers/flint/sdk.json",
       "nodeRuntimeSha256": "6b06043bbc15e163b47d32bb1a41beaef98bc267ec5f103437ebc8e01ec84661",
-      "phpSha256": "60bd18f756158e309c56db0b669b90911eb8cfdbbf6a8df56070665ac23eb22d",
+      "phpSha256": "9fb1510d7fb8f360d146c38d0516f2eb8fde76f97f3998193e7ea796d369866a",
       "rootExports": [
         "SdkError",
         "Model",
@@ -360,7 +360,7 @@
       ],
       "singleTarget": {
         "node": "70de9570e4b82ce7640975c0ca68c2c791b8fb3091ef071e7168db6b71bb253d",
-        "php": "60bd18f756158e309c56db0b669b90911eb8cfdbbf6a8df56070665ac23eb22d"
+        "php": "9fb1510d7fb8f360d146c38d0516f2eb8fde76f97f3998193e7ea796d369866a"
       },
       "phpRuntimeSha256": "86f5ff8ac85ae6eda84400a8a1d122e8a020288f5a3f5101ec0fd65abc1a18d4"
     }

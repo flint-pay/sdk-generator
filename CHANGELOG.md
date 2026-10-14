@@ -49,8 +49,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ### Fixed
 
-- Generated examples and README inputs can replace inferred placeholders with validated, non-sensitive path/query parameter examples. Existing schema example/enum selection and default metadata behavior are preserved, as is explicit SDK configuration precedence. Added format-valid placeholders for UUID, URI, hostname and IP addresses. Exact numeric-string parameter tokens are preserved; parsed exact numeric literals fall back.
-- Node and PHP operation references list request body fields and inline alternative variants without schema examples. Long unions are indented, `Record<…>` expressions stay intact, and idempotency scope text no longer gains a doubled period.
+- Generated examples and README inputs can replace inferred placeholders with validated, non-sensitive path/query parameter examples. Existing schema example/enum selection and default metadata behavior are preserved, as is explicit SDK configuration precedence. Added format-valid placeholders for UUID, URI, hostname and IP addresses, with the existing sampler retained when a format placeholder conflicts with schema constraints. Exact numeric-string parameter tokens are preserved; parsed exact numeric literals fall back.
+- Node and PHP operation references list request body fields and inline alternative variants without schema examples. Variant tables combine parent and branch field declarations, requiredness and constraints. Long unions are indented, `Record<…>` expressions stay intact, and idempotency scope text no longer gains a doubled period.
 - IPv4 and IPv6 formats are accepted as textual annotations, with format-valid inferred sample values; SDK wire validation is unchanged.
 
 - Selective generation with `include` skips operations without an operation ID in both targets. Missing-ID diagnostics explain how to select named operations, and missing override targets explain that overrides only replace existing values.

@@ -519,6 +519,49 @@ for (const [format, value] of [
     everySample(files, [value], ['invalid format']);
   });
 
+for (const targets of [['node'], ['php'], ['node', 'php']])
+  for (const [name, schema, expected] of [
+    ['hostname length', { format: 'hostname', minLength: 20 }, 'examplexxxxxxxxxxxxx'],
+    ['URI length', { format: 'uri', maxLength: 20 }, 'example'],
+    ['UUID pattern', { format: 'uuid', pattern: '^example$' }, 'example'],
+  ])
+    test(`${targets.join('+')} ${name} falls back to main's sample without aborting generation`, () => {
+      const { files } = fixture({
+        parameters: [query('formatted', { type: 'string', ...schema })],
+        config: { targets },
+      });
+      for (const target of targets) {
+        const script = files.get(
+          `${target}/examples/api-createValue.${target === 'node' ? 'mjs' : 'php'}`,
+        );
+        assert.ok(script.includes(expected));
+        assert.doesNotMatch(script, /example\.invalid|00000000-0000-4000-8000-000000000001/);
+      }
+    });
+
+for (const targets of [['node'], ['php'], ['node', 'php']])
+  test(`${targets.join('+')} format choices respect enclosing constraints and retain main's fallback`, () => {
+    const { files } = fixture({
+      config: { targets },
+      body: {
+        type: 'object',
+        required: ['formatted'],
+        properties: {
+          formatted: {
+            allOf: [{ pattern: '^example$' }, { type: 'string', format: 'uuid' }],
+          },
+        },
+      },
+    });
+    for (const target of targets) {
+      const script = files.get(
+        `${target}/examples/api-createValue.${target === 'node' ? 'mjs' : 'php'}`,
+      );
+      assert.match(script, /formatted["']?\s*(?::|=>)\s*["']example["']/);
+      assert.doesNotMatch(script, /00000000-0000-4000-8000-000000000001/);
+    }
+  });
+
 for (const [type, format, token] of [
   ['integer', 'int64', '9007199254740993'],
   ['integer', 'uint64', '18446744073709551615'],
@@ -591,6 +634,69 @@ test('body references list inline variants, named models, field descriptions and
     /\[Child\]\(MODELS.md#child\)/,
   );
 });
+
+for (const keyword of ['oneOf', 'anyOf'])
+  for (const layout of ['inline', 'allOf', 'reference'])
+    test(`${keyword} ${layout} body variants retain parent types, required fields and constraints`, () => {
+      const body = {
+        type: 'object',
+        properties: {
+          label: { type: 'string', description: 'Parent label.', minLength: 2 },
+          mode: { type: 'string', description: 'Parent mode.' },
+          bounded: { type: 'string', minLength: 2 },
+          optional: { type: 'boolean' },
+          nested: { $ref: '#/components/schemas/Child' },
+          responseOnly: { type: 'string', readOnly: true },
+        },
+        [keyword]: [
+          {
+            required: ['label', 'mode', 'responseOnly'],
+            properties: {
+              mode: { const: 'first' },
+              bounded: { maxLength: 20 },
+            },
+          },
+          { required: ['mode'], properties: { mode: { const: 'second' } } },
+        ],
+      };
+      const { [keyword]: variants, ...parent } = body;
+      const { files } = fixture({
+        body:
+          layout === 'reference'
+            ? { $ref: '#/components/schemas/Body' }
+            : layout === 'allOf'
+              ? { allOf: [parent, { [keyword]: variants }] }
+              : body,
+        schemas: {
+          Child: { type: 'object', properties: { value: { type: 'string' } } },
+          ...(layout === 'reference' ? { Body: body } : {}),
+        },
+      });
+      for (const target of ['node', 'php']) {
+        const reference = files.get(`${target}/REFERENCE.md`);
+        const first = reference
+          .split(`#### api.createValue body ${keyword} variant 1 fields`)[1]
+          ?.split('####')[0];
+        assert.ok(first, `${target}: missing first variant table`);
+        assert.match(first, /\| `label` \| Required \| string \| Parent label\./);
+        assert.match(first, /minLength: `2`\./);
+        assert.match(
+          first,
+          /\| `bounded` \| Optional \| string \| minLength: `2`\. maxLength: `20`\./,
+        );
+        assert.match(first, /\| `mode` \| Required \| string \| Parent mode\./);
+        assert.match(first, /Values: `"first"`\./);
+        assert.match(first, /\| `optional` \| Optional \| boolean \|/);
+        assert.match(first, /\| `nested` \| Optional \| \[Child\]\(MODELS\.md#child\) \|/);
+        assert.doesNotMatch(first, /responseOnly/);
+        const second = reference
+          .split(`#### api.createValue body ${keyword} variant 2 fields`)[1]
+          ?.split('####')[0];
+        assert.match(second, /\| `label` \| Optional \| string \| Parent label\./);
+        assert.match(second, /\| `mode` \| Required \| string \| Parent mode\./);
+        assert.match(second, /Values: `"second"`\./);
+      }
+    });
 
 test('long unions indent their members, preserve Record expressions and retain syntax', () => {
   const source =

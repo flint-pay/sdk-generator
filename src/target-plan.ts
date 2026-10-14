@@ -1443,6 +1443,20 @@ function sampleMetadata(
   return value;
 }
 
+/** Select format placeholders only when the complete input remains valid. */
+export function sampleWithFormats(
+  schema: Schema,
+  definitions: Record<string, Schema>,
+  accepts: SampleValidator,
+): unknown {
+  const input = sample(schema, {}, definitions, [], undefined, accepts);
+  // Local choices can conflict with enclosing composition or cross-field
+  // constraints. Preserve main's sample exactly before generation validates it.
+  return accepts(input, compileCodec({ ...schema, 'x-sdk-definitions': definitions }))
+    ? input
+    : sample(schema, {}, definitions);
+}
+
 export function sample(
   s: Schema,
   inherited: Record<string, Schema> = {},
@@ -1450,6 +1464,7 @@ export function sample(
   stack: string[] = [],
   // Observe existing metadata selection without changing its precedence or validation.
   onMetadata?: () => void,
+  accepts?: SampleValidator,
 ): unknown {
   // A use-site example takes precedence over the referenced model's sample.
   if (s.example !== undefined) {
@@ -1462,7 +1477,7 @@ export function sample(
     if (!target || stack.includes(name))
       throw new Diagnostic('example', 'provide a finite example for recursive model ' + name);
     if (Array.isArray(target.type) && target.type.includes('null')) return null;
-    return sample(target, inherited, definitions, [...stack, name], onMetadata);
+    return sample(target, inherited, definitions, [...stack, name], onMetadata, accepts);
   }
   s = directionalSchema(s, false);
   if (Object.hasOwn(s, 'const')) {
@@ -1517,7 +1532,7 @@ export function sample(
     const properties = { ...inherited, ...collect(s) };
     const typed = [base, ...(allOf ?? [])].find((shape) => shape.type !== undefined);
     const item = [base, ...(allOf ?? [])].find((shape) => shape.items !== undefined)?.items;
-    let result = sample(base, properties, definitions, stack, onMetadata);
+    let result = sample(base, properties, definitions, stack, onMetadata, accepts);
     for (const branch of [...(allOf ?? []), ...(oneOf ?? anyOf ?? []).slice(0, 1)]) {
       const next = sample(
         { ...(typed ? { type: typed.type } : {}), ...(item ? { items: item } : {}), ...branch },
@@ -1525,6 +1540,7 @@ export function sample(
         definitions,
         stack,
         onMetadata,
+        accepts,
       );
       result =
         result &&
@@ -1560,7 +1576,10 @@ export function sample(
       if (selected.length < (s.minProperties ?? 0) && !selected.includes(field))
         selected.push(field);
     const result = Object.fromEntries(
-      selected.map(([key, child]) => [key, sample(child, {}, definitions, stack, onMetadata)]),
+      selected.map(([key, child]) => [
+        key,
+        sample(child, {}, definitions, stack, onMetadata, accepts),
+      ]),
     );
     if (Object.keys(result).length < (s.minProperties ?? 0) && s.additionalProperties !== false) {
       for (let i = Object.keys(result).length; i < (s.minProperties ?? 0); i++)
@@ -1570,6 +1589,7 @@ export function sample(
           definitions,
           stack,
           onMetadata,
+          accepts,
         );
     }
     return result;
@@ -1582,6 +1602,7 @@ export function sample(
         definitions,
         stack,
         onMetadata,
+        accepts,
       ),
     );
   if (t === 'boolean') return true;
@@ -1600,22 +1621,31 @@ export function sample(
     return s['x-sdk-number-input'] === 'explicit' ? new ExactNumberSample(token) : token;
   }
   if (t === 'string') {
-    const formatted =
-      (
-        {
-          uuid: '00000000-0000-4000-8000-000000000001',
-          date: '2026-01-01',
-          'date-time': '2026-01-01T00:00:00Z',
-          email: 'example@example.invalid',
-          uri: 'https://example.invalid/',
-          hostname: 'example.invalid',
-          ipv4: '192.0.2.1',
-          ipv6: '2001:db8::1',
-        } as Record<string, string>
-      )[s.format ?? ''] ?? 'example';
-    if (s.format && ['uuid', 'uri', 'hostname', 'ipv4', 'ipv6'].includes(s.format))
+    // Preserve main's sample exactly when a new format candidate cannot satisfy
+    // all constraints. Padding/truncating a format value can invalidate it too.
+    const fallback =
+      s.format === 'date'
+        ? '2026-01-01'
+        : s.format === 'date-time'
+          ? '2026-01-01T00:00:00Z'
+          : s.format === 'email'
+            ? 'example@example.invalid'
+            : 'example';
+    const formatted = (
+      {
+        uuid: '00000000-0000-4000-8000-000000000001',
+        date: '2026-01-01',
+        'date-time': '2026-01-01T00:00:00Z',
+        email: 'example@example.invalid',
+        uri: 'https://example.invalid/',
+        hostname: 'example.invalid',
+        ipv4: '192.0.2.1',
+        ipv6: '2001:db8::1',
+      } as Record<string, string>
+    )[s.format ?? ''];
+    if (formatted !== undefined && accepts && validSample(formatted, s, definitions, accepts))
       return formatted;
-    return formatted.padEnd(s.minLength ?? 0, 'x').slice(0, s.maxLength);
+    return fallback.padEnd(s.minLength ?? 0, 'x').slice(0, s.maxLength);
   }
   if (t === 'null') return null;
   return 'example';

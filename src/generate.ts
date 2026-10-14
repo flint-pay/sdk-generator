@@ -45,6 +45,7 @@ import {
   inputSchema,
   successStatus,
   sample,
+  sampleWithFormats,
   parameterExample,
   ExactNumberSample,
   compileSdkContract,
@@ -445,7 +446,7 @@ function configuredExample(
       return false;
     }
   };
-  const input = sample(schema, {}, definitions);
+  const input = sampleWithFormats(schema, definitions, accepts);
   if (input && typeof input === 'object' && !Array.isArray(input)) {
     for (const parameter of op.parameters) {
       // Omitted optional fields stay omitted. Main's examples, enums and consts
