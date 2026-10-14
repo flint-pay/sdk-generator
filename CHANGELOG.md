@@ -11,6 +11,7 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 ### Breaking changes for regenerated SDKs
 
 - Event names that share a type name or have no ASCII letters or digits fail diagnosis for every target.
+- When `webhook` is configured, `VerifiedWebhook`, `KnownWebhookEvent` and each `WebhookEvent<EventName>` type name are reserved for every target selection, including PHP-only generation. Configurations whose model, resource or operation helper names collide with these symbols now fail diagnosis. Customize the conflicting model/resource/method name or change the event declaration.
 - **Error kinds.** HTTP 404 uses kind `not_found` and HTTP 500–599 uses `server`, replacing `api` for those statuses. Update kind switches. Retry eligibility still follows the declared policy.
 - **Error messages and codes.** Server messages, provider codes and code-based retries require original JSON strings. Decimal, exponent and large-integer JSON numbers do not become messages or codes or trigger string-code retries. Node error paths stop at scalar strings and ignore runtime-only array properties, matching PHP: `code.0` cannot turn a string into a one-character retry code, and `details.length` cannot expose an array length.
 - **Numbers.** Plain `number`, float and double fields accept and return native numbers (PHP `int|float` inputs, `float` outputs). Replace numeric-string arguments with numbers. Declare `format: "decimal"` to keep exact decimal strings. int64/uint64 keep exact strings.

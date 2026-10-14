@@ -315,7 +315,7 @@ if (verified.known) {
 }
 ```
 
-Node exports `VerifiedWebhook`, `KnownWebhookEvent` and one `WebhookEvent<EventName>` type per declared event from the package root. Node shares PHP's names: `payment_intent.succeeded` becomes `WebhookEventPaymentIntentSucceeded`. Multi-variant events have a named union. These types are unavailable from `resources/*`; `KnownWebhookEvent` is `never` when no events are declared.
+Node exports `VerifiedWebhook`, `KnownWebhookEvent` and one `WebhookEvent<EventName>` type per declared event from the package root. Per-event types use the PHP event naming rule: `payment_intent.succeeded` becomes `WebhookEventPaymentIntentSucceeded`. Names match where PHP emits an event class; multi-variant events have a named Node union without a corresponding PHP event class. These types are unavailable from `resources/*`; `KnownWebhookEvent` is `never` when no events are declared.
 
 Use indexed access for payload annotations, for example `type SucceededPayload = WebhookEventPaymentIntentSucceeded['data']`. A top-level `typeField` supports exhaustive `switch` narrowing with a `never` default. For a dotted path such as `meta.name`, annotate a handler with the named event type or use `Extract<KnownWebhookEvent, { meta: { name: 'payment_intent.succeeded' } }>`.
 

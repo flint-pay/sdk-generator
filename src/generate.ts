@@ -1415,9 +1415,13 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       ...targetPlan.php.runtime,
       userAgent: `${c.config.composer.name.replaceAll('/', '-')}/${c.config.version} (PHP)`,
     };
-    for (const model of targetPlan.php.models.filter((model) => model.response))
-      if (!Object.hasOwn(models, model.name) && !webhookTypes.has(model.name)) reserve(model.name);
     const eventModels = targetPlan.php.eventModels;
+    // Each PHP event class reuses its reserved Node identity once. Other
+    // response classes with that name must still produce a collision.
+    const reservedEventModels = new Set(Object.values(eventModels));
+    for (const model of targetPlan.php.models.filter((model) => model.response))
+      if (!Object.hasOwn(models, model.name) && !reservedEventModels.delete(model.name))
+        reserve(model.name);
     put(
       'composer.json',
       stable({
@@ -2782,7 +2786,7 @@ function webhookReference(target: 'node' | 'php'): string {
   return (
     '## verifyWebhook\n\nVerify original request bytes with signing headers and one secret or a rotation array. Returns { known, event }; only matched declared envelopes are known. ' +
     (target === 'node'
-      ? 'The return type is `VerifiedWebhook`: checking `known` exposes `KnownWebhookEvent`, the union of the root-only `WebhookEvent<EventName>` types that share PHP class names. Unknown events remain `unknown`. '
+      ? 'The return type is `VerifiedWebhook`: checking `known` exposes `KnownWebhookEvent`, the union of the root-only `WebhookEvent<EventName>` types. Per-event types use the PHP event naming rule and match class names where PHP emits an event class; multi-variant events have Node types without corresponding PHP event classes. Unknown events remain `unknown`. '
       : '') +
     'See [signatures, framework examples, and errors](RUNTIME.md#webhooks-and-recovery).\n\n'
   );

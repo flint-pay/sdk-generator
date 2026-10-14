@@ -26,6 +26,7 @@ function fixture({
   typeField = 'type',
   model = 'Payment',
   schemas = {},
+  responseSchema,
   targets = ['node', 'php'],
 } = {}) {
   const root = join(dir, String(sequence++));
@@ -46,7 +47,9 @@ function fixture({
               200: {
                 description: 'Value',
                 content: {
-                  'application/json': { schema: { $ref: '#/components/schemas/' + model } },
+                  'application/json': {
+                    schema: responseSchema ?? { $ref: '#/components/schemas/' + model },
+                  },
                 },
               },
             },
@@ -271,6 +274,66 @@ type Preserved=Assert<Equals<VerifiedWebhook,Scoped>>;
 `,
   );
 });
+
+for (const targets of [['node', 'php'], ['php']]) {
+  for (const [kind, eventSchema] of [
+    ['object', envelope],
+    [
+      'multi-variant',
+      {
+        oneOf: [
+          envelope,
+          {
+            ...envelope,
+            properties: { ...envelope.properties, audience: { type: 'string' } },
+            required: [...envelope.required, 'audience'],
+          },
+        ],
+      },
+    ],
+  ])
+    test(`${targets.join('+')} generation rejects an inline response colliding with the ${kind} event type`, () => {
+      const responseSchema = {
+        type: 'object',
+        properties: { responseId: { type: 'string' } },
+        required: ['responseId'],
+      };
+      const f = fixture({
+        targets,
+        responseSchema,
+        events: { 'retrieve.response200': eventSchema },
+      });
+      const c = f.load();
+      const plan = compileSdkContract(c).plan;
+      assert.equal(
+        plan.php.runtime.operations[0].responses['200'].model,
+        'WebhookEventRetrieveResponse200',
+      );
+      assert.equal(
+        plan.php.eventModels['retrieve.response200'],
+        kind === 'object' ? 'WebhookEventRetrieveResponse200' : undefined,
+      );
+      assert.throws(
+        () => generate(c, f.output),
+        /public interface: generated type collision: WebhookEventRetrieveResponse200/,
+      );
+
+      const control = fixture({
+        targets,
+        responseSchema,
+        events: { 'retrieve.response201': eventSchema },
+      });
+      generate(control.load(), control.output);
+      const models = JSON.parse(
+        readFileSync(join(control.output, 'php/src/descriptors/models.json')),
+      );
+      assert.equal(models.filter((name) => name === 'WebhookEventRetrieveResponse200').length, 1);
+      assert.equal(
+        models.filter((name) => name === 'WebhookEventRetrieveResponse201').length,
+        kind === 'object' ? 1 : 0,
+      );
+    });
+}
 
 for (const target of ['node', 'php']) {
   for (const [name, options, expected] of [
