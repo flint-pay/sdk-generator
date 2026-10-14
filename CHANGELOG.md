@@ -41,6 +41,7 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 - PHP normalizes HTTP/HTTPS scheme capitalization before omitting default ports, matching Node origin checks.
 - Generator CLI errors name the cause: unknown command or flag, missing, empty or extra argument, a missing PHP or Composer tool for a selected target, and the JSON parse position. Hand-edit detection reports every edited file.
 - Diagnostic locations escape JSON Pointer segments, for example `/paths/~1todos/get`.
+- An operation no longer depends on models of another operation whose path extends it with a segment named like an HTTP method (for example `/values` `post` and `/values/post/nested`), so hidden operations do not pull their models into the SDK.
 - Optional idempotency keys: mutations without a key send once instead of failing because retries were declared.
 - Generated examples no longer use a fabricated sandbox fallback URL.
 - Generated examples use the effective retry policy instead of disabling retries.
