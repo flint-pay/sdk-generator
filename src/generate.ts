@@ -970,6 +970,7 @@ function packageReadme(
   c: Contract,
   target: 'node' | 'php',
   returns: { payload: number; total: number },
+  standaloneWebhook: boolean,
 ): string {
   const node = target === 'node';
   const selected = readmeOperations(c);
@@ -1022,7 +1023,7 @@ function packageReadme(
     ? `## Pagination\n\nList operations such as \`${paginated.resource}.${paginated.method}\` also have \`${paginated.method}Items\` and \`${paginated.method}Pages\` methods that fetch pages lazily. See [pagination](RUNTIME.md#pagination-and-polling).\n\n`
     : '';
   const webhooks = c.config.webhook
-    ? `## Webhooks\n\nVerify each delivery with \`${node ? 'client.verifyWebhook(rawBody, headers, secrets)' : '$client->verifyWebhook($rawBody, $headers, $secrets)'}\` on the original request bytes, never re-encoded JSON. Standalone ${node ? '`verifyWebhook`' : '`Webhooks::verify`'} needs no client configuration. See [verifyWebhook examples and errors](RUNTIME.md#webhooks-and-recovery).\n\n`
+    ? `## Webhooks\n\nVerify each delivery with \`${node ? 'client.verifyWebhook(rawBody, headers, secrets)' : '$client->verifyWebhook($rawBody, $headers, $secrets)'}\` on the original request bytes, never re-encoded JSON. ${standaloneWebhook ? `Standalone ${node ? '`verifyWebhook`' : '`Webhooks::verify`'} needs no client configuration.` : 'The Webhooks name belongs to an API model; use the client method for verification.'} See [verifyWebhook examples and errors](RUNTIME.md#webhooks-and-recovery).\n\n`
     : '';
   const guides = Object.keys(c.config.documentation?.guides ?? {}).map(
     (slug) => `- [${slug}](guides/${slug}.md)\n`,
@@ -1566,7 +1567,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       code +=
         '    public function money(string $currency, string $major): array { return $this->runtime->money($currency, $major); }\n';
     code += '}\n';
-    if (c.config.webhook)
+    if (targetPlan.php.standaloneWebhook)
       code += `final class Webhooks {\n${webhookDoc('string|list<string>')}    public static function verify(mixed $rawBody, mixed $headers, mixed $secrets, mixed $nowSeconds = null): array { return Runtime::verifyWebhookFromPlan(SchemaRegistry::source(), $rawBody, $headers, $secrets, $nowSeconds); }\n}\n`;
     for (const group of groups) {
       code += `final class ${pascal(group)}Resource {\n    public function __construct(private readonly Runtime $runtime) {}\n`;
@@ -1738,12 +1739,17 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
   for (const target of targets) {
     files.set(
       `${target}/README.md`,
-      packageReadme(c, target, {
-        payload: Object.keys(payloadReturns).length,
-        total: c.operations.length,
-      }),
+      packageReadme(
+        c,
+        target,
+        { payload: Object.keys(payloadReturns).length, total: c.operations.length },
+        targetPlan[target].standaloneWebhook === true,
+      ),
     );
-    files.set(`${target}/RUNTIME.md`, runtimeGuide(c, target));
+    files.set(
+      `${target}/RUNTIME.md`,
+      runtimeGuide(c, target, targetPlan[target].standaloneWebhook === true),
+    );
     files.set(
       `${target}/RUNTIME.md`,
       files
@@ -2884,14 +2890,20 @@ function webhookReference(target: 'node' | 'php'): string {
   );
 }
 
-function webhookGuide(c: Contract, target: 'node' | 'php'): string {
+function webhookGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: boolean): string {
   const w = c.config.webhook;
   if (!w) return 'This provider has not declared webhook verification.';
   const headers = [w.header, w.timestampHeader, w.idHeader]
     .filter(Boolean)
     .map((name) => '`' + name + '`')
     .join(', ');
-  const requirements = `${target === 'node' ? 'Import verifyWebhook from the package root to verify without client options, a base URL or API credentials. Client.verifyWebhook delegates to the same verifier. ' : `Use ${c.config.composer.namespace}\\Webhooks::verify($rawBody, $headers, $secrets, $nowSeconds = null) to verify without client options, a base URL or API credentials. Client::verifyWebhook delegates to the same verifier. The static method keeps mixed arguments so invalid inputs produce SDK error subclasses. `}Call verifyWebhook(rawBody, headers, secrets, nowSeconds?) with original request bytes and ${headers}. This package uses ${w.format ?? 'hex'} HMAC-SHA256 signing and a ${w.toleranceSeconds}-second timestamp tolerance. ${w.format === 'standard-webhooks' ? 'Secrets must use the whsec_ prefix and canonical base64 encoding of exactly 32 key bytes.' : 'Use the signing secret supplied by the provider.'} Pass one secret string or an array of active secrets during rotation. nowSeconds is an optional Unix time override for deterministic tests; normally omit it.\n\n`;
+  const verifier =
+    target === 'node'
+      ? 'Import verifyWebhook from the package root to verify without client options, a base URL or API credentials. Client.verifyWebhook delegates to the same verifier. '
+      : standaloneWebhook
+        ? `Use ${c.config.composer.namespace}\\Webhooks::verify($rawBody, $headers, $secrets, $nowSeconds = null) to verify without client options, a base URL or API credentials. Client::verifyWebhook delegates to the same verifier. The static method keeps mixed arguments so invalid inputs produce SDK error subclasses. `
+        : 'The Webhooks name belongs to an API model; use Client::verifyWebhook for verification. Its mixed arguments keep invalid inputs within the SDK error guards. ';
+  const requirements = `${verifier}Call verifyWebhook(rawBody, headers, secrets, nowSeconds?) with original request bytes and ${headers}. This package uses ${w.format ?? 'hex'} HMAC-SHA256 signing and a ${w.toleranceSeconds}-second timestamp tolerance. ${w.format === 'standard-webhooks' ? 'Secrets must use the whsec_ prefix and canonical base64 encoding of exactly 32 key bytes.' : 'Use the signing secret supplied by the provider.'} Pass one secret string or an array of active secrets during rotation. nowSeconds is an optional Unix time override for deterministic tests; normally omit it.\n\n`;
   const examples =
     target === 'node'
       ? `### Fetch\n\nThe request body must not have been consumed. Pass the SDK client and your configured signing secret to this helper:\n\n\`\`\`js
@@ -2979,7 +2991,7 @@ try {
 const bullets = (items: readonly string[]) => items.map((item) => '- ' + item + '\n').join('');
 
 /** Runtime guide: common tasks first, each with a short snippet where one applies. */
-function runtimeGuide(c: Contract, target: 'node' | 'php'): string {
+function runtimeGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: boolean): string {
   const node = target === 'node';
   const fence = node ? 'typescript' : 'php';
   const snippet = (
@@ -3061,7 +3073,7 @@ function runtimeGuide(c: Contract, target: 'node' | 'php'): string {
       'Close the returned stream (Result.data in result mode) or the client to release a stream; breaking iteration also closes it. Unknown event names retain raw strings. Reconnect and persist resume cursors explicitly; no yielded event is retried automatically.',
       'Cancellation stops local work, not the remote operation. Node uses AbortSignal. PHP uses a Cancellation token checked during cURL progress and between waits; synchronous calls need an external signal handler to cancel while blocked.',
     ]) +
-    `\n## Webhooks and recovery\n\n${webhookGuide(c, target)}\n\n` +
+    `\n## Webhooks and recovery\n\n${webhookGuide(c, target, standaloneWebhook)}\n\n` +
     downloadGuide(c, target) +
     `## Destinations and API versions\n\n` +
     bullets([

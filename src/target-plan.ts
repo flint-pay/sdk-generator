@@ -878,7 +878,12 @@ export function compileSdkContract(source: Contract): {
     },
     php: {
       errorClasses: true,
-      ...(c.config.webhook ? { webhookReasons: true, standaloneWebhook: true } : {}),
+      ...(c.config.webhook ? { webhookReasons: true } : {}),
+      // PHP class names are case-insensitive. Preserve a public Webhooks model
+      // instead of emitting the optional standalone verifier over its class file.
+      ...(c.config.webhook && !Object.keys(models).some((name) => name.toLowerCase() === 'webhooks')
+        ? { standaloneWebhook: true }
+        : {}),
       runtime: phpRuntime,
       models: [
         ...Object.entries(models).map(([name, s]) =>

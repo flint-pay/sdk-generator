@@ -1,12 +1,12 @@
 {
-  "description": "Reviewed additive SDK error subclasses and Node standalone webhook verification: executable Node modules now export the errors namespace and verifier, PHP class files/autoload maps include the Errors sub-namespace, and both verifiers return reasons for unrecognized deliveries. Runtime/declaration consumer tests independently verify these changes. Existing root exports remain and errors/verifyWebhook are added. The predecessor compiled-public baseline retains its historical bytes. The PHP standalone decision adds Webhooks::verify to declared packages and shares the compiled verification implementation with Client::verifyWebhook, preserving guarded invalid-input errors and client redaction. Node executable and declaration hashes are unchanged by these decisions.",
+  "description": "Reviewed additive SDK error subclasses and Node standalone webhook verification: executable Node modules now export the errors namespace and verifier, PHP class files/autoload maps include the Errors sub-namespace, and both verifiers return reasons for unrecognized deliveries. Runtime/declaration consumer tests independently verify these changes. Existing root exports remain and errors/verifyWebhook are added. The predecessor compiled-public baseline retains its historical bytes. The PHP standalone decision adds Webhooks::verify to declared packages and shares the compiled verification implementation with Client::verifyWebhook, preserving guarded invalid-input errors and client redaction. Review fixes give built-in Node errors literal names that survive minification and preserve factory callers in Node stacks and PHP file/line metadata. Executable hashes reflect those fixes; declarations and existing exports remain unchanged. PHP omits its optional standalone verifier when a Webhooks model takes the class name, independently covered by generated-client collision regressions.",
   "fixtures": [
     {
       "name": "payment",
       "api": "tests/fixtures/payment-api.json",
       "config": "tests/fixtures/payment-sdk.json",
-      "nodeRuntimeSha256": "c96562e746dbb9f1f09a9b9b241402897a33e578e78ca8410d740ef70bcd604a",
-      "phpSha256": "066ac142dc69d744d0d51b22d2d98bea5f8f95c95e608f83b6115b2718520954",
+      "nodeRuntimeSha256": "644b614d7d07fd0ef916ef44bb4090994f5f4bc2e0ecb66f4561531033fca8f1",
+      "phpSha256": "a5d20049472421219b6626eb85cdb092a5398faaa0574cd4359c64cf10c9127c",
       "rootExports": [
         "SdkError",
         "Model",
@@ -46,17 +46,17 @@
         "verifyWebhook"
       ],
       "singleTarget": {
-        "node": "c96562e746dbb9f1f09a9b9b241402897a33e578e78ca8410d740ef70bcd604a",
-        "php": "066ac142dc69d744d0d51b22d2d98bea5f8f95c95e608f83b6115b2718520954"
+        "node": "644b614d7d07fd0ef916ef44bb4090994f5f4bc2e0ecb66f4561531033fca8f1",
+        "php": "a5d20049472421219b6626eb85cdb092a5398faaa0574cd4359c64cf10c9127c"
       },
-      "phpRuntimeSha256": "51e649b99e0fa31f73f05ca643bdda67a885c088e6457c9189b2575d8d2db71a"
+      "phpRuntimeSha256": "f0a9ff73f55c2f3f7445ce4e50ce1566bd705411c5cad9f4281d4ddd37de20d1"
     },
     {
       "name": "flint",
       "api": "tests/providers/flint/openapi.json",
       "config": "tests/providers/flint/sdk.json",
-      "nodeRuntimeSha256": "4a9e351cb73c38ee70388b3f079b97e5380c254bcd76ee7771f62e3168dffdb6",
-      "phpSha256": "3da2e522bd9de23516c1e01b5ce6e9767420f13c58a57eb74cdc698678af7e99",
+      "nodeRuntimeSha256": "a3905d143c90b3c0af578906dda0fc3ea506d1158acbc3c332fbbc9665f158b4",
+      "phpSha256": "2966236b95adfdf616a76c3a235adc9ae2a6be0de9431a5743521ebe853ae676",
       "rootExports": [
         "SdkError",
         "Model",
@@ -363,10 +363,10 @@
         "verifyWebhook"
       ],
       "singleTarget": {
-        "node": "e49bffce6f9edf3337f0e8761633bc3c23e4c4dc68e80589c179689e71302aee",
-        "php": "3da2e522bd9de23516c1e01b5ce6e9767420f13c58a57eb74cdc698678af7e99"
+        "node": "631e0ef4e3d63bf1273e83c451897847f053007b840e8c223b50bace9a472bcf",
+        "php": "2966236b95adfdf616a76c3a235adc9ae2a6be0de9431a5743521ebe853ae676"
       },
-      "phpRuntimeSha256": "4afea66557b30ba4427fb66ba8ef2b55f173b6036ffb4363498c19eb3db4e55c"
+      "phpRuntimeSha256": "34c7f721d28c102ea62db0a1a29e9e3ddaaf7cef1542bc3f7449c69426d6ef17"
     }
   ]
 }

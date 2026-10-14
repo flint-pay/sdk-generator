@@ -194,7 +194,7 @@ try {
 | Request ID    | `meta?.requestId`       | `$error->meta['requestId']` |
 | HTTP status   | `status` or `undefined` | `status` or `null`          |
 
-`SdkError` and `kind` remain the authoritative API. Each runtime failure also has a subclass chosen solely from `kind`. Node exposes the classes through `errors` at the package root and resource subpaths; `errors.SdkError === SdkError`, and `errors.NotFoundError` works as a TypeScript type. PHP classes live in `Example\Library\Errors`, separate from generated models. Every subclass is still an `SdkError`. Node `name` and inspection show the subclass name.
+`SdkError` and `kind` remain the authoritative API. Each runtime failure also has a subclass chosen solely from `kind`. Node exposes the classes through `errors` at the package root and resource subpaths; `errors.SdkError === SdkError`, and `errors.NotFoundError` works as a TypeScript type. PHP classes live in `Example\Library\Errors`, separate from generated models. Every subclass is still an `SdkError`. Node `name` and inspection show the subclass name, including in minified bundles. Node stacks and PHP exception file/line metadata identify the factory's calling site.
 
 | Kind             | Class                 |
 | ---------------- | --------------------- |
@@ -289,6 +289,8 @@ if (!$verified['known']) {
 ```
 
 PHP's `Webhooks::verify(mixed $rawBody, mixed $headers, mixed $secrets, mixed $nowSeconds = null): array` validates argument types through the SDK guards. Invalid inputs throw `Errors\ValidationError`, signature failures throw `Errors\AuthenticationError`, and authenticated invalid JSON throws `Errors\ProtocolError`.
+
+If a generated model is named `Webhooks` (case insensitive), PHP keeps the model name and omits the standalone verifier class. Use `$client->verifyWebhook($rawBody, $headers, $secrets)` in that package. Node's standalone `verifyWebhook` remains available.
 
 When the provider declares signing, the client exposes `verifyWebhook(rawBody, headers, secrets, nowSeconds?)`.
 

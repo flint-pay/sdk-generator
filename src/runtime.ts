@@ -53,7 +53,7 @@ export class SdkError extends Error {
     public raw?: string,
   ) {
     super(message, options);
-    this.name = new.target.name;
+    this.name = errorNames.get(new.target) ?? new.target.name;
   }
   get status(): number | undefined {
     return this.meta?.status;
@@ -92,6 +92,22 @@ export namespace errors {
   export class DeadlineError extends BaseSdkError {}
   export class DestinationError extends BaseSdkError {}
 }
+// Built-in identities survive minification; consumer subclasses retain their own names.
+const errorNames = new Map<typeof SdkError, string>([
+  [SdkError, 'SdkError'],
+  [errors.ConnectionError, 'ConnectionError'],
+  [errors.AuthenticationError, 'AuthenticationError'],
+  [errors.ValidationError, 'ValidationError'],
+  [errors.RateLimitError, 'RateLimitError'],
+  [errors.NotFoundError, 'NotFoundError'],
+  [errors.ConflictError, 'ConflictError'],
+  [errors.ServerError, 'ServerError'],
+  [errors.ApiError, 'ApiError'],
+  [errors.ProtocolError, 'ProtocolError'],
+  [errors.CancelledError, 'CancelledError'],
+  [errors.DeadlineError, 'DeadlineError'],
+  [errors.DestinationError, 'DestinationError'],
+]);
 const errorClasses = {
   transport: errors.ConnectionError,
   authentication: errors.AuthenticationError,
@@ -109,7 +125,9 @@ const errorClasses = {
 
 /** Internal construction boundary; public constructors keep their existing arguments. */
 export function createSdkError(...args: ConstructorParameters<typeof SdkError>): SdkError {
-  return new errorClasses[args[0]](...args);
+  const error = new errorClasses[args[0]](...args);
+  if (typeof Error.captureStackTrace === 'function') Error.captureStackTrace(error, createSdkError);
+  return error;
 }
 export interface DiagnosticEvent {
   operation: string;

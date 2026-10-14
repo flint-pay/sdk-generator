@@ -49,7 +49,7 @@ class SdkError extends \RuntimeException
             'destination' => Errors\DestinationError::class,
             default => self::class,
         };
-        return new $class(
+        $error = new $class(
             $kind,
             $message,
             $outcome,
@@ -60,6 +60,11 @@ class SdkError extends \RuntimeException
             $previous,
             $raw,
         );
+        // The factory's call frame identifies the original construction site.
+        $caller = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 2)[0];
+        $error->file = $caller['file'] ?? $error->file;
+        $error->line = $caller['line'] ?? $error->line;
+        return $error;
     }
     public function __debugInfo(): array
     {

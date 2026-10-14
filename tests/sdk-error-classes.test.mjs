@@ -6,6 +6,8 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { inspect } from 'node:util';
+import { createHmac } from 'node:crypto';
+import { build } from 'esbuild';
 import { generate, loadContract, preview } from '../dist/index.js';
 import { compileSdkContract } from '../dist/target-plan.js';
 import { compareCompiledContracts } from '../dist/compiled-compatibility.js';
@@ -131,6 +133,79 @@ function php(f, code) {
   ]);
 }
 
+test('minified generated SDK bundles preserve built-in error names', async () => {
+  const f = fixture();
+  const bundle = join(f.dir, 'bundle.mjs');
+  await build({
+    entryPoints: [join(f.output, 'node/index.js')],
+    outfile: bundle,
+    bundle: true,
+    minify: true,
+    platform: 'node',
+    format: 'esm',
+  });
+  const { Client, SdkError, errors } = await import(pathToFileURL(bundle));
+  assert.deepEqual(
+    [
+      new SdkError('api', 'synthetic').name,
+      ...Object.entries(classes).map(([kind, name]) => new errors[name](kind, 'synthetic').name),
+    ],
+    ['SdkError', ...Object.values(classes)],
+  );
+  class ConsumerError extends errors.AuthenticationError {}
+  assert.equal(new ConsumerError('authentication', 'synthetic').name, 'ConsumerError');
+  const client = new Client({
+    baseUrl: 'https://example.invalid',
+    maxAttempts: 1,
+    transport: async () => new Response('{"message":"synthetic"}', { status: 401 }),
+  });
+  await assert.rejects(client.values.retrieve('value_fixture'), (error) => {
+    assert.ok(error instanceof errors.AuthenticationError && error instanceof SdkError);
+    assert.equal(error.name, 'AuthenticationError');
+    assert.match(inspect(error), /AuthenticationError/);
+    return true;
+  });
+});
+
+test('Node error factory reports its caller as the origin', async () => {
+  const f = fixture();
+  const { createSdkError } = await import(pathToFileURL(join(f.output, 'node/runtime.js')));
+  function throwingSite() {
+    throw createSdkError('authentication', 'synthetic');
+  }
+  assert.throws(throwingSite, (error) => {
+    assert.match(error.stack.split('\n')[1], /at throwingSite \(/);
+    assert.doesNotMatch(error.stack, /at createSdkError/);
+    return true;
+  });
+});
+
+test('PHP error factory reports its caller file and line as the origin', () => {
+  const f = fixture();
+  const caller = join(f.dir, 'caller.php');
+  writeFileSync(
+    caller,
+    String.raw`<?php
+require $argv[1].'/src/Client.php';
+use Example\ErrorClasses\SdkError;
+function throwingSite(): void {
+    $expectedLine = __LINE__ + 2;
+    try {
+        throw SdkError::create('authentication', 'synthetic');
+    } catch (SdkError $error) {
+        echo json_encode([$error->getFile(), $error->getLine(), __FILE__, $expectedLine]);
+    }
+}
+throwingSite();
+`,
+  );
+  const [file, line, expectedFile, expectedLine] = JSON.parse(
+    run('php', [caller, join(f.output, 'php')]),
+  );
+  assert.equal(file, expectedFile);
+  assert.equal(line, expectedLine);
+});
+
 test('HTTP errors use the independently expected class and preserve SdkError fields in both targets', async () => {
   const f = fixture();
   const { Client, SdkError, errors } = await import(pathToFileURL(join(f.output, 'node/index.js')));
@@ -157,6 +232,8 @@ test('HTTP errors use the independently expected class and preserve SdkError fie
       assert.equal(error.message, 'synthetic failure');
       assert.equal(error.meta.requestId, 'req_fixture');
       assert.equal(error.outcome, 'response');
+      assert.match(error.stack.split('\n')[1], /at CompiledRuntime\.request \(/);
+      assert.doesNotMatch(error.stack, /at createSdkError/);
       assert.match(inspect(error), new RegExp(classes[kind]));
       return true;
     });
@@ -170,7 +247,11 @@ $rows=[];
 foreach([401,403,404,409,412,400,422,429,500,503,599,418,408] as $status) {
   $client=new Client(new ClientOptions('https://example.invalid',maxAttempts:1,transport:fn($r)=>['status'=>$status,'headers'=>['x-request-id'=>'req_fixture'],'body'=>'{"message":"synthetic failure"}']));
   try {$client->values->retrieve('value_fixture'); throw new Exception('accepted');}
-  catch(SdkError $e) {$rows[]=[get_class($e),$e instanceof SdkError,$e->kind,$e->status,$e->getMessage(),$e->meta['requestId'],$e->outcome];}
+  catch(SdkError $e) {
+    $source=file($e->getFile());
+    if(basename($e->getFile())!=='Runtime.php' || !str_contains($source[$e->getLine()-1],'SdkError::create('))throw new Exception('factory obscured throwing site');
+    $rows[]=[get_class($e),$e instanceof SdkError,$e->kind,$e->status,$e->getMessage(),$e->meta['requestId'],$e->outcome];
+  }
 }
 echo json_encode($rows);`,
     ),
@@ -511,6 +592,98 @@ echo 'ok';`;
       ]),
       'ok',
     );
+});
+
+test('Webhooks model keeps its name and client verification when the PHP standalone class is omitted', async () => {
+  const f = fixture({ Webhooks: { type: 'object', properties: { id: { type: 'string' } } } }, true);
+  const plan = compileSdkContract(f.contract).plan;
+  assert.equal(plan.node.standaloneWebhook, true);
+  assert.equal(plan.php.standaloneWebhook, undefined);
+  const { Client, makeWebhooks, Model, verifyWebhook } = await import(
+    pathToFileURL(join(f.output, 'node/index.js'))
+  );
+  assert.ok(existsSync(join(f.output, 'node/declarations/Webhooks.d.ts')));
+  const model = makeWebhooks({ id: 'model_fixture' });
+  assert.ok(model instanceof Model);
+  assert.deepEqual(JSON.parse(JSON.stringify(model)), { id: 'model_fixture' });
+  const now = 1700000000;
+  const secret = 'synthetic-webhook-secret';
+  const body = '{"type":"value.updated","id":"value_fixture"}';
+  const headers = {
+    'X-Timestamp': String(now),
+    'X-Signature': createHmac('sha256', secret)
+      .update(now + '.' + body)
+      .digest('hex'),
+  };
+  const client = new Client({
+    baseUrl: 'https://example.invalid',
+    transport: async () => new Response('{"id":"value_fixture","Webhooks":{"id":"model_fixture"}}'),
+  });
+  assert.equal((await client.values.retrieve('value_fixture')).data.Webhooks.id, 'model_fixture');
+  assert.equal(verifyWebhook(Buffer.from(body), headers, secret, now).known, true);
+  assert.deepEqual(
+    client.verifyWebhook(Buffer.from(body), headers, secret, now),
+    verifyWebhook(Buffer.from(body), headers, secret, now),
+  );
+  const phpModel = readFileSync(join(f.output, 'php/src/classes/Webhooks.php'), 'utf8');
+  assert.match(phpModel, /class Webhooks extends Model/);
+  assert.doesNotMatch(phpModel, /static function verify\(/);
+  for (const file of ['README.md', 'RUNTIME.md']) {
+    const doc = readFileSync(join(f.output, 'php', file), 'utf8');
+    assert.doesNotMatch(doc, /Webhooks::verify/);
+    assert.match(doc, /Webhooks.*model/);
+  }
+  assert.equal(
+    php(
+      f,
+      String.raw`
+use Example\ErrorClasses\{Client,ClientOptions,Webhooks,Model};
+$model=new Webhooks(['id'=>'model_fixture']);
+if(!$model instanceof Model || $model->getId()!=='model_fixture' || method_exists(Webhooks::class,'verify'))throw new Exception('model renamed or standalone emitted');
+$client=new Client(new ClientOptions('https://example.invalid',transport:fn($r)=>['status'=>200,'headers'=>[],'body'=>'{"id":"value_fixture","Webhooks":{"id":"model_fixture"}}']));
+if(!$client->values->retrieve('value_fixture')->data->getWebhooks() instanceof Webhooks)throw new Exception('response model renamed');
+$now=1700000000;$body='{"type":"value.updated","id":"value_fixture"}';$secret='synthetic-webhook-secret';
+$headers=['X-Timestamp'=>(string)$now,'X-Signature'=>hash_hmac('sha256',$now.'.'.$body,$secret)];
+$verified=$client->verifyWebhook($body,$headers,$secret,$now);
+if(!$verified['known'] || $verified['event']->getId()!=='value_fixture')throw new Exception('client verification failed');
+echo 'ok';`,
+    ),
+    'ok',
+  );
+});
+
+test('Webhooks collision policy respects PHP case-insensitivity and selected targets', () => {
+  const f = fixture({ WebHooks: { type: 'object', properties: { id: { type: 'string' } } } }, true);
+  for (const targets of [['node'], ['php'], ['node', 'php']]) {
+    const contract = structuredClone(f.contract);
+    contract.config.targets = targets;
+    const plan = compileSdkContract(contract).plan;
+    assert.equal(plan.node.standaloneWebhook, true);
+    assert.equal(plan.php.standaloneWebhook, undefined);
+    const output = join(f.dir, targets.join('-'));
+    generate(contract, output);
+    if (targets.includes('node')) {
+      assert.ok(existsSync(join(output, 'node/declarations/WebHooks.d.ts')));
+      assert.match(
+        readFileSync(join(output, 'node/index.js'), 'utf8'),
+        /export function verifyWebhook/,
+      );
+    }
+    if (targets.includes('php')) {
+      assert.ok(existsSync(join(output, 'php/src/classes/WebHooks.php')));
+      assert.ok(!existsSync(join(output, 'php/src/classes/Webhooks.php')));
+      assert.equal(
+        php(
+          { output },
+          String.raw`
+$model=new Example\ErrorClasses\WebHooks(['id'=>'model_fixture']);
+if($model->getId()!=='model_fixture' || method_exists($model,'verify'))throw new Exception('case-insensitive collision');
+echo 'ok';`,
+        ),
+        'ok',
+      );
+    }
+  }
 });
 
 test('historical compiled records classify error classes, reasons and both standalone verifiers as additive', () => {
