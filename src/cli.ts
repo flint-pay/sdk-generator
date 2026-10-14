@@ -359,7 +359,8 @@ try {
         // Resolved contracts retain metadata for saved-record compatibility.
         if (!targets.includes('node')) Reflect.deleteProperty(config, 'npm');
         if (!targets.includes('php')) Reflect.deleteProperty(config, 'composer');
-        console.log(stable({ ...contract, config }));
+        const { exampleProtection: _exampleProtection, ...effective } = contract;
+        console.log(stable({ ...effective, config }));
       } else {
         const output = positional[2]!;
         if (json) console.log(stable(generate(contract, output, command === 'preview')));

@@ -1,3 +1,4 @@
+import { omitProtectedExamples } from './example-protection.js';
 import { reservePublicSymbols } from './public-symbols.js';
 import { pascalWords, webhookEventTypeName } from './naming.js';
 import {
@@ -1047,10 +1048,16 @@ export function compileSdkContract(source: Contract): {
     plan.node.responseReturnDeclarations = `type _SdkPayloadAt<T, P extends readonly string[]> = P extends readonly [infer K extends string, ...infer R extends string[]] ? T extends Record<K, infer V> ? _SdkPayloadAt<V, R> : unknown : T;\nexport interface SdkResponse<T> { body: T; meta: Result<T>['meta']; raw: Result<T>['raw']; }\n`;
   }
   if (plan.targets.includes('php')) {
+    // Examples/defaults historically participate in PHP entity identity and
+    // pins. Publication must remove values without changing those decisions.
+    const semantic = targetContract(source, 'semantic');
+    for (const op of semantic.operations)
+      for (const response of Object.values(op.responses))
+        if (response.schema) response.schema = exposeResponseUnion(response.schema);
     const representations = phpRepresentations(
-      models,
-      c.definitions ?? {},
-      c.config.phpFieldClasses,
+      modelsUsed(semantic),
+      semantic.definitions ?? {},
+      semantic.config.phpFieldClasses,
     );
     const project = (value: PhpRepresentation, path: string[]): PhpRepresentation => {
       if (!path.length) return value;
@@ -1061,7 +1068,7 @@ export function compileSdkContract(source: Contract): {
       }
       return { kind: 'value', type: 'mixed' };
     };
-    for (const op of c.operations) {
+    for (const op of semantic.operations) {
       const compiled = plan.php.runtime.operations.find((entry) => entry.id === op.id);
       if (!compiled) throw new Error('Missing PHP operation');
       for (const [status, response] of Object.entries(op.responses)) {
@@ -1069,7 +1076,7 @@ export function compileSdkContract(source: Contract): {
         if (!result || !response.schema || !(successStatus(status) || status === 'default'))
           continue;
         const prefix = pascal(op.resource) + pascal(op.method) + 'Response' + pascal(status);
-        const shape = phpDeclaration(response.schema, c.definitions);
+        const shape = phpDeclaration(response.schema, semantic.definitions);
         if (
           result.model &&
           (Object.keys(shape.properties ?? {}).length || shape.additionalProperties === false)
@@ -1144,7 +1151,7 @@ export function compileSdkContract(source: Contract): {
       }
     }
     for (const [event, name] of Object.entries(eventModels)) {
-      const schema = c.config.webhook?.events[event];
+      const schema = semantic.config.webhook?.events[event];
       if (schema) representations.model(name, schema);
     }
     representations.checkFieldClasses();
@@ -1223,7 +1230,11 @@ export function compileSdkContract(source: Contract): {
 
 /** Normalize shared named shapes without mutating the caller contract. */
 export function prepareTargetContract(c: Contract): Contract {
+  return targetContract(c, 'publication');
+}
+function targetContract(c: Contract, purpose: 'semantic' | 'publication'): Contract {
   c = JSON.parse(stable(c)) as Contract;
+  if (purpose === 'publication') omitProtectedExamples(c);
   // Share named nested shapes in recursive graphs. Expanding a provider's graph
   // into every operation, factory and declaration otherwise grows exponentially.
   if (c.definitions && c.config.schemaSharing !== 'named') {

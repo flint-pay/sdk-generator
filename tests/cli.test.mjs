@@ -816,9 +816,10 @@ test('--json preserves every command success byte for byte, including publicatio
     contractHash: contract.hash,
     targets: ['node', 'php'],
   });
-  jsonSuccess(['effective', f.api, f.sdk], contract);
+  const { exampleProtection: _exampleProtection, ...effective } = contract;
+  jsonSuccess(['effective', f.api, f.sdk], effective);
   const humanEffective = run(['effective', f.api, f.sdk]);
-  assert.equal(humanEffective.stdout, stable(contract) + '\n');
+  assert.equal(humanEffective.stdout, stable(effective) + '\n');
   assert.equal(humanEffective.status, 0);
   const fresh = join(f.dir, 'fresh');
   jsonSuccess(['preview', f.api, f.sdk, fresh], generate(contract, fresh, true));

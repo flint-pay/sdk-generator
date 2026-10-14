@@ -20,6 +20,7 @@ const semantic = new Set([
   'public-symbols',
   'schema-documentation',
   'schema-annotations',
+  'example-protection',
   'parameter-example-policy',
   'target-plan',
   'value-guarantee',

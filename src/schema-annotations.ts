@@ -1,5 +1,7 @@
+import { EXAMPLE_PROTECTION_MARKER } from './example-protection.js';
 /** Supported metadata does not change the referenced value's shape. */
 export const schemaAnnotations: readonly string[] = [
+  EXAMPLE_PROTECTION_MARKER,
   'description',
   'title',
   'default',

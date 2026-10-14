@@ -1,20 +1,57 @@
+import { EXAMPLE_PROTECTION_MARKER } from './example-protection.js';
 import { createHash } from 'node:crypto';
 import type { Contract, Schema } from './contract.js';
 import { isSchemaAnnotation } from './schema-annotations.js';
 
 /** Hash subtrees without ever materializing the expanded graph as one JSON string. */
 function identities() {
-  const cache = new WeakMap<object, string>();
-  const identity = (value: unknown): string => {
+  type Context = 'schema' | 'map' | 'data';
+  const caches = {
+    schema: new WeakMap<object, string>(),
+    map: new WeakMap<object, string>(),
+    data: new WeakMap<object, string>(),
+  };
+  const identity = (value: unknown, context: Context = 'schema'): string => {
     if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'undefined';
+    const cache = caches[context];
     const previous = cache.get(value);
     if (previous) return previous;
     const digest = createHash('sha256');
     digest.update(Array.isArray(value) ? '[' : '{');
     for (const [key, child] of Object.entries(value).sort(([a], [b]) => a.localeCompare(b, 'en'))) {
+      // Publication provenance must not change sharing when this schema has no
+      // annotation value to omit. Keep literal annotation payloads untouched.
+      if (
+        context === 'schema' &&
+        key === EXAMPLE_PROTECTION_MARKER &&
+        !['example', 'examples', 'default'].some((annotation) => Object.hasOwn(value, annotation))
+      )
+        continue;
+      const nested: Context =
+        context === 'map' || (context === 'schema' && Array.isArray(value))
+          ? 'schema'
+          : context === 'schema' &&
+              ['properties', 'patternProperties', 'dependentSchemas'].includes(key)
+            ? 'map'
+            : context === 'schema' &&
+                [
+                  'items',
+                  'additionalProperties',
+                  'allOf',
+                  'anyOf',
+                  'oneOf',
+                  'not',
+                  'contains',
+                  'if',
+                  'then',
+                  'else',
+                  'prefixItems',
+                ].includes(key)
+              ? 'schema'
+              : 'data';
       digest.update(JSON.stringify(key));
       digest.update(':');
-      digest.update(identity(child));
+      digest.update(identity(child, nested));
       digest.update(',');
     }
     const result = digest.digest('hex');
@@ -55,6 +92,7 @@ export function shareContractSchemas(
     if (name && !schema['x-sdk-ref'])
       return {
         'x-sdk-ref': name,
+        ...(schema[EXAMPLE_PROTECTION_MARKER] ? { [EXAMPLE_PROTECTION_MARKER]: true } : {}),
         ...(typeName && typeName !== name ? { 'x-sdk-type-name': typeName } : {}),
         ...(schema.readOnly ? { readOnly: true } : {}),
         ...(schema.writeOnly ? { writeOnly: true } : {}),
