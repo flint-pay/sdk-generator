@@ -243,7 +243,7 @@ test('deprecated aliases compile identically and explicit naming overrides win',
   );
   const diagnosis = spawnSync(
     process.execPath,
-    ['dist/cli.js', 'diagnose', aliases.definition, aliases.configuration],
+    ['dist/cli.js', 'diagnose', aliases.definition, aliases.configuration, '--json'],
     { encoding: 'utf8' },
   );
   assert.equal(diagnosis.status, 0, diagnosis.stderr);

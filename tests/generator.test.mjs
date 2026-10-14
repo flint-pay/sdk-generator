@@ -878,7 +878,7 @@ test('generator itself installs from its npm archive and produces validated pack
     { cwd: folder, encoding: 'utf8' },
   );
   assert.equal(generated.status, 0, generated.stderr);
-  const verified = spawnSync(process.execPath, [cli, 'validate', target], {
+  const verified = spawnSync(process.execPath, [cli, 'validate', target, '--json'], {
     cwd: folder,
     encoding: 'utf8',
     timeout: 120000,

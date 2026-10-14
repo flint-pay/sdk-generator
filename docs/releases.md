@@ -8,7 +8,7 @@
 ## Prepare a release
 
 1. Keep the pinned inputs, referenced local files, SDK configuration and generator revision in the provider's private or public source repository.
-2. Run `preview` against the current generated output. Review source, type and example differences and compatibility findings. `effective` explains the resolved contract but contains private API details.
+2. Run `preview --diff` against the current generated output. Review source, type and example differences and compatibility findings. `effective` explains the resolved contract but contains private API details.
 3. Generate, then run `validate --fixtures` with independently provider-reviewed HTTP scenarios. Test relevant workflows against the provider sandbox separately.
 4. Run `release OUTPUT NEW_RELEASE_DIRECTORY`. Inspect the archives, checksums, changelog, migration guidance and publication commands. Nothing is uploaded.
 

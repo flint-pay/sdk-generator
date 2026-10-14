@@ -21,9 +21,13 @@ function fixture(t, change = () => {}) {
   writeFileSync(definition, JSON.stringify(spec));
   writeFileSync(configuration, JSON.stringify(settings));
   const run = (command = 'diagnose') =>
-    spawnSync(process.execPath, [resolve('dist/cli.js'), command, definition, configuration], {
-      encoding: 'utf8',
-    });
+    spawnSync(
+      process.execPath,
+      [resolve('dist/cli.js'), command, definition, configuration, '--json'],
+      {
+        encoding: 'utf8',
+      },
+    );
   return { dir, definition, configuration, run };
 }
 function findings(run) {
@@ -271,9 +275,13 @@ test('YAML hints depend on the input extension or content', (t) => {
     const path = join(f.dir, name);
     writeFileSync(path, content);
     const items = findings(() =>
-      spawnSync(process.execPath, [resolve('dist/cli.js'), 'diagnose', f.definition, path], {
-        encoding: 'utf8',
-      }),
+      spawnSync(
+        process.execPath,
+        [resolve('dist/cli.js'), 'diagnose', f.definition, path, '--json'],
+        {
+          encoding: 'utf8',
+        },
+      ),
     );
     assert.equal(items[0].location, path);
     assert.match(items[0].message, /line \d+, column \d+; YAML is not supported/);
@@ -458,7 +466,7 @@ test('swapped API and SDK paths produce one valid-settings list and a swap hint'
   for (const command of ['diagnose', 'effective']) {
     const result = spawnSync(
       process.execPath,
-      [resolve('dist/cli.js'), command, f.configuration, f.definition],
+      [resolve('dist/cli.js'), command, f.configuration, f.definition, '--json'],
       { encoding: 'utf8' },
     );
     assert.equal(result.status, 1, result.stdout + result.stderr);

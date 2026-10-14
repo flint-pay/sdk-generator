@@ -40,6 +40,15 @@ export async function validateFixtures(
   output: string,
   fixtures: string,
 ): Promise<{ target: string; scenarios: number }[]> {
+  return validateFixturesWithProgress(output, fixtures);
+}
+
+// CLI progress does not change the public fixture report or parameters.
+export async function validateFixturesWithProgress(
+  output: string,
+  fixtures: string,
+  onCheck?: (target: 'node' | 'php', scenarios: number, passed: boolean) => void,
+): Promise<{ target: string; scenarios: number }[]> {
   output = resolve(output);
   fixtures = resolve(fixtures);
   const cases: Scenario[] = JSON.parse(readFileSync(fixtures, 'utf8'));
@@ -84,127 +93,140 @@ export async function validateFixtures(
     })),
   };
   const report: { target: string; scenarios: number }[] = [];
-  if ((c.config.targets ?? ['node', 'php']).includes('node')) {
-    const entry = join(output, 'node/index.js');
-    const { Client } = await import(
-      pathToFileURL(entry).href + '?generation=' + hash(readFileSync(entry, 'utf8'))
-    );
-    for (const scenario of cases) {
-      let attempts = 0;
-      const operation = c.operations.find((op) => op.id === scenario.operation);
-      if (!operation)
-        throw new Diagnostic(`${fixtures}/${scenario.name}`, 'operation is not included');
-      const client = new Client({
-        baseUrl: scenario.baseUrl ?? 'https://api.example.invalid/v1',
-        ...(c.authentication ? {} : { token: 'test-token' }),
-        transport: async (
-          url: URL,
-          init: { method: string; headers: Record<string, string>; body?: string },
-        ) => {
-          const expected = scenario.expected;
-          assert.ok(expected, 'unexpected HTTP request');
-          assert.equal(init.method, expected.method);
-          assert.equal(url.pathname + url.search, expected.path);
-          if (expected.body !== undefined) assert.equal(init.body, expected.body);
-          for (const [k, v] of Object.entries(expected.headers ?? {}))
-            assert.equal(init.headers[k.toLowerCase()], v);
-          for (const key of expected.absentHeaders ?? [])
-            assert.equal(init.headers[key.toLowerCase()], undefined);
-          const response = scenario.responses[attempts++];
-          assert.ok(response, 'unexpected extra attempt');
-          if (response.transportError) throw new Error('Fixture: lost response');
-          return new Response(
-            [204, 304].includes(response.status!)
-              ? null
-              : response.bodyBase64 !== undefined
-                ? Buffer.from(response.bodyBase64, 'base64')
-                : (response.body ?? ''),
-            { status: response.status!, headers: response.headers ?? {} },
-          );
-        },
-      });
-      try {
-        if (scenario.error)
-          await assert.rejects(
-            client[operation.resource][operation.method](
-              ...requestArguments(operation, scenario.input),
-              scenario.options,
-            ),
-            (e: any) => {
-              for (const [k, v] of Object.entries(scenario.error!))
-                assert.deepEqual(['status', 'requestId'].includes(k) ? e.meta?.[k] : e[k], v);
-              return true;
-            },
-          );
-        else {
-          const payload = operation.response?.return === 'payload';
-          const response = await client[operation.resource][
-            operation.method + (payload ? 'WithResponse' : '')
-          ](...requestArguments(operation, scenario.input), scenario.options);
-          const result = payload
-            ? { data: response.body, meta: response.meta, raw: response.raw }
-            : response;
-          if (scenario.data !== undefined)
-            assert.deepEqual(JSON.parse(JSON.stringify(result.data)), scenario.data);
-          if (scenario.dataBase64 !== undefined) {
-            assert.ok(result.data instanceof Uint8Array);
-            assert.equal(Buffer.from(result.data).toString('base64'), scenario.dataBase64);
-            assert.equal(result.raw, result.data);
-          }
-          if (scenario.status !== undefined) assert.equal(result.meta.status, scenario.status);
-          if (scenario.empty) assert.equal(result.data, undefined);
-        }
-        assert.equal(attempts, scenario.attempts ?? 1);
-      } catch (e) {
-        throw new Diagnostic(
-          `${fixtures}/${scenario.name}/node`,
-          e instanceof Error ? e.message : String(e),
-        );
-      }
+  async function check(target: 'node' | 'php', execute: () => Promise<void> | void) {
+    try {
+      await execute();
+    } catch (error) {
+      onCheck?.(target, cases.length, false);
+      throw error;
     }
-    report.push({ target: 'node', scenarios: cases.length });
+    onCheck?.(target, cases.length, true);
+  }
+  if ((c.config.targets ?? ['node', 'php']).includes('node')) {
+    await check('node', async () => {
+      const entry = join(output, 'node/index.js');
+      const { Client } = await import(
+        pathToFileURL(entry).href + '?generation=' + hash(readFileSync(entry, 'utf8'))
+      );
+      for (const scenario of cases) {
+        let attempts = 0;
+        const operation = c.operations.find((op) => op.id === scenario.operation);
+        if (!operation)
+          throw new Diagnostic(`${fixtures}/${scenario.name}`, 'operation is not included');
+        const client = new Client({
+          baseUrl: scenario.baseUrl ?? 'https://api.example.invalid/v1',
+          ...(c.authentication ? {} : { token: 'test-token' }),
+          transport: async (
+            url: URL,
+            init: { method: string; headers: Record<string, string>; body?: string },
+          ) => {
+            const expected = scenario.expected;
+            assert.ok(expected, 'unexpected HTTP request');
+            assert.equal(init.method, expected.method);
+            assert.equal(url.pathname + url.search, expected.path);
+            if (expected.body !== undefined) assert.equal(init.body, expected.body);
+            for (const [k, v] of Object.entries(expected.headers ?? {}))
+              assert.equal(init.headers[k.toLowerCase()], v);
+            for (const key of expected.absentHeaders ?? [])
+              assert.equal(init.headers[key.toLowerCase()], undefined);
+            const response = scenario.responses[attempts++];
+            assert.ok(response, 'unexpected extra attempt');
+            if (response.transportError) throw new Error('Fixture: lost response');
+            return new Response(
+              [204, 304].includes(response.status!)
+                ? null
+                : response.bodyBase64 !== undefined
+                  ? Buffer.from(response.bodyBase64, 'base64')
+                  : (response.body ?? ''),
+              { status: response.status!, headers: response.headers ?? {} },
+            );
+          },
+        });
+        try {
+          if (scenario.error)
+            await assert.rejects(
+              client[operation.resource][operation.method](
+                ...requestArguments(operation, scenario.input),
+                scenario.options,
+              ),
+              (e: any) => {
+                for (const [k, v] of Object.entries(scenario.error!))
+                  assert.deepEqual(['status', 'requestId'].includes(k) ? e.meta?.[k] : e[k], v);
+                return true;
+              },
+            );
+          else {
+            const payload = operation.response?.return === 'payload';
+            const response = await client[operation.resource][
+              operation.method + (payload ? 'WithResponse' : '')
+            ](...requestArguments(operation, scenario.input), scenario.options);
+            const result = payload
+              ? { data: response.body, meta: response.meta, raw: response.raw }
+              : response;
+            if (scenario.data !== undefined)
+              assert.deepEqual(JSON.parse(JSON.stringify(result.data)), scenario.data);
+            if (scenario.dataBase64 !== undefined) {
+              assert.ok(result.data instanceof Uint8Array);
+              assert.equal(Buffer.from(result.data).toString('base64'), scenario.dataBase64);
+              assert.equal(result.raw, result.data);
+            }
+            if (scenario.status !== undefined) assert.equal(result.meta.status, scenario.status);
+            if (scenario.empty) assert.equal(result.data, undefined);
+          }
+          assert.equal(attempts, scenario.attempts ?? 1);
+        } catch (e) {
+          throw new Diagnostic(
+            `${fixtures}/${scenario.name}/node`,
+            e instanceof Error ? e.message : String(e),
+          );
+        }
+      }
+      report.push({ target: 'node', scenarios: cases.length });
+    });
   }
   if ((c.config.targets ?? ['node', 'php']).includes('php')) {
-    requireTool('php', 'php', output);
-    const temp = mkdtempSync(join(tmpdir(), 'sdk-fixtures-'));
-    try {
-      const runtimePath = join(temp, 'runtime.json');
-      // The PHP harness only needs call routing, not a second copy of every codec.
-      writeFileSync(
-        runtimePath,
-        JSON.stringify({
-          composedAuthentication: c.authentication !== undefined,
-          authShortcuts: contract.authShortcuts,
-          operations: contract.operations.map((op) => ({
-            id: op.id,
-            resource: op.resource,
-            method: op.method,
-            path: op.path,
-            request: op.request,
-            response: op.response,
-            ...(op.body !== undefined ? { body: true } : {}),
-            bodyRequired: op.bodyRequired,
-            parameters: op.parameters.map(({ name, in: location }) => ({ name, in: location })),
-          })),
-        }),
-      );
-      const r = spawnSync(
-        'php',
-        [
-          join(dirname(fileURLToPath(import.meta.url)), '../templates/fixtures.php'),
-          join(output, 'php'),
+    await check('php', () => {
+      requireTool('php', 'php', output);
+      const temp = mkdtempSync(join(tmpdir(), 'sdk-fixtures-'));
+      try {
+        const runtimePath = join(temp, 'runtime.json');
+        // The PHP harness only needs call routing, not a second copy of every codec.
+        writeFileSync(
           runtimePath,
-          fixtures,
-          c.config.composer.namespace,
-        ],
-        { encoding: 'utf8', timeout: 120000 },
-      );
-      if (r.status !== 0 || r.error)
-        throw new Diagnostic(`${fixtures}/php`, r.error?.message ?? r.stderr + r.stdout);
-      report.push({ target: 'php', scenarios: JSON.parse(r.stdout).length });
-    } finally {
-      rmSync(temp, { recursive: true, force: true });
-    }
+          JSON.stringify({
+            composedAuthentication: c.authentication !== undefined,
+            authShortcuts: contract.authShortcuts,
+            operations: contract.operations.map((op) => ({
+              id: op.id,
+              resource: op.resource,
+              method: op.method,
+              path: op.path,
+              request: op.request,
+              response: op.response,
+              ...(op.body !== undefined ? { body: true } : {}),
+              bodyRequired: op.bodyRequired,
+              parameters: op.parameters.map(({ name, in: location }) => ({ name, in: location })),
+            })),
+          }),
+        );
+        const r = spawnSync(
+          'php',
+          [
+            join(dirname(fileURLToPath(import.meta.url)), '../templates/fixtures.php'),
+            join(output, 'php'),
+            runtimePath,
+            fixtures,
+            c.config.composer.namespace,
+          ],
+          { encoding: 'utf8', timeout: 120000 },
+        );
+        if (r.status !== 0 || r.error)
+          throw new Diagnostic(`${fixtures}/php`, r.error?.message ?? r.stderr + r.stdout);
+        report.push({ target: 'php', scenarios: JSON.parse(r.stdout).length });
+      } finally {
+        rmSync(temp, { recursive: true, force: true });
+      }
+    });
   }
   return report;
 }

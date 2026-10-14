@@ -55,7 +55,9 @@ test(
     const dir = mkdtempSync(join(tmpdir(), 'sdk-full-public-'));
     const output = join(dir, 'output');
     try {
-      const diagnosis = JSON.parse(run(process.execPath, ['dist/cli.js', 'diagnose', api, config]));
+      const diagnosis = JSON.parse(
+        run(process.execPath, ['dist/cli.js', 'diagnose', api, config, '--json']),
+      );
       assert.equal(diagnosis.operations, 503);
       const script = join(dir, 'generate.mjs');
       writeFileSync(
@@ -99,7 +101,7 @@ writeFileSync(${JSON.stringify(join(dir, 'summary.json'))},JSON.stringify({opera
       );
       assert.ok(size(output) < 300 * 1024 * 1024, 'full package/record size budget exceeded');
       const preview = JSON.parse(
-        run(process.execPath, ['dist/cli.js', 'preview', api, config, output]),
+        run(process.execPath, ['dist/cli.js', 'preview', api, config, output, '--json']),
       );
       assert.equal(
         preview.changes.length,
@@ -107,15 +109,25 @@ writeFileSync(${JSON.stringify(join(dir, 'summary.json'))},JSON.stringify({opera
         JSON.stringify(preview.changes.map((change) => change.path)),
       );
       const regenerated = JSON.parse(
-        run(process.execPath, ['dist/cli.js', 'generate', api, config, output]),
+        run(process.execPath, ['dist/cli.js', 'generate', api, config, output, '--json']),
       );
       assert.equal(regenerated.changes.length, 0);
+      const humanRegeneration = run(process.execPath, [
+        'dist/cli.js',
+        'generate',
+        api,
+        config,
+        output,
+      ]);
+      assert.match(humanRegeneration, /Files: no changes/);
+      assert.ok(Buffer.byteLength(humanRegeneration) < 1024);
       run(process.execPath, [
         'dist/cli.js',
         'validate',
         output,
         '--fixtures',
         join(fixture, 'full-http-cases.json'),
+        '--json',
       ]);
 
       const packed = npmPackResult(
@@ -492,7 +504,7 @@ test(
       const configured = JSON.parse(readFileSync(join(fixture, profile)));
       configured.include.forEach((id) => union.add(id));
       const diagnosis = JSON.parse(
-        run(process.execPath, ['dist/cli.js', 'diagnose', api, join(fixture, profile)]),
+        run(process.execPath, ['dist/cli.js', 'diagnose', api, join(fixture, profile), '--json']),
       );
       assert.equal(diagnosis.operations, configured.include.length, profile);
     }

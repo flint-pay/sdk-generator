@@ -4,6 +4,10 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ## Unreleased (generator 0.1.0)
 
+### Breaking changes for generator automation
+
+- **CLI output.** Commands print readable summaries by default. Pass `--json` to keep the previous JSON on stdout and JSON errors and warnings on stderr; JSON shapes are unchanged. `effective` still prints JSON. Library functions are unchanged.
+
 ### Breaking changes for regenerated SDKs
 
 - **Error kinds.** HTTP 404 uses kind `not_found` and HTTP 500–599 uses `server`, replacing `api` for those statuses. Update kind switches. Retry eligibility still follows the declared policy.
@@ -22,6 +26,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 - **Node type dependency.** `@types/node` moves from a pinned runtime dependency to an optional `>=22.16.0` peer dependency. TypeScript consumers must install it, for example `npm install --save-dev @types/node@22`.
 
 ### Added
+
+- `preview --diff`.
 
 - `errors.messagePath` (default `message`) and a direct HTTP `status` on errors in both targets. Node inspection and PHP debug output include provider codes, redacted details and stack frames.
 - Destination errors distinguish protocol failures from allowed-origin failures.
