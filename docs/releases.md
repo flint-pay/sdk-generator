@@ -98,6 +98,12 @@ Set `release.policy` in the SDK configuration:
 
 Findings marked `review` still require provider judgment under either policy.
 
+The release plan's `reviewRequired` is `true` when findings include a breaking or `review` finding. Its `approved` field records caller acknowledgment:
+
+- CLI preparation records `approved: false` unless you pass `--acknowledge-review` after reviewing the findings.
+- Library callers pass `true` as the third argument: `prepareRelease(output, destination, acknowledgeReview)`.
+- Acknowledgment is metadata only. It does not bypass validation or version policy, remove findings, or publish anything.
+
 The generator compares against the previous interface in the private generation record. Preserve that record across upgrades; a fresh output directory has no earlier version to compare. A package-version bump does not change the API contract or the pinned request version header.
 
 Version stable SDKs as follows:

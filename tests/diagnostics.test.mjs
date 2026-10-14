@@ -159,8 +159,8 @@ test('diagnose collects independent operation errors', (t) => {
   });
   const items = findings(f.run);
   assert.equal(items.length, 2);
-  assert.ok(items.some((d) => d.location.includes('/books/')));
-  assert.ok(items.some((d) => d.location.includes('/another-book/')));
+  assert.ok(items.some((d) => d.location.startsWith('/paths/~1books~1{id}/')));
+  assert.ok(items.some((d) => d.location.startsWith('/paths/~1another-book~1{id}/')));
 });
 
 test('diagnostic collector never swallows programming errors', () => {
@@ -236,6 +236,247 @@ test('invalid JSON is a structured fatal diagnostic', (t) => {
   const items = findings(f.run);
   assert.equal(items.length, 1);
   assert.match(items[0].message, /JSON/);
+});
+
+test('invalid JSON reports line and column without quoting input or blaming YAML', (t) => {
+  for (const [content, line, column] of [
+    ['{\n  "version":\n', 3, 1],
+    ['{\n  "version": "1.0.0",\n}', 3, 1],
+    ['{\r\n  "version": nope\r\n}', 2, 15],
+    ['{\r  "version": "1.0.0",\r}', 3, 1],
+    ['{\r  "version": nope\r}', 2, 15],
+    ['[\n  true,\n]', 3, 1],
+    ['{\n  "example": "synthetic-private-value",\n  "version": NaN\n}', 3, 14],
+  ]) {
+    const f = fixture(t);
+    writeFileSync(f.configuration, content);
+    const items = findings(f.run);
+    assert.deepEqual(items, [
+      {
+        location: f.configuration,
+        message: `expected valid JSON at line ${line}, column ${column}`,
+      },
+    ]);
+    assert.doesNotMatch(f.run().stderr, /synthetic-private-value/);
+  }
+});
+
+test('YAML hints depend on the input extension or content', (t) => {
+  for (const [name, content] of [
+    ['sdk.yaml', '{\n'],
+    ['sdk.YML', '{\n'],
+    ['sdk.json', 'openapi: 3.1.0\npaths: {}\n'],
+  ]) {
+    const f = fixture(t);
+    const path = join(f.dir, name);
+    writeFileSync(path, content);
+    const items = findings(() =>
+      spawnSync(process.execPath, [resolve('dist/cli.js'), 'diagnose', f.definition, path], {
+        encoding: 'utf8',
+      }),
+    );
+    assert.equal(items[0].location, path);
+    assert.match(items[0].message, /line \d+, column \d+; YAML is not supported/);
+  }
+});
+
+test('path diagnostic pointers escape slashes and tildes in both CLI and library errors', (t) => {
+  const f = fixture(t, (c, spec) => {
+    spec.paths['/shelves~archive/{id}'] = spec.paths['/books/{id}'];
+    delete spec.paths['/books/{id}'];
+    c.operations.findBook.method = 'class';
+  });
+  const location = '/paths/~1shelves~0archive~1{id}/get/method';
+  const items = findings(f.run);
+  assert.equal(items[0].location, location);
+  assert.throws(
+    () => loadContract(f.definition, f.configuration),
+    (error) => error.location === location,
+  );
+});
+
+test('nested schema property and unknown-key locations escape every segment', (t) => {
+  for (const [child, suffix] of [
+    [{ type: 'bogus' }, 'type'],
+    [{ type: 'string', 'a/b~c': true }, 'a~1b~0c'],
+    [{ type: 'object', properties: { 'a/b~c': { type: 'bogus' } } }, 'properties/a~1b~0c/type'],
+  ]) {
+    const f = fixture(t, (c, spec) => {
+      spec.paths['/books/{id}'].get.responses['200'].content['application/json'].schema = {
+        type: 'object',
+        properties: { 'a/b~c': child },
+      };
+    });
+    const location = '/paths/~1books~1{id}/get/responses/200/properties/a~1b~0c/' + suffix;
+    assert.throws(
+      () => loadContract(f.definition, f.configuration),
+      (error) => error.location === location,
+    );
+    assert.throws(
+      () => loadContract(f.definition, f.configuration, { collectDiagnostics: true }),
+      (error) => error.findings[0].location === location,
+    );
+  }
+});
+
+test('diagnostic builders escape arbitrary configuration, model and schema keys', (t) => {
+  const cases = [
+    [
+      'config/a~1b~0c',
+      (c) => {
+        c['a/b~c'] = true;
+      },
+    ],
+    [
+      'config/requests/a~1b~0c',
+      (c) => {
+        c.requests['a/b~c'] = true;
+      },
+    ],
+    [
+      'config/responses/a~1b~0c',
+      (c) => {
+        c.responses = { 'a/b~c': true };
+      },
+    ],
+    [
+      'config/operations/a~1b~0c',
+      (c) => {
+        c.operations['a/b~c'] = {};
+      },
+    ],
+    [
+      'config/documentation/guides/a~1b~0c',
+      (c) => {
+        c.documentation = { guides: { 'a/b~c': 'text' } };
+      },
+    ],
+    [
+      'config/models/a~1b~0c',
+      (c) => {
+        c.models = { 'a/b~c': 'class' };
+      },
+    ],
+    [
+      'config/phpFieldClasses/Book/a~1b~0c',
+      (c) => {
+        c.phpFieldClasses = { Book: { 'a/b~c': 'class' } };
+      },
+    ],
+    [
+      'config/overrides/~1a~1b~0c',
+      (c) => {
+        c.overrides = { '/a/b~c': true };
+      },
+    ],
+    [
+      '/components/schemas/a~1b~0c/type',
+      (c, spec, response) => {
+        c.models = { 'a/b~c': 'CustomBook' };
+        spec.components = { schemas: { 'a/b~c': { type: 'bogus' } } };
+        response.schema = { $ref: '#/components/schemas/a~1b~0c' };
+      },
+    ],
+    [
+      '/paths/~1books~1{id}/get/responses/200/dependentRequired/a~1b~0c',
+      (c, spec, response) => {
+        response.schema = { type: 'object', dependentRequired: { 'a/b~c': 42 } };
+      },
+    ],
+    [
+      '/paths/~1books~1{id}/get/responses/200/content/application~1json/schema/discriminator/mapping/a~1b~0c',
+      (c, spec, response) => {
+        response.schema = {
+          oneOf: [{ type: 'string' }],
+          discriminator: { propertyName: 'kind', mapping: { 'a/b~c': 42 } },
+        };
+      },
+    ],
+    [
+      '/paths/~1books~1{id}/get/responses/200/content/application~1json',
+      (c, spec) => {
+        spec.paths['/books/{id}'].get.responses['200'].content['application/json'] = null;
+      },
+    ],
+    [
+      '/paths/~1books~1{id}/get/parameters/a~1b~0c/type',
+      (c, spec) => {
+        spec.paths['/books/{id}'].get.parameters.push({
+          name: 'a/b~c',
+          in: 'query',
+          schema: { type: 'bogus' },
+        });
+      },
+    ],
+  ];
+  for (const [location, change] of cases) {
+    const f = fixture(t, (c, spec) =>
+      change(c, spec, spec.paths['/books/{id}'].get.responses['200'].content['application/json']),
+    );
+    assert.throws(
+      () => loadContract(f.definition, f.configuration),
+      (error) => {
+        assert.equal(error.location, location);
+        return true;
+      },
+    );
+  }
+});
+
+test('escaped reference paths preserve operation and shared-parameter model dependencies', (t) => {
+  const f = fixture(t, (c, spec) => {
+    const item = spec.paths['/books/{id}'];
+    const response = item.get.responses['200'].content['application/json'];
+    spec.components = { schemas: { Book: response.schema, Label: { type: 'string' } } };
+    response.schema = { $ref: '#/components/schemas/Book' };
+    item.parameters = [
+      { name: 'label', in: 'query', schema: { $ref: '#/components/schemas/Label' } },
+    ];
+    spec.paths['/shelves~archive/{id}'] = item;
+    delete spec.paths['/books/{id}'];
+  });
+  const contract = loadContract(f.definition, f.configuration);
+  assert.deepEqual(contract.modelDependencies.findBook, ['Book', 'Label']);
+});
+
+test('unknown settings list valid keys once per object and keep every spelling suggestion', (t) => {
+  const f = fixture(t, (c) => {
+    c.operatons = {};
+    c.targtes = [];
+  });
+  const output = JSON.parse(f.run().stderr);
+  assert.equal(output.diagnostics.length, 2);
+  assert.equal((output.error.match(/Valid settings:/g) ?? []).length, 1);
+  assert.equal(output.diagnostics.filter((d) => d.message.includes('Valid settings:')).length, 1);
+  assert.match(output.diagnostics[0].message, /Did you mean "operations"/);
+  assert.match(output.diagnostics[1].message, /Did you mean "targets"/);
+  assert.doesNotMatch(output.error, /swapped/);
+});
+
+test('swapped API and SDK paths produce one valid-settings list and a swap hint', (t) => {
+  const f = fixture(t);
+  for (const command of ['diagnose', 'effective']) {
+    const result = spawnSync(
+      process.execPath,
+      [resolve('dist/cli.js'), command, f.configuration, f.definition],
+      { encoding: 'utf8' },
+    );
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.equal(result.stdout, '');
+    const output = JSON.parse(result.stderr);
+    assert.match(
+      output.error,
+      /SDK_JSON looks like an OpenAPI document.*API_JSON and SDK_JSON arguments are swapped/,
+    );
+    assert.equal((output.error.match(/Valid settings:/g) ?? []).length, 1);
+    if (command === 'diagnose') {
+      const unknown = output.diagnostics.filter((d) =>
+        d.message.startsWith('unsupported setting.'),
+      );
+      assert.ok(unknown.length > 1);
+      assert.equal(unknown.filter((d) => d.message.includes('swapped')).length, 1);
+    }
+  }
 });
 
 test('diagnose collects errors from independent reachable models', (t) => {

@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import type { Contract } from './contract.js';
 import { Diagnostic, hash } from './contract.js';
+import { requireTool } from './tool-checks.js';
 interface Scenario {
   name: string;
   operation: string;
@@ -164,6 +165,7 @@ export async function validateFixtures(
     report.push({ target: 'node', scenarios: cases.length });
   }
   if ((c.config.targets ?? ['node', 'php']).includes('php')) {
+    requireTool('php', 'php', output);
     const temp = mkdtempSync(join(tmpdir(), 'sdk-fixtures-'));
     try {
       const runtimePath = join(temp, 'runtime.json');

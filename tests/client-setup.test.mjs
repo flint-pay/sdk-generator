@@ -366,7 +366,7 @@ test('server declarations diagnose unsupported routing and preserve source order
     (location === 'path' ? spec.paths['/health'] : spec.paths['/health'].get).servers = [
       { url: 'https://other.example.invalid' },
     ];
-    assert.throws(() => load(spec), /\/paths\/\/health.*servers/);
+    assert.throws(() => load(spec), /\/paths\/~1health.*servers/);
   }
   assert.throws(
     () =>

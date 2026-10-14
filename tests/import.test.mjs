@@ -56,7 +56,7 @@ test('malformed operations and customization objects report their source locatio
     change(d);
     assert.throws(
       () => load(d),
-      (e) => e instanceof Diagnostic && e.message.includes('/paths//values/post'),
+      (e) => e instanceof Diagnostic && e.message.includes('/paths/~1values/post'),
     );
   }
   for (const c of [

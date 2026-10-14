@@ -2838,7 +2838,7 @@ new Client({baseUrl:'https://example.invalid'}).api.sendValue({body:'1'});
   ]);
 });
 
-test('operation reference indexing preserves shared parameters and overlapping path prefixes', () => {
+test('operation reference indexing preserves shared parameters and separates overlapping path prefixes', () => {
   const schemas = Object.fromEntries(
     ['Shared', 'First', 'Second', 'Nested'].map((name) => [
       name,
@@ -2859,8 +2859,9 @@ test('operation reference indexing preserves shared parameters and overlapping p
   // shared scalar reference while retaining independent model dependency facts.
   doc.components.schemas.Shared = { type: 'string' };
   const contract = inputs(doc).load();
+  // Escaped path segments keep `/values` + `post` from matching `/values/post/nested`.
   assert.deepEqual(contract.modelDependencies, {
-    first: ['First', 'Nested', 'Shared'],
+    first: ['First', 'Shared'],
     second: ['Second', 'Shared'],
     nested: ['Nested'],
   });
