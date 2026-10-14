@@ -182,21 +182,25 @@ export function sourceExampleProtection(
 /** Visit schema locations only: literal example/enum values are never schemas. */
 function contractSchemas(
   contract: Contract,
-  inspect: (schema: Schema, pointer: string) => void,
+  inspect: (schema: Schema, pointer: string, identity: string) => void,
 ): void {
-  const visit = (schema: Schema, pointer: string): void => {
-    inspect(schema, pointer);
+  // Pointers address this contract's sidecar. Identities match schema owners
+  // across contracts, followed by pointers relative to each owner's schema.
+  const visit = (schema: Schema, pointer: string, identity = pointer): void => {
+    inspect(schema, pointer, identity);
+    const child = (schema: Schema, relative: string): void =>
+      visit(schema, pointer + relative, identity + relative);
     for (const keyword of ['properties', 'patternProperties', 'dependentSchemas'] as const) {
       const map = schema[keyword];
       if (object(map))
-        for (const [name, child] of Object.entries(map))
-          if (object(child)) visit(child, pointer + '/' + keyword + '/' + pointerSegment(name));
+        for (const [name, nested] of Object.entries(map))
+          if (object(nested)) child(nested, '/' + keyword + '/' + pointerSegment(name));
     }
     for (const keyword of ['allOf', 'anyOf', 'oneOf', 'prefixItems'] as const) {
       const branches = schema[keyword];
       if (Array.isArray(branches))
-        branches.forEach((child, i) => {
-          if (object(child)) visit(child, pointer + '/' + keyword + '/' + i);
+        branches.forEach((nested, i) => {
+          if (object(nested)) child(nested, '/' + keyword + '/' + i);
         });
     }
     for (const keyword of [
@@ -208,8 +212,8 @@ function contractSchemas(
       'contains',
       'additionalProperties',
     ] as const) {
-      const child = schema[keyword];
-      if (object(child)) visit(child, pointer + '/' + keyword);
+      const nested = schema[keyword];
+      if (object(nested)) child(nested, '/' + keyword);
     }
   };
   for (const keyword of ['models', 'definitions'] as const)
@@ -217,17 +221,46 @@ function contractSchemas(
       visit(schema, '/' + keyword + '/' + pointerSegment(name));
   contract.operations.forEach((op, i) => {
     const base = '/operations/' + i;
+    const identity = '/operations/' + pointerSegment(op.id);
     op.parameters.forEach((parameter, j) =>
-      visit(parameter.schema, base + '/parameters/' + j + '/schema'),
+      visit(
+        parameter.schema,
+        base + '/parameters/' + j + '/schema',
+        identity + '/parameters/' + parameter.in + '/' + pointerSegment(parameter.name) + '/schema',
+      ),
     );
-    if (op.body) visit(op.body, base + '/body');
+    if (op.body)
+      visit(op.body, base + '/body', identity + '/body/' + pointerSegment(op.mediaType ?? ''));
     for (const [status, response] of Object.entries(op.responses))
       if (response.schema)
-        visit(response.schema, base + '/responses/' + pointerSegment(status) + '/schema');
+        visit(
+          response.schema,
+          base + '/responses/' + pointerSegment(status) + '/schema',
+          identity +
+            '/responses/' +
+            pointerSegment(status) +
+            '/' +
+            pointerSegment(response.mediaType ?? '') +
+            '/schema',
+        );
     for (const [event, schema] of Object.entries(op.streamEventSchemas ?? {}))
-      visit(schema, base + '/streamEventSchemas/' + pointerSegment(event));
+      visit(
+        schema,
+        base + '/streamEventSchemas/' + pointerSegment(event),
+        identity + '/streamEventSchemas/' + pointerSegment(event),
+      );
   });
-  contract.incoming?.forEach((incoming, i) => visit(incoming.schema, '/incoming/' + i + '/schema'));
+  contract.incoming?.forEach((incoming, i) =>
+    visit(
+      incoming.schema,
+      '/incoming/' + i + '/schema',
+      '/incoming/' +
+        pointerSegment(incoming.name) +
+        '/' +
+        pointerSegment(incoming.method) +
+        '/schema',
+    ),
+  );
   for (const [event, schema] of Object.entries(contract.config.webhook?.events ?? {}))
     visit(schema, '/config/webhook/events/' + pointerSegment(event));
 }
@@ -293,13 +326,17 @@ export function omitProtectedExamples(contract: Contract): void {
 export function removesPublishedExamples(before: Contract, after: Contract): boolean {
   const previousProtection = protectionPointers(before);
   const nextProtection = protectionPointers(after);
+  const nextProtectedIdentities = new Set<string>();
+  contractSchemas(after, (_schema, pointer, identity) => {
+    if (nextProtection.has(pointer)) nextProtectedIdentities.add(identity);
+  });
   const php =
     (before.config.targets ?? ['node', 'php']).includes('php') &&
     (after.config.targets ?? ['node', 'php']).includes('php');
   let removed = false;
-  contractSchemas(before, (schema, pointer) => {
+  contractSchemas(before, (schema, pointer, identity) => {
     if (
-      nextProtection.has(pointer) &&
+      nextProtectedIdentities.has(identity) &&
       !previousProtection.has(pointer) &&
       (schema.example !== undefined ||
         (Array.isArray(schema.examples) && schema.examples.length > 0) ||

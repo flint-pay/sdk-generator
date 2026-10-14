@@ -7,7 +7,18 @@ import { spawnSync, execFileSync } from 'node:child_process';
 import { loadContract, generate, render, preview, compare, prepareRelease } from '../dist/index.js';
 import { compileSdkContract } from '../dist/target-plan.js';
 import { isSchemaAnnotation } from '../dist/schema-annotations.js';
-import { sourceExampleProtection, EXAMPLE_PROTECTION_MARKER } from '../dist/example-protection.js';
+import {
+  sourceExampleProtection,
+  removesPublishedExamples,
+  omitProtectedExamples,
+  EXAMPLE_PROTECTION_MARKER,
+} from '../dist/example-protection.js';
+
+// Actual, unmodified generation records from before publication protection.
+// Keep their saved compiled snapshots so upgrades exercise historical comparison too.
+const publicationBaseline = JSON.parse(
+  readFileSync(new URL('./fixtures/sensitive-publication-baseline.json', import.meta.url)),
+);
 
 const root = mkdtempSync(join(tmpdir(), 'sdk-sensitive-publication-'));
 after(() => rmSync(root, { recursive: true, force: true }));
@@ -330,6 +341,218 @@ test('provenance alone gives no compatibility finding; removing published annota
     assert.deepEqual(plan.compatibility, findings);
     assert.deepEqual(preview(f.contract, f.output).changes, []);
   }
+});
+
+for (const baseline of publicationBaseline.records) {
+  const { targets, sensitive, api, config, record: savedRecord } = baseline;
+  test(`historical ${targets.join('/')} upgrade ${sensitive ? 'finds sendB removal' : 'keeps sendB published'} when sendA is added`, () => {
+    assert.equal(savedRecord.interface.exampleProtection, undefined);
+    assert.deepEqual(
+      savedRecord.interface.operations.map(({ id }) => id),
+      ['sendB'],
+    );
+    const nextApi = structuredClone(api);
+    const added = structuredClone(nextApi.paths['/b']);
+    added.post.operationId = 'sendA';
+    const value = added.post.requestBody.content['application/json'].schema.properties.value;
+    value.example = 'SYNTHETIC_ADDED_OPERATION_EXAMPLE';
+    if (sensitive) delete value['x-sensitive'];
+    else value['x-sensitive'] = true;
+    nextApi.paths['/a'] = added;
+    const f = fixture(
+      'operation-upgrade-' + targets.join('-') + '-' + sensitive,
+      {},
+      {},
+      {
+        api: nextApi,
+        config,
+      },
+    );
+    assert.deepEqual(
+      f.contract.operations.map(({ id }) => id),
+      ['sendA', 'sendB'],
+    );
+    const expected = [
+      ...(sensitive ? [{ severity: 'review', subject: 'published schema examples' }] : []),
+      { severity: 'additive', subject: 'sendA' },
+    ];
+    const summarize = (findings) =>
+      findings.map(({ severity, subject }) => ({ severity, subject }));
+    assert.deepEqual(summarize(compare(savedRecord.interface, f.contract)), expected);
+    mkdirSync(f.output);
+    writeFileSync(join(f.output, '.sdk-generator.json'), JSON.stringify(savedRecord));
+    assert.deepEqual(summarize(preview(f.contract, f.output).compatibility), expected);
+    assert.deepEqual(summarize(generate(f.contract, f.output).compatibility), expected);
+    const saved = JSON.parse(readFileSync(join(f.output, '.sdk-generator.json')));
+    assert.deepEqual(summarize(saved.compatibility), expected);
+    assert.deepEqual(preview(saved.interface, f.output).changes, []);
+    assert.deepEqual(summarize(preview(saved.interface, f.output).compatibility), expected);
+    const example =
+      api.paths['/b'].post.requestBody.content['application/json'].schema.properties.value.example;
+    const files = render(saved.interface);
+    for (const target of targets)
+      assert.equal(
+        [...files].some(
+          ([path, contents]) => path.startsWith(target + '/') && contents.includes(example),
+        ),
+        !sensitive,
+        target + ' sendB publication',
+      );
+  });
+}
+
+test('reordering source operations produces no compatibility findings', () => {
+  const f = fixture(
+    'publication-source-reordering',
+    {},
+    {
+      B: record({ 'x-sensitive': true }),
+      C: record({ properties: { value: text(annotations(visible)) } }),
+    },
+  );
+  const api = JSON.parse(readFileSync(f.source));
+  api.paths = Object.fromEntries(Object.entries(api.paths).reverse());
+  writeFileSync(f.source, JSON.stringify(api));
+  const reordered = loadContract(f.source, f.profile);
+  assert.deepEqual(compare(f.contract, reordered), []);
+  assert.deepEqual(compare(reordered, f.contract), []);
+});
+
+test('reordering contract operations and parameters preserves publication decisions', () => {
+  const f = fixture(
+    'publication-reordering',
+    {},
+    {
+      B: record({ 'x-sensitive': true }),
+      C: record({ properties: { value: text(annotations(visible)) } }),
+    },
+  );
+  // Sidecar indices always belong to their own contract. Move the protected
+  // owners and update those indices without changing any publication decision.
+  const before = structuredClone(f.contract);
+  before.operations[0].parameters = [
+    { in: 'query', name: 'value', schema: text() },
+    { in: 'header', name: 'other', schema: text(annotations(visible)) },
+  ];
+  before.exampleProtection.schemas.push('/operations/0/parameters/0/schema');
+  const after = structuredClone(before);
+  after.operations.reverse();
+  after.operations[1].parameters.reverse();
+  after.exampleProtection.schemas = before.exampleProtection.schemas.map((pointer) =>
+    pointer.replace('/operations/0/', '/operations/1/').replace('/parameters/0/', '/parameters/1/'),
+  );
+  assert.equal(removesPublishedExamples(before, after), false);
+  assert.equal(removesPublishedExamples(after, before), false);
+  const published = (contract) => {
+    const copy = structuredClone(contract);
+    omitProtectedExamples(copy);
+    copy.operations.sort((a, b) => a.id.localeCompare(b.id));
+    for (const op of copy.operations) op.parameters.sort((a, b) => a.in.localeCompare(b.in));
+    return copy.operations;
+  };
+  assert.deepEqual(published(before), published(after));
+});
+
+test('publication comparisons distinguish parameter location/name, body media types and response status', () => {
+  const f = fixture('publication-owner-identities', {}, { B: record() });
+  const before = structuredClone(f.contract);
+  before.operations[0].parameters = [{ in: 'query', name: 'value', schema: text() }];
+  before.exampleProtection.schemas = [];
+  const cases = [
+    ['same parameter', '/parameters/0/schema', () => {}, true],
+    [
+      'other parameter name',
+      '/parameters/0/schema',
+      (op) => {
+        op.parameters[0].name = 'other';
+      },
+      false,
+    ],
+    [
+      'other parameter location',
+      '/parameters/0/schema',
+      (op) => {
+        op.parameters[0].in = 'header';
+      },
+      false,
+    ],
+    ['same request body', '/body/properties/value', () => {}, true],
+    [
+      'other request media type',
+      '/body/properties/value',
+      (op) => {
+        op.mediaType = 'application/merge-patch+json';
+      },
+      false,
+    ],
+    ['same response body', '/responses/200/schema/properties/value', () => {}, true],
+    [
+      'other response media type',
+      '/responses/200/schema/properties/value',
+      (op) => {
+        op.responses['200'].mediaType = 'application/merge-patch+json';
+      },
+      false,
+    ],
+    [
+      'other response status',
+      '/responses/201/schema/properties/value',
+      (op) => {
+        op.responses['201'] = op.responses['200'];
+        delete op.responses['200'];
+      },
+      false,
+    ],
+  ];
+  for (const [name, relative, change, expected] of cases) {
+    const after = structuredClone(before);
+    change(after.operations[0]);
+    after.exampleProtection.schemas = ['/operations/0' + relative];
+    assert.equal(removesPublishedExamples(before, after), expected, name);
+  }
+  for (const sensitive of [false, true]) {
+    const after = structuredClone(before);
+    after.operations[0].parameters.unshift({ in: 'query', name: 'earlier', schema: text() });
+    after.exampleProtection.schemas = [
+      '/operations/0/parameters/' + (sensitive ? '1' : '0') + '/schema',
+    ];
+    assert.equal(removesPublishedExamples(before, after), sensitive, 'parameter insertion');
+  }
+});
+
+test('publication comparisons match components by name and incoming webhooks by name/method', () => {
+  const f = fixture('publication-named-owners', {}, { B: record() });
+  for (const collection of ['models', 'definitions']) {
+    const before = structuredClone(f.contract);
+    before[collection] = { 'B/~': record() };
+    const after = structuredClone(before);
+    after[collection] = { A: record(), ...after[collection] };
+    after.exampleProtection.schemas = ['/' + collection + '/A/properties/value'];
+    assert.equal(removesPublishedExamples(before, after), false, collection + ' added name');
+    after.exampleProtection.schemas = ['/' + collection + '/B~1~0/properties/value'];
+    assert.equal(removesPublishedExamples(before, after), true, collection + ' matching name');
+  }
+  const before = structuredClone(f.contract);
+  before.incoming = ['B/~', 'C'].map((name) => ({
+    name,
+    method: 'POST',
+    pointer: '/webhooks/' + name,
+    model: 'Incoming' + name,
+    schema: record(),
+    dependencies: [],
+  }));
+  before.exampleProtection.schemas = ['/incoming/0/schema/properties/value'];
+  const after = structuredClone(before);
+  after.incoming.reverse();
+  after.exampleProtection.schemas = ['/incoming/1/schema/properties/value'];
+  assert.equal(removesPublishedExamples(before, after), false, 'reordered incoming webhooks');
+  before.exampleProtection.schemas = [];
+  assert.equal(removesPublishedExamples(before, after), true, 'same incoming webhook');
+  after.incoming[1].method = 'PUT';
+  assert.equal(removesPublishedExamples(before, after), false, 'other incoming method');
+  after.incoming[1].method = 'POST';
+  after.incoming[1].name = 'A';
+  assert.equal(removesPublishedExamples(before, after), false, 'other incoming name');
 });
 
 for (const flag of [{ 'x-sensitive': true }, { writeOnly: true }])
