@@ -295,6 +295,134 @@ test('path diagnostic pointers escape slashes and tildes in both CLI and library
   );
 });
 
+test('nested schema property and unknown-key locations escape every segment', (t) => {
+  for (const [child, suffix] of [
+    [{ type: 'bogus' }, 'type'],
+    [{ type: 'string', 'a/b~c': true }, 'a~1b~0c'],
+    [{ type: 'object', properties: { 'a/b~c': { type: 'bogus' } } }, 'properties/a~1b~0c/type'],
+  ]) {
+    const f = fixture(t, (c, spec) => {
+      spec.paths['/books/{id}'].get.responses['200'].content['application/json'].schema = {
+        type: 'object',
+        properties: { 'a/b~c': child },
+      };
+    });
+    const location = '/paths/~1books~1{id}/get/responses/200/properties/a~1b~0c/' + suffix;
+    assert.throws(
+      () => loadContract(f.definition, f.configuration),
+      (error) => error.location === location,
+    );
+    assert.throws(
+      () => loadContract(f.definition, f.configuration, { collectDiagnostics: true }),
+      (error) => error.findings[0].location === location,
+    );
+  }
+});
+
+test('diagnostic builders escape arbitrary configuration, model and schema keys', (t) => {
+  const cases = [
+    [
+      'config/a~1b~0c',
+      (c) => {
+        c['a/b~c'] = true;
+      },
+    ],
+    [
+      'config/requests/a~1b~0c',
+      (c) => {
+        c.requests['a/b~c'] = true;
+      },
+    ],
+    [
+      'config/responses/a~1b~0c',
+      (c) => {
+        c.responses = { 'a/b~c': true };
+      },
+    ],
+    [
+      'config/operations/a~1b~0c',
+      (c) => {
+        c.operations['a/b~c'] = {};
+      },
+    ],
+    [
+      'config/documentation/guides/a~1b~0c',
+      (c) => {
+        c.documentation = { guides: { 'a/b~c': 'text' } };
+      },
+    ],
+    [
+      'config/models/a~1b~0c',
+      (c) => {
+        c.models = { 'a/b~c': 'class' };
+      },
+    ],
+    [
+      'config/phpFieldClasses/Book/a~1b~0c',
+      (c) => {
+        c.phpFieldClasses = { Book: { 'a/b~c': 'class' } };
+      },
+    ],
+    [
+      'config/overrides/~1a~1b~0c',
+      (c) => {
+        c.overrides = { '/a/b~c': true };
+      },
+    ],
+    [
+      '/components/schemas/a~1b~0c/type',
+      (c, spec, response) => {
+        c.models = { 'a/b~c': 'CustomBook' };
+        spec.components = { schemas: { 'a/b~c': { type: 'bogus' } } };
+        response.schema = { $ref: '#/components/schemas/a~1b~0c' };
+      },
+    ],
+    [
+      '/paths/~1books~1{id}/get/responses/200/dependentRequired/a~1b~0c',
+      (c, spec, response) => {
+        response.schema = { type: 'object', dependentRequired: { 'a/b~c': 42 } };
+      },
+    ],
+    [
+      '/paths/~1books~1{id}/get/responses/200/content/application~1json/schema/discriminator/mapping/a~1b~0c',
+      (c, spec, response) => {
+        response.schema = {
+          oneOf: [{ type: 'string' }],
+          discriminator: { propertyName: 'kind', mapping: { 'a/b~c': 42 } },
+        };
+      },
+    ],
+    [
+      '/paths/~1books~1{id}/get/responses/200/content/application~1json',
+      (c, spec) => {
+        spec.paths['/books/{id}'].get.responses['200'].content['application/json'] = null;
+      },
+    ],
+    [
+      '/paths/~1books~1{id}/get/parameters/a~1b~0c/type',
+      (c, spec) => {
+        spec.paths['/books/{id}'].get.parameters.push({
+          name: 'a/b~c',
+          in: 'query',
+          schema: { type: 'bogus' },
+        });
+      },
+    ],
+  ];
+  for (const [location, change] of cases) {
+    const f = fixture(t, (c, spec) =>
+      change(c, spec, spec.paths['/books/{id}'].get.responses['200'].content['application/json']),
+    );
+    assert.throws(
+      () => loadContract(f.definition, f.configuration),
+      (error) => {
+        assert.equal(error.location, location);
+        return true;
+      },
+    );
+  }
+});
+
 test('escaped reference paths preserve operation and shared-parameter model dependencies', (t) => {
   const f = fixture(t, (c, spec) => {
     const item = spec.paths['/books/{id}'];

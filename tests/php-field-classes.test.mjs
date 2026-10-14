@@ -511,6 +511,23 @@ test('load-time field pin syntax errors use exact paths and aggregate independen
   );
 });
 
+test('PHP field pin diagnostics escape names while matching valid fields by their original keys', () => {
+  const valid = fixture({ 'a/b~c': ref('Location') }, { Venue: { 'a/b~c': 'Location' } });
+  assert.doesNotThrow(() => selected(valid));
+  const missing = fixture(undefined, { Venue: { 'a/b~c': 'Location' } });
+  diagnostic(
+    () => selected(missing),
+    'config/phpFieldClasses/Venue/a~1b~0c',
+    'stale PHP field class customization: Venue has no response field a/b~c',
+  );
+  const owner = fixture(undefined, { 'a/b~c': { location: 'Location' } });
+  diagnostic(
+    () => selected(owner),
+    'config/phpFieldClasses/a~1b~0c',
+    'stale PHP field class customization: a/b~c is not a generated PHP response class',
+  );
+});
+
 test('stale pin owners and absent or writeOnly fields fail after response entities are built', () => {
   for (const owner of ['Missing', 'VenueInput', 'venue', 'FieldClasses\\Sdk\\Venue']) {
     const f = fixture(undefined, { [owner]: { location: 'Location' } });

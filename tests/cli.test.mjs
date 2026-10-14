@@ -92,7 +92,17 @@ test('argument errors name the cause and suggest nearby commands', () => {
     failure(['publish', 'release', '--confirm-version']),
     /flag "--confirm-version" requires a value \(VERSION\)/,
   );
-  assert.match(failure(['publish', 'release', '--confirm-version', '--help']), /requires a value/);
+  assert.match(
+    failure(['publish-site', 'release', 'site', '--confirm-version']),
+    /flag "--confirm-version" requires a value \(VERSION\)/,
+  );
+  for (const flag of ['--fixtures', '--confirm-version'])
+    assert.match(
+      failure(
+        flag === '--fixtures' ? ['validate', 'output', flag, ''] : ['publish', 'release', flag, ''],
+      ),
+      /requires a value/,
+    );
   assert.match(failure(['publish', 'release']), /missing required flag --confirm-version VERSION/);
   assert.match(
     failure(['validate', 'output', '--fixtures', 'one.json', '--fixtures', 'two.json']),
@@ -109,6 +119,66 @@ test('each command reports its missing named argument before reading inputs or w
           `missing required argument ${names[count]}`,
         ),
       );
+});
+
+test('every command rejects empty required paths before reading inputs or writing output', () => {
+  for (const [command, names] of Object.entries(commandArguments))
+    for (let index = 0; index < names.length; index++) {
+      const args = [...names];
+      args[index] = '';
+      if (command.startsWith('publish')) args.push('--confirm-version', '1.0.0');
+      assert.equal(
+        failure([command, ...args]),
+        `arguments: missing required argument ${names[index]}`,
+      );
+    }
+});
+
+test('fixtures accepts a dash-prefixed filename as its value', (t) => {
+  const f = fixture(t, ['node']);
+  writeFileSync(
+    join(f.dir, '-cases.json'),
+    JSON.stringify([
+      {
+        name: 'synthetic todo',
+        operation: 'listTodos',
+        input: {},
+        expected: { method: 'GET', path: '/v1/todos' },
+        responses: [{ status: 200, body: '"ok"' }],
+        data: 'ok',
+      },
+    ]),
+  );
+  const result = spawnSync(
+    process.execPath,
+    [cli, 'validate', f.output, '--fixtures', '-cases.json'],
+    {
+      cwd: f.dir,
+      encoding: 'utf8',
+    },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout).fixtures, [{ target: 'node', scenarios: 1 }]);
+});
+
+test('confirm-version consumes dash-prefixed values and leaves version validation to publication', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'sdk-cli-version-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, 'release-plan.json'), JSON.stringify({ version: '1.0.0' }));
+  for (const command of ['publish', 'publish-site'])
+    for (const value of ['-version', '--help', '-h', '--'])
+      assert.match(
+        failure([
+          command,
+          dir,
+          ...(command === 'publish-site' ? [join(dir, 'site')] : []),
+          '--confirm-version',
+          value,
+        ]),
+        /confirm the exact reviewed version with --confirm-version/,
+      );
+  assert.equal(existsSync(join(dir, 'publication.json')), false);
+  assert.equal(existsSync(join(dir, 'site')), false);
 });
 
 test('every command rejects extra positional arguments before doing work', () => {
@@ -223,7 +293,7 @@ test('PHP fixture validation also explains a missing PHP runtime', async (t) => 
         name: 'synthetic todo',
         operation: 'listTodos',
         input: {},
-        expected: { method: 'GET', path: '/todos' },
+        expected: { method: 'GET', path: '/v1/todos' },
         responses: [{ status: 200, body: '"ok"' }],
         data: 'ok',
       },

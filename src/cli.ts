@@ -126,7 +126,7 @@ function parseArguments(definition: Command) {
         throw new Diagnostic('arguments', `flag "${arg}" was provided more than once`);
       if (option.value) {
         const value = args[i + 1];
-        if (!value || value.startsWith('-'))
+        if (!value)
           throw new Diagnostic('arguments', `flag "${arg}" requires a value (${option.value})`);
         flags.set(arg, value);
         i++;
@@ -139,7 +139,7 @@ function parseArguments(definition: Command) {
       `unexpected extra argument "${positional[definition.arguments.length]}"`,
     );
   if (!help) {
-    const missing = definition.arguments[positional.length];
+    const missing = definition.arguments.find((_, index) => !positional[index]);
     if (missing) throw new Diagnostic('arguments', `missing required argument ${missing}`);
     for (const [flag, option] of Object.entries(definition.flags))
       if (option.required && !flags.has(flag))

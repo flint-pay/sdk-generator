@@ -3,7 +3,7 @@ export type { PhpRepresentation } from './php-value-plan.js';
 import type { Schema } from './contract.js';
 import { stable } from './canonical.js';
 import { discriminatorBindings, directionalSchema, nullableAlternative } from './codec-plan.js';
-import { Diagnostic } from './diagnostic.js';
+import { Diagnostic, pointerSegment } from './diagnostic.js';
 import { pascalWords } from './naming.js';
 import { phpDeclaration, phpNative } from './php-types.js';
 
@@ -204,7 +204,11 @@ export function phpRepresentations(
                   ? undefined
                   : {
                       name: pinned,
-                      path: 'config/phpFieldClasses/' + name + '/' + key,
+                      path:
+                        'config/phpFieldClasses/' +
+                        pointerSegment(name) +
+                        '/' +
+                        pointerSegment(key),
                       field: name + '.' + key,
                     },
               ),
@@ -370,7 +374,7 @@ export function phpRepresentations(
   }
   const checkFieldClasses = (): void => {
     for (const [name, fields] of Object.entries(fieldClasses)) {
-      const path = 'config/phpFieldClasses/' + name;
+      const path = 'config/phpFieldClasses/' + pointerSegment(name);
       const entity = entities.get(name);
       if (!entity)
         throw new Diagnostic(
@@ -378,9 +382,9 @@ export function phpRepresentations(
           'stale PHP field class customization: ' + name + ' is not a generated PHP response class',
         );
       for (const field of Object.keys(fields))
-        if (!appliedFieldClasses.has(path + '/' + field))
+        if (!appliedFieldClasses.has(path + '/' + pointerSegment(field)))
           throw new Diagnostic(
-            path + '/' + field,
+            path + '/' + pointerSegment(field),
             'stale PHP field class customization: ' + name + ' has no response field ' + field,
           );
     }

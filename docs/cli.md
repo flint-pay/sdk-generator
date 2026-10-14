@@ -19,7 +19,7 @@ From a source checkout, run `npm ci` and `npm run build`, then invoke `node dist
 | `node dist/cli.js publish RELEASE_DIRECTORY --confirm-version VERSION`               | Verify the prepared artifacts and upload the npm archive using the caller's registry authentication. Write a publication receipt on success.                                                                                                |
 | `node dist/cli.js publish-site RELEASE_DIRECTORY WEB_ROOT --confirm-version VERSION` | Verify and deploy the prepared Composer repository, archives and documentation into a dedicated local web root or hosting checkout. A hosting checkout still needs its normal deployment step.                                              |
 
-Arguments are positional; named options may appear before or after them. Quote paths containing spaces. Use `--` before positional paths beginning with `-`. Unknown commands and flags, missing arguments or option values, repeated options and unexpected extra positional arguments fail before execution. Unknown commands suggest close spellings.
+Arguments are positional; named options may appear before or after them. Required paths must be nonempty. Quote paths containing spaces. Use `--` before positional paths beginning with `-`. Value-taking options consume the next argument even when it begins with `-` (for example, `--fixtures -cases.json`); an absent or empty value fails. Unknown commands and flags, missing arguments or option values, repeated options and unexpected extra positional arguments fail before execution. Unknown commands suggest close spellings.
 
 Commands other than help and version print JSON to stdout. Failures print a JSON object with an `error` string to stderr and exit with status 1. `--help` (also `-h`) and `--version` print plain text. Command help lists the required arguments, options and side effects; `validate --help` reads no output directory.
 
@@ -47,7 +47,7 @@ On failure, it exits with status 1 and writes JSON to stderr:
 
 The `error` string includes the reported findings; each `diagnostics` entry has a location and a message without the repeated location prefix. No files are written.
 
-Locations into OpenAPI `paths` escape path keys using JSON Pointer rules: `/todos` becomes `/paths/~1todos/get`, and `~` becomes `~0`. Invalid JSON reports a one-based line and column without quoting input contents. The YAML hint appears only for `.yaml`/`.yml` files or content that does not start with a JSON object or array.
+Diagnostic pointer segments escape `/` as `~1` and `~` as `~0` using JSON Pointer rules: `/todos` becomes `/paths/~1todos/get`, and a nested property named `a/b~c` becomes `a~1b~0c`. This applies to unknown keys and configuration locations too. Invalid JSON reports a one-based line and column without quoting input contents. The YAML hint appears only for `.yaml`/`.yml` files or content that does not start with a JSON object or array.
 
 Checks that depend on an invalid setting are skipped. Loading failures (such as invalid JSON or unresolved references) can prevent later checks; config errors stop compilation, and model errors stop operation validation. Within model and operation validation, diagnostics report the first failure per model or operation and continue checking the others. Fix the reported findings and rerun to reach dependent checks.
 

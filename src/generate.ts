@@ -28,7 +28,7 @@ import { spawnSync } from 'node:child_process';
 import { comparePolicies } from './compatibility.js';
 import { artifactHashes, prepareSite, verifyRelease, npmPackResult } from './distribution.js';
 import { checkVersionPolicy } from './version.js';
-import { DiagnosticGroup } from './diagnostic.js';
+import { DiagnosticGroup, pointerSegment } from './diagnostic.js';
 import { requireTool } from './tool-checks.js';
 import { serialize, executeCodec, ExactNumber } from './runtime.js';
 import {
@@ -430,7 +430,7 @@ function exampleInput(op: Operation, definitions: Record<string, Schema> = {}): 
     return input;
   } catch (error) {
     throw new Diagnostic(
-      `config/operations/${op.id}/example`,
+      `config/operations/${pointerSegment(op.id)}/example`,
       `provide an input example that satisfies this operation: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
@@ -852,7 +852,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       checkedExamples.set(op, input);
     } catch (error) {
       throw new Diagnostic(
-        `config/operations/${op.id}/example`,
+        `config/operations/${pointerSegment(op.id)}/example`,
         `provide an input example that satisfies this operation: ${error instanceof Error ? error.message : String(error)}`,
       );
     }

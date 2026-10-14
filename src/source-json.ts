@@ -1,4 +1,4 @@
-import { Diagnostic } from './diagnostic.js';
+import { Diagnostic, pointerSegment } from './diagnostic.js';
 import { extname } from 'node:path';
 
 /** Compare decimal values without expanding exponents or using floating point. */
@@ -147,7 +147,7 @@ export class SourceJson {
   assertExact(value: unknown, path: string): void {
     if (!value || typeof value !== 'object') return;
     for (const key of Object.keys(value))
-      this.assertMember(value, key, path + '/' + key.replaceAll('~', '~0').replaceAll('/', '~1'));
+      this.assertMember(value, key, path + '/' + pointerSegment(key));
   }
 
   /** An explicit provider replacement supersedes the original source token. */

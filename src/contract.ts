@@ -4,7 +4,13 @@ import { operationNames, modelNames, isPublicName } from './naming.js';
 import { shareContractSchemas } from './schema-sharing.js';
 import { schemaAnnotations, isSchemaAnnotation } from './schema-annotations.js';
 import { SourceJson } from './source-json.js';
-import { Diagnostic, DiagnosticGroup, DiagnosticCollector, suggestion } from './diagnostic.js';
+import {
+  Diagnostic,
+  DiagnosticGroup,
+  DiagnosticCollector,
+  suggestion,
+  pointerSegment,
+} from './diagnostic.js';
 import { valueInstruction, exactValue, discriminatorBindings } from './codec-plan.js';
 import { stable } from './canonical.js';
 import { successStatus, isAuthShortcutName, isDefaultBaseUrl } from './runtime-plan.js';
@@ -236,7 +242,6 @@ function name(value: unknown, path: string, method = false): asserts value is st
       'choose an identifier that is not a JavaScript/PHP reserved word or SDK runtime member',
     );
 }
-const pointerSegment = (value: string): string => value.replaceAll('~', '~0').replaceAll('/', '~1');
 function keys(object: object, allowed: string[], path: string, hint = '') {
   if (!object || typeof object !== 'object' || Array.isArray(object))
     fail(path, 'expected an object');
@@ -245,7 +250,7 @@ function keys(object: object, allowed: string[], path: string, hint = '') {
     .map(
       (k, index) =>
         new Diagnostic(
-          `${path}/${k}`,
+          `${path}/${pointerSegment(k)}`,
           `unsupported setting.${suggestion(k, allowed)}${index === 0 ? ` Valid settings: ${allowed.join(', ')}${hint}` : ''}`,
         ),
     );
@@ -505,7 +510,7 @@ function schema(s: Schema, p: string, legacy = false, explicitNumbers = false): 
         required.some((value) => typeof value !== 'string') ||
         new Set(required).size !== required.length
       )
-        fail(p + '/dependentRequired/' + key, 'expected unique property names');
+        fail(p + '/dependentRequired/' + pointerSegment(key), 'expected unique property names');
       if ((required as string[]).length > 0)
         branches.push({
           if: { type: 'object', required: [key] },
@@ -667,7 +672,7 @@ function schema(s: Schema, p: string, legacy = false, explicitNumbers = false): 
         );
       if (value && typeof value === 'object')
         for (const [key, child] of Object.entries(value))
-          literal(child, location + '/' + key, depth + 1);
+          literal(child, location + '/' + pointerSegment(key), depth + 1);
     };
     literal(s.const, p + '/const');
   }
@@ -711,7 +716,7 @@ function schema(s: Schema, p: string, legacy = false, explicitNumbers = false): 
     for (const [tag, index] of Object.entries(s['x-sdk-discriminator-mapping'] ?? {}))
       if (bindings && bindings[tag] !== index)
         fail(
-          p + '/discriminator/mapping/' + tag,
+          p + '/discriminator/mapping/' + pointerSegment(tag),
           'mapping conflicts with branch literal constraints',
         );
   }
@@ -773,7 +778,7 @@ function schema(s: Schema, p: string, legacy = false, explicitNumbers = false): 
   }
   if (s.items) schema(s.items, p + '/items', legacy, explicitNumbers);
   for (const [key, child] of Object.entries(s.properties ?? {}))
-    schema(child, p + '/properties/' + key, legacy, explicitNumbers);
+    schema(child, p + '/properties/' + pointerSegment(key), legacy, explicitNumbers);
   if (s.additionalProperties && typeof s.additionalProperties === 'object')
     schema(s.additionalProperties, p + '/additionalProperties', legacy, explicitNumbers);
   checkRepresentations(s, p, explicitNumbers);
@@ -972,7 +977,12 @@ function checkRepresentations(s: Schema, p: string, explicitNumbers = false): vo
               ? [shape.additionalProperties]
               : [];
         });
-      checkOverlap(children(left), children(right), path + '/properties/' + key, relation);
+      checkOverlap(
+        children(left),
+        children(right),
+        path + '/properties/' + pointerSegment(key),
+        relation,
+      );
     }
     checkItems(left, right, path, relation);
   };
@@ -1004,7 +1014,11 @@ function checkRepresentations(s: Schema, p: string, explicitNumbers = false): vo
         checkOverlap([left], [right], p + '/allOf', 'intersection');
     visitIntersectedProperties(shapes, (children, name) => {
       if (children.length > 1)
-        checkRepresentations({ allOf: children }, p + '/properties/' + name, explicitNumbers);
+        checkRepresentations(
+          { allOf: children },
+          p + '/properties/' + pointerSegment(name),
+          explicitNumbers,
+        );
     });
     // These conjuncts describe the same elements/values, just as matching
     // properties describe the same field. Constraint-only schemas must see the
@@ -1159,7 +1173,8 @@ export function loadContract(
         'const',
         'enum',
       ])
-        if (Object.hasOwn(value, key)) sourceJson.assertMember(value, key, path + '/' + key);
+        if (Object.hasOwn(value, key))
+          sourceJson.assertMember(value, key, path + '/' + pointerSegment(key));
     const map = context.startsWith('map:');
     if (!map && Object.keys(value).some((key) => key.startsWith('x-sdk-')))
       fail(path, 'x-sdk-* extensions are reserved for resolved generator metadata');
@@ -1175,7 +1190,7 @@ export function loadContract(
             fail(path + '/allOf', 'expected a nonempty schema array');
           for (const key of ['readOnly', 'writeOnly', 'deprecated', 'x-sensitive'])
             if (local[key] !== undefined && typeof local[key] !== 'boolean')
-              fail(path + '/' + key, 'expected a boolean');
+              fail(path + '/' + pointerSegment(key), 'expected a boolean');
           if (Object.keys(local).every(isSchemaAnnotation)) {
             const combined = { ...result, ...local };
             for (const key of ['readOnly', 'writeOnly', 'x-sensitive'])
@@ -1214,7 +1229,8 @@ export function loadContract(
         }
         for (const key of ['summary', 'description']) {
           if (!Object.hasOwn(siblings, key)) continue;
-          if (typeof siblings[key] !== 'string') fail(path + '/' + key, 'expected a string');
+          if (typeof siblings[key] !== 'string')
+            fail(path + '/' + pointerSegment(key), 'expected a string');
           const supported =
             key === 'summary'
               ? ['example']
@@ -1297,10 +1313,10 @@ export function loadContract(
         fail(path + '/discriminator', 'mapping requires oneOf branches');
       const bindings: Record<string, number> = Object.create(null);
       for (const [tag, target] of Object.entries(mapping)) {
-        const location = path + '/discriminator/mapping/' + tag;
+        const location = path + '/discriminator/mapping/' + pointerSegment(tag);
         if (typeof target !== 'string') fail(location, 'expected a local schema reference');
         const ref = Object.hasOwn(load(file).components?.schemas ?? {}, target)
-          ? '#/components/schemas/' + target.replaceAll('~', '~0').replaceAll('/', '~1')
+          ? '#/components/schemas/' + pointerSegment(target)
           : target;
         const resolvedTarget = deref({ $ref: ref }, file, location, stack, 'schema');
         const referenceKeys = (
@@ -1378,7 +1394,7 @@ export function loadContract(
           value: mergeProfiles(
             Object.hasOwn(result, key) ? result[key] : undefined,
             value,
-            path + '/' + key,
+            path + '/' + pointerSegment(key),
           ),
           writable: true,
           enumerable: true,
@@ -1516,11 +1532,13 @@ export function loadContract(
   });
   checkConfig(['operations'], () => {
     for (const [id, capability] of Object.entries(config.operations ?? {}))
-      diagnostics.check(() => record(capability, 'config/operations/' + id));
+      diagnostics.check(() => record(capability, 'config/operations/' + pointerSegment(id)));
   });
   checkConfig(['models', 'targets'], () => {
     for (const [original, mapped] of Object.entries(config.models ?? {}))
-      diagnostics.check(() => modelName(mapped, 'config/models/' + original, config.targets));
+      diagnostics.check(() =>
+        modelName(mapped, 'config/models/' + pointerSegment(original), config.targets),
+      );
   });
   checkConfig(['phpFieldClasses', 'targets'], () => {
     if (config.phpFieldClasses === undefined) return;
@@ -1528,10 +1546,10 @@ export function loadContract(
       if (!targets.includes('php')) fail('config/phpFieldClasses', 'requires the php target');
     });
     for (const [owner, fields] of Object.entries(config.phpFieldClasses)) {
-      const path = 'config/phpFieldClasses/' + owner;
+      const path = 'config/phpFieldClasses/' + pointerSegment(owner);
       if (!diagnostics.check(() => record(fields, path))) continue;
       for (const [field, value] of Object.entries(fields))
-        diagnostics.check(() => modelName(value, path + '/' + field, ['php']));
+        diagnostics.check(() => modelName(value, path + '/' + pointerSegment(field), ['php']));
     }
   });
   checkConfig(['release'], () => {
@@ -1629,7 +1647,7 @@ export function loadContract(
           for (const [name, content] of Object.entries(config.documentation!.guides))
             if (!/^[a-z0-9][a-z0-9-]*$/.test(name) || typeof content !== 'string')
               fail(
-                `config/documentation/guides/${name}`,
+                `config/documentation/guides/${pointerSegment(name)}`,
                 'use a lowercase guide slug and Markdown text',
               );
         }
@@ -1790,11 +1808,12 @@ export function loadContract(
     diagnostics.check(() => {
       const parts = p.split('/');
       const key = parts.pop()!;
-      const parent = pointer(raw, parts.join('/'), `config/overrides/${p}`);
+      const parent = pointer(raw, parts.join('/'), `config/overrides/${pointerSegment(p)}`);
       if (!parent || typeof parent !== 'object')
-        fail('config/overrides/' + p, 'override parent must be an object or array');
+        fail('config/overrides/' + pointerSegment(p), 'override parent must be an object or array');
       const decoded = key.replace(/~1/g, '/').replace(/~0/g, '~');
-      if (!Object.hasOwn(parent, decoded)) fail('config/overrides/' + p, 'stale override target');
+      if (!Object.hasOwn(parent, decoded))
+        fail('config/overrides/' + pointerSegment(p), 'stale override target');
       parent[decoded] = replacement;
       sourceJson.forget(parent, decoded);
     });
@@ -1853,7 +1872,7 @@ export function loadContract(
       if (key.startsWith('x-sdk-'))
         fail(path, 'x-sdk-* extensions are reserved for resolved generator metadata');
       if (Object.hasOwn(fields, key))
-        fail(path + '/' + key, 'conflicting path item $ref field ' + key);
+        fail(path + '/' + pointerSegment(key), 'conflicting path item $ref field ' + key);
       Object.defineProperty(fields, key, {
         value: { value, file },
         enumerable: true,
@@ -1885,7 +1904,7 @@ export function loadContract(
       if (!declaredIds.has(id))
         diagnostics.check(() =>
           fail(
-            'config/operations/' + id,
+            'config/operations/' + pointerSegment(id),
             `operation ID "${id}" is not in the contract.${suggestion(id, [...declaredIds])}`,
           ),
         );
@@ -1925,19 +1944,25 @@ export function loadContract(
           selectedAny = true;
           collect(op, file, 'operation');
           if (c?.stream?.events) {
-            record(c.stream.events, 'config/operations/' + op.operationId + '/stream/events');
+            record(
+              c.stream.events,
+              'config/operations/' + pointerSegment(op.operationId) + '/stream/events',
+            );
             const events: Record<string, Schema> = Object.create(null);
             for (const [event, ref] of Object.entries(c.stream.events)) {
               if (typeof ref !== 'string')
                 fail(
-                  'config/operations/' + op.operationId + '/stream/events/' + event,
+                  'config/operations/' +
+                    pointerSegment(op.operationId) +
+                    '/stream/events/' +
+                    pointerSegment(event),
                   'expected a local schema reference',
                 );
               collect({ $ref: ref }, resolve(definitionPath), 'schema');
               events[event] = deref(
                 { $ref: ref },
                 resolve(definitionPath),
-                p + '/stream/events/' + event,
+                p + '/stream/events/' + pointerSegment(event),
                 [],
                 'schema',
               );
@@ -1968,7 +1993,7 @@ export function loadContract(
     if (raw.openapi.startsWith('3.0.')) fail('/webhooks', 'webhooks require OpenAPI 3.1');
     record(raw.webhooks, '/webhooks');
     for (const [key, item] of Object.entries(raw.webhooks).sort()) {
-      const base = '/webhooks/' + key.replaceAll('~', '~0').replaceAll('/', '~1');
+      const base = '/webhooks/' + pointerSegment(key);
       const fields = pathFields(item, resolve(definitionPath), base);
       for (const [method, field] of Object.entries(fields)) {
         if (
@@ -1977,9 +2002,9 @@ export function loadContract(
         )
           continue;
         if (!['get', 'post', 'put', 'patch', 'delete', 'head', 'options'].includes(method))
-          fail(base + '/' + method, 'unsupported incoming method');
+          fail(base + '/' + pointerSegment(method), 'unsupported incoming method');
         collect(field.value, field.file, 'operation');
-        const location = base + '/' + method;
+        const location = base + '/' + pointerSegment(method);
         const op = deref(field.value, field.file, location, [], 'operation');
         record(op, location);
         record(op.requestBody, location + '/requestBody');
@@ -2080,12 +2105,12 @@ export function loadContract(
   ][]) {
     try {
       const mapped = publicModel(original);
-      modelName(mapped, `models/${original}`, config.targets);
+      modelName(mapped, `models/${pointerSegment(original)}`, config.targets);
       if (Object.keys(models).some((k) => k.toLowerCase() === mapped.toLowerCase()))
-        fail(`models/${original}`, 'model name collision');
+        fail(`models/${pointerSegment(original)}`, 'model name collision');
       schema(
         value,
-        `/components/schemas/${original}`,
+        `/components/schemas/${pointerSegment(original)}`,
         raw.openapi.startsWith('3.0.'),
         config.numericUnions === 'explicit',
       );
@@ -2096,24 +2121,26 @@ export function loadContract(
   }
   for (const k of Object.keys(config.models ?? {}))
     if (!Object.hasOwn(raw.components?.schemas ?? {}, k))
-      diagnostics.check(() => fail(`config/models/${k}`, 'stale model customization'));
+      diagnostics.check(() =>
+        fail(`config/models/${pointerSegment(k)}`, 'stale model customization'),
+      );
   diagnostics.finish();
   const definitions: Record<string, Schema> = {};
   for (const [mapped, key] of cycles) {
-    modelName(mapped, 'definitions/' + mapped, config.targets);
+    modelName(mapped, 'definitions/' + pointerSegment(mapped), config.targets);
     if (
       !key.startsWith(resolve(definitionPath) + '#/components/schemas/') &&
       Object.hasOwn(models, mapped)
     )
       fail(
-        'definitions/' + mapped,
+        'definitions/' + pointerSegment(mapped),
         'generated external model name collides with an existing model',
       );
     const value = models[mapped] ?? resolved.get('schema:' + key)?.value;
-    if (!value) fail('definitions/' + mapped, 'unresolved recursive model');
+    if (!value) fail('definitions/' + pointerSegment(mapped), 'unresolved recursive model');
     schema(
       value,
-      'definitions/' + mapped,
+      'definitions/' + pointerSegment(mapped),
       raw.openapi.startsWith('3.0.'),
       config.numericUnions === 'explicit',
     );
@@ -2134,11 +2161,11 @@ export function loadContract(
     if (declaration.type === 'http' && declaration.scheme === 'bearer')
       return { name: key, type: 'bearer', header: 'Authorization' };
     if (declaration.type === 'apiKey' && declaration.in === 'header') {
-      header(declaration.name, 'securitySchemes/' + key + '/name');
+      header(declaration.name, 'securitySchemes/' + pointerSegment(key) + '/name');
       return { name: key, type: 'apiKey', header: declaration.name };
     }
     return fail(
-      'securitySchemes/' + key,
+      'securitySchemes/' + pointerSegment(key),
       'supported authentication: bearer or header API key; refresh/OAuth must be supplied by an explicit caller-owned transport',
     );
   };
@@ -2156,16 +2183,19 @@ export function loadContract(
       fail('config/auth/modes', 'declare at least one authentication mode');
     authentication = Object.create(null);
     for (const [mode, settings] of Object.entries(namedAuth.modes)) {
-      name(mode, 'config/auth/modes/' + mode);
-      keys(settings, ['schemes', 'operations'], 'config/auth/modes/' + mode);
-      strings(settings.schemes, 'config/auth/modes/' + mode + '/schemes');
+      name(mode, 'config/auth/modes/' + pointerSegment(mode));
+      keys(settings, ['schemes', 'operations'], 'config/auth/modes/' + pointerSegment(mode));
+      strings(settings.schemes, 'config/auth/modes/' + pointerSegment(mode) + '/schemes');
       if (!settings.schemes.length)
-        fail('config/auth/modes/' + mode, 'a mode requires a complete scheme set');
+        fail('config/auth/modes/' + pointerSegment(mode), 'a mode requires a complete scheme set');
       if (settings.operations !== undefined)
-        strings(settings.operations, 'config/auth/modes/' + mode + '/operations');
+        strings(settings.operations, 'config/auth/modes/' + pointerSegment(mode) + '/operations');
       const compiled = settings.schemes.map(compileScheme);
       if (new Set(compiled.map((scheme) => scheme.header.toLowerCase())).size !== compiled.length)
-        fail('config/auth/modes/' + mode, 'combined schemes have conflicting header destinations');
+        fail(
+          'config/auth/modes/' + pointerSegment(mode),
+          'combined schemes have conflicting header destinations',
+        );
       authentication![mode] = {
         schemes: compiled,
         ...(settings.operations ? { operations: settings.operations } : {}),
@@ -2174,7 +2204,7 @@ export function loadContract(
     if (namedAuth.shortcuts !== undefined) {
       record(namedAuth.shortcuts, 'config/auth/shortcuts');
       for (const [key, shortcut] of Object.entries(namedAuth.shortcuts)) {
-        const path = 'config/auth/shortcuts/' + key;
+        const path = 'config/auth/shortcuts/' + pointerSegment(key);
         if (!isAuthShortcutName(key))
           fail(
             path,
@@ -2259,16 +2289,16 @@ export function loadContract(
             'requestMediaType',
             'stream',
           ],
-          `config/operations/${id}`,
+          `config/operations/${pointerSegment(id)}`,
         );
         if (c.request !== undefined)
-          validateRequestStyle(c.request, `config/operations/${id}/request`);
+          validateRequestStyle(c.request, `config/operations/${pointerSegment(id)}/request`);
         const requestStyle =
           c.request?.style ??
           (invalidConfig.has('requests') ? undefined : config.requests?.style) ??
           'positional';
         if (c.response !== undefined)
-          validateResponseReturn(c.response, `config/operations/${id}/response`);
+          validateResponseReturn(c.response, `config/operations/${pointerSegment(id)}/response`);
         const responseReturn: ResponseReturn = {
           return: 'payload',
           ...(invalidConfig.has('responses') ? {} : config.responses),
@@ -2276,27 +2306,40 @@ export function loadContract(
         };
         const payloadReturn = responseReturn.return === 'payload';
         if (!payloadReturn && c.response?.payloadPath != null)
-          fail(`config/operations/${id}/response`, 'payloadPath requires return: payload');
+          fail(
+            `config/operations/${pointerSegment(id)}/response`,
+            'payloadPath requires return: payload',
+          );
         for (const key of ['aliases', 'audiences'] as const)
-          if (c[key] !== undefined) strings(c[key], `config/operations/${id}/${key}`);
+          if (c[key] !== undefined)
+            strings(c[key], `config/operations/${pointerSegment(id)}/${key}`);
         if (c.hidden !== undefined && typeof c.hidden !== 'boolean')
           fail(p, 'hidden must be boolean');
         if (c.requestMediaType !== undefined && typeof c.requestMediaType !== 'string')
-          fail(`config/operations/${id}/requestMediaType`, 'expected a media type string');
+          fail(
+            `config/operations/${pointerSegment(id)}/requestMediaType`,
+            'expected a media type string',
+          );
         if (c.requestMediaType !== undefined && op.requestBody === undefined)
-          fail(`config/operations/${id}/requestMediaType`, 'operation has no request body');
+          fail(
+            `config/operations/${pointerSegment(id)}/requestMediaType`,
+            'operation has no request body',
+          );
         if (c.stream) {
           keys(
             c.stream,
             ['events', 'idleTimeoutMs', 'maxEventBytes'],
-            `config/operations/${id}/stream`,
+            `config/operations/${pointerSegment(id)}/stream`,
           );
           for (const key of ['idleTimeoutMs', 'maxEventBytes'] as const)
             if (
               c.stream[key] !== undefined &&
               (!Number.isSafeInteger(c.stream[key]) || c.stream[key]! <= 0)
             )
-              fail(`config/operations/${id}/stream/${key}`, 'expected a positive safe integer');
+              fail(
+                `config/operations/${pointerSegment(id)}/stream/${key}`,
+                'expected a positive safe integer',
+              );
         }
         if (
           c.deprecated !== undefined &&
@@ -2362,11 +2405,11 @@ export function loadContract(
             fail(p, `parameter name ${param.name} conflicts with SDK input`);
           schema(
             param.schema,
-            `${p}/parameters/${param.name}`,
+            `${p}/parameters/${pointerSegment(param.name)}`,
             raw.openapi.startsWith('3.0.'),
             config.numericUnions === 'explicit',
           );
-          parameterType(param.schema, `${p}/parameters/${param.name}`);
+          parameterType(param.schema, `${p}/parameters/${pointerSegment(param.name)}`);
           const style = param.style ?? (param.in === 'query' ? 'form' : 'simple');
           if (style !== (param.in === 'query' ? 'form' : 'simple'))
             fail(p, `unsupported parameter style ${style}`);
@@ -2453,7 +2496,10 @@ export function loadContract(
             c.requestMediaType !== undefined &&
             !Object.hasOwn(op.requestBody.content, c.requestMediaType)
           )
-            fail(`config/operations/${id}/requestMediaType`, 'selected media type is not declared');
+            fail(
+              `config/operations/${pointerSegment(id)}/requestMediaType`,
+              'selected media type is not declared',
+            );
           const contents = Object.entries(op.requestBody.content).filter(([media]) =>
             c.requestMediaType === undefined
               ? supported.includes(media)
@@ -2487,9 +2533,9 @@ export function loadContract(
         for (const [status, response] of Object.entries(op.responses) as [string, any][]) {
           if (!/^[1-5]\d\d$/.test(status) && status !== 'default')
             fail(p, 'responses require explicit HTTP status codes or default');
-          record(response, p + '/responses/' + status);
+          record(response, p + '/responses/' + pointerSegment(status));
           if (response.content !== undefined)
-            record(response.content, p + '/responses/' + status + '/content');
+            record(response.content, p + '/responses/' + pointerSegment(status) + '/content');
           const contents = Object.entries(response.content ?? {});
           if (contents.length > 1) fail(p, 'each response must select one media type');
           const r: Operation['responses'][string] = {
@@ -2505,20 +2551,23 @@ export function loadContract(
               ([name]) => name.toLowerCase() === 'location',
             )?.[1];
             if (location !== undefined) {
-              record(location, p + '/responses/' + status + '/headers/Location');
+              record(location, p + '/responses/' + pointerSegment(status) + '/headers/Location');
               r.locationRequired = location.required === true;
             }
           }
           if (contents.length) {
             const [media, value] = contents[0]! as [string, any];
-            record(value, p + '/responses/' + status + '/content/' + media);
+            record(
+              value,
+              p + '/responses/' + pointerSegment(status) + '/content/' + pointerSegment(media),
+            );
             if (['application/pdf', 'text/event-stream'].includes(media) && successStatus(status)) {
               r.bodyKind = media === 'application/pdf' ? 'binary' : 'sse';
             } else {
               if (media !== 'application/json') fail(p, `unsupported response media type ${media}`);
               schema(
                 value.schema,
-                `${p}/responses/${status}`,
+                `${p}/responses/${pointerSegment(status)}`,
                 raw.openapi.startsWith('3.0.'),
                 config.numericUnions === 'explicit',
               );
@@ -2532,12 +2581,12 @@ export function loadContract(
         for (const [event, eventSchema] of Object.entries(streamSchemas.get(id) ?? {}))
           schema(
             eventSchema,
-            `${p}/stream/events/${event}`,
+            `${p}/stream/events/${pointerSegment(event)}`,
             false,
             config.numericUnions === 'explicit',
           );
         if (c.stream && !Object.values(responses).some((response) => response.bodyKind === 'sse'))
-          fail(`config/operations/${id}/stream`, 'operation has no SSE response');
+          fail(`config/operations/${pointerSegment(id)}/stream`, 'operation has no SSE response');
         if (!Object.keys(responses).some((k) => successStatus(k) && k !== '304'))
           fail(p, 'declare at least one explicit success response');
         if (c.idempotency) {
@@ -2720,14 +2769,17 @@ export function loadContract(
   for (const id of [...Object.keys(config.operations ?? {}), ...(config.include ?? [])])
     if (!ids.has(id))
       fail(
-        `config/operations/${id}`,
+        `config/operations/${pointerSegment(id)}`,
         `operation ID "${id}" is not in the contract.${suggestion(id, [...ids])}`,
       );
   if (!operations.length) fail('/paths', 'selection contains no operations');
   for (const [mode, settings] of Object.entries(authentication ?? {}))
     for (const id of settings.operations ?? [])
       if (!ids.has(id))
-        fail('config/auth/modes/' + mode + '/operations', 'unknown operation binding ' + id);
+        fail(
+          'config/auth/modes/' + pointerSegment(mode) + '/operations',
+          'unknown operation binding ' + id,
+        );
   if (config.webhook) {
     const w = config.webhook;
     keys(
@@ -2817,7 +2869,12 @@ export function loadContract(
         w.events[type] = declaration.schema;
       }
     for (const [k, v] of Object.entries(w.events))
-      schema(v, `config/webhook/events/${k}`, false, config.numericUnions === 'explicit');
+      schema(
+        v,
+        `config/webhook/events/${pointerSegment(k)}`,
+        false,
+        config.numericUnions === 'explicit',
+      );
   }
   if (config.money) {
     keys(config.money, ['currencies'], 'config/money');

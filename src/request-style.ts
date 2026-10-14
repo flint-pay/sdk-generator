@@ -1,5 +1,5 @@
 import type { Operation, Schema } from './contract.js';
-import { Diagnostic } from './diagnostic.js';
+import { Diagnostic, pointerSegment } from './diagnostic.js';
 import { objectConstraint } from './target-types.js';
 import { valueScopes } from './schema-intersections.js';
 
@@ -12,7 +12,8 @@ export function validateRequestStyle(value: unknown, path: string): void {
     throw new Diagnostic(path, 'expected a request style object');
   const record = value as Record<string, unknown>;
   for (const key of Object.keys(record))
-    if (key !== 'style') throw new Diagnostic(path + '/' + key, 'unknown configuration key');
+    if (key !== 'style')
+      throw new Diagnostic(path + '/' + pointerSegment(key), 'unknown configuration key');
   if (record.style !== undefined && !['object', 'positional'].includes(record.style as string))
     throw new Diagnostic(path + '/style', 'expected object or positional');
 }
@@ -32,7 +33,7 @@ export function validatePositional(op: Operation, definitions: Record<string, Sc
   const scopes = valueScopes(body, definitions);
   const fail = (message: string): never => {
     throw new Diagnostic(
-      'config/operations/' + op.id + '/request',
+      'config/operations/' + pointerSegment(op.id) + '/request',
       message + '; use request.style: object for this operation',
     );
   };

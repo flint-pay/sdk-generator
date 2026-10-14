@@ -1,5 +1,5 @@
 import type { Operation, Schema } from './contract.js';
-import { Diagnostic } from './diagnostic.js';
+import { Diagnostic, pointerSegment } from './diagnostic.js';
 import { successStatus } from './runtime-plan.js';
 import { objectConstraint } from './target-types.js';
 
@@ -17,7 +17,7 @@ export function validateResponseReturn(
   const v = value as Record<string, unknown>;
   for (const key of Object.keys(v))
     if (!['return', 'payloadPath'].includes(key))
-      throw new Diagnostic(path + '/' + key, 'unsupported response setting');
+      throw new Diagnostic(path + '/' + pointerSegment(key), 'unsupported response setting');
   if (v.return !== undefined && v.return !== 'result' && v.return !== 'payload')
     throw new Diagnostic(path + '/return', 'expected result or payload');
   if (
@@ -36,7 +36,7 @@ export function validateResponseReturn(
 export function payloadSchemas(op: Operation, definitions: Record<string, Schema> = {}): Schema[] {
   const path = op.response?.payloadPath;
   if (!path) return [];
-  const location = 'config/operations/' + op.id + '/response/payloadPath';
+  const location = 'config/operations/' + pointerSegment(op.id) + '/response/payloadPath';
   const fail = (): never => {
     throw new Diagnostic(
       location,
