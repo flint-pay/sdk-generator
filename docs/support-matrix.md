@@ -2,6 +2,8 @@
 
 A capability must be declared to generate its public helper. Both targets implement the declared contract through bundled compiled codecs, with the target differences described below. A missing provider capability is not inferred from a payment resource name or field name. GET/HEAD/OPTIONS have bounded default retries; mutation retries and idempotency still require declarations.
 
+Node webhook verification returns `VerifiedWebhook`. Root-only `KnownWebhookEvent` and `WebhookEvent<EventName>` types share PHP event-class names; top-level event fields support exhaustive narrowing. See [webhook verification](using-sdks.md#webhook-verification) for payload annotations and dotted event paths.
+
 `include` selects named operations before validating their wire capabilities and skips operations without a nonempty `operationId`. Without `include`, unnamed operations fail diagnosis; `hidden` and audience declarations need an operation ID. Declared IDs must remain unique throughout the document. Request bodies declaring only unsupported media types fail directly; exclude those operations with `include` or `hidden`.
 
 | Capability                 | Node.js/TypeScript                                                                              | PHP                                                                            |

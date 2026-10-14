@@ -1,3 +1,4 @@
+import { reservePublicSymbols } from './public-symbols.js';
 import {
   nodeDescriptors,
   scopedNodeClients,
@@ -1105,81 +1106,16 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
   const models = targetPlan.node.models;
   const payloadReturns = targetPlan.responseReturns ?? {};
   const hasPayloadReturns = Object.keys(payloadReturns).length > 0;
-  const symbols = new Set(
-    [
-      'Client',
-      ...(hasPayloadReturns ? ['SdkResponse'] : []),
-      'Runtime',
-      'Model',
-      'Result',
-      'SdkError',
-      'Codec',
-      'RawNumber',
-      'ExactNumber',
-      'EventStream',
-      'ServerSentEvent',
-      'ByteStream',
-      'CurlByteStream',
-      'ParsedNumber',
-      'Cancellation',
-      'ClientOptions',
-      'RuntimeClientOptions',
-      'RequestOptions',
-      'InputValue',
-      ...(c.authentication ? ['Credentials', 'AuthMode', 'RuntimeRequestOptions'] : []),
-      'Metadata',
-      'ErrorKind',
-      'DiagnosticEvent',
-      'serialize',
-      'parseExact',
-      'redact',
-      ...(targets.includes('node')
-        ? [
-            'Promise',
-            'AsyncGenerator',
-            'Record',
-            'Omit',
-            ...(c.authentication ? ['Partial'] : []),
-            'Exclude',
-            'Object',
-            'Array',
-            'Uint8Array',
-            'any',
-            'unknown',
-            'number',
-            'boolean',
-            'bigint',
-            'symbol',
-            'undefined',
-            'intrinsic',
-          ]
-        : []),
-    ].map((n) => n.toLowerCase()),
+  const reserve = reservePublicSymbols(
+    c,
+    Object.keys(models),
+    new Set(
+      c.operations.filter((op) => targetPlan.documentation[op.id]!.reserveKnown).map((op) => op.id),
+    ),
   );
-  const symbolOwners = new Map([...symbols].map((name) => [name, 'runtime.' + name]));
-  const reserve = (n: string, owner = 'generated.' + n) => {
-    if (symbols.has(n.toLowerCase()))
-      throw new Diagnostic(
-        'public interface',
-        `generated type collision: ${n} between ${symbolOwners.get(n.toLowerCase())} and ${owner}; customize resource/method/model names`,
-      );
-    symbols.add(n.toLowerCase());
-    symbolOwners.set(n.toLowerCase(), owner);
-  };
-  for (const group of groups) reserve(pascal(group) + 'Resource', 'resources.' + group);
-  for (const name of Object.keys(models)) {
-    reserve(name, 'models.' + name);
-    reserve(name + 'Input', 'models.' + name + '.input');
-  }
-  for (const op of c.operations) {
-    reserve(pascal(op.resource) + pascal(op.method) + 'Input', op.id + '.input');
-    reserve(pascal(op.resource) + pascal(op.method) + 'Response', op.id + '.response');
-    if (targetPlan.documentation[op.id]!.reserveKnown)
-      reserve(pascal(op.resource) + pascal(op.method) + 'ResponseKnown');
-  }
+  const webhookTypes = new Set(Object.values(targetPlan.node.eventTypes ?? {}));
   const compiledRuntime = targetPlan.runtime;
   const definitions = c.definitions ?? {};
-  reserve('SchemaRegistry');
   const license = readFileSync(join(here, '../LICENSE'), 'utf8');
   if (targets.includes('node')) {
     const put = (p: string, value: string) => files.set('node/' + p, value);
@@ -1370,9 +1306,8 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     }
     if (c.config.webhook) {
       code += '  verifyWebhook(...args) { return this.#runtime.verifyWebhook(...args); }\n';
-      declarations += `  verifyWebhook(rawBody: Uint8Array, headers: _SdkWebhookHeaders, secrets: string | readonly string[], nowSeconds?: number): { event: ${
-        targetPlan.node.eventType
-      }; known: true } | { event: unknown; known: false };\n`;
+      declarations +=
+        '  verifyWebhook(rawBody: Uint8Array, headers: _SdkWebhookHeaders, secrets: string | readonly string[], nowSeconds?: number): VerifiedWebhook;\n';
     }
     if (c.config.money) {
       code += '  money(...args) { return this.#runtime.money(...args); }\n';
@@ -1415,6 +1350,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       put,
       new Set(Object.keys(targetPlan.node.models)),
       new Map(Object.entries(targetPlan.node.models).map(([name, model]) => [name, model.codec])),
+      new Set(c.config.webhook ? [...webhookTypes, 'KnownWebhookEvent', 'VerifiedWebhook'] : []),
     );
     const scopedClient = scopedNodeClients(code);
     for (const group of groups) {
@@ -1480,7 +1416,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       userAgent: `${c.config.composer.name.replaceAll('/', '-')}/${c.config.version} (PHP)`,
     };
     for (const model of targetPlan.php.models.filter((model) => model.response))
-      if (!Object.hasOwn(models, model.name)) reserve(model.name);
+      if (!Object.hasOwn(models, model.name) && !webhookTypes.has(model.name)) reserve(model.name);
     const eventModels = targetPlan.php.eventModels;
     put(
       'composer.json',
@@ -1732,7 +1668,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     );
     files.set(
       `${target}/REFERENCE.md`,
-      `# ${c.title} API reference\n\nPackage ${c.config.version}; API ${c.apiVersion}.\n\n[Models and field descriptions](MODELS.md) · [Runtime guide](RUNTIME.md)\n\nResult.data is the full decoded API response body; Result.meta contains HTTP metadata. Provider data envelopes remain inside Result.data. PHP accepts input arrays or generated input classes.\n\n${c.config.webhook ? '## verifyWebhook\n\nVerify original request bytes with signing headers and one secret or a rotation array. Returns { known, event }; only matched declared envelopes are known. See [signatures, framework examples, and errors](RUNTIME.md#webhooks-and-recovery).\n\n' : ''}## Resources\n\n${groups.map((group) => `- [${group}](#resource-${group.toLowerCase()})`).join('\n')}\n\n` +
+      `# ${c.title} API reference\n\nPackage ${c.config.version}; API ${c.apiVersion}.\n\n[Models and field descriptions](MODELS.md) · [Runtime guide](RUNTIME.md)\n\nResult.data is the full decoded API response body; Result.meta contains HTTP metadata. Provider data envelopes remain inside Result.data. PHP accepts input arrays or generated input classes.\n\n${c.config.webhook ? webhookReference(target) : ''}## Resources\n\n${groups.map((group) => `- [${group}](#resource-${group.toLowerCase()})`).join('\n')}\n\n` +
         [...c.operations]
           .sort((a, b) => a.resource.localeCompare(b.resource) || a.method.localeCompare(b.method))
           .map(
@@ -2842,6 +2778,16 @@ export function publishRelease(
   return { version: confirmedVersion, npmPublished: true, composer: plan.composer };
 }
 
+function webhookReference(target: 'node' | 'php'): string {
+  return (
+    '## verifyWebhook\n\nVerify original request bytes with signing headers and one secret or a rotation array. Returns { known, event }; only matched declared envelopes are known. ' +
+    (target === 'node'
+      ? 'The return type is `VerifiedWebhook`: checking `known` exposes `KnownWebhookEvent`, the union of the root-only `WebhookEvent<EventName>` types that share PHP class names. Unknown events remain `unknown`. '
+      : '') +
+    'See [signatures, framework examples, and errors](RUNTIME.md#webhooks-and-recovery).\n\n'
+  );
+}
+
 function webhookGuide(c: Contract, target: 'node' | 'php'): string {
   const w = c.config.webhook;
   if (!w) return 'This provider has not declared webhook verification.';
@@ -2870,13 +2816,20 @@ app.post("/webhooks", express.raw({ type: "application/json" }), (req, res, next
 });
 app.use(express.json());
 \`\`\`\n\n### Rotation and narrowing\n\n\`\`\`ts
-const verified = client.verifyWebhook(rawBody, headers, [currentSecret, previousSecret]);
+import type { VerifiedWebhook, KnownWebhookEvent } from '${c.config.npm.name}';
+
+function handleKnown(event: KnownWebhookEvent): void {
+  // Switch on the configured event-type field to handle each declared event.
+}
+
+const verified: VerifiedWebhook = client.verifyWebhook(rawBody, headers, [currentSecret, previousSecret]);
 if (verified.known) {
-  const event = verified.event; // Declared event union; narrow by the configured event-type field.
+  const event = verified.event; // KnownWebhookEvent
+  handleKnown(event);
 } else {
   const event = verified.event; // unknown: validate before accessing fields.
 }
-\`\`\`\n\n`
+\`\`\`\n\nNode exports these types only from the package root, together with one WebhookEvent<EventName> type per declared event. Event names use the same PascalCase rule as PHP classes, for example payment_intent.succeeded becomes WebhookEventPaymentIntentSucceeded. For an envelope with a data field, use indexed access such as WebhookEventPaymentIntentSucceeded['data'] for its payload. A top-level typeField supports exhaustive switch narrowing with a never default. Dotted typeField paths require the named type or Extract<KnownWebhookEvent, { meta: { name: 'payment.updated' } }> (adapt that path and literal to your configuration). When no events are declared, KnownWebhookEvent is never.\n\n`
       : `### PSR-7\n\nLoad Composer's vendor/autoload.php in your application. Pass an unmodified request body and getHeaders() arrays directly:\n\n\`\`\`php
 use ${c.config.composer.namespace}\\Client;
 

@@ -329,6 +329,10 @@ Top level `webhook`: an HMAC-SHA256 signing format and event schemas. Other sign
 
 Consumer usage, `known` event matching and error codes: [webhook verification](using-sdks.md#webhook-verification).
 
+Each event gets a Node type named `WebhookEvent` plus its PascalCase words, using the same rule as PHP event classes: `payment_intent.succeeded` becomes `WebhookEventPaymentIntentSucceeded`. CamelCase, acronyms and punctuation-separated words normalize consistently. Event names must contain at least one ASCII letter or digit. Two event names producing the same type name (case insensitive), such as `a.b` and `a_b`, fail diagnosis at the escaped `config/webhook/events/<event>` path for every target selection.
+
+When `webhook` is configured, `KnownWebhookEvent`, `VerifiedWebhook` and every per-event type name are reserved alongside other generated symbols. A clash with a model, resource or operation helper fails diagnosis, including for PHP-only generation. Customize the conflicting model/resource/method name or change the event declaration.
+
 ### Webhook inbox examples
 
 Generated `examples/webhook-inbox.*` implement an optional durable SQLite inbox and outbox, outside the default SDK transport:

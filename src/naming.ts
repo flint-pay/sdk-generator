@@ -28,6 +28,11 @@ export function pascalWords(value: string): string {
     .map((word) => word[0]!.toUpperCase() + word.slice(1))
     .join('');
 }
+
+/** Public webhook identities shared by Node event types and PHP event classes. */
+export function webhookEventTypeName(event: string): string {
+  return 'WebhookEvent' + pascalWords(event);
+}
 const camel = (parts: string[]) =>
   parts.map((part, i) => (i ? part[0]!.toUpperCase() + part.slice(1) : part)).join('');
 function singular(value: string): string {

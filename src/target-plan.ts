@@ -1,4 +1,5 @@
-import { pascalWords } from './naming.js';
+import { reservePublicSymbols } from './public-symbols.js';
+import { pascalWords, webhookEventTypeName } from './naming.js';
 import {
   phpRepresentations,
   phpRepresentationType,
@@ -537,6 +538,8 @@ export interface CompiledSdkContract {
     >;
     eventType: string;
     eventDeclarations?: string;
+    /** Absent in records predating named webhook event exports. */
+    eventTypes?: Record<string, string>;
   };
   php: {
     runtime: CompiledRuntimePlan;
@@ -563,17 +566,44 @@ export interface CompiledSdkContract {
 }
 
 /** Close alternatives only at the envelope value. Nested payloads keep response
- * tolerance and references. Private aliases avoid re-expanding shared envelopes. */
+ * tolerance and references. Only unchanged allOf conjuncts use public models. */
 function webhookDeclarations(
   c: Contract,
   models: Record<string, Schema>,
+  eventOrder: readonly string[],
 ): {
   eventType: string;
   eventDeclarations?: string;
+  eventTypes?: Record<string, string>;
 } {
   const webhook = c.config.webhook;
   if (!webhook) return { eventType: 'never' };
   const names = new Set(Object.keys(models));
+  const modelNames = new Map(
+    Object.entries(models).map(([name, schema]) => [stable(schema), name]),
+  );
+  const render = (
+    schema: Schema,
+    known: boolean,
+    objectContext = objectConstraint(schema),
+  ): string => typescriptType(schema, true, undefined, known, objectContext, undefined, models);
+  const unchangedModels = new Map<string, boolean>();
+  const unchanged = (name: string, seen: ReadonlySet<string> = new Set()): boolean => {
+    if (seen.has(name)) return true;
+    const cached = unchangedModels.get(name);
+    if (cached !== undefined) return cached;
+    const schema = models[name];
+    const preserves = (value: Schema): boolean =>
+      (value['x-sdk-ref']
+        ? unchanged(value['x-sdk-ref'], new Set([...seen, name]))
+        : render(value, true) === render(value, false)) &&
+      [value.allOf, value.oneOf, value.anyOf].every((branches) =>
+        (branches ?? []).every(preserves),
+      );
+    const same = schema !== undefined && preserves(schema);
+    if (!seen.size) unchangedModels.set(name, same);
+    return same;
+  };
   const aliases = new Map<string, string>();
   const pending: { name: string; schema: Schema }[] = [];
   let sequence = 0;
@@ -590,7 +620,13 @@ function webhookDeclarations(
     pending.push({ name, schema });
     return name;
   };
-  const close = (schema: Schema): Schema => {
+  const close = (schema: Schema, conjunct = false): Schema => {
+    // Keep event roots and alternatives structural: referring to a complete
+    // payload model makes TypeScript flatten its event-name enum into hovers.
+    const model = schema['x-sdk-ref'] ?? modelNames.get(stable(schema));
+    // Retain contextual type facts for the structural parent. Rendering the
+    // conjunct itself stops at the reference, including inside alternatives.
+    if (conjunct && model && unchanged(model)) return { ...schema, 'x-sdk-ref': model };
     const ref = schema['x-sdk-ref'];
     if (ref) {
       const target = models[ref];
@@ -599,30 +635,42 @@ function webhookDeclarations(
     }
     const result = { ...schema };
     for (const keyword of ['allOf', 'oneOf', 'anyOf'] as const)
-      if (schema[keyword]) result[keyword] = schema[keyword].map(close);
+      if (schema[keyword])
+        result[keyword] = schema[keyword].map((branch) => close(branch, keyword === 'allOf'));
     return result;
   };
-  const eventType =
-    Object.entries(webhook.events)
-      .map(([event, schema]) => {
-        const tag = webhook.typeField
-          .split('.')
-          .reduceRight(
-            (value, field) => `{ ${JSON.stringify(field)}: ${value} }`,
-            JSON.stringify(event),
-          );
-        // Runtime lookup proves the event-name literal independently of schema tolerance.
-        return `(${alias(schema)} & ${tag})`;
-      })
-      .join(' | ') || 'never';
   const declarations: string[] = [];
+  const eventTypes = Object.fromEntries(
+    eventOrder.map((event) => {
+      const schema = webhook.events[event];
+      if (!schema) throw new Error('Missing webhook declaration ' + event);
+      const name = webhookEventTypeName(event);
+      const tag = webhook.typeField
+        .split('.')
+        .reduceRight(
+          (value, field) => `{ ${JSON.stringify(field)}: ${value} }`,
+          JSON.stringify(event),
+        );
+      // Runtime lookup proves the event-name literal independently of schema tolerance.
+      // Named conjuncts hide their type keyword. Preserve the original envelope's
+      // object context so typeless siblings do not introduce scalar alternatives.
+      declarations.push(
+        `export type ${name} = (${render(close(schema), true, objectConstraint(schema))} & ${tag});\n`,
+      );
+      return [event, name];
+    }),
+  );
   // Array iteration includes reference aliases appended while closing each declaration.
   for (const entry of pending) {
     declarations.push(
-      `type ${entry.name} = ${typescriptType(close(entry.schema), true, undefined, true, undefined, undefined, models)};\n`,
+      `type ${entry.name} = ${render(close(entry.schema), true, objectConstraint(entry.schema))};\n`,
     );
   }
-  return { eventType, eventDeclarations: declarations.join('') };
+  declarations.push(
+    `export type KnownWebhookEvent = ${Object.values(eventTypes).join(' | ') || 'never'};\n`,
+    'export type VerifiedWebhook = { known: true; event: KnownWebhookEvent } | { known: false; event: unknown };\n',
+  );
+  return { eventType: 'KnownWebhookEvent', eventDeclarations: declarations.join(''), eventTypes };
 }
 
 /** Compile language interfaces and response class routing before any source rendering. */
@@ -642,6 +690,16 @@ export function compileSdkContract(source: Contract): {
       }
     }
   const models = modelsUsed(c);
+  if (c.config.webhook)
+    reservePublicSymbols(
+      c,
+      Object.keys(models),
+      new Set(
+        c.operations
+          .filter((op) => Object.values(op.responses).some((response) => response.schema?.oneOf))
+          .map((op) => op.id),
+      ),
+    );
   const index = new Map<string, string>();
   for (const [name, schema] of Object.entries(models)) {
     const key = stable(schema);
@@ -689,17 +747,9 @@ export function compileSdkContract(source: Contract): {
     }
   }
   const eventModels: Record<string, string> = {};
-  const eventNames = new Map<string, string>();
   for (const [event, schema] of Object.entries(c.config.webhook?.events ?? {})) {
     if (objectConstraint(schema) === 'object') {
-      const name = 'WebhookEvent' + pascalWords(event);
-      const previous = eventNames.get(name.toLowerCase());
-      if (previous && (c.config.targets ?? ['node', 'php']).includes('php'))
-        throw new Diagnostic(
-          'webhook.events.' + event,
-          `PHP webhook class collision between ${previous} and ${event}`,
-        );
-      eventNames.set(name.toLowerCase(), event);
+      const name = webhookEventTypeName(event);
       eventModels[event] = name;
       responseModels.push(compilePhpModel(name, schema, true, sharedNames));
     }
@@ -814,7 +864,7 @@ export function compileSdkContract(source: Contract): {
           ];
         }),
       ),
-      ...webhookDeclarations(c, models),
+      ...webhookDeclarations(c, models, Object.keys(source.config.webhook?.events ?? {})),
     },
     php: {
       runtime: phpRuntime,
