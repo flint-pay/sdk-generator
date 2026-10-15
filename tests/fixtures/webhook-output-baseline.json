@@ -1,12 +1,12 @@
 {
-  "description": "Pre-named-webhook-type executable Node modules/descriptors, complete PHP output and root symbol exports from synthetic payment and public Flint slice fixtures. PHP reference baselines include body field tables and type formatting; separate executable PHP hashes retain origin/main bytes.",
+  "description": "Reviewed additive SDK error subclasses and Node standalone webhook verification: executable Node modules now export the errors namespace and verifier, PHP class files/autoload maps include the Errors sub-namespace, and both verifiers return reasons for unrecognized deliveries. Runtime/declaration consumer tests independently verify these changes. Existing root exports remain and errors/verifyWebhook are added. The predecessor compiled-public baseline retains its historical bytes. The PHP standalone decision adds Webhooks::verify to declared packages and shares the compiled verification implementation with Client::verifyWebhook, preserving guarded invalid-input errors and client redaction. Review fixes give built-in Node errors literal names that survive minification and preserve factory callers in Node stacks and PHP file/line metadata. Executable hashes reflect those fixes; declarations and existing exports remain unchanged. PHP omits its optional standalone verifier when a Webhooks model takes the class name, independently covered by generated-client collision regressions.",
   "fixtures": [
     {
       "name": "payment",
       "api": "tests/fixtures/payment-api.json",
       "config": "tests/fixtures/payment-sdk.json",
-      "nodeRuntimeSha256": "03c5e29f1be9087b6c41785105fdd42ba3cd7f70fb8a12fb4e5a0bc167d32e51",
-      "phpSha256": "3cd14219abac30dc9aab6f242130727afc7fa947062cf3f408b359eb03d4cce7",
+      "nodeRuntimeSha256": "644b614d7d07fd0ef916ef44bb4090994f5f4bc2e0ecb66f4561531033fca8f1",
+      "phpSha256": "3ed81f5b8a55da7706fd2948831ee0c0852e1e11fe6c005a29ffa7a27d4246a8",
       "rootExports": [
         "SdkError",
         "Model",
@@ -41,20 +41,22 @@
         "PaymentsRefundResponse",
         "PaymentsUpdateInput",
         "PaymentsUpdateResponse",
-        "Client"
+        "Client",
+        "errors",
+        "verifyWebhook"
       ],
       "singleTarget": {
-        "node": "03c5e29f1be9087b6c41785105fdd42ba3cd7f70fb8a12fb4e5a0bc167d32e51",
-        "php": "3cd14219abac30dc9aab6f242130727afc7fa947062cf3f408b359eb03d4cce7"
+        "node": "644b614d7d07fd0ef916ef44bb4090994f5f4bc2e0ecb66f4561531033fca8f1",
+        "php": "3ed81f5b8a55da7706fd2948831ee0c0852e1e11fe6c005a29ffa7a27d4246a8"
       },
-      "phpRuntimeSha256": "88d66c2b70b9f7a746b66ff90824b15c4f6daeaeb44baeb8a28a695d52d2794a"
+      "phpRuntimeSha256": "286dcb11d8658f502db100356eb825846f98da84aae1f1ca4fc25416d49f85ae"
     },
     {
       "name": "flint",
       "api": "tests/providers/flint/openapi.json",
       "config": "tests/providers/flint/sdk.json",
-      "nodeRuntimeSha256": "6b06043bbc15e163b47d32bb1a41beaef98bc267ec5f103437ebc8e01ec84661",
-      "phpSha256": "9fb1510d7fb8f360d146c38d0516f2eb8fde76f97f3998193e7ea796d369866a",
+      "nodeRuntimeSha256": "a3905d143c90b3c0af578906dda0fc3ea506d1158acbc3c332fbbc9665f158b4",
+      "phpSha256": "620e0fd06af11132640d5f2a9367da89c1ed603e834d2f07cc5bd3d422f375ce",
       "rootExports": [
         "SdkError",
         "Model",
@@ -356,13 +358,15 @@
         "PaymentIntentsListResponse",
         "RefundsListInput",
         "RefundsListResponse",
-        "Client"
+        "Client",
+        "errors",
+        "verifyWebhook"
       ],
       "singleTarget": {
-        "node": "70de9570e4b82ce7640975c0ca68c2c791b8fb3091ef071e7168db6b71bb253d",
-        "php": "9fb1510d7fb8f360d146c38d0516f2eb8fde76f97f3998193e7ea796d369866a"
+        "node": "631e0ef4e3d63bf1273e83c451897847f053007b840e8c223b50bace9a472bcf",
+        "php": "620e0fd06af11132640d5f2a9367da89c1ed603e834d2f07cc5bd3d422f375ce"
       },
-      "phpRuntimeSha256": "86f5ff8ac85ae6eda84400a8a1d122e8a020288f5a3f5101ec0fd65abc1a18d4"
+      "phpRuntimeSha256": "4ef24e166849511d7000647075a76f1dab0cd7bb1825551deb8d8ca2bc8e01d9"
     }
   ]
 }

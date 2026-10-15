@@ -147,13 +147,16 @@ With `requests.style: "object"`, methods take one input object with path/query/h
 ## Errors and retries
 
 ```js
-import { SdkError } from '@example/library';
+import { SdkError, errors } from '@example/library';
 
 try {
   const result = await client.books.retrieveWithResponse('book/123');
   console.log(result.body.title, result.meta.requestId);
 } catch (error) {
   if (!(error instanceof SdkError)) throw error;
+  if (error instanceof errors.NotFoundError) {
+    console.error('The requested book was not found.');
+  }
   console.error(
     error.message,
     error.status,
@@ -166,8 +169,13 @@ try {
 ```
 
 ```php
+use Example\Library\SdkError;
+use Example\Library\Errors\NotFoundError;
+
 try {
   echo $client->books->retrieve('book/123')->getTitle();
+} catch (NotFoundError $error) {
+  error_log('The requested book was not found.');
 } catch (SdkError $error) {
   error_log(
     $error->getMessage() .
@@ -186,7 +194,22 @@ try {
 | Request ID    | `meta?.requestId`       | `$error->meta['requestId']` |
 | HTTP status   | `status` or `undefined` | `status` or `null`          |
 
-Shared `kind` values: `transport`, `authentication`, `validation`, `rate_limit`, `not_found` (HTTP 404), `server` (HTTP 500–599), `api`, `conflict`, `protocol`, `cancelled`, `deadline` and `destination`. <!-- copy-ok: `cancelled` is the literal SdkError kind -->
+`SdkError` and `kind` remain the authoritative API. Each runtime failure also has a subclass chosen solely from `kind`. Node exposes the classes through `errors` at the package root and resource subpaths; `errors.SdkError === SdkError`, and `errors.NotFoundError` works as a TypeScript type. PHP classes live in `Example\Library\Errors`, separate from generated models. Every subclass is still an `SdkError`. Node `name` and inspection show the subclass name, including in minified bundles. Node stacks and PHP exception file/line metadata identify the factory's calling site.
+
+| Kind             | Class                 |
+| ---------------- | --------------------- |
+| `transport`      | `ConnectionError`     |
+| `authentication` | `AuthenticationError` |
+| `validation`     | `ValidationError`     |
+| `rate_limit`     | `RateLimitError`      |
+| `not_found`      | `NotFoundError`       |
+| `conflict`       | `ConflictError`       |
+| `server`         | `ServerError`         |
+| `api`            | `ApiError`            |
+| `protocol`       | `ProtocolError`       |
+| `cancelled`      | `CancelledError`      |
+| `deadline`       | `DeadlineError`       |
+| `destination`    | `DestinationError`    |
 
 Messages and codes:
 
@@ -247,6 +270,27 @@ For a polling operation named `get`, `getWait(input, options)` returns the same 
 Conditional calls send the declared precondition header and surface conflicts without retrying an unconditional write.
 
 ## Webhook verification
+
+Packages with webhook verification declared also expose a standalone verifier. It requires no client options, base URL or API credentials; the client method delegates to the same verification implementation.
+
+```js
+import { verifyWebhook } from '@example/payments';
+const verified = verifyWebhook(rawBody, headers, [currentSecret, previousSecret]);
+if (!verified.known) console.log(verified.reason);
+```
+
+```php
+use Example\Payments\Webhooks;
+
+$verified = Webhooks::verify($rawBody, $headers, [$currentSecret, $previousSecret]);
+if (!$verified['known']) {
+  error_log($verified['reason']);
+}
+```
+
+PHP's `Webhooks::verify(mixed $rawBody, mixed $headers, mixed $secrets, mixed $nowSeconds = null): array` validates argument types through the SDK guards. Invalid inputs throw `Errors\ValidationError`, signature failures throw `Errors\AuthenticationError`, and authenticated invalid JSON throws `Errors\ProtocolError`.
+
+If a generated model is named `Webhooks` (case insensitive), PHP keeps the model name and omits the standalone verifier class. Use `$client->verifyWebhook($rawBody, $headers, $secrets)` in that package. Node's standalone `verifyWebhook` remains available.
 
 When the provider declares signing, the client exposes `verifyWebhook(rawBody, headers, secrets, nowSeconds?)`.
 
@@ -319,7 +363,7 @@ Node exports `VerifiedWebhook`, `KnownWebhookEvent` and one `WebhookEvent<EventN
 
 Use indexed access for payload annotations, for example `type SucceededPayload = WebhookEventPaymentIntentSucceeded['data']`. A top-level `typeField` supports exhaustive `switch` narrowing with a `never` default. For a dotted path such as `meta.name`, annotate a handler with the named event type or use `Extract<KnownWebhookEvent, { meta: { name: 'payment_intent.succeeded' } }>`.
 
-- Authenticated unknown names and unmatched envelopes return `known: false`. Keep them for review.
+- Authenticated unknown names return `known: false` with `reason: "unknown_event"`; declared names whose payload matches no envelope use `reason: "unmatched_envelope"`. PHP uses the same `reason` array key. Known deliveries have no `reason`. Keep unrecognized deliveries for review.
 - Malformed declared payloads produce a `protocol` error.
 - `known` does not make future nested enums or variants statically known.
 

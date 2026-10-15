@@ -138,9 +138,9 @@ test('Flint READMEs lead with SDK docs and include one quickstart and concise pa
     const runtime = readFileSync(join(output, target, 'RUNTIME.md'), 'utf8');
     assert.ok(runtime.includes('Mutually dependent numeric alternatives'));
     assert.ok(runtime.includes('[Back to the quickstart](README.md)'));
-    const snippets = [...readme.matchAll(/```(?:typescript|php)\n([\s\S]*?)```/g)].map(
-      (match) => match[1],
-    );
+    const snippets = [
+      ...readme.split('## Errors and retries')[0].matchAll(/```(?:typescript|php)\n([\s\S]*?)```/g),
+    ].map((match) => match[1]);
     assert.equal(snippets.length, 3);
     for (const [index, operation] of [
       'paymentIntents-create',

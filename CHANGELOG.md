@@ -33,6 +33,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 ### Added
 
 - `init API_JSON SDK_JSON [--targets node|php|node,php] [--json]` writes a minimal configuration with placeholder package names, refuses overwrites and reports diagnosis while keeping the file on diagnostic failure. Library callers can use `initialConfig` without writing files.
+- SDK errors now have one subclass per `kind`: Node exposes them through the root/resource `errors` namespace and PHP through the `Errors` sub-namespace. `SdkError` and `kind` remain authoritative, and `instanceof SdkError` keeps working. Node `error.name` and inspection now show the subclass name (for example `NotFoundError`), a visible change.
+- Webhook results with `known: false` include `reason: 'unknown_event' | 'unmatched_envelope'` in both targets. Packages with verification declared expose standalone Node `verifyWebhook` and PHP `Webhooks::verify`, requiring no client options, base URL or API credentials; client methods delegate to the shared verifier. PHP keeps guarded `mixed` arguments so invalid inputs produce SDK error subclasses. If a model uses the `Webhooks` name (case insensitive), PHP preserves the model and omits the standalone verifier class; `Client::verifyWebhook` and Node's standalone function remain available.
 - `preview --diff`.
 - Node exports `VerifiedWebhook`, `KnownWebhookEvent` and `WebhookEvent<EventName>`; `verifyWebhook` returns `VerifiedWebhook`.
 
@@ -52,6 +54,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 ### Fixed
 
 - `init` prefixes digit-leading PHP namespace segments with `Sdk`, shortens package slugs to fit npm's 214-character name limit and quotes shell-sensitive paths in its human `generate` suggestion.
+- Built-in Node SDK error names remain stable in minified bundles, including `AuthenticationError` and the base `SdkError`; user subclasses retain their constructor names. Error factories preserve the calling site in Node stack traces and PHP exception file/line metadata.
+- APIs with a `Webhooks` model and webhook configuration generate in both targets without renaming the model. PHP omits the optional standalone verifier class when its name is taken; client verification still works.
 - Generated examples and README inputs can replace inferred placeholders with validated, non-sensitive path/query parameter examples. Existing schema example/enum selection and default metadata behavior are preserved, as is explicit SDK configuration precedence. Added format-valid placeholders for UUID, URI, hostname and IP addresses, with the existing sampler retained when a format placeholder conflicts with schema constraints. Exact numeric-string parameter tokens are preserved; parsed exact numeric literals fall back.
 - Node and PHP operation references list request body fields and inline alternative variants without schema examples. Variant tables combine parent and branch field declarations, requiredness and constraints. Long unions are indented, `Record<…>` expressions stay intact, and idempotency scope text no longer gains a doubled period.
 - IPv4 and IPv6 formats are accepted as textual annotations, with format-valid inferred sample values; SDK wire validation is unchanged.

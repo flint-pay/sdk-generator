@@ -116,7 +116,7 @@ function runtimeIdentity(
               ? /^node\/(runtime|codec-plan|runtime-plan|descriptor-source|package-plan|response|request)\.js$/.test(
                   name,
                 )
-              : /^php\/src\/(SchemaAdapter|classes\/(?:Runtime|Codec|Model|SdkError|Result|RequestOptions|ClientOptions|EventStream|ServerSentEvent|Cancellation|ByteStream|CurlByteStream|RawNumber|ParsedNumber|ExactNumber|SdkResponse|Internal\/DescriptorSource))\.php$/.test(
+              : /^php\/src\/(SchemaAdapter|classes\/(?:Runtime|Codec|Model|SdkError|Result|RequestOptions|ClientOptions|EventStream|ServerSentEvent|Cancellation|ByteStream|CurlByteStream|RawNumber|ParsedNumber|ExactNumber|SdkResponse|Errors\/\w+|Internal\/DescriptorSource))\.php$/.test(
                   name,
                 ),
           ),
@@ -943,11 +943,34 @@ const markdownList = (items: readonly string[]) =>
     ? items.join('')
     : items.slice(0, -1).join(', ') + (items.length > 2 ? ',' : '') + ' and ' + items.at(-1);
 
+function errorClassExample(c: Contract, target: 'node' | 'php'): string {
+  return target === 'node'
+    ? `import { errors } from '${c.config.npm.name}';
+async function handleSdkRequest(request) {
+  try {
+    return await request(); // Pass a function that calls a resource method.
+  } catch (error) {
+    if (error instanceof errors.NotFoundError) console.error(error.message);
+    else throw error;
+  }
+}`
+    : `use ${c.config.composer.namespace}\\Errors\\NotFoundError;
+/** @param callable(): mixed $request */
+function handleSdkRequest(callable $request): void {
+    try {
+        $request(); // Pass a closure that calls a resource method.
+    } catch (NotFoundError $error) {
+        error_log($error->getMessage());
+    }
+}`;
+}
+
 /** Render the package landing page: install, quickstart, then declared capabilities. */
 function packageReadme(
   c: Contract,
   target: 'node' | 'php',
   returns: { payload: number; total: number },
+  standaloneWebhook: boolean,
 ): string {
   const node = target === 'node';
   const selected = readmeOperations(c);
@@ -964,6 +987,7 @@ function packageReadme(
       selected.flatMap((op) => credentialValues(exampleCredentials(c, op)).map((v) => v.env)),
     ),
   ].map((env) => '`' + env + '`');
+  const errorSnippet = errorClassExample(c, target);
   const authLink = c.authentication ? ' ([authentication](RUNTIME.md#authentication))' : '';
   const setup =
     c.defaultBaseUrl === undefined
@@ -999,7 +1023,7 @@ function packageReadme(
     ? `## Pagination\n\nList operations such as \`${paginated.resource}.${paginated.method}\` also have \`${paginated.method}Items\` and \`${paginated.method}Pages\` methods that fetch pages lazily. See [pagination](RUNTIME.md#pagination-and-polling).\n\n`
     : '';
   const webhooks = c.config.webhook
-    ? `## Webhooks\n\nVerify each delivery with \`${node ? 'client.verifyWebhook(rawBody, headers, secrets)' : '$client->verifyWebhook($rawBody, $headers, $secrets)'}\` on the original request bytes, never re-encoded JSON. See [verifyWebhook examples and errors](RUNTIME.md#webhooks-and-recovery).\n\n`
+    ? `## Webhooks\n\nVerify each delivery with \`${node ? 'client.verifyWebhook(rawBody, headers, secrets)' : '$client->verifyWebhook($rawBody, $headers, $secrets)'}\` on the original request bytes, never re-encoded JSON. ${standaloneWebhook ? `Standalone ${node ? '`verifyWebhook`' : '`Webhooks::verify`'} needs no client configuration.` : 'The Webhooks name belongs to an API model; use the client method for verification.'} See [verifyWebhook examples and errors](RUNTIME.md#webhooks-and-recovery).\n\n`
     : '';
   const guides = Object.keys(c.config.documentation?.guides ?? {}).map(
     (slug) => `- [${slug}](guides/${slug}.md)\n`,
@@ -1009,7 +1033,7 @@ function packageReadme(
     (returnMode || close ? [returnMode, close].filter(Boolean).join(' ') + '\n\n' : '') +
     recipes +
     (recipes ? '\n' : '') +
-    `## Errors and retries\n\nFailed calls throw \`SdkError\` with \`${node ? 'message' : 'getMessage()'}\`, \`kind\`, \`status\`, \`${node ? 'code' : 'errorCode'}\` and the request ID in \`meta\`. An \`outcome\` of \`unknown\` means the request may have succeeded, so check the current state before resubmitting. ${retries} See [errors](RUNTIME.md#responses-and-errors) and [retries](RUNTIME.md#retries-and-idempotency).\n\n` +
+    `## Errors and retries\n\nFailed calls throw \`SdkError\` with \`${node ? 'message' : 'getMessage()'}\`, \`kind\`, \`status\`, \`${node ? 'code' : 'errorCode'}\` and the request ID in \`meta\`. An \`outcome\` of \`unknown\` means the request may have succeeded, so check the current state before resubmitting. ${retries} See [errors](RUNTIME.md#responses-and-errors) and [retries](RUNTIME.md#retries-and-idempotency).\n\nCheck an error's class to handle a specific failure; every class extends \`SdkError\`:\n\n\`\`\`${node ? 'js' : 'php'}\n${errorSnippet}\n\`\`\`\n\n` +
     pagination +
     webhooks +
     `## Documentation\n\n- [API reference](REFERENCE.md): every operation, with examples\n- [Models](MODELS.md): fields and descriptions\n- [Runtime guide](RUNTIME.md): request options, errors, retries${c.config.webhook ? ', pagination and webhooks' : ' and pagination'}\n${guides.join('')}- \`examples/\`: a runnable script per operation. ${node ? 'Run `node examples/RESOURCE-METHOD.mjs`; TypeScript versions are alongside.' : 'Run `composer install`, then `php examples/RESOURCE-METHOD.php`.'}\n\nPackage ${c.config.version}, generated for API ${c.apiVersion}.\n`
@@ -1255,12 +1279,12 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       },
       put,
     );
-    let code = `import { runtimeFromPlan, modelFromCodec, isKnownCodec } from './runtime.js';\nexport { SdkError, Model${extraValues}, serialize, parseExact, redact } from './runtime.js';\n${descriptorOutput.source(groups, './', true)}\nexport class Client {\n  #runtime;\n  constructor(options = {}) {\n    this.#runtime = runtimeFromPlan(_sdkDescriptors, options);\n`;
+    let code = `import { runtimeFromPlan, modelFromCodec, isKnownCodec${c.config.webhook ? ', verifyWebhookFromPlan' : ''} } from './runtime.js';\nexport { SdkError, errors, Model${extraValues}, serialize, parseExact, redact } from './runtime.js';\n${descriptorOutput.source(groups, './', true)}\nexport class Client {\n  #runtime;\n  constructor(options = {}) {\n    this.#runtime = runtimeFromPlan(_sdkDescriptors, options);\n`;
     if (c.operations.some(positional)) {
       put('request.js', readFileSync(join(here, '../templates/request.mjs'), 'utf8'));
       code = "import { requestInput as _sdkRequestInput } from './request.js';\n" + code;
     }
-    let declarations = `import type { ${c.authentication ? 'ClientOptions as RuntimeClientOptions, RequestOptions as RuntimeRequestOptions' : 'ClientOptions as RuntimeClientOptions, RequestOptions'}, Result, InputValue${c.config.webhook ? ', WebhookHeaders as _SdkWebhookHeaders' : ''} } from './runtime.js';\nimport { Model${extraValues} } from './runtime.js';\nexport { SdkError, Model${extraValues}, serialize, parseExact, redact } from './runtime.js';\nexport type { ${c.authentication ? '' : 'RequestOptions, '}Result, Metadata, ErrorKind, DiagnosticEvent, InputValue${streamTypes ? ', ServerSentEvent' : ''} } from './runtime.js';\n`;
+    let declarations = `import type { ${c.authentication ? 'ClientOptions as RuntimeClientOptions, RequestOptions as RuntimeRequestOptions' : 'ClientOptions as RuntimeClientOptions, RequestOptions'}, Result, InputValue${c.config.webhook ? ', WebhookHeaders as _SdkWebhookHeaders' : ''} } from './runtime.js';\nimport { Model${extraValues} } from './runtime.js';\nexport { SdkError, errors, Model${extraValues}, serialize, parseExact, redact } from './runtime.js';\nexport type { ${c.authentication ? '' : 'RequestOptions, '}Result, Metadata, ErrorKind, DiagnosticEvent, InputValue${streamTypes ? ', ServerSentEvent' : ''} } from './runtime.js';\n`;
     if (c.operations.some((op) => !op.idempotency))
       declarations +=
         "type _SdkWithoutIdempotency<T> = T extends unknown ? Omit<T, 'idempotencyKey'> & { idempotencyKey?: never } : never;\n";
@@ -1354,6 +1378,12 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     }
     code += '}\n';
     declarations += '}\n';
+    if (c.config.webhook) {
+      code +=
+        'export function verifyWebhook(rawBody, headers, secrets, nowSeconds) { return verifyWebhookFromPlan(_sdkDescriptors, rawBody, headers, secrets, nowSeconds); }\n';
+      declarations +=
+        'export declare function verifyWebhook(rawBody: Uint8Array, headers: _SdkWebhookHeaders, secrets: string | readonly string[], nowSeconds?: number): VerifiedWebhook;\n';
+    }
     for (const op of c.operations) {
       const known = targetPlan.node.operations[op.id]!.known;
       if (!known) continue;
@@ -1454,6 +1484,8 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       userAgent: `${c.config.composer.name.replaceAll('/', '-')}/${c.config.version} (PHP)`,
     };
     const eventModels = targetPlan.php.eventModels;
+    const webhookDoc = (secretType: string) =>
+      `    /** @param string $rawBody Original request bytes.\n     * @param array<string, string|list<string>> $headers Header map, including PSR-7 header arrays.\n     * @param ${secretType} $secrets\n     * @param int|null $nowSeconds\n     * @return array{known: true, event: ${Object.values(eventModels).join('|') || 'mixed'}|\\stdClass|array}|array{known: false, event: mixed, reason: 'unknown_event'|'unmatched_envelope'} */\n`;
     // Each PHP event class reuses its reserved Node identity once. Other
     // response classes with that name must still produce a collision.
     const reservedEventModels = new Set(Object.values(eventModels));
@@ -1529,11 +1561,14 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       code += `        $this->${group} = new ${pascal(group)}Resource($this->runtime);\n`;
     code += '    }\n    public function close(): void { $this->runtime->close(); }\n';
     if (c.config.webhook)
-      code += `    /** @param string $rawBody Original request bytes.\n     * @param array<string, string|list<string>> $headers\n     * @param string|array<array-key, string> $secrets\n     * @param int|null $nowSeconds\n     * @return array{known: true, event: ${Object.values(eventModels).join('|') || 'mixed'}|\\stdClass|array}|array{known: false, event: mixed} */\n    public function verifyWebhook(mixed $rawBody, mixed $headers, mixed $secrets, mixed $nowSeconds = null): array { return $this->runtime->verifyWebhook($rawBody, $headers, $secrets, $nowSeconds); }\n`;
+      // Runtime and Webhooks delegate to the same verifier; Runtime retains client redaction.
+      code += `${webhookDoc('string|array<array-key, string>')}    public function verifyWebhook(mixed $rawBody, mixed $headers, mixed $secrets, mixed $nowSeconds = null): array { return $this->runtime->verifyWebhook($rawBody, $headers, $secrets, $nowSeconds); }\n`;
     if (c.config.money)
       code +=
         '    public function money(string $currency, string $major): array { return $this->runtime->money($currency, $major); }\n';
     code += '}\n';
+    if (targetPlan.php.standaloneWebhook)
+      code += `final class Webhooks {\n${webhookDoc('string|list<string>')}    public static function verify(mixed $rawBody, mixed $headers, mixed $secrets, mixed $nowSeconds = null): array { return Runtime::verifyWebhookFromPlan(SchemaRegistry::source(), $rawBody, $headers, $secrets, $nowSeconds); }\n}\n`;
     for (const group of groups) {
       code += `final class ${pascal(group)}Resource {\n    public function __construct(private readonly Runtime $runtime) {}\n`;
       for (const op of c.operations.filter((o) => o.resource === group)) {
@@ -1648,6 +1683,26 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       );
       classmap[ns + '\\' + name] = 'classes/' + name + '.php';
     }
+    for (const name of [
+      'ConnectionError',
+      'AuthenticationError',
+      'ValidationError',
+      'RateLimitError',
+      'NotFoundError',
+      'ConflictError',
+      'ServerError',
+      'ApiError',
+      'ProtocolError',
+      'CancelledError',
+      'DeadlineError',
+      'DestinationError',
+    ]) {
+      put(
+        `src/classes/Errors/${name}.php`,
+        `<?php\ndeclare(strict_types=1);\nnamespace ${ns}\\Errors;\nfinal class ${name} extends \\${ns}\\SdkError {}\n`,
+      );
+      classmap[ns + '\\Errors\\' + name] = 'classes/Errors/' + name + '.php';
+    }
     classmap[ns + '\\Internal\\SchemaAdapter'] = 'SchemaAdapter.php';
     classmap[ns + '\\Internal\\DescriptorSource'] = 'classes/Internal/DescriptorSource.php';
     put(
@@ -1684,12 +1739,17 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
   for (const target of targets) {
     files.set(
       `${target}/README.md`,
-      packageReadme(c, target, {
-        payload: Object.keys(payloadReturns).length,
-        total: c.operations.length,
-      }),
+      packageReadme(
+        c,
+        target,
+        { payload: Object.keys(payloadReturns).length, total: c.operations.length },
+        targetPlan[target].standaloneWebhook === true,
+      ),
     );
-    files.set(`${target}/RUNTIME.md`, runtimeGuide(c, target));
+    files.set(
+      `${target}/RUNTIME.md`,
+      runtimeGuide(c, target, targetPlan[target].standaloneWebhook === true),
+    );
     files.set(
       `${target}/RUNTIME.md`,
       files
@@ -2822,22 +2882,28 @@ export function publishRelease(
 
 function webhookReference(target: 'node' | 'php'): string {
   return (
-    '## verifyWebhook\n\nVerify original request bytes with signing headers and one secret or a rotation array. Returns { known, event }; only matched declared envelopes are known. ' +
+    '## verifyWebhook\n\nVerify original request bytes with signing headers and one secret or a rotation array. Returns { known, event }; only matched declared envelopes are known. When known is false, reason is unknown_event for undeclared names or unmatched_envelope for declared names with no matching payload. Known deliveries have no reason. ' +
     (target === 'node'
-      ? 'The return type is `VerifiedWebhook`: checking `known` exposes `KnownWebhookEvent`, the union of the root-only `WebhookEvent<EventName>` types. Per-event types use the PHP event naming rule and match class names where PHP emits an event class; multi-variant events have Node types without corresponding PHP event classes. Unknown events remain `unknown`. '
+      ? 'The return type is `VerifiedWebhook`: checking `known` exposes `KnownWebhookEvent`, the union of the root-only `WebhookEvent<EventName>` types. Per-event types use the PHP event naming rule and match class names where PHP emits an event class; multi-variant events have Node types without corresponding PHP event classes. Unknown events remain `unknown`; check `reason` when `known` is false. '
       : '') +
     'See [signatures, framework examples, and errors](RUNTIME.md#webhooks-and-recovery).\n\n'
   );
 }
 
-function webhookGuide(c: Contract, target: 'node' | 'php'): string {
+function webhookGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: boolean): string {
   const w = c.config.webhook;
   if (!w) return 'This provider has not declared webhook verification.';
   const headers = [w.header, w.timestampHeader, w.idHeader]
     .filter(Boolean)
     .map((name) => '`' + name + '`')
     .join(', ');
-  const requirements = `Call verifyWebhook(rawBody, headers, secrets, nowSeconds?) with original request bytes and ${headers}. This package uses ${w.format ?? 'hex'} HMAC-SHA256 signing and a ${w.toleranceSeconds}-second timestamp tolerance. ${w.format === 'standard-webhooks' ? 'Secrets must use the whsec_ prefix and canonical base64 encoding of exactly 32 key bytes.' : 'Use the signing secret supplied by the provider.'} Pass one secret string or an array of active secrets during rotation. nowSeconds is an optional Unix time override for deterministic tests; normally omit it.\n\n`;
+  const verifier =
+    target === 'node'
+      ? 'Import verifyWebhook from the package root to verify without client options, a base URL or API credentials. Client.verifyWebhook delegates to the same verifier. '
+      : standaloneWebhook
+        ? `Use ${c.config.composer.namespace}\\Webhooks::verify($rawBody, $headers, $secrets, $nowSeconds = null) to verify without client options, a base URL or API credentials. Client::verifyWebhook delegates to the same verifier. The static method keeps mixed arguments so invalid inputs produce SDK error subclasses. `
+        : 'The Webhooks name belongs to an API model; use Client::verifyWebhook for verification. Its mixed arguments keep invalid inputs within the SDK error guards. ';
+  const requirements = `${verifier}Call verifyWebhook(rawBody, headers, secrets, nowSeconds?) with original request bytes and ${headers}. This package uses ${w.format ?? 'hex'} HMAC-SHA256 signing and a ${w.toleranceSeconds}-second timestamp tolerance. ${w.format === 'standard-webhooks' ? 'Secrets must use the whsec_ prefix and canonical base64 encoding of exactly 32 key bytes.' : 'Use the signing secret supplied by the provider.'} Pass one secret string or an array of active secrets during rotation. nowSeconds is an optional Unix time override for deterministic tests; normally omit it.\n\n`;
   const examples =
     target === 'node'
       ? `### Fetch\n\nThe request body must not have been consumed. Pass the SDK client and your configured signing secret to this helper:\n\n\`\`\`js
@@ -2918,14 +2984,14 @@ try {
     examples +
     `### Failures and recovery\n\n${target === 'node' ? 'Import SdkError from this package. ' : ''}SdkError uses ${target === 'node' ? 'code' : 'errorCode'} for these stable reasons:\n\n| Kind | Code | Action |\n| --- | --- | --- |\n| validation | webhook_invalid_input | Supply original bytes and supported header/time values. |\n| validation | webhook_invalid_secret | Supply at least one correctly formatted nonempty secret. |\n| authentication | webhook_missing_header | Forward all configured signing headers. |\n| authentication | webhook_invalid_timestamp | Supply one integer timestamp in seconds. |\n| authentication | webhook_timestamp_out_of_tolerance | Check the clock and delivery age. |\n| authentication | webhook_invalid_signature | Check the secret and original bytes. |\n| protocol | webhook_invalid_json | The authenticated body is not valid UTF-8 JSON. |\n\n` +
     errors +
-    '\n\nNever verify JSON.stringify(parsedBody) or json_encode(parsedBody): verification authenticates the original bytes, including whitespace and numeric spelling. A mismatch cannot distinguish a wrong secret from altered bytes. Repeated signature values are supported; timestamp and ID headers must each contain a single value.\n\nknown is true only for a registered event name whose payload matches a declared envelope. Authenticated unknown names and unmatched variants return known: false; nested response types retain their documented uncertainty. Malformed declared payloads produce a protocol error.\n\nVerification does not deduplicate deliveries. The optional examples/webhook-inbox files demonstrate durable inbox/outbox processing: commit the event ID and work record before acknowledging, reconcile out-of-order deliveries, and apply side effects idempotently. Unknown names and unmatched envelopes remain pending for review.'
+    '\n\nNever verify JSON.stringify(parsedBody) or json_encode(parsedBody): verification authenticates the original bytes, including whitespace and numeric spelling. A mismatch cannot distinguish a wrong secret from altered bytes. Repeated signature values are supported; timestamp and ID headers must each contain a single value.\n\nknown is true only for a registered event name whose payload matches a declared envelope. Authenticated unknown names return known: false with reason: unknown_event; declared names with unmatched envelopes use reason: unmatched_envelope. Known deliveries have no reason; nested response types retain their documented uncertainty. Malformed declared payloads produce a protocol error.\n\nVerification does not deduplicate deliveries. The optional examples/webhook-inbox files demonstrate durable inbox/outbox processing: commit the event ID and work record before acknowledging, reconcile out-of-order deliveries, and apply side effects idempotently. Unknown names and unmatched envelopes remain pending for review.'
   );
 }
 
 const bullets = (items: readonly string[]) => items.map((item) => '- ' + item + '\n').join('');
 
 /** Runtime guide: common tasks first, each with a short snippet where one applies. */
-function runtimeGuide(c: Contract, target: 'node' | 'php'): string {
+function runtimeGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: boolean): string {
   const node = target === 'node';
   const fence = node ? 'typescript' : 'php';
   const snippet = (
@@ -2973,6 +3039,8 @@ function runtimeGuide(c: Contract, target: 'node' | 'php'): string {
       'Results expose data, meta and explicit raw response access. JSON raw values are text; PDF data/raw are Uint8Array in Node and binary-safe strings in PHP. SSE data is a closeable iterable carrying event names, IDs, decoded data and rawData. Node metadata uses properties; PHP metadata uses array keys.',
     ]) +
     `\n### Errors\n\n` +
+    `${target === 'node' ? 'Import { SdkError, errors } from the package root or a resource subpath. The errors namespace provides both values and TypeScript types; errors.SdkError is the root SdkError class.' : 'Import SdkError from the package namespace and individual subclasses from its Errors sub-namespace.'} SdkError and kind remain the authoritative API.\n\n` +
+    `\`\`\`${target === 'node' ? 'js' : 'php'}\n${errorClassExample(c, target)}\n\`\`\`\n\n` +
     bullets([
       'SdkError exposes the server message (message in Node, getMessage() in PHP), status, kind, outcome, retryAllowed and optional metadata; provider codes use code in Node and errorCode in PHP.',
       'outcome is not_sent, response or unknown. Reconcile an unknown mutation outcome with the provider and the original persisted idempotency key before resubmitting.',
@@ -3005,7 +3073,7 @@ function runtimeGuide(c: Contract, target: 'node' | 'php'): string {
       'Close the returned stream (Result.data in result mode) or the client to release a stream; breaking iteration also closes it. Unknown event names retain raw strings. Reconnect and persist resume cursors explicitly; no yielded event is retried automatically.',
       'Cancellation stops local work, not the remote operation. Node uses AbortSignal. PHP uses a Cancellation token checked during cURL progress and between waits; synchronous calls need an external signal handler to cancel while blocked.',
     ]) +
-    `\n## Webhooks and recovery\n\n${webhookGuide(c, target)}\n\n` +
+    `\n## Webhooks and recovery\n\n${webhookGuide(c, target, standaloneWebhook)}\n\n` +
     downloadGuide(c, target) +
     `## Destinations and API versions\n\n` +
     bullets([

@@ -4,7 +4,10 @@ require $argv[1] . '/Runtime.php';
 require $argv[1] . '/Client.php';
 $api = [];
 $generated = [];
-foreach (glob($argv[1] . '/classes/*.php') as $file) {
+foreach (
+    array_merge(glob($argv[1] . '/classes/*.php'), glob($argv[1] . '/classes/Errors/*.php'))
+    as $file
+) {
     $source = file_get_contents($file);
     preg_match('/namespace ([^;]+);/', $source, $namespace);
     $short = basename($file, '.php');

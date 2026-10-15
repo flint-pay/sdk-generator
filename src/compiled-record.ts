@@ -186,6 +186,10 @@ export function assertCompiledSnapshot(value: unknown): asserts value is Compile
     fields(options, ['optional'], 'boolean', 'node.clientOptions');
   }
   for (const target of [node, php]) object(target.operations, 'target.operations');
+  for (const target of [node, php])
+    for (const feature of ['errorClasses', 'webhookReasons', 'standaloneWebhook'])
+      if (target[feature] !== undefined && target[feature] !== true)
+        throw new Error('Invalid compiled runtime API flag: ' + feature);
   fields(node, ['eventType'], 'string', 'node');
   if (node.eventDeclarations !== undefined) fields(node, ['eventDeclarations'], 'string', 'node');
   if (node.eventTypes !== undefined)

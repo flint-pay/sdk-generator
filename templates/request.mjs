@@ -1,9 +1,9 @@
-import { isModel, modelInputValue, SdkError } from './runtime.js';
+import { isModel, modelInputValue, createSdkError } from './runtime.js';
 
 export function requestInput(paths, values, fields, body, required, params) {
   if (isModel(params)) params = modelInputValue(params);
   if (params !== undefined && (!params || typeof params !== 'object' || Array.isArray(params)))
-    throw new SdkError('validation', 'Expected a params object', 'not_sent');
+    throw createSdkError('validation', 'Expected a params object', 'not_sent');
   const input = Object.fromEntries(paths.map((name, index) => [name, values[index]]));
   const rest = { ...(params ?? {}) };
   for (const name of fields) {
@@ -22,7 +22,11 @@ export function requestInput(paths, values, fields, body, required, params) {
     // Keep unknown keys so the canonical request validator rejects them.
     for (const [name, value] of Object.entries(rest)) {
       if (Object.hasOwn(input, name))
-        throw new SdkError('validation', 'Path values belong in positional arguments', 'not_sent');
+        throw createSdkError(
+          'validation',
+          'Path values belong in positional arguments',
+          'not_sent',
+        );
       Object.defineProperty(input, name, { value, enumerable: true });
     }
   }

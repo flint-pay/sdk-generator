@@ -376,7 +376,11 @@ test('verified webhooks normalize declared integers and preserve unknown numeric
   }));
   const expected = [
     { known: true, event: { type: 'count.updated', count: 1000, extra: '1.00' } },
-    { known: false, event: { type: 'future', count: '1e3', extra: '1.00' } },
+    {
+      known: false,
+      reason: 'unknown_event',
+      event: { type: 'future', count: '1e3', extra: '1.00' },
+    },
   ];
   assert.deepEqual(
     JSON.parse(

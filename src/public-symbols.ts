@@ -64,13 +64,15 @@ export function reservePublicSymbols(
     ].map((n) => n.toLowerCase()),
   );
   const symbolOwners = new Map([...symbols].map((name) => [name, 'runtime.' + name]));
+  // The Node namespace lives in runtime.js, so an Errors model/file can coexist.
+  const exactSymbols = new Map(targets.includes('node') ? [['errors', 'runtime.errors']] : []);
   const reserve = (n: string, owner = 'generated.' + n) => {
-    if (symbols.has(n.toLowerCase()))
+    const existing = exactSymbols.get(n) ?? symbolOwners.get(n.toLowerCase());
+    if (existing)
       throw new Diagnostic(
         'public interface',
-        `generated type collision: ${n} between ${symbolOwners.get(n.toLowerCase())} and ${owner}; customize resource/method/model names`,
+        `generated type collision: ${n} between ${existing} and ${owner}; customize resource/method/model names`,
       );
-    symbols.add(n.toLowerCase());
     symbolOwners.set(n.toLowerCase(), owner);
   };
   for (const group of groups) reserve(pascal(group) + 'Resource', 'resources.' + group);
@@ -87,6 +89,7 @@ export function reservePublicSymbols(
   if (c.config.webhook) {
     reserve('KnownWebhookEvent', 'webhook');
     reserve('VerifiedWebhook', 'webhook');
+    reserve('verifyWebhook', 'webhook');
     for (const event of Object.keys(c.config.webhook.events))
       reserve(webhookEventTypeName(event), 'webhook.events.' + event);
   }

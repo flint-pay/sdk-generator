@@ -189,7 +189,17 @@ for (const nested of [false, true]) {
         assert.ok(logged.includes('stack:'));
         assert.ok(logged.includes('code:'));
         assert.ok(logged.includes('details:'));
-        assert.ok(logged.includes('SdkError:'));
+        const className = {
+          authentication: 'AuthenticationError',
+          validation: 'ValidationError',
+          rate_limit: 'RateLimitError',
+          not_found: 'NotFoundError',
+          conflict: 'ConflictError',
+          server: 'ServerError',
+          api: 'ApiError',
+        }[c.kind];
+        assert.equal(error.name, className);
+        assert.ok(logged.includes(className + ':'));
         assert.ok(!logged.includes('cookie-secret'));
         expected.push({
           message: c.message,

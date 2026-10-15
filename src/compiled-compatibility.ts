@@ -41,6 +41,19 @@ export function compareCompiledContracts(
   const node = previous.targets.includes('node') && next.targets.includes('node');
   const php = previous.targets.includes('php') && next.targets.includes('php');
   if (!node && !php) return findings;
+  for (const target of ['node', 'php'] as const) {
+    if (target === 'node' ? !node : !php) continue;
+    for (const feature of ['errorClasses', 'webhookReasons', 'standaloneWebhook'] as const)
+      if (previous[target][feature] !== next[target][feature])
+        findings.push({
+          severity: next[target][feature] === true ? 'additive' : 'breaking',
+          subject: target + '.' + feature,
+          message:
+            next[target][feature] === true
+              ? 'Added ' + feature + ' to the public SDK runtime API.'
+              : 'Removed ' + feature + ' from the public SDK runtime API.',
+        });
+  }
   if (previous.runtime.semantics !== next.runtime.semantics)
     findings.push({
       severity: 'breaking',
@@ -290,7 +303,13 @@ export function compareCompiledContracts(
   if (node) {
     if (
       previous.node.eventType !== next.node.eventType ||
-      (previous.node.eventDeclarations ?? '') !== (next.node.eventDeclarations ?? '')
+      (previous.node.eventDeclarations ?? '') !==
+        (previous.node.webhookReasons !== true && next.node.webhookReasons === true
+          ? (next.node.eventDeclarations ?? '').replace(
+              '; reason: "unknown_event" | "unmatched_envelope"',
+              '',
+            )
+          : (next.node.eventDeclarations ?? ''))
     )
       findings.push({
         severity: 'review',
@@ -391,8 +410,10 @@ export function compareCompiledContracts(
   if (
     samePolicy &&
     (stable(previous.runtime) !== stable(next.runtime) ||
-      (node && stable(previous.node) !== stable(next.node)) ||
-      (php && stable(previous.php) !== stable(next.php)))
+      (node &&
+        stable(executionDescriptors(previous.node)) !== stable(executionDescriptors(next.node))) ||
+      (php &&
+        stable(executionDescriptors(previous.php)) !== stable(executionDescriptors(next.php))))
   )
     findings.push({
       severity: 'review',
@@ -401,6 +422,20 @@ export function compareCompiledContracts(
         'Compiled execution or target descriptors changed without a source policy change; review encoding, decoding and operation behavior.',
     });
   return findings;
+}
+
+/** Public API additions are compared above, separately from execution descriptors. */
+function executionDescriptors(target: CompiledSdkContract['node'] | CompiledSdkContract['php']) {
+  const { errorClasses, webhookReasons, standaloneWebhook, ...execution } = target;
+  return 'eventDeclarations' in execution
+    ? {
+        ...execution,
+        eventDeclarations: execution.eventDeclarations?.replace(
+          '; reason: "unknown_event" | "unmatched_envelope"',
+          '',
+        ),
+      }
+    : execution;
 }
 
 /** Historical raw objects and dictionaries did not have representation graphs. */

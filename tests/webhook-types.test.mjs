@@ -111,14 +111,15 @@ test('root names, independent result/envelope types, exhaustive narrowing and un
   generate(c, f.output);
   typecheck(
     f,
-    `import {Client} from './index.js';
+    `import {Client,verifyWebhook} from './index.js';
 import type {Payment,VerifiedWebhook,KnownWebhookEvent,WebhookEventPaymentUpdated,WebhookEventPaymentDeleted} from './index.js';
 ${equals}
 // Exact alias identity as well as independent structural expectations.
 type Identical<A,B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 type ReturnAlias = Assert<Identical<ReturnType<Client['verifyWebhook']>,VerifiedWebhook>>;
+type StandaloneAlias = Assert<Identical<ReturnType<typeof verifyWebhook>,VerifiedWebhook>>;
 type ReturnShape = Assert<Equals<VerifiedWebhook,
- {known:true;event:{data:Payment;id:string;type:'payment.updated'}|{data:Payment;id:string;type:'payment.deleted'}}|{known:false;event:unknown}>>;
+ {known:true;event:{data:Payment;id:string;type:'payment.updated'}|{data:Payment;id:string;type:'payment.deleted'}}|{known:false;event:unknown;reason:'unknown_event'|'unmatched_envelope'}>>;
 type EventShape = Assert<Equals<WebhookEventPaymentUpdated,{data:Payment;id:string;type:'payment.updated'}>>;
 type Union = Assert<Equals<KnownWebhookEvent,WebhookEventPaymentUpdated|WebhookEventPaymentDeleted>>;
 type Payload = Assert<Equals<WebhookEventPaymentUpdated['data'],Payment>>;
@@ -126,6 +127,8 @@ declare const verified: VerifiedWebhook;
 // @ts-expect-error Check known before field access.
 verified.event.data;
 if (verified.known) {
+ // @ts-expect-error Known deliveries have no reason.
+ verified.reason;
  const event = verified.event;
  switch(event.type) {
   case 'payment.updated': { const updated:WebhookEventPaymentUpdated=event; break; }
@@ -135,6 +138,7 @@ if (verified.known) {
  // @ts-expect-error Undeclared event literals are rejected.
  const undeclared:KnownWebhookEvent={id:'evt_fixture',type:'payment.created',data:{id:'p_fixture'}};
 } else {
+ const reason:'unknown_event'|'unmatched_envelope'=verified.reason;
  type Unknown = Assert<Equals<typeof verified.event,unknown>>;
  // @ts-expect-error Unknown authenticated events require validation.
  verified.event.id;
@@ -587,7 +591,7 @@ test('JavaScript, descriptors, complete PHP output and existing root exports ret
         ),
       ),
       fixture.phpRuntimeSha256,
-      fixture.name + ' PHP runtime/descriptors retain origin/main bytes',
+      fixture.name + ' PHP runtime/descriptors match the reviewed additive baseline',
     );
     const root = ts.createSourceFile(
       'index.d.ts',
