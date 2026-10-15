@@ -2057,15 +2057,20 @@ export function loadContract(
     const fields = pathFields(item, resolve(definitionPath), '/paths/' + pointerSegment(path));
     let selected = false;
     for (const [verb, field] of Object.entries(fields)) {
+      // Malformed operations are reported by validation below; protection skips them.
       if (
         !['get', 'post', 'put', 'patch', 'delete', 'head', 'options'].includes(verb) ||
+        !field.value ||
+        typeof field.value !== 'object' ||
         !includedOperation(field.value)
       )
         continue;
       selected = true;
       addExampleRoot(field, 'operation');
+      const operationId: unknown = field.value.operationId;
       for (const [event, ref] of Object.entries(
-        own(config.operations, field.value.operationId)?.stream?.events ?? {},
+        (typeof operationId === 'string' && own(config.operations, operationId)?.stream?.events) ||
+          {},
       ))
         exampleRoots.push({
           document: '',
