@@ -181,6 +181,8 @@ For example, with `validation: "schema"`, adding `minLength: 3` to a string inpu
 
 ## Upgrade an existing SDK
 
+Regenerate older SDKs to remove schema examples/defaults from sensitive, write-only and password locations, including shared reference targets and compositions. Removing previously published annotation values requires review; publication provenance alone does not change compatibility. Rendering, generation and release preparation require reloading the source inputs for records that predate publication protection, including PHP-only SDKs. Private records preserve source examples and must remain private.
+
 Regenerate packages as a complete unit, review the preview and compatibility findings, and follow the version policy. Do not publish breaking findings as a compatible patch. The [changelog](../CHANGELOG.md) lists every generator change that affects regenerated SDKs.
 
 Configuration validation rejects `npm.name` values longer than 214 characters, including the scope and separator. Shorten an oversized package name before regenerating.

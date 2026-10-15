@@ -1,3 +1,4 @@
+import { removesPublishedExamples } from './example-protection.js';
 import { reservePublicSymbols } from './public-symbols.js';
 import {
   nodeDescriptors,
@@ -1129,6 +1130,11 @@ export function render(c: Contract): Map<string, string> {
 }
 function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map<string, string> {
   const c = compilation.source;
+  if (c.exampleProtection === undefined)
+    throw new Diagnostic(
+      'exampleProtection',
+      'reload the source inputs with loadContract before rendering or generating an SDK',
+    );
   const targetPlan = compilation.plan;
   for (const op of c.operations) {
     const model = targetPlan.php.models.find(
@@ -1873,6 +1879,13 @@ function compareWithCompiled(
   const oldPlan = previousPlan ?? compileSdkContract(before).plan;
   const newPlan = nextPlan ?? compileSdkContract(after).plan;
   const changes: Compatibility[] = [];
+  if (removesPublishedExamples(before, after))
+    changes.push({
+      severity: 'review',
+      subject: 'published schema examples',
+      message:
+        'Protected schema example/default annotations were removed from published documentation and package metadata; review sample inputs before release.',
+    });
   const compareNode = oldPlan.targets.includes('node') && newPlan.targets.includes('node');
   const comparePhp =
     (before.config.targets ?? ['node', 'php']).includes('php') &&
@@ -2657,6 +2670,13 @@ export function prepareRelease(output: string, destination: string, acknowledgeR
   output = resolve(output);
   destination = resolve(destination);
   const record: RecordFile = JSON.parse(readFileSync(join(output, recordName), 'utf8'));
+  // Older normalized records cannot prove which source ancestors or reference
+  // uses protected a value. Reload the original inputs before packaging them.
+  if (record.interface.exampleProtection === undefined)
+    throw new Diagnostic(
+      output,
+      'regenerate before preparing a release: reload the source inputs to compute schema example publication protection',
+    );
   const integrity = preview(record.interface, output);
   if (integrity.changes.length)
     throw new Diagnostic(output, 'regenerate before preparing a release');

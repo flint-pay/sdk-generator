@@ -3,6 +3,12 @@ import { validateResponseReturn, payloadSchemas, type ResponseReturn } from './r
 import { operationNames, modelNames, isPublicName, webhookEventTypeName } from './naming.js';
 import { shareContractSchemas } from './schema-sharing.js';
 import { schemaAnnotations, isSchemaAnnotation } from './schema-annotations.js';
+import {
+  EXAMPLE_PROTECTION_MARKER,
+  sourceExampleProtection,
+  saveExampleProtection,
+  type ExampleSource,
+} from './example-protection.js';
 import { parameterExampleEligible } from './parameter-example-policy.js';
 import { SourceJson } from './source-json.js';
 import { openApiObject, assertOpenApiVersion, readInput } from './openapi-input.js';
@@ -200,6 +206,8 @@ export interface Config {
   release?: { baseUrl?: string; policy?: 'review' | 'semver' };
 }
 export interface Contract {
+  /** Private publication provenance; excluded from compiled compatibility facts and effective output. */
+  exampleProtection?: { locations: string[]; schemas: string[] };
   defaultBaseUrl?: string;
   title: string;
   apiVersion: string;
@@ -1091,6 +1099,25 @@ export function loadContract(
   const references: { path: string; model: string }[] = [];
   const resolved = new Map<string, { value: any; models: string[] }>();
   const cycles = new Map<string, string>();
+  let exampleProtection: ReturnType<typeof sourceExampleProtection> | undefined;
+  const exampleDocumentIds = new Map([[resolve(definitionPath), '']]);
+  const sourceDocument = (file: string): string => {
+    const previous = exampleDocumentIds.get(file);
+    if (previous !== undefined) return previous;
+    const identity = 'local:' + hash(relativePath(rootDir, file));
+    exampleDocumentIds.set(file, identity);
+    return identity;
+  };
+  const protectExamples = <T>(value: T, file: string, sourcePath: string, context: Context): T => {
+    if (
+      context === 'schema' &&
+      value &&
+      typeof value === 'object' &&
+      exampleProtection?.protects(sourceDocument(file), sourcePath)
+    )
+      Reflect.set(value, EXAMPLE_PROTECTION_MARKER, true);
+    return value;
+  };
   // Keep use-site identity outside the expanded schema until validation finishes.
   const referenceNames = new WeakMap<object, string>();
   const typeNames = new WeakMap<object, string>();
@@ -1168,10 +1195,13 @@ export function loadContract(
     path: string,
     stack: { key: string; path: string }[] = [],
     context: Context = 'root',
+    sourcePath = path,
   ): any {
     if (context === 'literal') return cloneJson(value);
     if (Array.isArray(value))
-      return value.map((v, i) => deref(v, file, `${path}/${i}`, stack, context));
+      return value.map((v, i) =>
+        deref(v, file, `${path}/${i}`, stack, context, `${sourcePath}/${i}`),
+      );
     if (!value || typeof value !== 'object') return value;
     if (context === 'schema' && !(raw.openapi.startsWith('3.0.') && '$ref' in value))
       for (const key of [
@@ -1201,12 +1231,14 @@ export function loadContract(
             result,
             publicModel(modelMatch[1]!.replace(/~1/g, '/').replace(/~0/g, '~')),
           );
-        if (raw.openapi.startsWith('3.0.')) return result;
+        if (raw.openapi.startsWith('3.0.'))
+          return protectExamples(result, file, sourcePath, context);
         const { $ref, ...siblings } = value;
         if (context === 'schema') {
-          if (!Object.keys(siblings).length) return result;
+          if (!Object.keys(siblings).length)
+            return protectExamples(result, file, sourcePath, context);
           record(result, path);
-          const local = deref(siblings, file, path, stack, context);
+          const local = deref(siblings, file, path, stack, context, sourcePath);
           if (local.allOf !== undefined && (!Array.isArray(local.allOf) || !local.allOf.length))
             fail(path + '/allOf', 'expected a nonempty schema array');
           for (const key of ['readOnly', 'writeOnly', 'deprecated', 'x-sensitive'])
@@ -1225,7 +1257,7 @@ export function loadContract(
               );
             const typeName = typeNames.get(result);
             if (typeName) typeNames.set(combined, typeName);
-            return combined;
+            return protectExamples(combined, file, sourcePath, context);
           }
           // Preserve keyword scope (especially additionalProperties and alternatives).
           // The referenced target remains a separate conjunct, even at recursive edges.
@@ -1248,7 +1280,7 @@ export function loadContract(
           const combined = { ...metadata, ...local, allOf: [result, ...(local.allOf ?? [])] };
           for (const key of ['readOnly', 'writeOnly', 'x-sensitive'])
             if (result[key] === true || local[key] === true) combined[key] = true;
-          return combined;
+          return protectExamples(combined, file, sourcePath, context);
         }
         for (const key of ['summary', 'description']) {
           if (!Object.hasOwn(siblings, key)) continue;
@@ -1316,6 +1348,7 @@ export function loadContract(
         path,
         [...stack, { key: cacheKey, path }],
         context,
+        fragment,
       );
       resolved.set(cacheKey, {
         value: result,
@@ -1326,7 +1359,14 @@ export function loadContract(
     const result = Object.fromEntries(
       Object.entries(value).map(([k, v]) => [
         k,
-        deref(v, file, `${path}/${pointerSegment(k)}`, stack, childContext(context, k)),
+        deref(
+          v,
+          file,
+          `${path}/${pointerSegment(k)}`,
+          stack,
+          childContext(context, k),
+          `${sourcePath}/${pointerSegment(k)}`,
+        ),
       ]),
     );
     if (context === 'schema' && value.discriminator?.mapping !== undefined) {
@@ -1388,7 +1428,7 @@ export function loadContract(
       }
       result['x-sdk-discriminator-mapping'] = bindings;
     }
-    return result;
+    return protectExamples(result, file, sourcePath, context);
   }
   const raw = load(resolve(definitionPath));
   openApiObject(raw);
@@ -1892,12 +1932,13 @@ export function loadContract(
       if (key !== '$ref' || context.startsWith('map:'))
         collect(child, file, childContext(context, key));
   };
-  type PathField = { value: any; file: string };
+  type PathField = { value: any; file: string; sourcePath: string };
   function pathFields(
     item: any,
     file: string,
     path: string,
     seen = new Set<string>(),
+    sourcePath = path,
   ): Record<string, PathField> {
     record(item, path);
     let fields: Record<string, PathField> = {};
@@ -1910,7 +1951,7 @@ export function loadContract(
       const key = target + '#' + fragment;
       if (seen.has(key)) fail(path, 'cyclic path item reference');
       seen.add(key);
-      fields = pathFields(pointer(load(target), fragment, path), target, path, seen);
+      fields = pathFields(pointer(load(target), fragment, path), target, path, seen, fragment);
     }
     for (const [key, value] of Object.entries(item)) {
       if (key === '$ref') continue;
@@ -1919,7 +1960,7 @@ export function loadContract(
       if (Object.hasOwn(fields, key))
         fail(path + '/' + pointerSegment(key), 'conflicting path item $ref field ' + key);
       Object.defineProperty(fields, key, {
-        value: { value, file },
+        value: { value, file, sourcePath: sourcePath + '/' + pointerSegment(key) },
         enumerable: true,
         configurable: true,
       });
@@ -1967,6 +2008,156 @@ export function loadContract(
   }
   diagnostics.finish();
   inferredModels = modelNames(Object.keys(raw.components?.schemas ?? {}), config.models);
+  const includedOperation = (op: unknown): boolean => {
+    const id: unknown = op && typeof op === 'object' ? Reflect.get(op, 'operationId') : undefined;
+    const capability = typeof id === 'string' ? own(config.operations, id) : undefined;
+    return (
+      !capability?.hidden &&
+      (!config.include || (typeof id === 'string' && config.include.includes(id))) &&
+      (!config.audiences ||
+        Boolean(capability?.audiences?.some((a) => config.audiences!.includes(a))))
+    );
+  };
+  const ancestorProtection = new Map<string, boolean>();
+  const protectedSourceAncestor = (file: string, path: string): boolean => {
+    const key = sourceDocument(file) + '#' + path;
+    const previous = ancestorProtection.get(key);
+    if (previous !== undefined) return previous;
+    const flagged = (value: unknown): boolean =>
+      Boolean(
+        value &&
+          typeof value === 'object' &&
+          (Reflect.get(value, 'x-sensitive') === true ||
+            Reflect.get(value, 'writeOnly') === true ||
+            Reflect.get(value, 'format') === 'password'),
+      );
+    let value: unknown = load(file);
+    let protectedAncestor = flagged(value);
+    for (const part of path.split('/').slice(1, -1)) {
+      value =
+        value && typeof value === 'object'
+          ? Reflect.get(value, part.replace(/~1/g, '/').replace(/~0/g, '~'))
+          : undefined;
+      protectedAncestor ||= flagged(value);
+    }
+    ancestorProtection.set(key, protectedAncestor);
+    return protectedAncestor;
+  };
+  const exampleRoots: ExampleSource[] = [];
+  const addExampleRoot = (field: PathField, context: Context): void => {
+    exampleRoots.push({
+      document: sourceDocument(field.file),
+      pointer: field.sourcePath,
+      value: field.value,
+      protectedAncestor: protectedSourceAncestor(field.file, field.sourcePath),
+      context,
+    });
+  };
+  for (const [path, item] of Object.entries(raw.paths ?? {})) {
+    const fields = pathFields(item, resolve(definitionPath), '/paths/' + pointerSegment(path));
+    let selected = false;
+    for (const [verb, field] of Object.entries(fields)) {
+      // Malformed operations are reported by validation below; protection skips them.
+      if (
+        !['get', 'post', 'put', 'patch', 'delete', 'head', 'options'].includes(verb) ||
+        !field.value ||
+        typeof field.value !== 'object' ||
+        !includedOperation(field.value)
+      )
+        continue;
+      selected = true;
+      addExampleRoot(field, 'operation');
+      const operationId: unknown = field.value.operationId;
+      if (typeof operationId !== 'string') continue;
+      for (const [event, ref] of Object.entries(
+        own(config.operations, operationId)?.stream?.events ?? {},
+      ))
+        exampleRoots.push({
+          // Configured references resolve from the API root. Their synthetic
+          // locations still identify the operation and its vendored source.
+          document: '',
+          pointer:
+            '/config/operations/' +
+            pointerSegment(operationId) +
+            '/sources/' +
+            pointerSegment(sourceDocument(field.file)) +
+            field.sourcePath +
+            '/stream/events/' +
+            pointerSegment(event),
+          value: { $ref: ref },
+          context: 'schema',
+        });
+    }
+    if (selected && fields.parameters) addExampleRoot(fields.parameters, 'parameter');
+  }
+  for (const [name, item] of Object.entries(raw.webhooks ?? {}))
+    for (const [method, field] of Object.entries(
+      pathFields(item, resolve(definitionPath), '/webhooks/' + pointerSegment(name)),
+    ))
+      if (['get', 'post', 'put', 'patch', 'delete', 'head', 'options'].includes(method))
+        addExampleRoot(field, 'operation');
+  for (const [event, value] of Object.entries(config.webhook?.events ?? {}))
+    exampleRoots.push({
+      document: 'config',
+      pointer: '/webhook/events/' + pointerSegment(event),
+      value,
+      context: 'schema',
+    });
+  const exampleDocuments = new Map([
+    [sourceDocument(resolve(definitionPath)), resolve(definitionPath)],
+  ]);
+  exampleDocuments.set('config', resolve(configPath));
+  // Path-item roots can originate in other vendored documents.
+  for (const file of documents.keys()) exampleDocuments.set(sourceDocument(file), file);
+  exampleProtection = sourceExampleProtection(
+    exampleRoots,
+    (context, key) => {
+      if (context === 'map:composition') return 'schema';
+      if (context === 'schema' && ['patternProperties', 'dependentSchemas'].includes(key))
+        return key === 'dependentSchemas' ? 'map:composition' : 'map:schema';
+      if (context === 'schema' && key === 'prefixItems') return 'schema';
+      return childContext(context, key);
+    },
+    (source, ref) => {
+      if (/^\w+:/.test(ref) || ref.startsWith('//'))
+        fail(
+          source.pointer,
+          'remote references must be vendored locally for reproducible generation',
+        );
+      const file =
+        exampleDocuments.get(source.document) ??
+        fail(source.pointer, 'unresolved example source document');
+      const [relative, fragment = ''] = ref.split('#');
+      const target = resolve(dirname(file), relative || file);
+      const document = sourceDocument(target);
+      exampleDocuments.set(document, target);
+      return {
+        document,
+        pointer: fragment,
+        value: pointer(load(target), fragment, source.pointer),
+        protectedAncestor: protectedSourceAncestor(target, fragment),
+        context: source.context,
+      };
+    },
+    raw.openapi.startsWith('3.0.'),
+    isSchemaAnnotation,
+  );
+  // Configured event schemas are already inline rather than dereferenced. Mark
+  // their source locations before validation can normalize annotation wrappers.
+  const markConfiguredExamples = (value: unknown, sourcePath: string, context: Context): void => {
+    if (context === 'literal' || !value || typeof value !== 'object') return;
+    if (context === 'schema' && exampleProtection?.protects('config', sourcePath))
+      Reflect.set(value, EXAMPLE_PROTECTION_MARKER, true);
+    for (const [key, child] of Object.entries(value))
+      if (key !== EXAMPLE_PROTECTION_MARKER)
+        markConfiguredExamples(
+          child,
+          sourcePath + '/' + pointerSegment(key),
+          Array.isArray(value) ? context : childContext(context, key),
+        );
+  };
+  for (const [event, value] of Object.entries(config.webhook?.events ?? {}))
+    markConfiguredExamples(value, '/webhook/events/' + pointerSegment(event), 'schema');
   const streamSchemas = new Map<string, Record<string, Schema>>();
   const selectedPaths = Object.fromEntries(
     Object.entries(raw.paths ?? {}).map(([path, item]) => {
@@ -1981,10 +2172,7 @@ export function loadContract(
             return [verb, deref(op, file, p, [], childContext('pathItem', verb))];
           record(op, p);
           const c = own(config.operations, op.operationId);
-          const included =
-            !c?.hidden &&
-            (!config.include || config.include.includes(op.operationId)) &&
-            (!config.audiences || c?.audiences?.some((a) => config.audiences!.includes(a)));
+          const included = includedOperation(op);
           if (!included) return [verb, { operationId: op.operationId }];
           selectedAny = true;
           collect(op, file, 'operation');
@@ -2014,7 +2202,7 @@ export function loadContract(
             }
             streamSchemas.set(op.operationId, events);
           }
-          return [verb, deref(op, file, p, [], 'operation')];
+          return [verb, deref(op, file, p, [], 'operation', field.sourcePath)];
         });
       const parameters = own(fields, 'parameters');
       if (selectedAny && parameters) {
@@ -2027,6 +2215,7 @@ export function loadContract(
             '/paths/' + pointerSegment(path) + '/parameters',
             [],
             'parameter',
+            parameters.sourcePath,
           ),
         ]);
       }
@@ -2050,7 +2239,7 @@ export function loadContract(
           fail(base + '/' + pointerSegment(method), 'unsupported incoming method');
         collect(field.value, field.file, 'operation');
         const location = base + '/' + pointerSegment(method);
-        const op = deref(field.value, field.file, location, [], 'operation');
+        const op = deref(field.value, field.file, location, [], 'operation', field.sourcePath);
         record(op, location);
         record(op.requestBody, location + '/requestBody');
         record(op.requestBody.content, location + '/requestBody/content');
@@ -3044,6 +3233,7 @@ export function loadContract(
   for (const path of Object.keys(selectedPaths)) delete selectedPaths[path];
   streamSchemas.clear();
   if (config.schemaSharing === 'named') shareContractSchemas(contract, referenceNames, typeNames);
+  saveExampleProtection(contract, exampleProtection.locations);
   contract.hash = hash(stable(contract));
   return contract;
 }

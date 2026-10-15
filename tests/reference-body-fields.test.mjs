@@ -381,7 +381,7 @@ test('schema examples, enums and consts retain precedence over parameter metadat
   );
 });
 
-test('credential and sensitive exclusions apply only to new parameter metadata', () => {
+test('credential exclusions apply to new parameter metadata and sensitive schema examples stay unpublished', () => {
   const { files } = fixture({
     parameters: [
       query(
@@ -403,8 +403,14 @@ test('credential and sensitive exclusions apply only to new parameter metadata',
   });
   everySample(
     files,
-    ['synthetic-existing-password', 'synthetic-existing-sensitive', 'synthetic-existing-enum'],
-    ['synthetic-new-password', 'synthetic-new-sensitive', 'synthetic-new-enum'],
+    ['synthetic-existing-password', 'synthetic-existing-enum'],
+    [
+      'synthetic-new-password',
+      'synthetic-new-sensitive',
+      'synthetic-new-enum',
+      // Sensitive schema examples are never published.
+      'synthetic-existing-sensitive',
+    ],
   );
 });
 

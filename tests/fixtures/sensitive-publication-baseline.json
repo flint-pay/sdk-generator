@@ -1,0 +1,2992 @@
+{
+  "description": "Synthetic records produced by loadContract and generate at the pre-publication-protection revision. Records are unmodified; package output stays ignored. Inputs are included for reproducible upgrades.",
+  "revision": "5ff35ae47c2cef645187a90d501c830ca450f94c",
+  "records": [
+    {
+      "targets": ["node"],
+      "sensitive": false,
+      "api": {
+        "openapi": "3.1.1",
+        "info": { "title": "Synthetic operation publication", "version": "1" },
+        "paths": {
+          "/b": {
+            "post": {
+              "operationId": "sendB",
+              "requestBody": {
+                "required": true,
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "type": "object",
+                      "required": ["value"],
+                      "properties": {
+                        "value": { "type": "string", "example": "SYNTHETIC_OPERATION_EXAMPLE" }
+                      }
+                    }
+                  }
+                }
+              },
+              "responses": { "204": { "description": "Synthetic empty response" } }
+            }
+          }
+        }
+      },
+      "config": {
+        "version": "1.0.0",
+        "targets": ["node"],
+        "requests": { "style": "object" },
+        "responses": { "return": "result" },
+        "npm": { "name": "synthetic-operation-publication" },
+        "composer": {
+          "name": "synthetic/operation-publication",
+          "namespace": "SyntheticPublication"
+        }
+      },
+      "record": {
+        "compatibility": [],
+        "compiled": {
+          "encoding": "shared-json-v1",
+          "nodes": [
+            {
+              "entries": [
+                ["nodeInput", "{ \"body\": { \"value\": string; }; }"],
+                ["nodeOutput", "undefined"],
+                ["phpInput", "array{'body': array{'value': string, ...}|object}"],
+                ["phpOutput", "null"],
+                ["reserveKnown", false]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["sendB", { "ref": 0 }]], "kind": "object" },
+            {
+              "entries": [
+                [
+                  "declaration",
+                  "export type ClientOptions = Omit<RuntimeClientOptions, 'baseUrl'> & { baseUrl: string; };\n"
+                ],
+                ["optional", false]
+              ],
+              "kind": "object"
+            },
+            { "entries": [], "kind": "object" },
+            {
+              "entries": [
+                [
+                  "documentedInput",
+                  "{ \"body\": InputValue<{ /** Example: \"SYNTHETIC_OPERATION_EXAMPLE\". */ \"value\": string; }>; }"
+                ],
+                ["idempotencyKey", false],
+                ["input", "{ \"body\": InputValue<{ \"value\": string; }>; }"],
+                ["inputRequired", true],
+                ["items", "never"],
+                ["output", "undefined"],
+                ["requestOptions", "_SdkWithoutIdempotency<RequestOptions>"]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["sendB", { "ref": 4 }]], "kind": "object" },
+            {
+              "entries": [
+                ["clientOptions", { "ref": 2 }],
+                ["eventType", "never"],
+                ["models", { "ref": 3 }],
+                ["operations", { "ref": 5 }]
+              ],
+              "kind": "object"
+            },
+            { "items": [], "kind": "array" },
+            { "entries": [["kind", "dynamic"]], "kind": "object" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", true],
+                ["nullable", true],
+                ["objectOnlyAlternative", true],
+                ["reference", "SharedCodec0"],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 7 }],
+                ["requiredOutput", { "ref": 7 }],
+                ["sensitive", false],
+                ["value", { "ref": 8 }]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["doc", "array{'value': string, ...}|object"],
+                ["field", "body"],
+                ["method", "getBody"],
+                ["type", "array|object"]
+              ],
+              "kind": "object"
+            },
+            { "items": [{ "ref": 10 }], "kind": "array" },
+            {
+              "entries": [
+                ["codec", { "ref": 9 }],
+                ["constructorDoc", "array{'body': array{'value': string, ...}|object}|object"],
+                ["constructorType", "array|object"],
+                ["defaultObject", true],
+                ["getters", { "ref": 11 }],
+                ["name", "ApiSendBInput"],
+                ["response", false]
+              ],
+              "kind": "object"
+            },
+            { "items": [{ "ref": 12 }], "kind": "array" },
+            {
+              "entries": [
+                ["items", "mixed"],
+                ["output", "null"]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["sendB", { "ref": 14 }]], "kind": "object" },
+            { "entries": [["kind", "string"]], "kind": "object" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", false],
+                ["nullable", false],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 7 }],
+                ["requiredOutput", { "ref": 7 }],
+                ["sensitive", false],
+                ["value", { "ref": 16 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["value", { "ref": 17 }]], "kind": "object" },
+            { "items": ["value"], "kind": "array" },
+            { "entries": [["kind", "object"]], "kind": "object" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["fields", { "ref": 18 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", true],
+                ["nullable", false],
+                ["objectOnlyAlternative", true],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 19 }],
+                ["requiredOutput", { "ref": 19 }],
+                ["sensitive", false],
+                ["value", { "ref": 20 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["body", { "ref": 21 }]], "kind": "object" },
+            { "items": ["body"], "kind": "array" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["extra", false],
+                ["fields", { "ref": 22 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", true],
+                ["nullable", false],
+                ["objectOnlyAlternative", true],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 23 }],
+                ["requiredOutput", { "ref": 23 }],
+                ["sensitive", false],
+                ["value", { "ref": 20 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["SharedCodec0", { "ref": 24 }]], "kind": "object" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["constraints", false],
+                ["fields", { "ref": 18 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", true],
+                ["nullable", false],
+                ["objectOnlyAlternative", true],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 19 }],
+                ["requiredOutput", { "ref": 19 }],
+                ["sensitive", false],
+                ["value", { "ref": 20 }]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["bodyKind", "empty"],
+                ["classification", "success"]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["204", { "ref": 27 }]], "kind": "object" },
+            {
+              "entries": [
+                ["baseDelayMs", 100],
+                ["maxAttempts", 1],
+                ["statuses", { "ref": 7 }],
+                ["transport", false]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["authenticated", false],
+                ["body", { "ref": 26 }],
+                ["bodyRequired", true],
+                ["description", ""],
+                ["id", "sendB"],
+                ["mediaType", "application/json"],
+                ["method", "sendB"],
+                ["parameters", { "ref": 7 }],
+                ["path", "/b"],
+                ["replay", "idempotency"],
+                ["resource", "api"],
+                ["responses", { "ref": 28 }],
+                ["retry", { "ref": 29 }],
+                ["verb", "POST"]
+              ],
+              "kind": "object"
+            },
+            { "items": [{ "ref": 30 }], "kind": "array" },
+            {
+              "entries": [
+                ["definitions", { "ref": 25 }],
+                ["format", 1],
+                ["operations", { "ref": 31 }],
+                ["retrySemantics", "budgets-1"],
+                ["semantics", "4"],
+                ["validation", "encoding"]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["eventModels", { "ref": 3 }],
+                ["models", { "ref": 13 }],
+                ["operations", { "ref": 15 }],
+                ["runtime", { "ref": 32 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["metadata", { "ref": 3 }]], "kind": "object" },
+            { "entries": [["example", "SYNTHETIC_OPERATION_EXAMPLE"]], "kind": "object" },
+            { "entries": [["metadata", { "ref": 35 }]], "kind": "object" },
+            { "items": ["string"], "kind": "array" },
+            {
+              "entries": [
+                ["exact", false],
+                ["label", "string"]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["annotations", { "ref": 36 }],
+                ["checks", { "ref": 3 }],
+                ["compositions", { "ref": 3 }],
+                ["fields", { "ref": 3 }],
+                ["kinds", { "ref": 37 }],
+                ["nullOnlyInput", false],
+                ["requiredKeys", { "ref": 7 }],
+                ["wire", { "ref": 38 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["value", { "ref": 39 }]], "kind": "object" },
+            { "items": ["object"], "kind": "array" },
+            {
+              "entries": [
+                ["exact", false],
+                ["label", "object"]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["annotations", { "ref": 34 }],
+                ["checks", { "ref": 3 }],
+                ["compositions", { "ref": 3 }],
+                ["fields", { "ref": 40 }],
+                ["kinds", { "ref": 41 }],
+                ["nullOnlyInput", false],
+                ["requiredKeys", { "ref": 19 }],
+                ["wire", { "ref": 42 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["body", { "ref": 43 }]], "kind": "object" },
+            {
+              "entries": [
+                ["annotations", { "ref": 34 }],
+                ["checks", { "ref": 3 }],
+                ["compositions", { "ref": 3 }],
+                ["extra", false],
+                ["fields", { "ref": 44 }],
+                ["kinds", { "ref": 41 }],
+                ["nullOnlyInput", false],
+                ["requiredKeys", { "ref": 23 }],
+                ["wire", { "ref": 42 }]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["input", { "ref": 45 }],
+                ["responses", { "ref": 3 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["sendB", { "ref": 46 }]], "kind": "object" },
+            {
+              "entries": [
+                ["definitions", { "ref": 3 }],
+                ["models", { "ref": 3 }],
+                ["operations", { "ref": 47 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["204", { "ref": 3 }]], "kind": "object" },
+            { "entries": [["sendB", { "ref": 49 }]], "kind": "object" },
+            { "items": ["node"], "kind": "array" },
+            {
+              "entries": [
+                ["documentation", { "ref": 1 }],
+                ["format", 1],
+                ["node", { "ref": 6 }],
+                ["php", { "ref": 33 }],
+                ["policy", { "ref": 48 }],
+                ["responses", { "ref": 50 }],
+                ["runtime", { "ref": 32 }],
+                ["semantics", "4/results-1"],
+                ["targets", { "ref": 51 }]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["node", "7dbb3fd2dd5549bef0379e4505ffed9df2f9f706365786325eb2cb960e226756"]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["plan", { "ref": 52 }],
+                ["runtimeIdentity", { "ref": 53 }]
+              ],
+              "kind": "object"
+            }
+          ],
+          "root": { "ref": 54 }
+        },
+        "contractHash": "125de95a04cf280b3366fb8247fea0b09e592abb931312cdd34e148aa2ae9729",
+        "files": {
+          "node/canonical.d.ts": "ea9e8d5d8ddd02f7404ede6c09e1f033ff1c4c22eaccc3a3daf686ecbd8420fe",
+          "node/canonical.js": "0dd1a554144f4ea4ee6412608fd87067815ac574901b54fb9695778198fe39f8",
+          "node/codec-plan.d.ts": "f79131519d74af2c8c22b6748462adc04ffc0cf30c4d02bd722460001fac7b03",
+          "node/codec-plan.js": "98ef19bf3a4c425e22cf0c531e523041c26532237cf89e8bdb878cfb4f0b5840",
+          "node/contract.d.ts": "f83588466325d5f95aad98dd6c3aff58894bd6929fcf534084b4824515aa6cf2",
+          "node/declarations/_SdkWithoutIdempotency.d.ts": "d70223f80fcc66b4e4a28f15438fbe5232448de7d95fa5237a3c740997c46113",
+          "node/declarations/ApiSendBInput.d.ts": "698e82186efeb595e559cef92303ecfe4cf34a6f46ae54ea4aba5650419a2758",
+          "node/declarations/ApiSendBResponse.d.ts": "c27391d7446060a208aa78e21203eb07d08d1e6bd848c073743a3f7e464e586e",
+          "node/declarations/Client.d.ts": "9c11cd62f5f2cbbf800507da98ec5b9d6299d6fdb57410293f3accbca24b4ceb",
+          "node/declarations/ClientOptions.d.ts": "eca1e0a206473daed1643b9c38d96c2c4dbfb3eeb7148f4a3355b1301e299b5c",
+          "node/descriptor-source.d.ts": "6d3e4979aee2899d25edf220c88c4cef3fff53f0c3aea9c8040f0db3fce58bf2",
+          "node/descriptor-source.js": "1ff78e81de414d2463a3593d0f06a979fcd635168c36f4c7ffce2a356defac59",
+          "node/descriptors/data.js": "9bc12ef02b394b0398371457facefb66486644d71d1a7db8b7b1864bc645188e",
+          "node/descriptors/modules.json": "e2f22b0c1fe7e69f09166499caffdc9415c692e4f0683eaed438df58c2b4d565",
+          "node/descriptors/resources/api.js": "68d48a45a5c2596d37520aa85b5c3ef473a767c1d2151cc2e39a8afa8eb978f9",
+          "node/descriptors/root.js": "1965c66da843898b052c3087075225cfb327fda60d974cea107eb54aeb19b08e",
+          "node/descriptors/settings.js": "130373e1d8e2b601adb66594b42842e8d2b49f597cfbdefe5002576eaee4dd7b",
+          "node/diagnostic.d.ts": "370d2d0f8856f8cb0eb97a125918fcd3cad8cca21b7668dfcb7431e3d7d507ad",
+          "node/diagnostic.js": "4e606237ee92eb9840d8528fdc8d0e817adb723314da75686bdb1c523efacd88",
+          "node/examples/api-sendB.mjs": "11b8a0cb1156583917c04c32d7d6161bb9a891a257c30e8a87040764a63a626c",
+          "node/examples/api-sendB.ts": "11b8a0cb1156583917c04c32d7d6161bb9a891a257c30e8a87040764a63a626c",
+          "node/index.d.ts": "8e2749ac9a8da22a882f34d4119add5c13176743c7ad3e4fd907e580befc666c",
+          "node/index.js": "06a93271b4a4d2d4754ca10208f0ecd69e995c8396fcf89c3a39188d9aac4ca0",
+          "node/LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "node/MODELS.md": "3eb7be3460342d75b8778eb5814bc795ee4b3e1016f474e53019fc31bc3dfe4f",
+          "node/package-plan.js": "d347d7e35337461f5ab800148db56a2ada7f1fda1e5e7cb724c1d1a2d198886a",
+          "node/package.json": "26b6d27aca4d7f7e0f8c5405e11f71861649121eac6fc23f79a03f06032def2d",
+          "node/php-value-plan.d.ts": "cbb6c600506bbe896a148024a4c708e29b8cb8cc549f73630d2fb9d44319517a",
+          "node/php-value-plan.js": "e8fddf38a104f61bc53aa425dd51102dad38cf2ad5f0ea2b414c982a61fabf9f",
+          "node/README.md": "b7dcf434a63ef4bf0943ca01d3b677d2fb6eb36144d4399af53e3f816a69a1b3",
+          "node/REFERENCE.md": "9974c4d5034d0e8c0b43ddf84c73a51bc0ec26d0dc81382ac19dc2b2b2c5730f",
+          "node/request-style.d.ts": "ead4ed1d50c0721ea14b389f5e1becda201b695de4398e1e53e9e37fab778edf",
+          "node/resources/api.d.ts": "dc9b9926eae704976719f4e7cf0f0d9924f39e210ba2d0d1dc57f8ea6cf20e7e",
+          "node/resources/api.js": "b619bde2ed9c1a4098daf6006865c0c9284a783a9258fd94d845b61f8d3df1b3",
+          "node/response-return.d.ts": "2929ddbbb0fa934329349c26da37faedd25b2671ccf6ec7098c67158e2e38c78",
+          "node/runtime-plan.d.ts": "e3e8f8a79170ee09cc1564d4151dd0164e0312425d94f1b25717fee8412ff723",
+          "node/runtime-plan.js": "797b1048cfb1fac753256ce8bd0d2af4c820bab54efa04b733d5f01f54c9ea02",
+          "node/runtime.d.ts": "8bd2c2fa93926cce93752547f1e629affc180677505125abb9eeaf71b4a5dccb",
+          "node/runtime.js": "d2996c281e68af8b7b62034e778ca74094eeb266d0faad044c424cc2c088e5a4",
+          "node/RUNTIME.md": "a9f789dbe71712a94a2cc4e8959fb05be3b967b363d3befb1d29c56c9ee09eaf"
+        },
+        "generator": "0.1.0",
+        "interface": {
+          "apiVersion": "1",
+          "config": {
+            "composer": {
+              "name": "synthetic/operation-publication",
+              "namespace": "SyntheticPublication"
+            },
+            "npm": { "name": "synthetic-operation-publication" },
+            "numericUnions": "explicit",
+            "requests": { "style": "object" },
+            "responses": { "return": "result" },
+            "schemaSharing": "named",
+            "targets": ["node"],
+            "version": "1.0.0"
+          },
+          "definitions": {},
+          "hash": "125de95a04cf280b3366fb8247fea0b09e592abb931312cdd34e148aa2ae9729",
+          "modelDependencies": { "sendB": [] },
+          "models": {},
+          "operations": [
+            {
+              "authenticated": false,
+              "body": {
+                "properties": {
+                  "value": { "example": "SYNTHETIC_OPERATION_EXAMPLE", "type": "string" }
+                },
+                "required": ["value"],
+                "type": "object"
+              },
+              "bodyRequired": true,
+              "description": "",
+              "id": "sendB",
+              "mediaType": "application/json",
+              "method": "sendB",
+              "parameters": [],
+              "path": "/b",
+              "resource": "api",
+              "responses": { "204": { "bodyKind": "empty", "classification": "success" } },
+              "verb": "POST"
+            }
+          ],
+          "sources": {
+            "api.json": "bcbde13dcbaf2bcdb69521233b97fc0ac04527fa003ddccc7f51a2b048f468f1",
+            "sdk.json": "25fe743100ce46c6871e65d6f415bebded92f567d28d6713dde3e5cee08753b0"
+          },
+          "title": "Synthetic operation publication"
+        },
+        "recordVersion": 2,
+        "sources": {
+          "api.json": "bcbde13dcbaf2bcdb69521233b97fc0ac04527fa003ddccc7f51a2b048f468f1",
+          "sdk.json": "25fe743100ce46c6871e65d6f415bebded92f567d28d6713dde3e5cee08753b0"
+        }
+      }
+    },
+    {
+      "targets": ["node"],
+      "sensitive": true,
+      "api": {
+        "openapi": "3.1.1",
+        "info": { "title": "Synthetic operation publication", "version": "1" },
+        "paths": {
+          "/b": {
+            "post": {
+              "operationId": "sendB",
+              "requestBody": {
+                "required": true,
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "type": "object",
+                      "required": ["value"],
+                      "properties": {
+                        "value": {
+                          "type": "string",
+                          "example": "SYNTHETIC_OPERATION_EXAMPLE",
+                          "x-sensitive": true
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "responses": { "204": { "description": "Synthetic empty response" } }
+            }
+          }
+        }
+      },
+      "config": {
+        "version": "1.0.0",
+        "targets": ["node"],
+        "requests": { "style": "object" },
+        "responses": { "return": "result" },
+        "npm": { "name": "synthetic-operation-publication" },
+        "composer": {
+          "name": "synthetic/operation-publication",
+          "namespace": "SyntheticPublication"
+        }
+      },
+      "record": {
+        "compatibility": [],
+        "compiled": {
+          "encoding": "shared-json-v1",
+          "nodes": [
+            {
+              "entries": [
+                ["nodeInput", "{ \"body\": { \"value\": string; }; }"],
+                ["nodeOutput", "undefined"],
+                ["phpInput", "array{'body': array{'value': string, ...}|object}"],
+                ["phpOutput", "null"],
+                ["reserveKnown", false]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["sendB", { "ref": 0 }]], "kind": "object" },
+            {
+              "entries": [
+                [
+                  "declaration",
+                  "export type ClientOptions = Omit<RuntimeClientOptions, 'baseUrl'> & { baseUrl: string; };\n"
+                ],
+                ["optional", false]
+              ],
+              "kind": "object"
+            },
+            { "entries": [], "kind": "object" },
+            {
+              "entries": [
+                [
+                  "documentedInput",
+                  "{ \"body\": InputValue<{ /** Example: \"SYNTHETIC_OPERATION_EXAMPLE\". */ \"value\": string; }>; }"
+                ],
+                ["idempotencyKey", false],
+                ["input", "{ \"body\": InputValue<{ \"value\": string; }>; }"],
+                ["inputRequired", true],
+                ["items", "never"],
+                ["output", "undefined"],
+                ["requestOptions", "_SdkWithoutIdempotency<RequestOptions>"]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["sendB", { "ref": 4 }]], "kind": "object" },
+            {
+              "entries": [
+                ["clientOptions", { "ref": 2 }],
+                ["eventType", "never"],
+                ["models", { "ref": 3 }],
+                ["operations", { "ref": 5 }]
+              ],
+              "kind": "object"
+            },
+            { "items": [], "kind": "array" },
+            { "entries": [["kind", "dynamic"]], "kind": "object" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", true],
+                ["nullable", true],
+                ["objectOnlyAlternative", true],
+                ["reference", "SharedCodec0"],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 7 }],
+                ["requiredOutput", { "ref": 7 }],
+                ["sensitive", false],
+                ["value", { "ref": 8 }]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["doc", "array{'value': string, ...}|object"],
+                ["field", "body"],
+                ["method", "getBody"],
+                ["type", "array|object"]
+              ],
+              "kind": "object"
+            },
+            { "items": [{ "ref": 10 }], "kind": "array" },
+            {
+              "entries": [
+                ["codec", { "ref": 9 }],
+                ["constructorDoc", "array{'body': array{'value': string, ...}|object}|object"],
+                ["constructorType", "array|object"],
+                ["defaultObject", true],
+                ["getters", { "ref": 11 }],
+                ["name", "ApiSendBInput"],
+                ["response", false]
+              ],
+              "kind": "object"
+            },
+            { "items": [{ "ref": 12 }], "kind": "array" },
+            {
+              "entries": [
+                ["items", "mixed"],
+                ["output", "null"]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["sendB", { "ref": 14 }]], "kind": "object" },
+            { "entries": [["kind", "string"]], "kind": "object" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", false],
+                ["nullable", false],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 7 }],
+                ["requiredOutput", { "ref": 7 }],
+                ["sensitive", true],
+                ["value", { "ref": 16 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["value", { "ref": 17 }]], "kind": "object" },
+            { "items": ["value"], "kind": "array" },
+            { "entries": [["kind", "object"]], "kind": "object" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["fields", { "ref": 18 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", true],
+                ["nullable", false],
+                ["objectOnlyAlternative", true],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 19 }],
+                ["requiredOutput", { "ref": 19 }],
+                ["sensitive", false],
+                ["value", { "ref": 20 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["body", { "ref": 21 }]], "kind": "object" },
+            { "items": ["body"], "kind": "array" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["extra", false],
+                ["fields", { "ref": 22 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", true],
+                ["nullable", false],
+                ["objectOnlyAlternative", true],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 23 }],
+                ["requiredOutput", { "ref": 23 }],
+                ["sensitive", false],
+                ["value", { "ref": 20 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["SharedCodec0", { "ref": 24 }]], "kind": "object" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["constraints", false],
+                ["fields", { "ref": 18 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", true],
+                ["nullable", false],
+                ["objectOnlyAlternative", true],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 19 }],
+                ["requiredOutput", { "ref": 19 }],
+                ["sensitive", false],
+                ["value", { "ref": 20 }]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["bodyKind", "empty"],
+                ["classification", "success"]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["204", { "ref": 27 }]], "kind": "object" },
+            {
+              "entries": [
+                ["baseDelayMs", 100],
+                ["maxAttempts", 1],
+                ["statuses", { "ref": 7 }],
+                ["transport", false]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["authenticated", false],
+                ["body", { "ref": 26 }],
+                ["bodyRequired", true],
+                ["description", ""],
+                ["id", "sendB"],
+                ["mediaType", "application/json"],
+                ["method", "sendB"],
+                ["parameters", { "ref": 7 }],
+                ["path", "/b"],
+                ["replay", "idempotency"],
+                ["resource", "api"],
+                ["responses", { "ref": 28 }],
+                ["retry", { "ref": 29 }],
+                ["verb", "POST"]
+              ],
+              "kind": "object"
+            },
+            { "items": [{ "ref": 30 }], "kind": "array" },
+            {
+              "entries": [
+                ["definitions", { "ref": 25 }],
+                ["format", 1],
+                ["operations", { "ref": 31 }],
+                ["retrySemantics", "budgets-1"],
+                ["semantics", "4"],
+                ["validation", "encoding"]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["eventModels", { "ref": 3 }],
+                ["models", { "ref": 13 }],
+                ["operations", { "ref": 15 }],
+                ["runtime", { "ref": 32 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["metadata", { "ref": 3 }]], "kind": "object" },
+            { "entries": [["example", "SYNTHETIC_OPERATION_EXAMPLE"]], "kind": "object" },
+            {
+              "entries": [
+                ["metadata", { "ref": 35 }],
+                ["sensitive", true]
+              ],
+              "kind": "object"
+            },
+            { "items": ["string"], "kind": "array" },
+            {
+              "entries": [
+                ["exact", false],
+                ["label", "string"]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["annotations", { "ref": 36 }],
+                ["checks", { "ref": 3 }],
+                ["compositions", { "ref": 3 }],
+                ["fields", { "ref": 3 }],
+                ["kinds", { "ref": 37 }],
+                ["nullOnlyInput", false],
+                ["requiredKeys", { "ref": 7 }],
+                ["wire", { "ref": 38 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["value", { "ref": 39 }]], "kind": "object" },
+            { "items": ["object"], "kind": "array" },
+            {
+              "entries": [
+                ["exact", false],
+                ["label", "object"]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["annotations", { "ref": 34 }],
+                ["checks", { "ref": 3 }],
+                ["compositions", { "ref": 3 }],
+                ["fields", { "ref": 40 }],
+                ["kinds", { "ref": 41 }],
+                ["nullOnlyInput", false],
+                ["requiredKeys", { "ref": 19 }],
+                ["wire", { "ref": 42 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["body", { "ref": 43 }]], "kind": "object" },
+            {
+              "entries": [
+                ["annotations", { "ref": 34 }],
+                ["checks", { "ref": 3 }],
+                ["compositions", { "ref": 3 }],
+                ["extra", false],
+                ["fields", { "ref": 44 }],
+                ["kinds", { "ref": 41 }],
+                ["nullOnlyInput", false],
+                ["requiredKeys", { "ref": 23 }],
+                ["wire", { "ref": 42 }]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["input", { "ref": 45 }],
+                ["responses", { "ref": 3 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["sendB", { "ref": 46 }]], "kind": "object" },
+            {
+              "entries": [
+                ["definitions", { "ref": 3 }],
+                ["models", { "ref": 3 }],
+                ["operations", { "ref": 47 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["204", { "ref": 3 }]], "kind": "object" },
+            { "entries": [["sendB", { "ref": 49 }]], "kind": "object" },
+            { "items": ["node"], "kind": "array" },
+            {
+              "entries": [
+                ["documentation", { "ref": 1 }],
+                ["format", 1],
+                ["node", { "ref": 6 }],
+                ["php", { "ref": 33 }],
+                ["policy", { "ref": 48 }],
+                ["responses", { "ref": 50 }],
+                ["runtime", { "ref": 32 }],
+                ["semantics", "4/results-1"],
+                ["targets", { "ref": 51 }]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["node", "7dbb3fd2dd5549bef0379e4505ffed9df2f9f706365786325eb2cb960e226756"]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["plan", { "ref": 52 }],
+                ["runtimeIdentity", { "ref": 53 }]
+              ],
+              "kind": "object"
+            }
+          ],
+          "root": { "ref": 54 }
+        },
+        "contractHash": "8dc53a89464490b423085c804b4df0e20842356f9866cd9c801f2b46201b6453",
+        "files": {
+          "node/canonical.d.ts": "ea9e8d5d8ddd02f7404ede6c09e1f033ff1c4c22eaccc3a3daf686ecbd8420fe",
+          "node/canonical.js": "0dd1a554144f4ea4ee6412608fd87067815ac574901b54fb9695778198fe39f8",
+          "node/codec-plan.d.ts": "f79131519d74af2c8c22b6748462adc04ffc0cf30c4d02bd722460001fac7b03",
+          "node/codec-plan.js": "98ef19bf3a4c425e22cf0c531e523041c26532237cf89e8bdb878cfb4f0b5840",
+          "node/contract.d.ts": "f83588466325d5f95aad98dd6c3aff58894bd6929fcf534084b4824515aa6cf2",
+          "node/declarations/_SdkWithoutIdempotency.d.ts": "d70223f80fcc66b4e4a28f15438fbe5232448de7d95fa5237a3c740997c46113",
+          "node/declarations/ApiSendBInput.d.ts": "698e82186efeb595e559cef92303ecfe4cf34a6f46ae54ea4aba5650419a2758",
+          "node/declarations/ApiSendBResponse.d.ts": "c27391d7446060a208aa78e21203eb07d08d1e6bd848c073743a3f7e464e586e",
+          "node/declarations/Client.d.ts": "9c11cd62f5f2cbbf800507da98ec5b9d6299d6fdb57410293f3accbca24b4ceb",
+          "node/declarations/ClientOptions.d.ts": "eca1e0a206473daed1643b9c38d96c2c4dbfb3eeb7148f4a3355b1301e299b5c",
+          "node/descriptor-source.d.ts": "6d3e4979aee2899d25edf220c88c4cef3fff53f0c3aea9c8040f0db3fce58bf2",
+          "node/descriptor-source.js": "1ff78e81de414d2463a3593d0f06a979fcd635168c36f4c7ffce2a356defac59",
+          "node/descriptors/data.js": "7cbae2d6d78392a9d7bb353a3fba17da2f1b71eec73a2cf8f584947c2ef3df51",
+          "node/descriptors/modules.json": "e2f22b0c1fe7e69f09166499caffdc9415c692e4f0683eaed438df58c2b4d565",
+          "node/descriptors/resources/api.js": "c3239268d764bcd1b85c15f7da6d19b70da07ff0226c8ad597ef9719db81a0aa",
+          "node/descriptors/root.js": "00467d2bbcd731a213c7ed51d1570065349e00c80be48a5e927bf76e65b63311",
+          "node/descriptors/settings.js": "130373e1d8e2b601adb66594b42842e8d2b49f597cfbdefe5002576eaee4dd7b",
+          "node/diagnostic.d.ts": "370d2d0f8856f8cb0eb97a125918fcd3cad8cca21b7668dfcb7431e3d7d507ad",
+          "node/diagnostic.js": "4e606237ee92eb9840d8528fdc8d0e817adb723314da75686bdb1c523efacd88",
+          "node/examples/api-sendB.mjs": "11b8a0cb1156583917c04c32d7d6161bb9a891a257c30e8a87040764a63a626c",
+          "node/examples/api-sendB.ts": "11b8a0cb1156583917c04c32d7d6161bb9a891a257c30e8a87040764a63a626c",
+          "node/index.d.ts": "8e2749ac9a8da22a882f34d4119add5c13176743c7ad3e4fd907e580befc666c",
+          "node/index.js": "5789e3722e3367ff889e93256e8d1f4dcc903d11681b27474617ea46eb72ccb5",
+          "node/LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "node/MODELS.md": "3eb7be3460342d75b8778eb5814bc795ee4b3e1016f474e53019fc31bc3dfe4f",
+          "node/package-plan.js": "d347d7e35337461f5ab800148db56a2ada7f1fda1e5e7cb724c1d1a2d198886a",
+          "node/package.json": "26b6d27aca4d7f7e0f8c5405e11f71861649121eac6fc23f79a03f06032def2d",
+          "node/php-value-plan.d.ts": "cbb6c600506bbe896a148024a4c708e29b8cb8cc549f73630d2fb9d44319517a",
+          "node/php-value-plan.js": "e8fddf38a104f61bc53aa425dd51102dad38cf2ad5f0ea2b414c982a61fabf9f",
+          "node/README.md": "b7dcf434a63ef4bf0943ca01d3b677d2fb6eb36144d4399af53e3f816a69a1b3",
+          "node/REFERENCE.md": "9974c4d5034d0e8c0b43ddf84c73a51bc0ec26d0dc81382ac19dc2b2b2c5730f",
+          "node/request-style.d.ts": "ead4ed1d50c0721ea14b389f5e1becda201b695de4398e1e53e9e37fab778edf",
+          "node/resources/api.d.ts": "dc9b9926eae704976719f4e7cf0f0d9924f39e210ba2d0d1dc57f8ea6cf20e7e",
+          "node/resources/api.js": "bf8e11c593128bbfc21b6a1454d7f22356515c2cf291606c2bbcb61eb0181dcc",
+          "node/response-return.d.ts": "2929ddbbb0fa934329349c26da37faedd25b2671ccf6ec7098c67158e2e38c78",
+          "node/runtime-plan.d.ts": "e3e8f8a79170ee09cc1564d4151dd0164e0312425d94f1b25717fee8412ff723",
+          "node/runtime-plan.js": "797b1048cfb1fac753256ce8bd0d2af4c820bab54efa04b733d5f01f54c9ea02",
+          "node/runtime.d.ts": "8bd2c2fa93926cce93752547f1e629affc180677505125abb9eeaf71b4a5dccb",
+          "node/runtime.js": "d2996c281e68af8b7b62034e778ca74094eeb266d0faad044c424cc2c088e5a4",
+          "node/RUNTIME.md": "a9f789dbe71712a94a2cc4e8959fb05be3b967b363d3befb1d29c56c9ee09eaf"
+        },
+        "generator": "0.1.0",
+        "interface": {
+          "apiVersion": "1",
+          "config": {
+            "composer": {
+              "name": "synthetic/operation-publication",
+              "namespace": "SyntheticPublication"
+            },
+            "npm": { "name": "synthetic-operation-publication" },
+            "numericUnions": "explicit",
+            "requests": { "style": "object" },
+            "responses": { "return": "result" },
+            "schemaSharing": "named",
+            "targets": ["node"],
+            "version": "1.0.0"
+          },
+          "definitions": {},
+          "hash": "8dc53a89464490b423085c804b4df0e20842356f9866cd9c801f2b46201b6453",
+          "modelDependencies": { "sendB": [] },
+          "models": {},
+          "operations": [
+            {
+              "authenticated": false,
+              "body": {
+                "properties": {
+                  "value": {
+                    "example": "SYNTHETIC_OPERATION_EXAMPLE",
+                    "type": "string",
+                    "x-sensitive": true
+                  }
+                },
+                "required": ["value"],
+                "type": "object"
+              },
+              "bodyRequired": true,
+              "description": "",
+              "id": "sendB",
+              "mediaType": "application/json",
+              "method": "sendB",
+              "parameters": [],
+              "path": "/b",
+              "resource": "api",
+              "responses": { "204": { "bodyKind": "empty", "classification": "success" } },
+              "verb": "POST"
+            }
+          ],
+          "sources": {
+            "api.json": "6bede2bb619c80a381b79cd54af5a6527260ffe53c8f590d6c8b1bd1e044d1db",
+            "sdk.json": "25fe743100ce46c6871e65d6f415bebded92f567d28d6713dde3e5cee08753b0"
+          },
+          "title": "Synthetic operation publication"
+        },
+        "recordVersion": 2,
+        "sources": {
+          "api.json": "6bede2bb619c80a381b79cd54af5a6527260ffe53c8f590d6c8b1bd1e044d1db",
+          "sdk.json": "25fe743100ce46c6871e65d6f415bebded92f567d28d6713dde3e5cee08753b0"
+        }
+      }
+    },
+    {
+      "targets": ["php"],
+      "sensitive": false,
+      "api": {
+        "openapi": "3.1.1",
+        "info": { "title": "Synthetic operation publication", "version": "1" },
+        "paths": {
+          "/b": {
+            "post": {
+              "operationId": "sendB",
+              "requestBody": {
+                "required": true,
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "type": "object",
+                      "required": ["value"],
+                      "properties": {
+                        "value": { "type": "string", "example": "SYNTHETIC_OPERATION_EXAMPLE" }
+                      }
+                    }
+                  }
+                }
+              },
+              "responses": { "204": { "description": "Synthetic empty response" } }
+            }
+          }
+        }
+      },
+      "config": {
+        "version": "1.0.0",
+        "targets": ["php"],
+        "requests": { "style": "object" },
+        "responses": { "return": "result" },
+        "npm": { "name": "synthetic-operation-publication" },
+        "composer": {
+          "name": "synthetic/operation-publication",
+          "namespace": "SyntheticPublication"
+        }
+      },
+      "record": {
+        "compatibility": [],
+        "compiled": {
+          "encoding": "shared-json-v1",
+          "nodes": [
+            {
+              "entries": [
+                ["nodeInput", "{ \"body\": { \"value\": string; }; }"],
+                ["nodeOutput", "undefined"],
+                ["phpInput", "array{'body': array{'value': string, ...}|object}"],
+                ["phpOutput", "null"],
+                ["reserveKnown", false]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["sendB", { "ref": 0 }]], "kind": "object" },
+            {
+              "entries": [
+                [
+                  "declaration",
+                  "export type ClientOptions = Omit<RuntimeClientOptions, 'baseUrl'> & { baseUrl: string; };\n"
+                ],
+                ["optional", false]
+              ],
+              "kind": "object"
+            },
+            { "entries": [], "kind": "object" },
+            {
+              "entries": [
+                [
+                  "documentedInput",
+                  "{ \"body\": InputValue<{ /** Example: \"SYNTHETIC_OPERATION_EXAMPLE\". */ \"value\": string; }>; }"
+                ],
+                ["idempotencyKey", false],
+                ["input", "{ \"body\": InputValue<{ \"value\": string; }>; }"],
+                ["inputRequired", true],
+                ["items", "never"],
+                ["output", "undefined"],
+                ["requestOptions", "_SdkWithoutIdempotency<RequestOptions>"]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["sendB", { "ref": 4 }]], "kind": "object" },
+            {
+              "entries": [
+                ["clientOptions", { "ref": 2 }],
+                ["eventType", "never"],
+                ["models", { "ref": 3 }],
+                ["operations", { "ref": 5 }]
+              ],
+              "kind": "object"
+            },
+            { "items": [], "kind": "array" },
+            { "entries": [["kind", "dynamic"]], "kind": "object" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", true],
+                ["nullable", true],
+                ["objectOnlyAlternative", true],
+                ["reference", "SharedCodec0"],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 7 }],
+                ["requiredOutput", { "ref": 7 }],
+                ["sensitive", false],
+                ["value", { "ref": 8 }]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["doc", "array{'value': string, ...}|object"],
+                ["field", "body"],
+                ["method", "getBody"],
+                ["type", "array|object"]
+              ],
+              "kind": "object"
+            },
+            { "items": [{ "ref": 10 }], "kind": "array" },
+            {
+              "entries": [
+                ["codec", { "ref": 9 }],
+                ["constructorDoc", "array{'body': array{'value': string, ...}|object}|object"],
+                ["constructorType", "array|object"],
+                ["defaultObject", true],
+                ["getters", { "ref": 11 }],
+                ["name", "ApiSendBInput"],
+                ["response", false]
+              ],
+              "kind": "object"
+            },
+            { "items": [{ "ref": 12 }], "kind": "array" },
+            {
+              "entries": [
+                ["items", "mixed"],
+                ["output", "null"]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["sendB", { "ref": 14 }]], "kind": "object" },
+            { "entries": [["kind", "string"]], "kind": "object" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", false],
+                ["nullable", false],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 7 }],
+                ["requiredOutput", { "ref": 7 }],
+                ["sensitive", false],
+                ["value", { "ref": 16 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["value", { "ref": 17 }]], "kind": "object" },
+            { "items": ["value"], "kind": "array" },
+            { "entries": [["kind", "object"]], "kind": "object" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["fields", { "ref": 18 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", true],
+                ["nullable", false],
+                ["objectOnlyAlternative", true],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 19 }],
+                ["requiredOutput", { "ref": 19 }],
+                ["sensitive", false],
+                ["value", { "ref": 20 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["body", { "ref": 21 }]], "kind": "object" },
+            { "items": ["body"], "kind": "array" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["extra", false],
+                ["fields", { "ref": 22 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", true],
+                ["nullable", false],
+                ["objectOnlyAlternative", true],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 23 }],
+                ["requiredOutput", { "ref": 23 }],
+                ["sensitive", false],
+                ["value", { "ref": 20 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["SharedCodec0", { "ref": 24 }]], "kind": "object" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["constraints", false],
+                ["fields", { "ref": 18 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", true],
+                ["nullable", false],
+                ["objectOnlyAlternative", true],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 19 }],
+                ["requiredOutput", { "ref": 19 }],
+                ["sensitive", false],
+                ["value", { "ref": 20 }]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["bodyKind", "empty"],
+                ["classification", "success"]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["204", { "ref": 27 }]], "kind": "object" },
+            {
+              "entries": [
+                ["baseDelayMs", 100],
+                ["maxAttempts", 1],
+                ["statuses", { "ref": 7 }],
+                ["transport", false]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["authenticated", false],
+                ["body", { "ref": 26 }],
+                ["bodyRequired", true],
+                ["description", ""],
+                ["id", "sendB"],
+                ["mediaType", "application/json"],
+                ["method", "sendB"],
+                ["parameters", { "ref": 7 }],
+                ["path", "/b"],
+                ["replay", "idempotency"],
+                ["resource", "api"],
+                ["responses", { "ref": 28 }],
+                ["retry", { "ref": 29 }],
+                ["verb", "POST"]
+              ],
+              "kind": "object"
+            },
+            { "items": [{ "ref": 30 }], "kind": "array" },
+            {
+              "entries": [
+                ["definitions", { "ref": 25 }],
+                ["format", 1],
+                ["operations", { "ref": 31 }],
+                ["retrySemantics", "budgets-1"],
+                ["semantics", "4"],
+                ["validation", "encoding"]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["eventModels", { "ref": 3 }],
+                ["models", { "ref": 13 }],
+                ["operations", { "ref": 15 }],
+                ["runtime", { "ref": 32 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["metadata", { "ref": 3 }]], "kind": "object" },
+            { "entries": [["example", "SYNTHETIC_OPERATION_EXAMPLE"]], "kind": "object" },
+            { "entries": [["metadata", { "ref": 35 }]], "kind": "object" },
+            { "items": ["string"], "kind": "array" },
+            {
+              "entries": [
+                ["exact", false],
+                ["label", "string"]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["annotations", { "ref": 36 }],
+                ["checks", { "ref": 3 }],
+                ["compositions", { "ref": 3 }],
+                ["fields", { "ref": 3 }],
+                ["kinds", { "ref": 37 }],
+                ["nullOnlyInput", false],
+                ["requiredKeys", { "ref": 7 }],
+                ["wire", { "ref": 38 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["value", { "ref": 39 }]], "kind": "object" },
+            { "items": ["object"], "kind": "array" },
+            {
+              "entries": [
+                ["exact", false],
+                ["label", "object"]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["annotations", { "ref": 34 }],
+                ["checks", { "ref": 3 }],
+                ["compositions", { "ref": 3 }],
+                ["fields", { "ref": 40 }],
+                ["kinds", { "ref": 41 }],
+                ["nullOnlyInput", false],
+                ["requiredKeys", { "ref": 19 }],
+                ["wire", { "ref": 42 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["body", { "ref": 43 }]], "kind": "object" },
+            {
+              "entries": [
+                ["annotations", { "ref": 34 }],
+                ["checks", { "ref": 3 }],
+                ["compositions", { "ref": 3 }],
+                ["extra", false],
+                ["fields", { "ref": 44 }],
+                ["kinds", { "ref": 41 }],
+                ["nullOnlyInput", false],
+                ["requiredKeys", { "ref": 23 }],
+                ["wire", { "ref": 42 }]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["input", { "ref": 45 }],
+                ["responses", { "ref": 3 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["sendB", { "ref": 46 }]], "kind": "object" },
+            {
+              "entries": [
+                ["definitions", { "ref": 3 }],
+                ["models", { "ref": 3 }],
+                ["operations", { "ref": 47 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["204", { "ref": 3 }]], "kind": "object" },
+            { "entries": [["sendB", { "ref": 49 }]], "kind": "object" },
+            { "items": ["php"], "kind": "array" },
+            {
+              "entries": [
+                ["documentation", { "ref": 1 }],
+                ["format", 1],
+                ["node", { "ref": 6 }],
+                ["php", { "ref": 33 }],
+                ["policy", { "ref": 48 }],
+                ["responses", { "ref": 50 }],
+                ["runtime", { "ref": 32 }],
+                ["semantics", "4/results-1/php-entities-1"],
+                ["targets", { "ref": 51 }]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["php", "b1730cd83879fe7ef12b72e2393c369a313e701dddb3da788de1fe7ecf64b901"]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["plan", { "ref": 52 }],
+                ["runtimeIdentity", { "ref": 53 }]
+              ],
+              "kind": "object"
+            }
+          ],
+          "root": { "ref": 54 }
+        },
+        "contractHash": "1fd9bcaa91de449c58dfc86f3e39f431b6b6569135888cd1cdf2d5af4f942637",
+        "files": {
+          "php/composer.json": "9433e6680243a64063af23ee675de9dde134674b1b38128e39f98237b0ac0fd5",
+          "php/custom/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "php/examples/api-sendB.php": "1a468c40e77e7c6d0ea30357382000ed86096e5c16601ea76c9495242894137e",
+          "php/LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "php/MODELS.md": "3eb7be3460342d75b8778eb5814bc795ee4b3e1016f474e53019fc31bc3dfe4f",
+          "php/README.md": "035e4ec6d87bf535169048efaebe588a76b5916e5fb5e60c6a87b5c77fd7b20f",
+          "php/REFERENCE.md": "521abedf5b1bff466d128ae9d2ab08eaaac4b41345a95e8f8c1286124c47f9aa",
+          "php/RUNTIME.md": "2e815074ff7e95d1a3719ccbc1f6ac7b6cdd36646f4d94482df1120928b7660f",
+          "php/src/autoload.php": "e124e0f2a5cd960f2462bd5a38a0699af65ed76959daee8560136ac9fbbc4bed",
+          "php/src/classes/ApiResource.php": "4ae230db5cdd7a7597daba05f376e255661f10c778b2b86aeacfbd213140f0d8",
+          "php/src/classes/ApiSendBInput.php": "b87cb49bd7f9f4d880e181eb70d84a73a0603736f0fbb3b4a658bba24d5165f2",
+          "php/src/classes/ByteStream.php": "eb4ed226e4fbc643c53d8a8cd3f57477416967dddaad2d90772ee4d26ede2c34",
+          "php/src/classes/Cancellation.php": "3bbd95862ef115e9f43988d9ee4c38f4e2ffd4002e6f01d145d25f637224b54a",
+          "php/src/classes/Client.php": "afeb042dd18fe00a6d7430b2cc2fc9ebec8773c8075a625ea72567535535183c",
+          "php/src/classes/ClientOptions.php": "7ec83976ecdbb35310055cc4326f33f506644be01d4b507a621bf59806b53299",
+          "php/src/classes/Codec.php": "fce567e0b65d1e9fb9687e641b443d796db1cd91c214d0a968280825aabe35a9",
+          "php/src/classes/CurlByteStream.php": "a4cbf5a3affad9169b636b1a7f576bee56ff5c2f6275040ab410c4412bc21a6f",
+          "php/src/classes/EventStream.php": "7dd4b623f1d8c9ece3c90b3005ebadb9c66d9000dc61a90fb984e2437ba3e55f",
+          "php/src/classes/ExactNumber.php": "f749600978ac2057297162224972b9c7bd9c9aa0726baa6a58dc0ad899fe6e2d",
+          "php/src/classes/Internal/DescriptorSource.php": "bddda5e392c7316f892bce013234e490d7c76068011716e767ee2996df48533e",
+          "php/src/classes/Model.php": "7e769307047256a925944824760bcd4c0951626eddf3c59f1fdc9699ec7ba0aa",
+          "php/src/classes/ParsedNumber.php": "80403eaf41f3da85f5b8fb5c431570cbbf86c223667d3a3f79960bfbcb0a8703",
+          "php/src/classes/RawNumber.php": "6144a91fe907cfa223b675f25521cbe6c0d422badebbe27daff0541a4f4f1378",
+          "php/src/classes/RequestOptions.php": "5edddc895e97813965f12ca102493d9be0f72f41f05147b64fbb8175618f5fd4",
+          "php/src/classes/Result.php": "60e2015b4641d147ff18ce6e0b9d23b71a03e779eddda8a70aed98a6726857b7",
+          "php/src/classes/Runtime.php": "a47c61947a2ce7b05e039324cbbe5e667d3c1d3fa4f152e8dc46ad22aa134115",
+          "php/src/classes/SchemaRegistry.php": "78e5f364d7e52e879d8207cc42cadab6fb39ca1e61ff253641d99881232ad8c4",
+          "php/src/classes/SdkError.php": "a5329c08324d3dab9949126d594b62e108b203366a4ce315fb06ab7747a35dbe",
+          "php/src/classes/ServerSentEvent.php": "0e032bd493c0617fe6d79ad495a94796efb0c3fb8bc7179852d60c2ff8295d99",
+          "php/src/Client.php": "ff72be62f115d5c2ba0ffe5bfb6835b885213fe07772b8b6992c502237307758",
+          "php/src/descriptors/codecs/b54d4d0f04efd116f47ce1e9d50abba2afaf9828bcf41e048fce7b2fb9231eb8.json": "37595f6ce3f3cd28c28386100ec9209782ad5e241104719d7aed7ce2f54fadbc",
+          "php/src/descriptors/compatibility.json": "9201c846dc041fffde561e05caabee0689162ab554f7550819f100faaa0650ca",
+          "php/src/descriptors/models.json": "a0a728525aed3c5ed4b7e926d3d1c688f0ec8f5497da88de64b9cb07b6c3b7a2",
+          "php/src/descriptors/models/ApiSendBInput.json": "6ea527ebe7e771f5c791c143fc785405ba389e4aa495d3d9b1be2764c6b45251",
+          "php/src/descriptors/resources/api.json": "c5c61f1087644af9cb494ba5b123bbbfee93ca4421745da9a9ba1104afded4ae",
+          "php/src/descriptors/routes.json": "348402c05a5e7cf9d9bab254b0bb2a5de828f8df646baf013bed57b638f545cb",
+          "php/src/descriptors/settings.json": "48dad87a421d3a2595675b8272762661df3fcd96276075b1decb526f4b956879",
+          "php/src/Runtime.php": "ff72be62f115d5c2ba0ffe5bfb6835b885213fe07772b8b6992c502237307758",
+          "php/src/schema-definitions.json": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+          "php/src/SchemaAdapter.php": "7ee8651e64cda295ad6fca89b5c089f03a26f577b487667268fcf10322a7a6f7"
+        },
+        "generator": "0.1.0",
+        "interface": {
+          "apiVersion": "1",
+          "config": {
+            "composer": {
+              "name": "synthetic/operation-publication",
+              "namespace": "SyntheticPublication"
+            },
+            "npm": { "name": "synthetic-operation-publication" },
+            "numericUnions": "explicit",
+            "requests": { "style": "object" },
+            "responses": { "return": "result" },
+            "schemaSharing": "named",
+            "targets": ["php"],
+            "version": "1.0.0"
+          },
+          "definitions": {},
+          "hash": "1fd9bcaa91de449c58dfc86f3e39f431b6b6569135888cd1cdf2d5af4f942637",
+          "modelDependencies": { "sendB": [] },
+          "models": {},
+          "operations": [
+            {
+              "authenticated": false,
+              "body": {
+                "properties": {
+                  "value": { "example": "SYNTHETIC_OPERATION_EXAMPLE", "type": "string" }
+                },
+                "required": ["value"],
+                "type": "object"
+              },
+              "bodyRequired": true,
+              "description": "",
+              "id": "sendB",
+              "mediaType": "application/json",
+              "method": "sendB",
+              "parameters": [],
+              "path": "/b",
+              "resource": "api",
+              "responses": { "204": { "bodyKind": "empty", "classification": "success" } },
+              "verb": "POST"
+            }
+          ],
+          "sources": {
+            "api.json": "bcbde13dcbaf2bcdb69521233b97fc0ac04527fa003ddccc7f51a2b048f468f1",
+            "sdk.json": "ccb6da51b3f3bc1b523b0e43981cba798e1643d6b142903eb765f9c95eadab79"
+          },
+          "title": "Synthetic operation publication"
+        },
+        "recordVersion": 2,
+        "sources": {
+          "api.json": "bcbde13dcbaf2bcdb69521233b97fc0ac04527fa003ddccc7f51a2b048f468f1",
+          "sdk.json": "ccb6da51b3f3bc1b523b0e43981cba798e1643d6b142903eb765f9c95eadab79"
+        }
+      }
+    },
+    {
+      "targets": ["php"],
+      "sensitive": true,
+      "api": {
+        "openapi": "3.1.1",
+        "info": { "title": "Synthetic operation publication", "version": "1" },
+        "paths": {
+          "/b": {
+            "post": {
+              "operationId": "sendB",
+              "requestBody": {
+                "required": true,
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "type": "object",
+                      "required": ["value"],
+                      "properties": {
+                        "value": {
+                          "type": "string",
+                          "example": "SYNTHETIC_OPERATION_EXAMPLE",
+                          "x-sensitive": true
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "responses": { "204": { "description": "Synthetic empty response" } }
+            }
+          }
+        }
+      },
+      "config": {
+        "version": "1.0.0",
+        "targets": ["php"],
+        "requests": { "style": "object" },
+        "responses": { "return": "result" },
+        "npm": { "name": "synthetic-operation-publication" },
+        "composer": {
+          "name": "synthetic/operation-publication",
+          "namespace": "SyntheticPublication"
+        }
+      },
+      "record": {
+        "compatibility": [],
+        "compiled": {
+          "encoding": "shared-json-v1",
+          "nodes": [
+            {
+              "entries": [
+                ["nodeInput", "{ \"body\": { \"value\": string; }; }"],
+                ["nodeOutput", "undefined"],
+                ["phpInput", "array{'body': array{'value': string, ...}|object}"],
+                ["phpOutput", "null"],
+                ["reserveKnown", false]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["sendB", { "ref": 0 }]], "kind": "object" },
+            {
+              "entries": [
+                [
+                  "declaration",
+                  "export type ClientOptions = Omit<RuntimeClientOptions, 'baseUrl'> & { baseUrl: string; };\n"
+                ],
+                ["optional", false]
+              ],
+              "kind": "object"
+            },
+            { "entries": [], "kind": "object" },
+            {
+              "entries": [
+                [
+                  "documentedInput",
+                  "{ \"body\": InputValue<{ /** Example: \"SYNTHETIC_OPERATION_EXAMPLE\". */ \"value\": string; }>; }"
+                ],
+                ["idempotencyKey", false],
+                ["input", "{ \"body\": InputValue<{ \"value\": string; }>; }"],
+                ["inputRequired", true],
+                ["items", "never"],
+                ["output", "undefined"],
+                ["requestOptions", "_SdkWithoutIdempotency<RequestOptions>"]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["sendB", { "ref": 4 }]], "kind": "object" },
+            {
+              "entries": [
+                ["clientOptions", { "ref": 2 }],
+                ["eventType", "never"],
+                ["models", { "ref": 3 }],
+                ["operations", { "ref": 5 }]
+              ],
+              "kind": "object"
+            },
+            { "items": [], "kind": "array" },
+            { "entries": [["kind", "dynamic"]], "kind": "object" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", true],
+                ["nullable", true],
+                ["objectOnlyAlternative", true],
+                ["reference", "SharedCodec0"],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 7 }],
+                ["requiredOutput", { "ref": 7 }],
+                ["sensitive", false],
+                ["value", { "ref": 8 }]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["doc", "array{'value': string, ...}|object"],
+                ["field", "body"],
+                ["method", "getBody"],
+                ["type", "array|object"]
+              ],
+              "kind": "object"
+            },
+            { "items": [{ "ref": 10 }], "kind": "array" },
+            {
+              "entries": [
+                ["codec", { "ref": 9 }],
+                ["constructorDoc", "array{'body': array{'value': string, ...}|object}|object"],
+                ["constructorType", "array|object"],
+                ["defaultObject", true],
+                ["getters", { "ref": 11 }],
+                ["name", "ApiSendBInput"],
+                ["response", false]
+              ],
+              "kind": "object"
+            },
+            { "items": [{ "ref": 12 }], "kind": "array" },
+            {
+              "entries": [
+                ["items", "mixed"],
+                ["output", "null"]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["sendB", { "ref": 14 }]], "kind": "object" },
+            { "entries": [["kind", "string"]], "kind": "object" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", false],
+                ["nullable", false],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 7 }],
+                ["requiredOutput", { "ref": 7 }],
+                ["sensitive", true],
+                ["value", { "ref": 16 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["value", { "ref": 17 }]], "kind": "object" },
+            { "items": ["value"], "kind": "array" },
+            { "entries": [["kind", "object"]], "kind": "object" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["fields", { "ref": 18 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", true],
+                ["nullable", false],
+                ["objectOnlyAlternative", true],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 19 }],
+                ["requiredOutput", { "ref": 19 }],
+                ["sensitive", false],
+                ["value", { "ref": 20 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["body", { "ref": 21 }]], "kind": "object" },
+            { "items": ["body"], "kind": "array" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["extra", false],
+                ["fields", { "ref": 22 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", true],
+                ["nullable", false],
+                ["objectOnlyAlternative", true],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 23 }],
+                ["requiredOutput", { "ref": 23 }],
+                ["sensitive", false],
+                ["value", { "ref": 20 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["SharedCodec0", { "ref": 24 }]], "kind": "object" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["constraints", false],
+                ["fields", { "ref": 18 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", true],
+                ["nullable", false],
+                ["objectOnlyAlternative", true],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 19 }],
+                ["requiredOutput", { "ref": 19 }],
+                ["sensitive", false],
+                ["value", { "ref": 20 }]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["bodyKind", "empty"],
+                ["classification", "success"]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["204", { "ref": 27 }]], "kind": "object" },
+            {
+              "entries": [
+                ["baseDelayMs", 100],
+                ["maxAttempts", 1],
+                ["statuses", { "ref": 7 }],
+                ["transport", false]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["authenticated", false],
+                ["body", { "ref": 26 }],
+                ["bodyRequired", true],
+                ["description", ""],
+                ["id", "sendB"],
+                ["mediaType", "application/json"],
+                ["method", "sendB"],
+                ["parameters", { "ref": 7 }],
+                ["path", "/b"],
+                ["replay", "idempotency"],
+                ["resource", "api"],
+                ["responses", { "ref": 28 }],
+                ["retry", { "ref": 29 }],
+                ["verb", "POST"]
+              ],
+              "kind": "object"
+            },
+            { "items": [{ "ref": 30 }], "kind": "array" },
+            {
+              "entries": [
+                ["definitions", { "ref": 25 }],
+                ["format", 1],
+                ["operations", { "ref": 31 }],
+                ["retrySemantics", "budgets-1"],
+                ["semantics", "4"],
+                ["validation", "encoding"]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["eventModels", { "ref": 3 }],
+                ["models", { "ref": 13 }],
+                ["operations", { "ref": 15 }],
+                ["runtime", { "ref": 32 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["metadata", { "ref": 3 }]], "kind": "object" },
+            { "entries": [["example", "SYNTHETIC_OPERATION_EXAMPLE"]], "kind": "object" },
+            {
+              "entries": [
+                ["metadata", { "ref": 35 }],
+                ["sensitive", true]
+              ],
+              "kind": "object"
+            },
+            { "items": ["string"], "kind": "array" },
+            {
+              "entries": [
+                ["exact", false],
+                ["label", "string"]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["annotations", { "ref": 36 }],
+                ["checks", { "ref": 3 }],
+                ["compositions", { "ref": 3 }],
+                ["fields", { "ref": 3 }],
+                ["kinds", { "ref": 37 }],
+                ["nullOnlyInput", false],
+                ["requiredKeys", { "ref": 7 }],
+                ["wire", { "ref": 38 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["value", { "ref": 39 }]], "kind": "object" },
+            { "items": ["object"], "kind": "array" },
+            {
+              "entries": [
+                ["exact", false],
+                ["label", "object"]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["annotations", { "ref": 34 }],
+                ["checks", { "ref": 3 }],
+                ["compositions", { "ref": 3 }],
+                ["fields", { "ref": 40 }],
+                ["kinds", { "ref": 41 }],
+                ["nullOnlyInput", false],
+                ["requiredKeys", { "ref": 19 }],
+                ["wire", { "ref": 42 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["body", { "ref": 43 }]], "kind": "object" },
+            {
+              "entries": [
+                ["annotations", { "ref": 34 }],
+                ["checks", { "ref": 3 }],
+                ["compositions", { "ref": 3 }],
+                ["extra", false],
+                ["fields", { "ref": 44 }],
+                ["kinds", { "ref": 41 }],
+                ["nullOnlyInput", false],
+                ["requiredKeys", { "ref": 23 }],
+                ["wire", { "ref": 42 }]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["input", { "ref": 45 }],
+                ["responses", { "ref": 3 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["sendB", { "ref": 46 }]], "kind": "object" },
+            {
+              "entries": [
+                ["definitions", { "ref": 3 }],
+                ["models", { "ref": 3 }],
+                ["operations", { "ref": 47 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["204", { "ref": 3 }]], "kind": "object" },
+            { "entries": [["sendB", { "ref": 49 }]], "kind": "object" },
+            { "items": ["php"], "kind": "array" },
+            {
+              "entries": [
+                ["documentation", { "ref": 1 }],
+                ["format", 1],
+                ["node", { "ref": 6 }],
+                ["php", { "ref": 33 }],
+                ["policy", { "ref": 48 }],
+                ["responses", { "ref": 50 }],
+                ["runtime", { "ref": 32 }],
+                ["semantics", "4/results-1/php-entities-1"],
+                ["targets", { "ref": 51 }]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["php", "b1730cd83879fe7ef12b72e2393c369a313e701dddb3da788de1fe7ecf64b901"]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["plan", { "ref": 52 }],
+                ["runtimeIdentity", { "ref": 53 }]
+              ],
+              "kind": "object"
+            }
+          ],
+          "root": { "ref": 54 }
+        },
+        "contractHash": "e1682f540c844b3316a2fa6efb24188fff673b7609b1bd0ec7c6d6728d667d66",
+        "files": {
+          "php/composer.json": "9433e6680243a64063af23ee675de9dde134674b1b38128e39f98237b0ac0fd5",
+          "php/custom/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "php/examples/api-sendB.php": "1a468c40e77e7c6d0ea30357382000ed86096e5c16601ea76c9495242894137e",
+          "php/LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "php/MODELS.md": "3eb7be3460342d75b8778eb5814bc795ee4b3e1016f474e53019fc31bc3dfe4f",
+          "php/README.md": "035e4ec6d87bf535169048efaebe588a76b5916e5fb5e60c6a87b5c77fd7b20f",
+          "php/REFERENCE.md": "521abedf5b1bff466d128ae9d2ab08eaaac4b41345a95e8f8c1286124c47f9aa",
+          "php/RUNTIME.md": "2e815074ff7e95d1a3719ccbc1f6ac7b6cdd36646f4d94482df1120928b7660f",
+          "php/src/autoload.php": "e124e0f2a5cd960f2462bd5a38a0699af65ed76959daee8560136ac9fbbc4bed",
+          "php/src/classes/ApiResource.php": "4ae230db5cdd7a7597daba05f376e255661f10c778b2b86aeacfbd213140f0d8",
+          "php/src/classes/ApiSendBInput.php": "b87cb49bd7f9f4d880e181eb70d84a73a0603736f0fbb3b4a658bba24d5165f2",
+          "php/src/classes/ByteStream.php": "eb4ed226e4fbc643c53d8a8cd3f57477416967dddaad2d90772ee4d26ede2c34",
+          "php/src/classes/Cancellation.php": "3bbd95862ef115e9f43988d9ee4c38f4e2ffd4002e6f01d145d25f637224b54a",
+          "php/src/classes/Client.php": "afeb042dd18fe00a6d7430b2cc2fc9ebec8773c8075a625ea72567535535183c",
+          "php/src/classes/ClientOptions.php": "7ec83976ecdbb35310055cc4326f33f506644be01d4b507a621bf59806b53299",
+          "php/src/classes/Codec.php": "fce567e0b65d1e9fb9687e641b443d796db1cd91c214d0a968280825aabe35a9",
+          "php/src/classes/CurlByteStream.php": "a4cbf5a3affad9169b636b1a7f576bee56ff5c2f6275040ab410c4412bc21a6f",
+          "php/src/classes/EventStream.php": "7dd4b623f1d8c9ece3c90b3005ebadb9c66d9000dc61a90fb984e2437ba3e55f",
+          "php/src/classes/ExactNumber.php": "f749600978ac2057297162224972b9c7bd9c9aa0726baa6a58dc0ad899fe6e2d",
+          "php/src/classes/Internal/DescriptorSource.php": "bddda5e392c7316f892bce013234e490d7c76068011716e767ee2996df48533e",
+          "php/src/classes/Model.php": "7e769307047256a925944824760bcd4c0951626eddf3c59f1fdc9699ec7ba0aa",
+          "php/src/classes/ParsedNumber.php": "80403eaf41f3da85f5b8fb5c431570cbbf86c223667d3a3f79960bfbcb0a8703",
+          "php/src/classes/RawNumber.php": "6144a91fe907cfa223b675f25521cbe6c0d422badebbe27daff0541a4f4f1378",
+          "php/src/classes/RequestOptions.php": "5edddc895e97813965f12ca102493d9be0f72f41f05147b64fbb8175618f5fd4",
+          "php/src/classes/Result.php": "60e2015b4641d147ff18ce6e0b9d23b71a03e779eddda8a70aed98a6726857b7",
+          "php/src/classes/Runtime.php": "a47c61947a2ce7b05e039324cbbe5e667d3c1d3fa4f152e8dc46ad22aa134115",
+          "php/src/classes/SchemaRegistry.php": "78e5f364d7e52e879d8207cc42cadab6fb39ca1e61ff253641d99881232ad8c4",
+          "php/src/classes/SdkError.php": "a5329c08324d3dab9949126d594b62e108b203366a4ce315fb06ab7747a35dbe",
+          "php/src/classes/ServerSentEvent.php": "0e032bd493c0617fe6d79ad495a94796efb0c3fb8bc7179852d60c2ff8295d99",
+          "php/src/Client.php": "ff72be62f115d5c2ba0ffe5bfb6835b885213fe07772b8b6992c502237307758",
+          "php/src/descriptors/codecs/b54d4d0f04efd116f47ce1e9d50abba2afaf9828bcf41e048fce7b2fb9231eb8.json": "dd5000ec809b9b0b8dcbe3717a82beeba8c1519d377a3fa90d3d6b29f07698a8",
+          "php/src/descriptors/compatibility.json": "9201c846dc041fffde561e05caabee0689162ab554f7550819f100faaa0650ca",
+          "php/src/descriptors/models.json": "a0a728525aed3c5ed4b7e926d3d1c688f0ec8f5497da88de64b9cb07b6c3b7a2",
+          "php/src/descriptors/models/ApiSendBInput.json": "6ea527ebe7e771f5c791c143fc785405ba389e4aa495d3d9b1be2764c6b45251",
+          "php/src/descriptors/resources/api.json": "61740b15c56f9ab6d10a3c342ff1eb10bff508ae9729520a836cf997199c836c",
+          "php/src/descriptors/routes.json": "348402c05a5e7cf9d9bab254b0bb2a5de828f8df646baf013bed57b638f545cb",
+          "php/src/descriptors/settings.json": "48dad87a421d3a2595675b8272762661df3fcd96276075b1decb526f4b956879",
+          "php/src/Runtime.php": "ff72be62f115d5c2ba0ffe5bfb6835b885213fe07772b8b6992c502237307758",
+          "php/src/schema-definitions.json": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+          "php/src/SchemaAdapter.php": "7ee8651e64cda295ad6fca89b5c089f03a26f577b487667268fcf10322a7a6f7"
+        },
+        "generator": "0.1.0",
+        "interface": {
+          "apiVersion": "1",
+          "config": {
+            "composer": {
+              "name": "synthetic/operation-publication",
+              "namespace": "SyntheticPublication"
+            },
+            "npm": { "name": "synthetic-operation-publication" },
+            "numericUnions": "explicit",
+            "requests": { "style": "object" },
+            "responses": { "return": "result" },
+            "schemaSharing": "named",
+            "targets": ["php"],
+            "version": "1.0.0"
+          },
+          "definitions": {},
+          "hash": "e1682f540c844b3316a2fa6efb24188fff673b7609b1bd0ec7c6d6728d667d66",
+          "modelDependencies": { "sendB": [] },
+          "models": {},
+          "operations": [
+            {
+              "authenticated": false,
+              "body": {
+                "properties": {
+                  "value": {
+                    "example": "SYNTHETIC_OPERATION_EXAMPLE",
+                    "type": "string",
+                    "x-sensitive": true
+                  }
+                },
+                "required": ["value"],
+                "type": "object"
+              },
+              "bodyRequired": true,
+              "description": "",
+              "id": "sendB",
+              "mediaType": "application/json",
+              "method": "sendB",
+              "parameters": [],
+              "path": "/b",
+              "resource": "api",
+              "responses": { "204": { "bodyKind": "empty", "classification": "success" } },
+              "verb": "POST"
+            }
+          ],
+          "sources": {
+            "api.json": "6bede2bb619c80a381b79cd54af5a6527260ffe53c8f590d6c8b1bd1e044d1db",
+            "sdk.json": "ccb6da51b3f3bc1b523b0e43981cba798e1643d6b142903eb765f9c95eadab79"
+          },
+          "title": "Synthetic operation publication"
+        },
+        "recordVersion": 2,
+        "sources": {
+          "api.json": "6bede2bb619c80a381b79cd54af5a6527260ffe53c8f590d6c8b1bd1e044d1db",
+          "sdk.json": "ccb6da51b3f3bc1b523b0e43981cba798e1643d6b142903eb765f9c95eadab79"
+        }
+      }
+    },
+    {
+      "targets": ["node", "php"],
+      "sensitive": false,
+      "api": {
+        "openapi": "3.1.1",
+        "info": { "title": "Synthetic operation publication", "version": "1" },
+        "paths": {
+          "/b": {
+            "post": {
+              "operationId": "sendB",
+              "requestBody": {
+                "required": true,
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "type": "object",
+                      "required": ["value"],
+                      "properties": {
+                        "value": { "type": "string", "example": "SYNTHETIC_OPERATION_EXAMPLE" }
+                      }
+                    }
+                  }
+                }
+              },
+              "responses": { "204": { "description": "Synthetic empty response" } }
+            }
+          }
+        }
+      },
+      "config": {
+        "version": "1.0.0",
+        "targets": ["node", "php"],
+        "requests": { "style": "object" },
+        "responses": { "return": "result" },
+        "npm": { "name": "synthetic-operation-publication" },
+        "composer": {
+          "name": "synthetic/operation-publication",
+          "namespace": "SyntheticPublication"
+        }
+      },
+      "record": {
+        "compatibility": [],
+        "compiled": {
+          "encoding": "shared-json-v1",
+          "nodes": [
+            {
+              "entries": [
+                ["nodeInput", "{ \"body\": { \"value\": string; }; }"],
+                ["nodeOutput", "undefined"],
+                ["phpInput", "array{'body': array{'value': string, ...}|object}"],
+                ["phpOutput", "null"],
+                ["reserveKnown", false]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["sendB", { "ref": 0 }]], "kind": "object" },
+            {
+              "entries": [
+                [
+                  "declaration",
+                  "export type ClientOptions = Omit<RuntimeClientOptions, 'baseUrl'> & { baseUrl: string; };\n"
+                ],
+                ["optional", false]
+              ],
+              "kind": "object"
+            },
+            { "entries": [], "kind": "object" },
+            {
+              "entries": [
+                [
+                  "documentedInput",
+                  "{ \"body\": InputValue<{ /** Example: \"SYNTHETIC_OPERATION_EXAMPLE\". */ \"value\": string; }>; }"
+                ],
+                ["idempotencyKey", false],
+                ["input", "{ \"body\": InputValue<{ \"value\": string; }>; }"],
+                ["inputRequired", true],
+                ["items", "never"],
+                ["output", "undefined"],
+                ["requestOptions", "_SdkWithoutIdempotency<RequestOptions>"]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["sendB", { "ref": 4 }]], "kind": "object" },
+            {
+              "entries": [
+                ["clientOptions", { "ref": 2 }],
+                ["eventType", "never"],
+                ["models", { "ref": 3 }],
+                ["operations", { "ref": 5 }]
+              ],
+              "kind": "object"
+            },
+            { "items": [], "kind": "array" },
+            { "entries": [["kind", "dynamic"]], "kind": "object" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", true],
+                ["nullable", true],
+                ["objectOnlyAlternative", true],
+                ["reference", "SharedCodec0"],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 7 }],
+                ["requiredOutput", { "ref": 7 }],
+                ["sensitive", false],
+                ["value", { "ref": 8 }]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["doc", "array{'value': string, ...}|object"],
+                ["field", "body"],
+                ["method", "getBody"],
+                ["type", "array|object"]
+              ],
+              "kind": "object"
+            },
+            { "items": [{ "ref": 10 }], "kind": "array" },
+            {
+              "entries": [
+                ["codec", { "ref": 9 }],
+                ["constructorDoc", "array{'body': array{'value': string, ...}|object}|object"],
+                ["constructorType", "array|object"],
+                ["defaultObject", true],
+                ["getters", { "ref": 11 }],
+                ["name", "ApiSendBInput"],
+                ["response", false]
+              ],
+              "kind": "object"
+            },
+            { "items": [{ "ref": 12 }], "kind": "array" },
+            {
+              "entries": [
+                ["items", "mixed"],
+                ["output", "null"]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["sendB", { "ref": 14 }]], "kind": "object" },
+            { "entries": [["kind", "string"]], "kind": "object" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", false],
+                ["nullable", false],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 7 }],
+                ["requiredOutput", { "ref": 7 }],
+                ["sensitive", false],
+                ["value", { "ref": 16 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["value", { "ref": 17 }]], "kind": "object" },
+            { "items": ["value"], "kind": "array" },
+            { "entries": [["kind", "object"]], "kind": "object" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["fields", { "ref": 18 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", true],
+                ["nullable", false],
+                ["objectOnlyAlternative", true],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 19 }],
+                ["requiredOutput", { "ref": 19 }],
+                ["sensitive", false],
+                ["value", { "ref": 20 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["body", { "ref": 21 }]], "kind": "object" },
+            { "items": ["body"], "kind": "array" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["extra", false],
+                ["fields", { "ref": 22 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", true],
+                ["nullable", false],
+                ["objectOnlyAlternative", true],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 23 }],
+                ["requiredOutput", { "ref": 23 }],
+                ["sensitive", false],
+                ["value", { "ref": 20 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["SharedCodec0", { "ref": 24 }]], "kind": "object" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["constraints", false],
+                ["fields", { "ref": 18 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", true],
+                ["nullable", false],
+                ["objectOnlyAlternative", true],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 19 }],
+                ["requiredOutput", { "ref": 19 }],
+                ["sensitive", false],
+                ["value", { "ref": 20 }]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["bodyKind", "empty"],
+                ["classification", "success"]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["204", { "ref": 27 }]], "kind": "object" },
+            {
+              "entries": [
+                ["baseDelayMs", 100],
+                ["maxAttempts", 1],
+                ["statuses", { "ref": 7 }],
+                ["transport", false]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["authenticated", false],
+                ["body", { "ref": 26 }],
+                ["bodyRequired", true],
+                ["description", ""],
+                ["id", "sendB"],
+                ["mediaType", "application/json"],
+                ["method", "sendB"],
+                ["parameters", { "ref": 7 }],
+                ["path", "/b"],
+                ["replay", "idempotency"],
+                ["resource", "api"],
+                ["responses", { "ref": 28 }],
+                ["retry", { "ref": 29 }],
+                ["verb", "POST"]
+              ],
+              "kind": "object"
+            },
+            { "items": [{ "ref": 30 }], "kind": "array" },
+            {
+              "entries": [
+                ["definitions", { "ref": 25 }],
+                ["format", 1],
+                ["operations", { "ref": 31 }],
+                ["retrySemantics", "budgets-1"],
+                ["semantics", "4"],
+                ["validation", "encoding"]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["eventModels", { "ref": 3 }],
+                ["models", { "ref": 13 }],
+                ["operations", { "ref": 15 }],
+                ["runtime", { "ref": 32 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["metadata", { "ref": 3 }]], "kind": "object" },
+            { "entries": [["example", "SYNTHETIC_OPERATION_EXAMPLE"]], "kind": "object" },
+            { "entries": [["metadata", { "ref": 35 }]], "kind": "object" },
+            { "items": ["string"], "kind": "array" },
+            {
+              "entries": [
+                ["exact", false],
+                ["label", "string"]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["annotations", { "ref": 36 }],
+                ["checks", { "ref": 3 }],
+                ["compositions", { "ref": 3 }],
+                ["fields", { "ref": 3 }],
+                ["kinds", { "ref": 37 }],
+                ["nullOnlyInput", false],
+                ["requiredKeys", { "ref": 7 }],
+                ["wire", { "ref": 38 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["value", { "ref": 39 }]], "kind": "object" },
+            { "items": ["object"], "kind": "array" },
+            {
+              "entries": [
+                ["exact", false],
+                ["label", "object"]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["annotations", { "ref": 34 }],
+                ["checks", { "ref": 3 }],
+                ["compositions", { "ref": 3 }],
+                ["fields", { "ref": 40 }],
+                ["kinds", { "ref": 41 }],
+                ["nullOnlyInput", false],
+                ["requiredKeys", { "ref": 19 }],
+                ["wire", { "ref": 42 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["body", { "ref": 43 }]], "kind": "object" },
+            {
+              "entries": [
+                ["annotations", { "ref": 34 }],
+                ["checks", { "ref": 3 }],
+                ["compositions", { "ref": 3 }],
+                ["extra", false],
+                ["fields", { "ref": 44 }],
+                ["kinds", { "ref": 41 }],
+                ["nullOnlyInput", false],
+                ["requiredKeys", { "ref": 23 }],
+                ["wire", { "ref": 42 }]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["input", { "ref": 45 }],
+                ["responses", { "ref": 3 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["sendB", { "ref": 46 }]], "kind": "object" },
+            {
+              "entries": [
+                ["definitions", { "ref": 3 }],
+                ["models", { "ref": 3 }],
+                ["operations", { "ref": 47 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["204", { "ref": 3 }]], "kind": "object" },
+            { "entries": [["sendB", { "ref": 49 }]], "kind": "object" },
+            { "items": ["node", "php"], "kind": "array" },
+            {
+              "entries": [
+                ["documentation", { "ref": 1 }],
+                ["format", 1],
+                ["node", { "ref": 6 }],
+                ["php", { "ref": 33 }],
+                ["policy", { "ref": 48 }],
+                ["responses", { "ref": 50 }],
+                ["runtime", { "ref": 32 }],
+                ["semantics", "4/results-1/php-entities-1"],
+                ["targets", { "ref": 51 }]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["node", "7dbb3fd2dd5549bef0379e4505ffed9df2f9f706365786325eb2cb960e226756"],
+                ["php", "b1730cd83879fe7ef12b72e2393c369a313e701dddb3da788de1fe7ecf64b901"]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["plan", { "ref": 52 }],
+                ["runtimeIdentity", { "ref": 53 }]
+              ],
+              "kind": "object"
+            }
+          ],
+          "root": { "ref": 54 }
+        },
+        "contractHash": "73cf19ae999d03fb413f086ccce8aa2bd2ed6b411b6d8bf429858ba5c6213893",
+        "files": {
+          "node/canonical.d.ts": "ea9e8d5d8ddd02f7404ede6c09e1f033ff1c4c22eaccc3a3daf686ecbd8420fe",
+          "node/canonical.js": "0dd1a554144f4ea4ee6412608fd87067815ac574901b54fb9695778198fe39f8",
+          "node/codec-plan.d.ts": "f79131519d74af2c8c22b6748462adc04ffc0cf30c4d02bd722460001fac7b03",
+          "node/codec-plan.js": "98ef19bf3a4c425e22cf0c531e523041c26532237cf89e8bdb878cfb4f0b5840",
+          "node/contract.d.ts": "f83588466325d5f95aad98dd6c3aff58894bd6929fcf534084b4824515aa6cf2",
+          "node/declarations/_SdkWithoutIdempotency.d.ts": "d70223f80fcc66b4e4a28f15438fbe5232448de7d95fa5237a3c740997c46113",
+          "node/declarations/ApiSendBInput.d.ts": "698e82186efeb595e559cef92303ecfe4cf34a6f46ae54ea4aba5650419a2758",
+          "node/declarations/ApiSendBResponse.d.ts": "c27391d7446060a208aa78e21203eb07d08d1e6bd848c073743a3f7e464e586e",
+          "node/declarations/Client.d.ts": "9c11cd62f5f2cbbf800507da98ec5b9d6299d6fdb57410293f3accbca24b4ceb",
+          "node/declarations/ClientOptions.d.ts": "eca1e0a206473daed1643b9c38d96c2c4dbfb3eeb7148f4a3355b1301e299b5c",
+          "node/descriptor-source.d.ts": "6d3e4979aee2899d25edf220c88c4cef3fff53f0c3aea9c8040f0db3fce58bf2",
+          "node/descriptor-source.js": "1ff78e81de414d2463a3593d0f06a979fcd635168c36f4c7ffce2a356defac59",
+          "node/descriptors/data.js": "9bc12ef02b394b0398371457facefb66486644d71d1a7db8b7b1864bc645188e",
+          "node/descriptors/modules.json": "e2f22b0c1fe7e69f09166499caffdc9415c692e4f0683eaed438df58c2b4d565",
+          "node/descriptors/resources/api.js": "68d48a45a5c2596d37520aa85b5c3ef473a767c1d2151cc2e39a8afa8eb978f9",
+          "node/descriptors/root.js": "1965c66da843898b052c3087075225cfb327fda60d974cea107eb54aeb19b08e",
+          "node/descriptors/settings.js": "130373e1d8e2b601adb66594b42842e8d2b49f597cfbdefe5002576eaee4dd7b",
+          "node/diagnostic.d.ts": "370d2d0f8856f8cb0eb97a125918fcd3cad8cca21b7668dfcb7431e3d7d507ad",
+          "node/diagnostic.js": "4e606237ee92eb9840d8528fdc8d0e817adb723314da75686bdb1c523efacd88",
+          "node/examples/api-sendB.mjs": "11b8a0cb1156583917c04c32d7d6161bb9a891a257c30e8a87040764a63a626c",
+          "node/examples/api-sendB.ts": "11b8a0cb1156583917c04c32d7d6161bb9a891a257c30e8a87040764a63a626c",
+          "node/index.d.ts": "8e2749ac9a8da22a882f34d4119add5c13176743c7ad3e4fd907e580befc666c",
+          "node/index.js": "06a93271b4a4d2d4754ca10208f0ecd69e995c8396fcf89c3a39188d9aac4ca0",
+          "node/LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "node/MODELS.md": "3eb7be3460342d75b8778eb5814bc795ee4b3e1016f474e53019fc31bc3dfe4f",
+          "node/package-plan.js": "d347d7e35337461f5ab800148db56a2ada7f1fda1e5e7cb724c1d1a2d198886a",
+          "node/package.json": "26b6d27aca4d7f7e0f8c5405e11f71861649121eac6fc23f79a03f06032def2d",
+          "node/php-value-plan.d.ts": "cbb6c600506bbe896a148024a4c708e29b8cb8cc549f73630d2fb9d44319517a",
+          "node/php-value-plan.js": "e8fddf38a104f61bc53aa425dd51102dad38cf2ad5f0ea2b414c982a61fabf9f",
+          "node/README.md": "b7dcf434a63ef4bf0943ca01d3b677d2fb6eb36144d4399af53e3f816a69a1b3",
+          "node/REFERENCE.md": "9974c4d5034d0e8c0b43ddf84c73a51bc0ec26d0dc81382ac19dc2b2b2c5730f",
+          "node/request-style.d.ts": "ead4ed1d50c0721ea14b389f5e1becda201b695de4398e1e53e9e37fab778edf",
+          "node/resources/api.d.ts": "dc9b9926eae704976719f4e7cf0f0d9924f39e210ba2d0d1dc57f8ea6cf20e7e",
+          "node/resources/api.js": "b619bde2ed9c1a4098daf6006865c0c9284a783a9258fd94d845b61f8d3df1b3",
+          "node/response-return.d.ts": "2929ddbbb0fa934329349c26da37faedd25b2671ccf6ec7098c67158e2e38c78",
+          "node/runtime-plan.d.ts": "e3e8f8a79170ee09cc1564d4151dd0164e0312425d94f1b25717fee8412ff723",
+          "node/runtime-plan.js": "797b1048cfb1fac753256ce8bd0d2af4c820bab54efa04b733d5f01f54c9ea02",
+          "node/runtime.d.ts": "8bd2c2fa93926cce93752547f1e629affc180677505125abb9eeaf71b4a5dccb",
+          "node/runtime.js": "d2996c281e68af8b7b62034e778ca74094eeb266d0faad044c424cc2c088e5a4",
+          "node/RUNTIME.md": "a9f789dbe71712a94a2cc4e8959fb05be3b967b363d3befb1d29c56c9ee09eaf",
+          "php/composer.json": "9433e6680243a64063af23ee675de9dde134674b1b38128e39f98237b0ac0fd5",
+          "php/custom/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "php/examples/api-sendB.php": "1a468c40e77e7c6d0ea30357382000ed86096e5c16601ea76c9495242894137e",
+          "php/LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "php/MODELS.md": "3eb7be3460342d75b8778eb5814bc795ee4b3e1016f474e53019fc31bc3dfe4f",
+          "php/README.md": "035e4ec6d87bf535169048efaebe588a76b5916e5fb5e60c6a87b5c77fd7b20f",
+          "php/REFERENCE.md": "521abedf5b1bff466d128ae9d2ab08eaaac4b41345a95e8f8c1286124c47f9aa",
+          "php/RUNTIME.md": "2e815074ff7e95d1a3719ccbc1f6ac7b6cdd36646f4d94482df1120928b7660f",
+          "php/src/autoload.php": "e124e0f2a5cd960f2462bd5a38a0699af65ed76959daee8560136ac9fbbc4bed",
+          "php/src/classes/ApiResource.php": "4ae230db5cdd7a7597daba05f376e255661f10c778b2b86aeacfbd213140f0d8",
+          "php/src/classes/ApiSendBInput.php": "b87cb49bd7f9f4d880e181eb70d84a73a0603736f0fbb3b4a658bba24d5165f2",
+          "php/src/classes/ByteStream.php": "eb4ed226e4fbc643c53d8a8cd3f57477416967dddaad2d90772ee4d26ede2c34",
+          "php/src/classes/Cancellation.php": "3bbd95862ef115e9f43988d9ee4c38f4e2ffd4002e6f01d145d25f637224b54a",
+          "php/src/classes/Client.php": "afeb042dd18fe00a6d7430b2cc2fc9ebec8773c8075a625ea72567535535183c",
+          "php/src/classes/ClientOptions.php": "7ec83976ecdbb35310055cc4326f33f506644be01d4b507a621bf59806b53299",
+          "php/src/classes/Codec.php": "fce567e0b65d1e9fb9687e641b443d796db1cd91c214d0a968280825aabe35a9",
+          "php/src/classes/CurlByteStream.php": "a4cbf5a3affad9169b636b1a7f576bee56ff5c2f6275040ab410c4412bc21a6f",
+          "php/src/classes/EventStream.php": "7dd4b623f1d8c9ece3c90b3005ebadb9c66d9000dc61a90fb984e2437ba3e55f",
+          "php/src/classes/ExactNumber.php": "f749600978ac2057297162224972b9c7bd9c9aa0726baa6a58dc0ad899fe6e2d",
+          "php/src/classes/Internal/DescriptorSource.php": "bddda5e392c7316f892bce013234e490d7c76068011716e767ee2996df48533e",
+          "php/src/classes/Model.php": "7e769307047256a925944824760bcd4c0951626eddf3c59f1fdc9699ec7ba0aa",
+          "php/src/classes/ParsedNumber.php": "80403eaf41f3da85f5b8fb5c431570cbbf86c223667d3a3f79960bfbcb0a8703",
+          "php/src/classes/RawNumber.php": "6144a91fe907cfa223b675f25521cbe6c0d422badebbe27daff0541a4f4f1378",
+          "php/src/classes/RequestOptions.php": "5edddc895e97813965f12ca102493d9be0f72f41f05147b64fbb8175618f5fd4",
+          "php/src/classes/Result.php": "60e2015b4641d147ff18ce6e0b9d23b71a03e779eddda8a70aed98a6726857b7",
+          "php/src/classes/Runtime.php": "a47c61947a2ce7b05e039324cbbe5e667d3c1d3fa4f152e8dc46ad22aa134115",
+          "php/src/classes/SchemaRegistry.php": "78e5f364d7e52e879d8207cc42cadab6fb39ca1e61ff253641d99881232ad8c4",
+          "php/src/classes/SdkError.php": "a5329c08324d3dab9949126d594b62e108b203366a4ce315fb06ab7747a35dbe",
+          "php/src/classes/ServerSentEvent.php": "0e032bd493c0617fe6d79ad495a94796efb0c3fb8bc7179852d60c2ff8295d99",
+          "php/src/Client.php": "ff72be62f115d5c2ba0ffe5bfb6835b885213fe07772b8b6992c502237307758",
+          "php/src/descriptors/codecs/b54d4d0f04efd116f47ce1e9d50abba2afaf9828bcf41e048fce7b2fb9231eb8.json": "37595f6ce3f3cd28c28386100ec9209782ad5e241104719d7aed7ce2f54fadbc",
+          "php/src/descriptors/compatibility.json": "9201c846dc041fffde561e05caabee0689162ab554f7550819f100faaa0650ca",
+          "php/src/descriptors/models.json": "a0a728525aed3c5ed4b7e926d3d1c688f0ec8f5497da88de64b9cb07b6c3b7a2",
+          "php/src/descriptors/models/ApiSendBInput.json": "6ea527ebe7e771f5c791c143fc785405ba389e4aa495d3d9b1be2764c6b45251",
+          "php/src/descriptors/resources/api.json": "c5c61f1087644af9cb494ba5b123bbbfee93ca4421745da9a9ba1104afded4ae",
+          "php/src/descriptors/routes.json": "348402c05a5e7cf9d9bab254b0bb2a5de828f8df646baf013bed57b638f545cb",
+          "php/src/descriptors/settings.json": "48dad87a421d3a2595675b8272762661df3fcd96276075b1decb526f4b956879",
+          "php/src/Runtime.php": "ff72be62f115d5c2ba0ffe5bfb6835b885213fe07772b8b6992c502237307758",
+          "php/src/schema-definitions.json": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+          "php/src/SchemaAdapter.php": "7ee8651e64cda295ad6fca89b5c089f03a26f577b487667268fcf10322a7a6f7"
+        },
+        "generator": "0.1.0",
+        "interface": {
+          "apiVersion": "1",
+          "config": {
+            "composer": {
+              "name": "synthetic/operation-publication",
+              "namespace": "SyntheticPublication"
+            },
+            "npm": { "name": "synthetic-operation-publication" },
+            "numericUnions": "explicit",
+            "requests": { "style": "object" },
+            "responses": { "return": "result" },
+            "schemaSharing": "named",
+            "targets": ["node", "php"],
+            "version": "1.0.0"
+          },
+          "definitions": {},
+          "hash": "73cf19ae999d03fb413f086ccce8aa2bd2ed6b411b6d8bf429858ba5c6213893",
+          "modelDependencies": { "sendB": [] },
+          "models": {},
+          "operations": [
+            {
+              "authenticated": false,
+              "body": {
+                "properties": {
+                  "value": { "example": "SYNTHETIC_OPERATION_EXAMPLE", "type": "string" }
+                },
+                "required": ["value"],
+                "type": "object"
+              },
+              "bodyRequired": true,
+              "description": "",
+              "id": "sendB",
+              "mediaType": "application/json",
+              "method": "sendB",
+              "parameters": [],
+              "path": "/b",
+              "resource": "api",
+              "responses": { "204": { "bodyKind": "empty", "classification": "success" } },
+              "verb": "POST"
+            }
+          ],
+          "sources": {
+            "api.json": "bcbde13dcbaf2bcdb69521233b97fc0ac04527fa003ddccc7f51a2b048f468f1",
+            "sdk.json": "896c4eb25e81fd488f806836c8922e64317f0113fa1b80f86a2b29a465188983"
+          },
+          "title": "Synthetic operation publication"
+        },
+        "recordVersion": 2,
+        "sources": {
+          "api.json": "bcbde13dcbaf2bcdb69521233b97fc0ac04527fa003ddccc7f51a2b048f468f1",
+          "sdk.json": "896c4eb25e81fd488f806836c8922e64317f0113fa1b80f86a2b29a465188983"
+        }
+      }
+    },
+    {
+      "targets": ["node", "php"],
+      "sensitive": true,
+      "api": {
+        "openapi": "3.1.1",
+        "info": { "title": "Synthetic operation publication", "version": "1" },
+        "paths": {
+          "/b": {
+            "post": {
+              "operationId": "sendB",
+              "requestBody": {
+                "required": true,
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "type": "object",
+                      "required": ["value"],
+                      "properties": {
+                        "value": {
+                          "type": "string",
+                          "example": "SYNTHETIC_OPERATION_EXAMPLE",
+                          "x-sensitive": true
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "responses": { "204": { "description": "Synthetic empty response" } }
+            }
+          }
+        }
+      },
+      "config": {
+        "version": "1.0.0",
+        "targets": ["node", "php"],
+        "requests": { "style": "object" },
+        "responses": { "return": "result" },
+        "npm": { "name": "synthetic-operation-publication" },
+        "composer": {
+          "name": "synthetic/operation-publication",
+          "namespace": "SyntheticPublication"
+        }
+      },
+      "record": {
+        "compatibility": [],
+        "compiled": {
+          "encoding": "shared-json-v1",
+          "nodes": [
+            {
+              "entries": [
+                ["nodeInput", "{ \"body\": { \"value\": string; }; }"],
+                ["nodeOutput", "undefined"],
+                ["phpInput", "array{'body': array{'value': string, ...}|object}"],
+                ["phpOutput", "null"],
+                ["reserveKnown", false]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["sendB", { "ref": 0 }]], "kind": "object" },
+            {
+              "entries": [
+                [
+                  "declaration",
+                  "export type ClientOptions = Omit<RuntimeClientOptions, 'baseUrl'> & { baseUrl: string; };\n"
+                ],
+                ["optional", false]
+              ],
+              "kind": "object"
+            },
+            { "entries": [], "kind": "object" },
+            {
+              "entries": [
+                [
+                  "documentedInput",
+                  "{ \"body\": InputValue<{ /** Example: \"SYNTHETIC_OPERATION_EXAMPLE\". */ \"value\": string; }>; }"
+                ],
+                ["idempotencyKey", false],
+                ["input", "{ \"body\": InputValue<{ \"value\": string; }>; }"],
+                ["inputRequired", true],
+                ["items", "never"],
+                ["output", "undefined"],
+                ["requestOptions", "_SdkWithoutIdempotency<RequestOptions>"]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["sendB", { "ref": 4 }]], "kind": "object" },
+            {
+              "entries": [
+                ["clientOptions", { "ref": 2 }],
+                ["eventType", "never"],
+                ["models", { "ref": 3 }],
+                ["operations", { "ref": 5 }]
+              ],
+              "kind": "object"
+            },
+            { "items": [], "kind": "array" },
+            { "entries": [["kind", "dynamic"]], "kind": "object" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", true],
+                ["nullable", true],
+                ["objectOnlyAlternative", true],
+                ["reference", "SharedCodec0"],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 7 }],
+                ["requiredOutput", { "ref": 7 }],
+                ["sensitive", false],
+                ["value", { "ref": 8 }]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["doc", "array{'value': string, ...}|object"],
+                ["field", "body"],
+                ["method", "getBody"],
+                ["type", "array|object"]
+              ],
+              "kind": "object"
+            },
+            { "items": [{ "ref": 10 }], "kind": "array" },
+            {
+              "entries": [
+                ["codec", { "ref": 9 }],
+                ["constructorDoc", "array{'body': array{'value': string, ...}|object}|object"],
+                ["constructorType", "array|object"],
+                ["defaultObject", true],
+                ["getters", { "ref": 11 }],
+                ["name", "ApiSendBInput"],
+                ["response", false]
+              ],
+              "kind": "object"
+            },
+            { "items": [{ "ref": 12 }], "kind": "array" },
+            {
+              "entries": [
+                ["items", "mixed"],
+                ["output", "null"]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["sendB", { "ref": 14 }]], "kind": "object" },
+            { "entries": [["kind", "string"]], "kind": "object" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", false],
+                ["nullable", false],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 7 }],
+                ["requiredOutput", { "ref": 7 }],
+                ["sensitive", true],
+                ["value", { "ref": 16 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["value", { "ref": 17 }]], "kind": "object" },
+            { "items": ["value"], "kind": "array" },
+            { "entries": [["kind", "object"]], "kind": "object" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["fields", { "ref": 18 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", true],
+                ["nullable", false],
+                ["objectOnlyAlternative", true],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 19 }],
+                ["requiredOutput", { "ref": 19 }],
+                ["sensitive", false],
+                ["value", { "ref": 20 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["body", { "ref": 21 }]], "kind": "object" },
+            { "items": ["body"], "kind": "array" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["extra", false],
+                ["fields", { "ref": 22 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", true],
+                ["nullable", false],
+                ["objectOnlyAlternative", true],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 23 }],
+                ["requiredOutput", { "ref": 23 }],
+                ["sensitive", false],
+                ["value", { "ref": 20 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["SharedCodec0", { "ref": 24 }]], "kind": "object" },
+            {
+              "entries": [
+                ["checks", { "ref": 3 }],
+                ["constraints", false],
+                ["fields", { "ref": 18 }],
+                ["hiddenOutput", false],
+                ["modelObjectInput", true],
+                ["nullable", false],
+                ["objectOnlyAlternative", true],
+                ["rejectInput", false],
+                ["requiredInput", { "ref": 19 }],
+                ["requiredOutput", { "ref": 19 }],
+                ["sensitive", false],
+                ["value", { "ref": 20 }]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["bodyKind", "empty"],
+                ["classification", "success"]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["204", { "ref": 27 }]], "kind": "object" },
+            {
+              "entries": [
+                ["baseDelayMs", 100],
+                ["maxAttempts", 1],
+                ["statuses", { "ref": 7 }],
+                ["transport", false]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["authenticated", false],
+                ["body", { "ref": 26 }],
+                ["bodyRequired", true],
+                ["description", ""],
+                ["id", "sendB"],
+                ["mediaType", "application/json"],
+                ["method", "sendB"],
+                ["parameters", { "ref": 7 }],
+                ["path", "/b"],
+                ["replay", "idempotency"],
+                ["resource", "api"],
+                ["responses", { "ref": 28 }],
+                ["retry", { "ref": 29 }],
+                ["verb", "POST"]
+              ],
+              "kind": "object"
+            },
+            { "items": [{ "ref": 30 }], "kind": "array" },
+            {
+              "entries": [
+                ["definitions", { "ref": 25 }],
+                ["format", 1],
+                ["operations", { "ref": 31 }],
+                ["retrySemantics", "budgets-1"],
+                ["semantics", "4"],
+                ["validation", "encoding"]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["eventModels", { "ref": 3 }],
+                ["models", { "ref": 13 }],
+                ["operations", { "ref": 15 }],
+                ["runtime", { "ref": 32 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["metadata", { "ref": 3 }]], "kind": "object" },
+            { "entries": [["example", "SYNTHETIC_OPERATION_EXAMPLE"]], "kind": "object" },
+            {
+              "entries": [
+                ["metadata", { "ref": 35 }],
+                ["sensitive", true]
+              ],
+              "kind": "object"
+            },
+            { "items": ["string"], "kind": "array" },
+            {
+              "entries": [
+                ["exact", false],
+                ["label", "string"]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["annotations", { "ref": 36 }],
+                ["checks", { "ref": 3 }],
+                ["compositions", { "ref": 3 }],
+                ["fields", { "ref": 3 }],
+                ["kinds", { "ref": 37 }],
+                ["nullOnlyInput", false],
+                ["requiredKeys", { "ref": 7 }],
+                ["wire", { "ref": 38 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["value", { "ref": 39 }]], "kind": "object" },
+            { "items": ["object"], "kind": "array" },
+            {
+              "entries": [
+                ["exact", false],
+                ["label", "object"]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["annotations", { "ref": 34 }],
+                ["checks", { "ref": 3 }],
+                ["compositions", { "ref": 3 }],
+                ["fields", { "ref": 40 }],
+                ["kinds", { "ref": 41 }],
+                ["nullOnlyInput", false],
+                ["requiredKeys", { "ref": 19 }],
+                ["wire", { "ref": 42 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["body", { "ref": 43 }]], "kind": "object" },
+            {
+              "entries": [
+                ["annotations", { "ref": 34 }],
+                ["checks", { "ref": 3 }],
+                ["compositions", { "ref": 3 }],
+                ["extra", false],
+                ["fields", { "ref": 44 }],
+                ["kinds", { "ref": 41 }],
+                ["nullOnlyInput", false],
+                ["requiredKeys", { "ref": 23 }],
+                ["wire", { "ref": 42 }]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["input", { "ref": 45 }],
+                ["responses", { "ref": 3 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["sendB", { "ref": 46 }]], "kind": "object" },
+            {
+              "entries": [
+                ["definitions", { "ref": 3 }],
+                ["models", { "ref": 3 }],
+                ["operations", { "ref": 47 }]
+              ],
+              "kind": "object"
+            },
+            { "entries": [["204", { "ref": 3 }]], "kind": "object" },
+            { "entries": [["sendB", { "ref": 49 }]], "kind": "object" },
+            { "items": ["node", "php"], "kind": "array" },
+            {
+              "entries": [
+                ["documentation", { "ref": 1 }],
+                ["format", 1],
+                ["node", { "ref": 6 }],
+                ["php", { "ref": 33 }],
+                ["policy", { "ref": 48 }],
+                ["responses", { "ref": 50 }],
+                ["runtime", { "ref": 32 }],
+                ["semantics", "4/results-1/php-entities-1"],
+                ["targets", { "ref": 51 }]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["node", "7dbb3fd2dd5549bef0379e4505ffed9df2f9f706365786325eb2cb960e226756"],
+                ["php", "b1730cd83879fe7ef12b72e2393c369a313e701dddb3da788de1fe7ecf64b901"]
+              ],
+              "kind": "object"
+            },
+            {
+              "entries": [
+                ["plan", { "ref": 52 }],
+                ["runtimeIdentity", { "ref": 53 }]
+              ],
+              "kind": "object"
+            }
+          ],
+          "root": { "ref": 54 }
+        },
+        "contractHash": "858c1c1dc743c7d220f231ffe57bae9afe5910d6be389c4f25d7e033e3ad4f84",
+        "files": {
+          "node/canonical.d.ts": "ea9e8d5d8ddd02f7404ede6c09e1f033ff1c4c22eaccc3a3daf686ecbd8420fe",
+          "node/canonical.js": "0dd1a554144f4ea4ee6412608fd87067815ac574901b54fb9695778198fe39f8",
+          "node/codec-plan.d.ts": "f79131519d74af2c8c22b6748462adc04ffc0cf30c4d02bd722460001fac7b03",
+          "node/codec-plan.js": "98ef19bf3a4c425e22cf0c531e523041c26532237cf89e8bdb878cfb4f0b5840",
+          "node/contract.d.ts": "f83588466325d5f95aad98dd6c3aff58894bd6929fcf534084b4824515aa6cf2",
+          "node/declarations/_SdkWithoutIdempotency.d.ts": "d70223f80fcc66b4e4a28f15438fbe5232448de7d95fa5237a3c740997c46113",
+          "node/declarations/ApiSendBInput.d.ts": "698e82186efeb595e559cef92303ecfe4cf34a6f46ae54ea4aba5650419a2758",
+          "node/declarations/ApiSendBResponse.d.ts": "c27391d7446060a208aa78e21203eb07d08d1e6bd848c073743a3f7e464e586e",
+          "node/declarations/Client.d.ts": "9c11cd62f5f2cbbf800507da98ec5b9d6299d6fdb57410293f3accbca24b4ceb",
+          "node/declarations/ClientOptions.d.ts": "eca1e0a206473daed1643b9c38d96c2c4dbfb3eeb7148f4a3355b1301e299b5c",
+          "node/descriptor-source.d.ts": "6d3e4979aee2899d25edf220c88c4cef3fff53f0c3aea9c8040f0db3fce58bf2",
+          "node/descriptor-source.js": "1ff78e81de414d2463a3593d0f06a979fcd635168c36f4c7ffce2a356defac59",
+          "node/descriptors/data.js": "7cbae2d6d78392a9d7bb353a3fba17da2f1b71eec73a2cf8f584947c2ef3df51",
+          "node/descriptors/modules.json": "e2f22b0c1fe7e69f09166499caffdc9415c692e4f0683eaed438df58c2b4d565",
+          "node/descriptors/resources/api.js": "c3239268d764bcd1b85c15f7da6d19b70da07ff0226c8ad597ef9719db81a0aa",
+          "node/descriptors/root.js": "00467d2bbcd731a213c7ed51d1570065349e00c80be48a5e927bf76e65b63311",
+          "node/descriptors/settings.js": "130373e1d8e2b601adb66594b42842e8d2b49f597cfbdefe5002576eaee4dd7b",
+          "node/diagnostic.d.ts": "370d2d0f8856f8cb0eb97a125918fcd3cad8cca21b7668dfcb7431e3d7d507ad",
+          "node/diagnostic.js": "4e606237ee92eb9840d8528fdc8d0e817adb723314da75686bdb1c523efacd88",
+          "node/examples/api-sendB.mjs": "11b8a0cb1156583917c04c32d7d6161bb9a891a257c30e8a87040764a63a626c",
+          "node/examples/api-sendB.ts": "11b8a0cb1156583917c04c32d7d6161bb9a891a257c30e8a87040764a63a626c",
+          "node/index.d.ts": "8e2749ac9a8da22a882f34d4119add5c13176743c7ad3e4fd907e580befc666c",
+          "node/index.js": "5789e3722e3367ff889e93256e8d1f4dcc903d11681b27474617ea46eb72ccb5",
+          "node/LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "node/MODELS.md": "3eb7be3460342d75b8778eb5814bc795ee4b3e1016f474e53019fc31bc3dfe4f",
+          "node/package-plan.js": "d347d7e35337461f5ab800148db56a2ada7f1fda1e5e7cb724c1d1a2d198886a",
+          "node/package.json": "26b6d27aca4d7f7e0f8c5405e11f71861649121eac6fc23f79a03f06032def2d",
+          "node/php-value-plan.d.ts": "cbb6c600506bbe896a148024a4c708e29b8cb8cc549f73630d2fb9d44319517a",
+          "node/php-value-plan.js": "e8fddf38a104f61bc53aa425dd51102dad38cf2ad5f0ea2b414c982a61fabf9f",
+          "node/README.md": "b7dcf434a63ef4bf0943ca01d3b677d2fb6eb36144d4399af53e3f816a69a1b3",
+          "node/REFERENCE.md": "9974c4d5034d0e8c0b43ddf84c73a51bc0ec26d0dc81382ac19dc2b2b2c5730f",
+          "node/request-style.d.ts": "ead4ed1d50c0721ea14b389f5e1becda201b695de4398e1e53e9e37fab778edf",
+          "node/resources/api.d.ts": "dc9b9926eae704976719f4e7cf0f0d9924f39e210ba2d0d1dc57f8ea6cf20e7e",
+          "node/resources/api.js": "bf8e11c593128bbfc21b6a1454d7f22356515c2cf291606c2bbcb61eb0181dcc",
+          "node/response-return.d.ts": "2929ddbbb0fa934329349c26da37faedd25b2671ccf6ec7098c67158e2e38c78",
+          "node/runtime-plan.d.ts": "e3e8f8a79170ee09cc1564d4151dd0164e0312425d94f1b25717fee8412ff723",
+          "node/runtime-plan.js": "797b1048cfb1fac753256ce8bd0d2af4c820bab54efa04b733d5f01f54c9ea02",
+          "node/runtime.d.ts": "8bd2c2fa93926cce93752547f1e629affc180677505125abb9eeaf71b4a5dccb",
+          "node/runtime.js": "d2996c281e68af8b7b62034e778ca74094eeb266d0faad044c424cc2c088e5a4",
+          "node/RUNTIME.md": "a9f789dbe71712a94a2cc4e8959fb05be3b967b363d3befb1d29c56c9ee09eaf",
+          "php/composer.json": "9433e6680243a64063af23ee675de9dde134674b1b38128e39f98237b0ac0fd5",
+          "php/custom/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "php/examples/api-sendB.php": "1a468c40e77e7c6d0ea30357382000ed86096e5c16601ea76c9495242894137e",
+          "php/LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "php/MODELS.md": "3eb7be3460342d75b8778eb5814bc795ee4b3e1016f474e53019fc31bc3dfe4f",
+          "php/README.md": "035e4ec6d87bf535169048efaebe588a76b5916e5fb5e60c6a87b5c77fd7b20f",
+          "php/REFERENCE.md": "521abedf5b1bff466d128ae9d2ab08eaaac4b41345a95e8f8c1286124c47f9aa",
+          "php/RUNTIME.md": "2e815074ff7e95d1a3719ccbc1f6ac7b6cdd36646f4d94482df1120928b7660f",
+          "php/src/autoload.php": "e124e0f2a5cd960f2462bd5a38a0699af65ed76959daee8560136ac9fbbc4bed",
+          "php/src/classes/ApiResource.php": "4ae230db5cdd7a7597daba05f376e255661f10c778b2b86aeacfbd213140f0d8",
+          "php/src/classes/ApiSendBInput.php": "b87cb49bd7f9f4d880e181eb70d84a73a0603736f0fbb3b4a658bba24d5165f2",
+          "php/src/classes/ByteStream.php": "eb4ed226e4fbc643c53d8a8cd3f57477416967dddaad2d90772ee4d26ede2c34",
+          "php/src/classes/Cancellation.php": "3bbd95862ef115e9f43988d9ee4c38f4e2ffd4002e6f01d145d25f637224b54a",
+          "php/src/classes/Client.php": "afeb042dd18fe00a6d7430b2cc2fc9ebec8773c8075a625ea72567535535183c",
+          "php/src/classes/ClientOptions.php": "7ec83976ecdbb35310055cc4326f33f506644be01d4b507a621bf59806b53299",
+          "php/src/classes/Codec.php": "fce567e0b65d1e9fb9687e641b443d796db1cd91c214d0a968280825aabe35a9",
+          "php/src/classes/CurlByteStream.php": "a4cbf5a3affad9169b636b1a7f576bee56ff5c2f6275040ab410c4412bc21a6f",
+          "php/src/classes/EventStream.php": "7dd4b623f1d8c9ece3c90b3005ebadb9c66d9000dc61a90fb984e2437ba3e55f",
+          "php/src/classes/ExactNumber.php": "f749600978ac2057297162224972b9c7bd9c9aa0726baa6a58dc0ad899fe6e2d",
+          "php/src/classes/Internal/DescriptorSource.php": "bddda5e392c7316f892bce013234e490d7c76068011716e767ee2996df48533e",
+          "php/src/classes/Model.php": "7e769307047256a925944824760bcd4c0951626eddf3c59f1fdc9699ec7ba0aa",
+          "php/src/classes/ParsedNumber.php": "80403eaf41f3da85f5b8fb5c431570cbbf86c223667d3a3f79960bfbcb0a8703",
+          "php/src/classes/RawNumber.php": "6144a91fe907cfa223b675f25521cbe6c0d422badebbe27daff0541a4f4f1378",
+          "php/src/classes/RequestOptions.php": "5edddc895e97813965f12ca102493d9be0f72f41f05147b64fbb8175618f5fd4",
+          "php/src/classes/Result.php": "60e2015b4641d147ff18ce6e0b9d23b71a03e779eddda8a70aed98a6726857b7",
+          "php/src/classes/Runtime.php": "a47c61947a2ce7b05e039324cbbe5e667d3c1d3fa4f152e8dc46ad22aa134115",
+          "php/src/classes/SchemaRegistry.php": "78e5f364d7e52e879d8207cc42cadab6fb39ca1e61ff253641d99881232ad8c4",
+          "php/src/classes/SdkError.php": "a5329c08324d3dab9949126d594b62e108b203366a4ce315fb06ab7747a35dbe",
+          "php/src/classes/ServerSentEvent.php": "0e032bd493c0617fe6d79ad495a94796efb0c3fb8bc7179852d60c2ff8295d99",
+          "php/src/Client.php": "ff72be62f115d5c2ba0ffe5bfb6835b885213fe07772b8b6992c502237307758",
+          "php/src/descriptors/codecs/b54d4d0f04efd116f47ce1e9d50abba2afaf9828bcf41e048fce7b2fb9231eb8.json": "dd5000ec809b9b0b8dcbe3717a82beeba8c1519d377a3fa90d3d6b29f07698a8",
+          "php/src/descriptors/compatibility.json": "9201c846dc041fffde561e05caabee0689162ab554f7550819f100faaa0650ca",
+          "php/src/descriptors/models.json": "a0a728525aed3c5ed4b7e926d3d1c688f0ec8f5497da88de64b9cb07b6c3b7a2",
+          "php/src/descriptors/models/ApiSendBInput.json": "6ea527ebe7e771f5c791c143fc785405ba389e4aa495d3d9b1be2764c6b45251",
+          "php/src/descriptors/resources/api.json": "61740b15c56f9ab6d10a3c342ff1eb10bff508ae9729520a836cf997199c836c",
+          "php/src/descriptors/routes.json": "348402c05a5e7cf9d9bab254b0bb2a5de828f8df646baf013bed57b638f545cb",
+          "php/src/descriptors/settings.json": "48dad87a421d3a2595675b8272762661df3fcd96276075b1decb526f4b956879",
+          "php/src/Runtime.php": "ff72be62f115d5c2ba0ffe5bfb6835b885213fe07772b8b6992c502237307758",
+          "php/src/schema-definitions.json": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+          "php/src/SchemaAdapter.php": "7ee8651e64cda295ad6fca89b5c089f03a26f577b487667268fcf10322a7a6f7"
+        },
+        "generator": "0.1.0",
+        "interface": {
+          "apiVersion": "1",
+          "config": {
+            "composer": {
+              "name": "synthetic/operation-publication",
+              "namespace": "SyntheticPublication"
+            },
+            "npm": { "name": "synthetic-operation-publication" },
+            "numericUnions": "explicit",
+            "requests": { "style": "object" },
+            "responses": { "return": "result" },
+            "schemaSharing": "named",
+            "targets": ["node", "php"],
+            "version": "1.0.0"
+          },
+          "definitions": {},
+          "hash": "858c1c1dc743c7d220f231ffe57bae9afe5910d6be389c4f25d7e033e3ad4f84",
+          "modelDependencies": { "sendB": [] },
+          "models": {},
+          "operations": [
+            {
+              "authenticated": false,
+              "body": {
+                "properties": {
+                  "value": {
+                    "example": "SYNTHETIC_OPERATION_EXAMPLE",
+                    "type": "string",
+                    "x-sensitive": true
+                  }
+                },
+                "required": ["value"],
+                "type": "object"
+              },
+              "bodyRequired": true,
+              "description": "",
+              "id": "sendB",
+              "mediaType": "application/json",
+              "method": "sendB",
+              "parameters": [],
+              "path": "/b",
+              "resource": "api",
+              "responses": { "204": { "bodyKind": "empty", "classification": "success" } },
+              "verb": "POST"
+            }
+          ],
+          "sources": {
+            "api.json": "6bede2bb619c80a381b79cd54af5a6527260ffe53c8f590d6c8b1bd1e044d1db",
+            "sdk.json": "896c4eb25e81fd488f806836c8922e64317f0113fa1b80f86a2b29a465188983"
+          },
+          "title": "Synthetic operation publication"
+        },
+        "recordVersion": 2,
+        "sources": {
+          "api.json": "6bede2bb619c80a381b79cd54af5a6527260ffe53c8f590d6c8b1bd1e044d1db",
+          "sdk.json": "896c4eb25e81fd488f806836c8922e64317f0113fa1b80f86a2b29a465188983"
+        }
+      }
+    }
+  ]
+}

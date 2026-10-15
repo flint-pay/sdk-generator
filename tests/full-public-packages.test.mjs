@@ -50,16 +50,12 @@ const size = (path) =>
   );
 
 test(
-  'unmodified full export diagnoses, generates, regenerates, validates and installs complete Node/PHP packages',
+  'unmodified full export generates, regenerates, validates and installs complete Node/PHP packages',
   { timeout: 600000 },
   () => {
     const dir = mkdtempSync(join(tmpdir(), 'sdk-full-public-'));
     const output = join(dir, 'output');
     try {
-      const diagnosis = JSON.parse(
-        run(process.execPath, ['dist/cli.js', 'diagnose', api, config, '--json']),
-      );
-      assert.equal(diagnosis.operations, 503);
       const script = join(dir, 'generate.mjs');
       writeFileSync(
         script,
@@ -508,18 +504,20 @@ $streaming->close();
 );
 
 test(
-  'each full authentication profile generates its complete permitted operation selection',
+  'every full SDK profile diagnoses its complete permitted operation selection',
   { timeout: 600000 },
   () => {
     const combined = JSON.parse(readFileSync(config));
     const union = new Set();
-    for (const profile of combined.profiles) {
+    // The shared full-common base has no authentication selection of its own.
+    // Keep these large diagnoses sequential and use run's explicit heap budget.
+    for (const profile of ['full-sdk.json', ...combined.profiles]) {
       const configured = JSON.parse(readFileSync(join(fixture, profile)));
-      configured.include.forEach((id) => union.add(id));
+      configured.include?.forEach((id) => union.add(id));
       const diagnosis = JSON.parse(
         run(process.execPath, ['dist/cli.js', 'diagnose', api, join(fixture, profile), '--json']),
       );
-      assert.equal(diagnosis.operations, configured.include.length, profile);
+      assert.equal(diagnosis.operations, configured.include?.length ?? 503, profile);
     }
     assert.equal(union.size, 503);
   },
