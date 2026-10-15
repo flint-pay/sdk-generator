@@ -642,8 +642,12 @@ for (const baseline of publicationBaseline.records) {
       ...(sensitive ? [{ severity: 'review', subject: 'published schema examples' }] : []),
       { severity: 'additive', subject: 'sendA' },
     ];
+    // Records predate later generator capabilities (runtime and target flags); keep
+    // the comparison focused on operations and published examples.
     const summarize = (findings) =>
-      findings.map(({ severity, subject }) => ({ severity, subject }));
+      findings
+        .filter(({ subject }) => subject !== 'runtime' && !/^(node|php)\./.test(subject))
+        .map(({ severity, subject }) => ({ severity, subject }));
     assert.deepEqual(summarize(compare(savedRecord.interface, f.contract)), expected);
     mkdirSync(f.output);
     writeFileSync(join(f.output, '.sdk-generator.json'), JSON.stringify(savedRecord));
