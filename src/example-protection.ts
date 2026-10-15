@@ -29,6 +29,15 @@ export function sourceExampleProtection(
   const parents = new Map<string, Set<string>>();
   const children = new Map<string, Map<string, string>>();
   const equivalents: [string, string][] = [];
+  const childConstraints: [string, string][] = [];
+  const childKeywords = [
+    'properties',
+    'additionalProperties',
+    'patternProperties',
+    'items',
+    'prefixItems',
+    'contains',
+  ];
   const seeds = new Set<string>();
   const schemas = new Set<string>();
   // Intern shallow tree descriptions instead of repeatedly serializing whole
@@ -128,6 +137,13 @@ export function sourceExampleProtection(
           ));
       connect(key, nested, together);
       if (!together) children.get(key)?.set(name, nested);
+      if (context === 'schema' && object(value)) {
+        if (['additionalProperties', 'items', 'contains'].includes(name))
+          childConstraints.push([key, nested]);
+        else if (['patternProperties', 'prefixItems'].includes(name))
+          for (const constraint of edges.get(nested) ?? [])
+            childConstraints.push([key, constraint]);
+      }
     }
     if (context === 'schema' && object(value)) {
       // items/contains/prefixItems constrain element values, not the array.
@@ -184,6 +200,17 @@ export function sourceExampleProtection(
       else target.set(name, child);
     }
     children.delete(from);
+  }
+  // A protected dictionary or element constraint protects every child of the
+  // same value, across the completed reference/composition group. The owner
+  // receives only the separate embedded fact below, never value protection.
+  // Each constraint adds at most one edge per child keyword, keeping this linear.
+  for (const [owner, constraint] of childConstraints) {
+    const group = children.get(representative(owner));
+    for (const keyword of childKeywords) {
+      const child = group?.get(keyword);
+      if (child) connect(constraint, child);
+    }
   }
   // Two monotone facts per source node: protected values flow down; embedded
   // protection flows up only to omit annotations that could embed a secret.

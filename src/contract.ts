@@ -2068,13 +2068,22 @@ export function loadContract(
       selected = true;
       addExampleRoot(field, 'operation');
       const operationId: unknown = field.value.operationId;
+      if (typeof operationId !== 'string') continue;
       for (const [event, ref] of Object.entries(
-        (typeof operationId === 'string' && own(config.operations, operationId)?.stream?.events) ||
-          {},
+        own(config.operations, operationId)?.stream?.events ?? {},
       ))
         exampleRoots.push({
+          // Configured references resolve from the API root. Their synthetic
+          // locations still identify the operation and its vendored source.
           document: '',
-          pointer: field.sourcePath + '/stream/events/' + pointerSegment(event),
+          pointer:
+            '/config/operations/' +
+            pointerSegment(operationId) +
+            '/sources/' +
+            pointerSegment(sourceDocument(field.file)) +
+            field.sourcePath +
+            '/stream/events/' +
+            pointerSegment(event),
           value: { $ref: ref },
           context: 'schema',
         });

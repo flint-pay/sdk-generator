@@ -39,6 +39,27 @@ const record = (extra = {}) => ({
   ...extra,
 });
 const media = (schema) => ({ 'application/json': { schema } });
+const schemaChildContext = (context, key) => {
+  if (context.startsWith('map:')) return context.slice(4);
+  if (context !== 'schema') return 'literal';
+  if (['properties', 'patternProperties'].includes(key)) return 'map:schema';
+  if (key === 'dependentSchemas') return 'map:composition';
+  return [
+    'prefixItems',
+    'items',
+    'contains',
+    'additionalProperties',
+    'allOf',
+    'anyOf',
+    'oneOf',
+    'not',
+    'if',
+    'then',
+    'else',
+  ].includes(key)
+    ? 'schema'
+    : 'literal';
+};
 function fixture(name, schemas, bodies, extra = {}) {
   const dir = join(root, name);
   mkdirSync(dir);
@@ -77,7 +98,11 @@ function fixture(name, schemas, bodies, extra = {}) {
   return { dir, source, profile, output, contract: loadContract(source, profile) };
 }
 function assertSafe(files) {
-  for (const [name, content] of files) assert.equal(content.includes(marker), false, name);
+  assert.deepEqual(
+    [...files].filter(([_name, content]) => content.includes(marker)).map(([name]) => name),
+    [],
+    'protected marker must be absent from every package file',
+  );
   for (const target of ['node', 'php']) {
     assert.ok(files.get(target + '/MODELS.md').includes(visible), target + ' control example');
     assert.ok(files.get(target + '/MODELS.md').includes('Synthetic field description'));
@@ -158,6 +183,118 @@ function comprehensiveFixture(flag, suffix = '') {
     properties: { value: text(flag), plain: text(annotations(visible)) },
   });
   return fixture(Object.keys(flag)[0] + suffix, schemas, bodies);
+}
+
+function assertRestoredPublications(contract) {
+  const files = render(contract);
+  assertSafe(files);
+  for (const restored of [JSON.parse(JSON.stringify(contract)), structuredClone(contract)]) {
+    const restoredFiles = render(restored);
+    assertSafe(restoredFiles);
+    assert.deepEqual([...restoredFiles], [...files]);
+    assert.deepEqual(compare(contract, restored), []);
+  }
+  return files;
+}
+
+for (const flag of [{ 'x-sensitive': true }, { writeOnly: true }, { format: 'password' }]) {
+  test(`R2: a protected dictionary constrains explicit properties across allOf (${Object.keys(flag)[0]})`, () => {
+    const f = fixture(
+      'dictionary-allOf-' + Object.keys(flag)[0],
+      {
+        Dictionary: { type: 'object', additionalProperties: { type: 'string', ...flag } },
+        Explicit: record(),
+        Bridge: { allOf: [ref('Dictionary'), ref('Explicit')] },
+        VisibleModel: record({ properties: { value: text(annotations(visible)) } }),
+      },
+      { Bridge: ref('Bridge'), Explicit: ref('Explicit'), VisibleModel: ref('VisibleModel') },
+    );
+    const files = assertRestoredPublications(f.contract);
+    const definitions = JSON.parse(files.get('php/src/schema-definitions.json'));
+    assert.equal(definitions.Explicit.properties.value.example, undefined);
+    assert.match(files.get('node/examples/api-sendExplicit.mjs'), /value: "example"/);
+    assert.match(files.get('php/examples/api-sendExplicit.php'), /'value' => 'example'/);
+  });
+
+  test(`R3: protected items constrain contains across allOf (${Object.keys(flag)[0]})`, () => {
+    const f = fixture(
+      'items-contains-allOf-' + Object.keys(flag)[0],
+      {
+        ElementRules: { type: 'array', minItems: 1, items: { type: 'string', ...flag } },
+        ContainmentRules: { contains: text() },
+        Bridge: { allOf: [ref('ElementRules'), ref('ContainmentRules')] },
+        VisibleModel: record({ properties: { value: text(annotations(visible)) } }),
+      },
+      {
+        Bridge: ref('Bridge'),
+        ContainmentRules: ref('ContainmentRules'),
+        VisibleModel: ref('VisibleModel'),
+      },
+      { config: { validation: 'schema' } },
+    );
+    const files = assertRestoredPublications(f.contract);
+    const definitions = JSON.parse(files.get('php/src/schema-definitions.json'));
+    assert.equal(definitions.ContainmentRules.contains.example, undefined);
+  });
+
+  test(`R4: vendored stream roots with the same pointer and event name stay distinct (${Object.keys(flag)[0]})`, () => {
+    const f = fixture(
+      'vendored-streams-' + Object.keys(flag)[0],
+      {
+        FirstEvent: record({ properties: { value: text(annotations(visible)) } }),
+        SecondEvent: record({ properties: { value: text(flag) } }),
+      },
+      { FirstEvent: ref('FirstEvent') },
+    );
+    const api = JSON.parse(readFileSync(f.source));
+    api.paths = {};
+    for (const [name, id] of [
+      ['first', 'watchFirst'],
+      ['second', 'watchSecond'],
+    ]) {
+      api.paths['/' + name] = { $ref: './' + name + '.json#/item' };
+      writeFileSync(
+        join(f.dir, name + '.json'),
+        JSON.stringify({
+          item: {
+            get: {
+              operationId: id,
+              responses: {
+                200: {
+                  description: 'Synthetic event stream',
+                  content: { 'text/event-stream': { schema: { type: 'string' } } },
+                },
+              },
+            },
+          },
+        }),
+      );
+    }
+    writeFileSync(f.source, JSON.stringify(api));
+    const config = JSON.parse(readFileSync(f.profile));
+    config.operations = {
+      watchFirst: { stream: { events: { ready: ref('FirstEvent').$ref } } },
+      watchSecond: { stream: { events: { ready: ref('SecondEvent').$ref } } },
+    };
+    writeFileSync(f.profile, JSON.stringify(config));
+    const contract = loadContract(f.source, f.profile);
+    const files = assertRestoredPublications(contract);
+    assert.deepEqual(
+      contract.operations.map((op) => op.id),
+      ['watchFirst', 'watchSecond'],
+    );
+    assert.ok(
+      contract.exampleProtection.locations.some(
+        (location) =>
+          location.startsWith('#/config/operations/watchSecond/sources/local:') &&
+          location.endsWith('/item/get/stream/events/ready'),
+      ),
+      'synthetic provenance includes the operation and vendored document identity',
+    );
+    const definitions = JSON.parse(files.get('php/src/schema-definitions.json'));
+    assert.equal(definitions.FirstEvent.properties.value.example, visible);
+    assert.equal(definitions.SecondEvent.properties.value.example, undefined);
+  });
 }
 
 test('a write-only property leaves sibling examples and their shared components public', () => {
@@ -303,28 +440,80 @@ for (const flag of [{ 'x-sensitive': true }, { writeOnly: true }, { format: 'pas
       assert.equal(content.includes(marker), false, path);
   });
 
+test('every protected child constraint protects all children of its value equivalence group', () => {
+  // Include keywords rejected by generation: this tests the source-graph rule,
+  // not support for new schema capabilities or combinations of value types.
+  const childLocations = (schema) => ({
+    properties: { value: schema },
+    additionalProperties: schema,
+    patternProperties: { '^x': schema },
+    items: schema,
+    prefixItems: [schema],
+    contains: schema,
+  });
+  const childPointers = [
+    '/properties/value',
+    '/additionalProperties',
+    '/patternProperties/^x',
+    '/items',
+    '/prefixItems/0',
+    '/contains',
+  ];
+  for (const flag of [{ 'x-sensitive': true }, { writeOnly: true }, { format: 'password' }])
+    for (const [keyword, constraint] of Object.entries(childLocations(ref('ProtectedValue')))) {
+      if (keyword === 'properties') continue;
+      for (const composition of ['allOf', 'anyOf', 'oneOf', 'if', 'then', 'else']) {
+        const branches = [ref('Constrained'), ref('Other')];
+        const schemas = {
+          ProtectedValue: { type: 'string', ...flag },
+          Constrained: { [keyword]: constraint },
+          Other: childLocations({ type: 'string' }),
+          Bridge: {
+            [composition]: composition.endsWith('Of') ? branches : { allOf: branches },
+          },
+          Money: { type: 'object', properties: { currency: { type: 'string', example: 'USD' } } },
+        };
+        const graph = sourceExampleProtection(
+          [
+            {
+              document: '',
+              pointer: '/envelope',
+              context: 'schema',
+              value: {
+                type: 'object',
+                properties: { value: ref('Bridge'), sibling: ref('Money') },
+              },
+            },
+          ],
+          schemaChildContext,
+          (_source, reference) => ({
+            document: '',
+            pointer: reference.slice(1),
+            context: 'schema',
+            value: schemas[reference.split('/').at(-1)],
+          }),
+          false,
+          isSchemaAnnotation,
+        );
+        const message = Object.keys(flag)[0] + '/' + keyword + '/' + composition;
+        for (const pointer of childPointers)
+          assert.equal(
+            graph.protects('', '/components/schemas/Other' + pointer),
+            true,
+            message + pointer,
+          );
+        assert.equal(graph.protects('', '/envelope/properties/sibling'), false, message);
+        assert.equal(graph.protects('', '/components/schemas/Money'), false, message);
+        assert.equal(
+          graph.protects('', '/components/schemas/Money/properties/currency'),
+          false,
+          message,
+        );
+      }
+    }
+});
+
 test('source protection reaches prefix items, patterns and dependent schemas before unsupported-input diagnosis', () => {
-  const childContext = (context, key) => {
-    if (context.startsWith('map:')) return context.slice(4);
-    if (context !== 'schema') return 'literal';
-    if (['properties', 'patternProperties'].includes(key)) return 'map:schema';
-    if (key === 'dependentSchemas') return 'map:composition';
-    return [
-      'prefixItems',
-      'items',
-      'contains',
-      'additionalProperties',
-      'allOf',
-      'anyOf',
-      'oneOf',
-      'not',
-      'if',
-      'then',
-      'else',
-    ].includes(key)
-      ? 'schema'
-      : 'literal';
-  };
   const schemas = { Shared: record(), Other: record() };
   for (const flag of [{ 'x-sensitive': true }, { writeOnly: true }])
     for (const [keyword, child] of [
@@ -347,7 +536,7 @@ test('source protection reaches prefix items, patterns and dependent schemas bef
             value: { allOf: [ref('Shared'), ref('Other')] },
           },
         ],
-        childContext,
+        schemaChildContext,
         (source, reference) => ({
           document: '',
           pointer: reference.slice(1),
