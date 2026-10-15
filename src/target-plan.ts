@@ -579,7 +579,6 @@ export interface CompiledSdkContract {
 function webhookDeclarations(
   c: Contract,
   models: Record<string, Schema>,
-  eventOrder: readonly string[],
 ): {
   eventType: string;
   eventDeclarations?: string;
@@ -650,7 +649,9 @@ function webhookDeclarations(
   };
   const declarations: string[] = [];
   const eventTypes = Object.fromEntries(
-    eventOrder.map((event) => {
+    // Use the canonical event-name order from prepareTargetContract, as PHP does.
+    // Source insertion order changes when generation records are saved with stable().
+    Object.keys(webhook.events).map((event) => {
       const schema = webhook.events[event];
       if (!schema) throw new Error('Missing webhook declaration ' + event);
       const name = webhookEventTypeName(event);
@@ -875,7 +876,7 @@ export function compileSdkContract(source: Contract): {
           ];
         }),
       ),
-      ...webhookDeclarations(c, models, Object.keys(source.config.webhook?.events ?? {})),
+      ...webhookDeclarations(c, models),
     },
     php: {
       errorClasses: true,

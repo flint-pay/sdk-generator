@@ -154,10 +154,10 @@ import type {_SdkWebhookHeaders} from './index.js';
 `,
   );
   const plan = compileSdkContract(c).plan;
-  assert.deepEqual(Object.keys(plan.node.eventTypes), Object.keys(c.config.webhook.events));
+  assert.deepEqual(Object.keys(plan.node.eventTypes), ['payment.deleted', 'payment.updated']);
   assert.match(
     plan.node.eventDeclarations,
-    /KnownWebhookEvent = WebhookEventPaymentUpdated \| WebhookEventPaymentDeleted;/,
+    /KnownWebhookEvent = WebhookEventPaymentDeleted \| WebhookEventPaymentUpdated;/,
   );
   assert.deepEqual(plan.node.eventTypes, plan.php.eventModels);
   const measured = measureWebhookTypes(

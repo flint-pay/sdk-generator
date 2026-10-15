@@ -60,13 +60,17 @@ test(
       writeFileSync(
         script,
         `import {loadContract,generate,preview} from ${JSON.stringify(new URL('../dist/index.js', import.meta.url).href)};
-import {writeFileSync} from 'node:fs';
+import assert from 'node:assert/strict';
+import {readFileSync,writeFileSync} from 'node:fs';
 import {webhookEventTypeName} from ${JSON.stringify(new URL('../dist/naming.js', import.meta.url).href)};
 const started=performance.now();
 const c=loadContract(${JSON.stringify(api)},${JSON.stringify(config)});
 generate(c,${JSON.stringify(output)});
 writeFileSync(${JSON.stringify(join(dir, 'webhook-names.json'))},JSON.stringify(Object.fromEntries(Object.keys(c.config.webhook.events).map(event=>[event,webhookEventTypeName(event)]))));
 writeFileSync(${JSON.stringify(join(dir, 'summary.json'))},JSON.stringify({operations:c.operations.map(o=>o.id),methods:c.operations.map(o=>({resource:o.resource,method:o.method,payload:o.response?.return==='payload',pagination:Boolean(o.pagination),polling:Boolean(o.polling)})),incoming:c.incoming.map(o=>({name:o.name,model:o.model})),events:Object.keys(c.config.webhook.events),modes:c.authentication,elapsedMs:performance.now()-started,maxRSS:process.resourceUsage().maxRSS,definitions:Object.keys(c.definitions).length}));
+const savedRecord=JSON.parse(readFileSync(${JSON.stringify(join(output, '.sdk-generator.json'))},'utf8'));
+const restored=JSON.parse(JSON.stringify(savedRecord.interface));
+assert.deepEqual(preview(restored,${JSON.stringify(output)}).changes,[],'full export saved interface must render every Node/PHP file identically');
 `,
       );
       run(process.execPath, [script]);

@@ -53,6 +53,7 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ### Fixed
 
+- Webhook declarations and root exports use canonical event-name order, matching PHP class order. Freshly generated SDKs render identically after restoring their saved contract, so release preparation no longer incorrectly requires regeneration.
 - Full generation reuses compiled sample validators instead of recompiling one per candidate example, restoring generation time for large APIs (about 30% faster on the full Flint export).
 - `init` prefixes digit-leading PHP namespace segments with `Sdk`, shortens package slugs to fit npm's 214-character name limit and quotes shell-sensitive paths in its human `generate` suggestion.
 - Built-in Node SDK error names remain stable in minified bundles, including `AuthenticationError` and the base `SdkError`; user subclasses retain their constructor names. Error factories preserve the calling site in Node stack traces and PHP exception file/line metadata.
