@@ -47,6 +47,7 @@ import {
   successStatus,
   sample,
   sampleWithFormats,
+  sampleCodecCompiler,
   parameterExample,
   ExactNumberSample,
   compileSdkContract,
@@ -436,6 +437,7 @@ function configuredExample(
   op: Operation,
   schema: Schema,
   definitions: Record<string, Schema>,
+  compile = sampleCodecCompiler(definitions),
 ): unknown {
   if (op.example !== undefined) return op.example;
   const accepts: SampleValidator = (value, codec) => {
@@ -447,7 +449,7 @@ function configuredExample(
       return false;
     }
   };
-  const input = sampleWithFormats(schema, definitions, accepts);
+  const input = sampleWithFormats(schema, definitions, accepts, compile);
   if (input && typeof input === 'object' && !Array.isArray(input)) {
     for (const parameter of op.parameters) {
       // Omitted optional fields stay omitted. Main's examples, enums and consts
@@ -460,7 +462,7 @@ function configuredExample(
         metadata = true;
       });
       if (metadata) continue;
-      const selected = parameterExample(parameter, definitions, accepts);
+      const selected = parameterExample(parameter, definitions, accepts, compile);
       if (selected) Reflect.set(input, parameter.name, selected.value);
     }
   }
@@ -1136,6 +1138,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       'reload the source inputs with loadContract before rendering or generating an SDK',
     );
   const targetPlan = compilation.plan;
+  const compileSample = sampleCodecCompiler(c.definitions ?? {});
   for (const op of c.operations) {
     const model = targetPlan.php.models.find(
       (model) => model.name === pascal(op.resource) + pascal(op.method) + 'Input',
@@ -1143,7 +1146,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     if (!model) throw new Error('Missing input codec for ' + op.id);
     try {
       const schema = exampleSchema(op, c.config.apiVersion, c);
-      const configured = configuredExample(op, schema, c.definitions ?? {});
+      const configured = configuredExample(op, schema, c.definitions ?? {}, compileSample);
       const omitted = new Set(
         op.parameters
           .filter((p) => !Object.hasOwn(schema.properties ?? {}, p.name))

@@ -10,10 +10,62 @@ import ts from 'typescript';
 import { loadContract } from '../dist/index.js';
 import { render } from '../dist/generate.js';
 import { bodyReference, referenceType } from '../dist/sdk-documentation.js';
-import { compileSdkContract, parameterExample } from '../dist/target-plan.js';
+import { compileSdkContract, parameterExample, sampleWithFormats } from '../dist/target-plan.js';
+import { compileCodec } from '../dist/codec-plan.js';
+import { executeCodec, SdkError } from '../dist/runtime.js';
 
 const root = mkdtempSync(join(tmpdir(), 'sdk-reference-body-'));
 after(() => rmSync(root, { recursive: true, force: true }));
+
+test('format candidates share definitions while preserving complete-schema validation', () => {
+  const uuid = { type: 'string', format: 'uuid' };
+  const definitions = { Identifier: uuid };
+  const schema = {
+    type: 'object',
+    properties: {
+      first: { 'x-sdk-ref': 'Identifier' },
+      second: { 'x-sdk-ref': 'Identifier' },
+    },
+    required: ['first', 'second'],
+    not: { properties: { first: { const: '00000000-0000-4000-8000-000000000001' } } },
+  };
+  const registries = new Set();
+  let rejected = 0;
+  const accepts = (value, codec) => {
+    registries.add(codec.definitions);
+    // Compare the optimized plans with the original compilation boundary.
+    assert.deepEqual(
+      codec,
+      compileCodec({
+        ...(codec.value.kind === 'object' ? schema : uuid),
+        'x-sdk-definitions': definitions,
+      }),
+    );
+    try {
+      executeCodec(value, codec, { mode: 'request', validateConstraints: true });
+      return true;
+    } catch (error) {
+      if (!(error instanceof SdkError)) throw error;
+      rejected++;
+      return false;
+    }
+  };
+  assert.deepEqual(sampleWithFormats(schema, definitions, accepts), {
+    first: 'example',
+    second: 'example',
+  });
+  assert.equal(rejected, 1, 'enclosing constraints must still reject local format choices');
+  assert.equal(registries.size, 1, 'candidate checks must not recompile the definitions graph');
+
+  // A later sampling call must observe changes instead of reusing a global cache.
+  definitions.Identifier.maxLength = 3;
+  assert.deepEqual(sampleWithFormats(schema, definitions, accepts), {
+    first: 'exa',
+    second: 'exa',
+  });
+  assert.equal(registries.size, 2);
+});
+
 let sequence = 0;
 function fixture({
   parameters = [],

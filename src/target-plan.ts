@@ -1292,6 +1292,27 @@ export class ExactNumberSample {
 }
 
 export type SampleValidator = (value: unknown, codec: CodecPlan) => boolean;
+type SampleCodecCompiler = (schema: Schema) => CodecPlan;
+
+/** Reuse sample codecs only while the caller owns a stable generation schema graph. */
+export function sampleCodecCompiler(definitions: Record<string, Schema>): SampleCodecCompiler {
+  const codecs = new WeakMap<Schema, CodecPlan>();
+  let compiledDefinitions: CodecPlan['definitions'];
+  return (schema) => {
+    const cached = codecs.get(schema);
+    if (cached) return cached;
+    // Compile definitions at the same depth as an attached schema registry, once.
+    const { 'x-sdk-definitions': ignored, ...shape } = schema;
+    const compiled = compileCodec(shape);
+    compiledDefinitions ??= compileCodec({ 'x-sdk-definitions': definitions }).definitions;
+    const codec = {
+      ...compiled,
+      ...(compiledDefinitions ? { definitions: compiledDefinitions } : {}),
+    };
+    codecs.set(schema, codec);
+    return codec;
+  };
+}
 
 /** Formats ignored by wire codecs still need valid documentation sample values. */
 function validSampleFormat(
@@ -1396,11 +1417,9 @@ function validSample(
   schema: Schema,
   definitions: Record<string, Schema>,
   accepts: SampleValidator,
+  compile: SampleCodecCompiler,
 ): boolean {
-  return (
-    validSampleFormat(value, schema, definitions) &&
-    accepts(value, compileCodec({ ...schema, 'x-sdk-definitions': definitions }))
-  );
+  return validSampleFormat(value, schema, definitions) && accepts(value, compile(schema));
 }
 
 /** Parameter metadata is already literal source data; do not annotate the schema or contract. */
@@ -1408,6 +1427,7 @@ export function parameterExample(
   parameter: Parameter,
   definitions: Record<string, Schema>,
   accepts: SampleValidator,
+  compile: SampleCodecCompiler = sampleCodecCompiler(definitions),
 ): { value: unknown } | undefined {
   if (!parameterExampleEligible(parameter, definitions)) return undefined;
   const examples: unknown = Reflect.get(parameter, 'examples');
@@ -1438,9 +1458,9 @@ export function parameterExample(
     );
   };
   if (unproven(value, parameter.schema)) return undefined;
-  if (validSample(value, parameter.schema, definitions, accepts)) return { value };
+  if (validSample(value, parameter.schema, definitions, accepts, compile)) return { value };
   const projected = sampleMetadata(value, parameter.schema, definitions);
-  return validSample(projected, parameter.schema, definitions, accepts)
+  return validSample(projected, parameter.schema, definitions, accepts, compile)
     ? { value: projected }
     : undefined;
 }
@@ -1475,13 +1495,12 @@ export function sampleWithFormats(
   schema: Schema,
   definitions: Record<string, Schema>,
   accepts: SampleValidator,
+  compile: SampleCodecCompiler = sampleCodecCompiler(definitions),
 ): unknown {
-  const input = sample(schema, {}, definitions, [], undefined, accepts);
+  const input = sample(schema, {}, definitions, [], undefined, accepts, compile);
   // Local choices can conflict with enclosing composition or cross-field
   // constraints. Preserve main's sample exactly before generation validates it.
-  return accepts(input, compileCodec({ ...schema, 'x-sdk-definitions': definitions }))
-    ? input
-    : sample(schema, {}, definitions);
+  return accepts(input, compile(schema)) ? input : sample(schema, {}, definitions);
 }
 
 export function sample(
@@ -1492,6 +1511,7 @@ export function sample(
   // Observe existing metadata selection without changing its precedence or validation.
   onMetadata?: () => void,
   accepts?: SampleValidator,
+  compile: SampleCodecCompiler = sampleCodecCompiler(definitions),
 ): unknown {
   // A use-site example takes precedence over the referenced model's sample.
   if (s.example !== undefined) {
@@ -1504,7 +1524,7 @@ export function sample(
     if (!target || stack.includes(name))
       throw new Diagnostic('example', 'provide a finite example for recursive model ' + name);
     if (Array.isArray(target.type) && target.type.includes('null')) return null;
-    return sample(target, inherited, definitions, [...stack, name], onMetadata, accepts);
+    return sample(target, inherited, definitions, [...stack, name], onMetadata, accepts, compile);
   }
   s = directionalSchema(s, false);
   if (Object.hasOwn(s, 'const')) {
@@ -1559,7 +1579,7 @@ export function sample(
     const properties = { ...inherited, ...collect(s) };
     const typed = [base, ...(allOf ?? [])].find((shape) => shape.type !== undefined);
     const item = [base, ...(allOf ?? [])].find((shape) => shape.items !== undefined)?.items;
-    let result = sample(base, properties, definitions, stack, onMetadata, accepts);
+    let result = sample(base, properties, definitions, stack, onMetadata, accepts, compile);
     for (const branch of [...(allOf ?? []), ...(oneOf ?? anyOf ?? []).slice(0, 1)]) {
       const next = sample(
         { ...(typed ? { type: typed.type } : {}), ...(item ? { items: item } : {}), ...branch },
@@ -1568,6 +1588,7 @@ export function sample(
         stack,
         onMetadata,
         accepts,
+        compile,
       );
       result =
         result &&
@@ -1605,7 +1626,7 @@ export function sample(
     const result = Object.fromEntries(
       selected.map(([key, child]) => [
         key,
-        sample(child, {}, definitions, stack, onMetadata, accepts),
+        sample(child, {}, definitions, stack, onMetadata, accepts, compile),
       ]),
     );
     if (Object.keys(result).length < (s.minProperties ?? 0) && s.additionalProperties !== false) {
@@ -1617,6 +1638,7 @@ export function sample(
           stack,
           onMetadata,
           accepts,
+          compile,
         );
     }
     return result;
@@ -1630,6 +1652,7 @@ export function sample(
         stack,
         onMetadata,
         accepts,
+        compile,
       ),
     );
   if (t === 'boolean') return true;
@@ -1670,7 +1693,11 @@ export function sample(
         ipv6: '2001:db8::1',
       } as Record<string, string>
     )[s.format ?? ''];
-    if (formatted !== undefined && accepts && validSample(formatted, s, definitions, accepts))
+    if (
+      formatted !== undefined &&
+      accepts &&
+      validSample(formatted, s, definitions, accepts, compile)
+    )
       return formatted;
     return fallback.padEnd(s.minLength ?? 0, 'x').slice(0, s.maxLength);
   }
