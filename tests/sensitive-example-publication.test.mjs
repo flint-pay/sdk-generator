@@ -160,6 +160,83 @@ function comprehensiveFixture(flag, suffix = '') {
   return fixture(Object.keys(flag)[0] + suffix, schemas, bodies);
 }
 
+test('a write-only property leaves sibling examples and their shared components public', () => {
+  const currency = { type: 'string', pattern: '^[A-Z]{3}$', example: 'USD' };
+  const f = fixture(
+    'write-only-siblings',
+    {
+      ProtectedCode: {
+        type: 'object',
+        properties: { code: { type: 'string' }, secret: text() },
+      },
+      PublicMoney: { type: 'object', required: ['currency'], properties: { currency } },
+      PublicChoice: { oneOf: [{ type: 'string' }, ref('PublicMoney')] },
+      Envelope: {
+        type: 'object',
+        allOf: [{ type: 'object' }],
+        ...annotations({ codes: [{ secret: marker }] }),
+        required: ['label', 'money'],
+        properties: {
+          codes: { type: 'array', writeOnly: true, items: ref('ProtectedCode') },
+          label: text(annotations(visible)),
+          money: ref('PublicMoney'),
+          choice: ref('PublicChoice'),
+        },
+      },
+    },
+    {
+      Envelope: ref('Envelope'),
+      PublicMoney: ref('PublicMoney'),
+      PublicChoice: ref('PublicChoice'),
+    },
+    { config: { validation: 'schema' } },
+  );
+  assert.equal(
+    f.contract.exampleProtection.locations.some((location) =>
+      location.startsWith('#/components/schemas/Public'),
+    ),
+    false,
+  );
+  for (const contract of [f.contract, JSON.parse(JSON.stringify(f.contract))]) {
+    const files = render(contract);
+    for (const [name, contents] of files) assert.equal(contents.includes(marker), false, name);
+    for (const target of ['node', 'php']) {
+      const models = files.get(target + '/MODELS.md');
+      assert.ok(models.includes(visible), target + ' sibling example');
+      assert.ok(models.includes('USD'), target + ' shared component example');
+      assert.ok(
+        files
+          .get(target + '/examples/api-sendEnvelope.' + (target === 'node' ? 'mjs' : 'php'))
+          .includes('USD'),
+      );
+    }
+    const definitions = JSON.parse(files.get('php/src/schema-definitions.json'));
+    assert.equal(definitions.Envelope.example, undefined, 'container example can embed a secret');
+    assert.equal(definitions.Envelope.properties.label.example, visible);
+    assert.equal(definitions.PublicMoney.properties.currency.example, 'USD');
+  }
+});
+
+for (const flag of [{ 'x-sensitive': true }, { writeOnly: true }, { format: 'password' }])
+  test(`composed fields share ${Object.keys(flag)[0]} protection without protecting sibling fields`, () => {
+    const f = fixture(
+      'composed-siblings-' + Object.keys(flag)[0],
+      {
+        SensitiveField: { type: 'object', properties: { value: text(flag) } },
+        PublicFields: {
+          type: 'object',
+          properties: { value: text(), sibling: text(annotations(visible)) },
+        },
+        Bridge: { allOf: [ref('SensitiveField'), ref('PublicFields')] },
+      },
+      { Bridge: ref('Bridge'), PublicFields: ref('PublicFields') },
+    );
+    assertSafe(render(f.contract));
+    const definitions = JSON.parse(render(f.contract).get('php/src/schema-definitions.json'));
+    assert.equal(definitions.PublicFields.properties.value.example, undefined);
+    assert.equal(definitions.PublicFields.properties.sibling.example, visible);
+  });
+
 for (const flag of [{ 'x-sensitive': true }, { writeOnly: true }, { format: 'password' }]) {
   test(`all publications and saved-contract regeneration protect ${Object.keys(flag)[0]}`, () => {
     const f = comprehensiveFixture(flag);

@@ -27,15 +27,16 @@ export function sourceExampleProtection(
 ): { locations: string[]; protects: (document: string, pointer: string) => boolean } {
   const edges = new Map<string, Set<string>>();
   const parents = new Map<string, Set<string>>();
+  const children = new Map<string, Map<string, string>>();
+  const equivalents: [string, string][] = [];
   const seeds = new Set<string>();
   const schemas = new Set<string>();
-  const compositions = new Set<string>();
   // Intern shallow tree descriptions instead of repeatedly serializing whole
   // subtrees. These exact identities include annotation payloads and are keyed
   // by source pointers; identical source shapes can share component aliases.
   const values = new Map<string, number>();
   const identities = new Map<string, number>();
-  const shapes = new Map<number, string>();
+  const shapes = new Map<number, { component?: string; locations: string[] }>();
   const identity = (source: ExampleSource): number => {
     const key = sourceKey(source);
     const previous = values.get(key);
@@ -72,6 +73,7 @@ export function sourceExampleProtection(
     incoming.add(from);
     parents.set(to, incoming);
     if (together) {
+      equivalents.push([from, to]);
       edges.get(to)?.add(from);
       const incoming = parents.get(from) ?? new Set<string>();
       incoming.add(to);
@@ -85,21 +87,14 @@ export function sourceExampleProtection(
     if (source.protectedAncestor) seeds.add(key);
     if (edges.has(key)) return key;
     edges.set(key, new Set());
+    children.set(key, new Map());
     if (context === 'schema' && object(value)) {
       schemas.add(key);
       const shape = identity(source);
-      const shared = shapes.get(shape);
-      if (shared) connect(key, shared, true);
-      else shapes.set(shape, key);
-      if (
-        ['allOf', 'anyOf', 'oneOf', 'not', 'if', 'then', 'else', 'dependentSchemas'].some(
-          (keyword) => Object.hasOwn(value, keyword),
-        ) ||
-        (!ignoredSiblings &&
-          typeof value.$ref === 'string' &&
-          Object.keys(value).some((keyword) => keyword !== '$ref' && !isAnnotation(keyword)))
-      )
-        compositions.add(key);
+      const shared = shapes.get(shape) ?? { locations: [] };
+      shared.locations.push(key);
+      if (/^\/components\/schemas\/[^/]+$/.test(source.pointer)) shared.component = key;
+      shapes.set(shape, shared);
     }
     if (
       object(value) &&
@@ -114,42 +109,85 @@ export function sourceExampleProtection(
     }
     for (const [name, child] of Object.entries(value)) {
       if (name === '$ref' && !context.startsWith('map:')) continue;
+      if (context === 'schema' && !Array.isArray(value) && isAnnotation(name)) continue;
       const nested = visit({
         ...source,
         pointer: source.pointer + '/' + pointerSegment(name),
         value: child,
         context: Array.isArray(value) ? context : childContext(context, name),
       });
-      if (nested)
-        connect(
-          key,
-          nested,
-          // Same-instance compositions and array element constraints must agree
-          // on publication, including components used plainly outside a bridge.
-          Array.isArray(value) ||
-            context === 'map:composition' ||
-            (context === 'schema' &&
-              [
-                'allOf',
-                'anyOf',
-                'oneOf',
-                'not',
-                'if',
-                'then',
-                'else',
-                'items',
-                'prefixItems',
-                'contains',
-                'dependentSchemas',
-              ].includes(name)),
-        );
+      if (!nested) continue;
+      // Compositions describe the same value. Properties and array elements
+      // descend into another value and must never protect their owner.
+      const together =
+        (context === 'schema' && Array.isArray(value)) ||
+        context === 'map:composition' ||
+        (context === 'schema' &&
+          ['allOf', 'anyOf', 'oneOf', 'not', 'if', 'then', 'else', 'dependentSchemas'].includes(
+            name,
+          ));
+      connect(key, nested, together);
+      if (!together) children.get(key)?.set(name, nested);
+    }
+    if (context === 'schema' && object(value)) {
+      // items/contains/prefixItems constrain element values, not the array.
+      const constraints = ['items', 'contains', 'prefixItems']
+        .map((keyword) => children.get(key)?.get(keyword))
+        .filter((child): child is string => child !== undefined);
+      const [first, ...rest] = constraints;
+      if (first) for (const child of rest) connect(first, child, true);
     }
     return key;
   };
   roots.forEach(visit);
+  // Only named schemas can be implicit publication aliases. Equal inline
+  // shapes (especially bare strings) do not imply that values are shared.
+  for (const { component, locations } of shapes.values())
+    if (component)
+      for (const location of locations)
+        if (location !== component) connect(component, location, true);
+
+  // Equivalent objects constrain the same named children, even when those
+  // children are declared in different allOf branches or reference siblings.
+  // Merge child maps small-to-large; new child equivalences join this queue.
+  const representatives = new Map<string, string>();
+  const representative = (key: string): string => {
+    let root = key;
+    let next = representatives.get(root);
+    while (next !== undefined) {
+      root = next;
+      next = representatives.get(root);
+    }
+    next = representatives.get(key);
+    while (next !== undefined) {
+      representatives.set(key, root);
+      key = next;
+      next = representatives.get(key);
+    }
+    return root;
+  };
+  for (const [left, right] of equivalents) {
+    let from = representative(left),
+      to = representative(right);
+    if (from === to) continue;
+    let source = children.get(from),
+      target = children.get(to);
+    if (!source || !target) throw new Error('Missing example-protection equivalence group');
+    if (source.size > target.size) {
+      [from, to] = [to, from];
+      [source, target] = [target, source];
+    }
+    representatives.set(from, to);
+    for (const [name, child] of source) {
+      const previous = target.get(name);
+      if (previous) connect(previous, child, true);
+      else target.set(name, child);
+    }
+    children.delete(from);
+  }
   // Two monotone facts per source node: protected values flow down; embedded
-  // protection flows up to omit container annotations. At composition owners,
-  // embedded protection also protects sibling constraints and their components.
+  // protection flows up only to omit annotations that could embed a secret.
+  // It never promotes a container or its unrelated children to protected.
   // Each fact enters the queue once, including in recursive reference graphs.
   type Fact = { key: string; kind: 'protected' | 'embedded' };
   const protectedLocations = new Set<string>();
@@ -170,7 +208,6 @@ export function sourceExampleProtection(
       for (const next of edges.get(fact.key) ?? []) add(next, 'protected');
     } else {
       for (const parent of parents.get(fact.key) ?? []) add(parent, 'embedded');
-      if (compositions.has(fact.key)) add(fact.key, 'protected');
     }
   }
   return {
