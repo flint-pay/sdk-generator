@@ -814,7 +814,12 @@ test('generated webhook verifiers match the local Flint Go signing implementatio
       });
     for (const c of cases) {
       const verify = () => client.verifyWebhook(Buffer.from(c.body), c.headers, c.secrets, c.now);
-      if (c.valid) assert.deepEqual(verify(), { event: JSON.parse(vector.body), known: false });
+      if (c.valid)
+        assert.deepEqual(verify(), {
+          event: JSON.parse(vector.body),
+          known: false,
+          reason: 'unknown_event',
+        });
       else assert.throws(verify, (e) => e.kind === (c.kind ?? 'authentication'));
     }
     const php = `require $argv[1].'/src/Runtime.php'; require $argv[1].'/src/Client.php'; $client=new Example\\Payments\\Client(new Example\\Payments\\ClientOptions('https://example.invalid')); $results=[]; foreach(json_decode($argv[2],true) as $c){try{$r=$client->verifyWebhook($c['body'],$c['headers'],$c['secrets'],$c['now']);$results[]=$r['known']===false;}catch(Example\\Payments\\SdkError $e){if($e->kind!==($c['kind']??'authentication'))throw $e;$results[]=false;}}echo json_encode($results);`;

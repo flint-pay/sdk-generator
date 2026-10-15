@@ -49,6 +49,10 @@ class SdkError extends \RuntimeException
             'destination' => Errors\DestinationError::class,
             default => self::class,
         };
+        // Standalone runtime use (without the generated Errors\ classes) keeps the base class.
+        if (!class_exists($class)) {
+            $class = self::class;
+        }
         $error = new $class(
             $kind,
             $message,
