@@ -223,7 +223,7 @@ test('new compiled assertions and stream descriptors reject malformed serialized
   const runtime = {
     format: CODEC_FORMAT,
     semantics: CODEC_SEMANTICS,
-    retrySemantics: 'budgets-1',
+    retrySemantics: 'budgets-2',
     operations: [],
   };
   assert.doesNotThrow(() => assertRuntimePlan(runtime));

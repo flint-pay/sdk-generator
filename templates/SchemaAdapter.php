@@ -182,7 +182,7 @@ final class SchemaAdapter
         }
         $contract['format'] = 1;
         $contract['semantics'] = '4';
-        $contract['retrySemantics'] = 'budgets-1';
+        $contract['retrySemantics'] = 'budgets-2';
         if (isset($contract['incoming'])) {
             foreach ($contract['incoming'] as &$entry) {
                 $entry['codec'] = $root($entry['schema']);

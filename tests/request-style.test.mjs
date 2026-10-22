@@ -448,6 +448,7 @@ test('positional types allow option-supplied idempotency and query-only optional
     `import {Client} from './index.js'; const c=new Client({baseUrl:'https://example.invalid'});
 await c.api.createCustomer({name:'a'}, {idempotencyKey:'key'});
 await c.api.ping(undefined, {idempotencyKey:'key'});
+// @ts-expect-error Required idempotency keys must be supplied in options
 await c.api.ping();
 await c.api.optional({limit:2});
 await c.api.optional({limit:2,name:'a'});

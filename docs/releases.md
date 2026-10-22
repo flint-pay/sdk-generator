@@ -205,6 +205,13 @@ PHP response models expose declared nested objects as generated entities, lists 
 
 ### Retry defaults
 
+Retry semantics are now `budgets-2`. Saved `budgets-1` compiled records remain readable for comparison, but new runtimes require newly generated descriptors. Comparisons flag retry semantics and configured body-signal changes for review; old snapshots retain their recorded policy. Regenerate each package as a complete unit.
+
+- Required idempotency headers with `auto` disabled now require TypeScript options containing `idempotencyKey`. This is a breaking signature change; choose a major SDK version under the semver release policy. PHP still fails before sending a missing required key.
+- Backoff now uses half-to-full jitter with optional `maxDelayMs`. A deadline-crossing retry wait returns the last error instead of replacing it with a deadline error. `retryAfterMs` exposes a valid server wait.
+- Optional `errors.retry` reads provider retry instructions without a client-side code table. Optional `idempotency.autoKeyPrefix` prefixes UUID v4 keys. PHP automatic keys now use the same UUID v4 format as Node.
+- Keyed errors, including pre-send errors after resolution, and response metadata expose `idempotencyKey`.
+
 GET/HEAD/OPTIONS retry by default (see [errors and retries](using-sdks.md#errors-and-retries)), and mutations with a missing optional idempotency key send once.
 
 - Set client or request `maxAttempts: 1` to keep single-attempt reads. Explicit retry policies replace the defaults.

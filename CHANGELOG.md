@@ -11,6 +11,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ### Breaking changes for regenerated SDKs
 
+- **Retry contract (`budgets-2`).** Required idempotency headers with `auto` disabled require TypeScript options containing `idempotencyKey`. PHP still rejects missing keys before dispatch. Both targets use half-to-full backoff jitter, optional `retry.maxDelayMs`, and preserve the last error when a retry wait exceeds the deadline. PHP automatic keys now use UUID v4. Older compiled records remain readable for compatibility comparison; regenerate descriptors together with runtimes. See [retry migration](docs/releases.md#retry-defaults).
+
 - Event names that share a type name or have no ASCII letters or digits fail diagnosis for every target.
 - When `webhook` is configured, `VerifiedWebhook`, `KnownWebhookEvent` and each `WebhookEvent<EventName>` type name are reserved for every target selection, including PHP-only generation. Configurations whose model, resource or operation helper names collide with these symbols now fail diagnosis. Customize the conflicting model/resource/method name or change the event declaration.
 - **Error kinds.** HTTP 404 uses kind `not_found` and HTTP 500–599 uses `server`, replacing `api` for those statuses. Update kind switches. Retry eligibility still follows the declared policy.
@@ -31,6 +33,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 - **Managed header inputs.** Headers supplied by an operation's permitted authentication modes and the configured API-version header are removed from method inputs and PHP input getters. Anonymous operations and operations whose modes never supply a declared header retain that input field. Pass credentials through authentication options; their wire values are validated against declared header schemas. Compatibility comparison reports the removed fields as breaking. Declared idempotency, conditional and request-ID headers retain input fields and their declared requiredness is enforced before dispatch; idempotency and conditional values may be supplied through request options or automatic idempotency keys.
 
 ### Added
+
+- Optional `errors.retry: { path, retryValues }` for body-driven retries, with configured status fallback when the path has no string. Optional `idempotency.autoKeyPrefix` prefixes generated UUID v4 keys. Keyed errors and response metadata expose `idempotencyKey`; errors expose a valid server wait as `retryAfterMs`. Both targets retain attempt/deadline bounds and never retry HTTP 412 or cancellation.
 
 - `init API_JSON SDK_JSON [--targets node|php|node,php] [--json]` writes a minimal configuration with placeholder package names, refuses overwrites and reports diagnosis while keeping the file on diagnostic failure. Library callers can use `initialConfig` without writing files.
 - SDK errors now have one subclass per `kind`: Node exposes them through the root/resource `errors` namespace and PHP through the `Errors` sub-namespace. `SdkError` and `kind` remain authoritative, and `instanceof SdkError` keeps working. Node `error.name` and inspection now show the subclass name (for example `NotFoundError`), a visible change.

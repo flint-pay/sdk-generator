@@ -96,6 +96,7 @@ export function compareCompiledContracts(
       const authUnchanged = stable(old.authModes) === stable(current.authModes);
       const widened =
         !keyNarrowed &&
+        !(current.idempotencyKeyRequired && !old.idempotencyKeyRequired) &&
         ((keyWidened && authUnchanged) ||
           (old.authModes !== undefined &&
             current.authModes !== undefined &&
@@ -114,6 +115,7 @@ export function compareCompiledContracts(
     if (
       current &&
       (previous.runtime.retrySemantics !== next.runtime.retrySemantics ||
+        stable(previous.runtime.errors?.retry) !== stable(next.runtime.errors?.retry) ||
         stable({ retry: old.retry, replay: old.replay, idempotency: old.idempotency }) !==
           stable({
             retry: current.retry,

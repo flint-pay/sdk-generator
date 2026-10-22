@@ -346,7 +346,7 @@ const cases = [
     headers: { 'retry-after': '10' },
     failures: 1,
     attempts: 1,
-    error: 'deadline',
+    error: 'server',
     eligible: true,
   },
 ];

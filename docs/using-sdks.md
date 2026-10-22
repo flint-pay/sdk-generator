@@ -146,6 +146,18 @@ With `requests.style: "object"`, methods take one input object with path/query/h
 
 ## Errors and retries
 
+Every error after a call resolves an idempotency key exposes `error.idempotencyKey` (Node) or `$error->idempotencyKey` (PHP), including validation and cancellation before sending. `WithResponse` results expose `meta.idempotencyKey` (PHP: `$result->meta['idempotencyKey']`). Keys are included in error inspection. Persist your key across process restarts and application resubmissions; automatically generated UUID v4 keys, including any configured prefix, last for one SDK call and are reused on every attempt.
+
+When an operation requires a header and has automatic keys disabled, TypeScript requires the options argument with `idempotencyKey: string`; PHP throws a `validation` error with `outcome: "not_sent"` before dispatch if the key is missing. Save the key with the action before the first attempt.
+
+```ts
+await client.refunds.create(params, { idempotencyKey: refundJob.idempotencyKey });
+```
+
+Providers may configure `errors.retry` to select a string in the error body, such as `error.remediation.retry`. A string signal overrides status and code rules; only configured retry values (for example `same_request`) retry. `after_refresh`, `none` and unknown strings stop immediately. Without a string signal, configured statuses apply; without body-driven configuration, existing status/code rules apply. HTTP 412 never retries. All retry signals still require a replay-safe operation and remain bounded by its attempt limit. Cancellation never retries, while per-attempt timeouts after sending may retry with the same key.
+
+Backoff waits uniformly between half and all of the exponential delay, capped by optional `retry.maxDelayMs`. `Retry-After` is a minimum wait. If a wait would reach the overall call deadline, the last error comes back unchanged, including its kind, code, status and details. Its optional `retryAfterMs` records the valid server wait in milliseconds. An attempt cut off mid-flight by the overall deadline still uses `kind: "deadline"`.
+
 ```js
 import { SdkError, errors } from '@example/library';
 

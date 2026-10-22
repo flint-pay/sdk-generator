@@ -405,7 +405,7 @@
       }
     ],
     "error": {
-      "kind": "deadline",
+      "kind": "server",
       "outcome": "response"
     }
   },

@@ -105,7 +105,21 @@ export const RETRY_DEFAULTS = {
   },
   mutation: { maxAttempts: 1, statuses: [], transport: false, baseDelayMs: 100 },
 };
-export const RETRY_SEMANTICS = 'budgets-1';
+export const RETRY_SEMANTICS = 'budgets-2';
+
+/** Required option typing follows the declared header, independently of retry policy. */
+export function requiresIdempotencyKey(op: Pick<Operation, 'idempotency' | 'parameters'>): boolean {
+  return Boolean(
+    op.idempotency &&
+      !op.idempotency.auto &&
+      op.parameters.some(
+        (parameter) =>
+          parameter.in === 'header' &&
+          parameter.required &&
+          parameter.name.toLowerCase() === op.idempotency?.header.toLowerCase(),
+      ),
+  );
+}
 
 export function compileRetry(op: Pick<Operation, 'verb' | 'retry'>): {
   retry: Retry;
@@ -153,7 +167,7 @@ export interface CompiledRuntimePlan
   extends Omit<RuntimeContract, 'operations' | 'definitions' | 'webhook' | 'incoming'> {
   format: typeof CODEC_FORMAT;
   semantics: string;
-  retrySemantics?: typeof RETRY_SEMANTICS;
+  retrySemantics?: typeof RETRY_SEMANTICS | 'budgets-1';
   operations: CompiledOperation[];
   incoming?: (Omit<IncomingWebhook, 'schema'> & { codec: CodecPlan })[];
   definitions?: Record<string, CodecPlan>;
@@ -265,8 +279,28 @@ export function assertRuntimePlan(
   if (plan.format !== CODEC_FORMAT || typeof plan.semantics !== 'string')
     throw new Error('Unsupported compiled runtime format');
   const legacyRetry = historical && plan.retrySemantics === undefined;
-  if (!legacyRetry && plan.retrySemantics !== RETRY_SEMANTICS)
+  if (
+    !legacyRetry &&
+    !(historical && plan.retrySemantics === 'budgets-1') &&
+    plan.retrySemantics !== RETRY_SEMANTICS
+  )
     throw new Error('Unsupported compiled retry semantics');
+  if (plan.errors !== undefined) {
+    const errors = record(plan.errors, 'errors');
+    if (errors.retry !== undefined) {
+      const retry = record(errors.retry, 'errors.retry');
+      if (
+        typeof errors.codePath !== 'string' ||
+        !errors.codePath ||
+        typeof retry.path !== 'string' ||
+        !/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/.test(retry.path) ||
+        !Array.isArray(retry.retryValues) ||
+        !retry.retryValues.length ||
+        retry.retryValues.some((value) => typeof value !== 'string' || !value.trim())
+      )
+        throw new Error('Invalid compiled error retry signal');
+    }
+  }
   if (!Array.isArray(plan.operations)) throw new Error('Missing compiled operations');
   if (plan.authentication !== undefined)
     for (const [name, value] of Object.entries(record(plan.authentication, 'authentication'))) {
@@ -353,6 +387,10 @@ export function assertRuntimePlan(
         typeof retry.baseDelayMs !== 'number' ||
         !Number.isFinite(retry.baseDelayMs) ||
         retry.baseDelayMs < 0 ||
+        (retry.maxDelayMs !== undefined &&
+          (typeof retry.maxDelayMs !== 'number' ||
+            !Number.isFinite(retry.maxDelayMs) ||
+            retry.maxDelayMs < 0)) ||
         (op.replay === 'idempotency' && Number(retry.maxAttempts) > 1 && !op.idempotency)
       )
         throw new Error(`${op.id}: invalid compiled retry policy`);
@@ -373,6 +411,16 @@ export function assertRuntimePlan(
             throw new Error('Invalid compiled retry errors');
         }
       }
+    }
+    if (op.idempotency !== undefined) {
+      const idempotency = record(op.idempotency, `${op.id}.idempotency`);
+      if (
+        idempotency.autoKeyPrefix !== undefined &&
+        (typeof idempotency.autoKeyPrefix !== 'string' ||
+          /[^\x20-\x7e]/.test(idempotency.autoKeyPrefix) ||
+          /^[ ]/.test(idempotency.autoKeyPrefix))
+      )
+        throw new Error('Invalid compiled automatic key prefix');
     }
     for (const parameter of op.parameters) {
       const field = record(parameter, `${op.id}.parameter`);

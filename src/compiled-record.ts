@@ -218,6 +218,8 @@ export function assertCompiledSnapshot(value: unknown): asserts value is Compile
   for (const [name, value] of Object.entries(object(node.operations, 'node.operations'))) {
     const op = object(value, name);
     fields(op, ['input', 'output', 'items'], 'string', name);
+    if (op.idempotencyKeyRequired !== undefined)
+      fields(op, ['idempotencyKeyRequired'], 'boolean', name);
     if (op.idempotencyKey !== undefined) fields(op, ['idempotencyKey'], 'boolean', name);
     if (op.requestOptions !== undefined) fields(op, ['requestOptions'], 'string', name);
     if (
