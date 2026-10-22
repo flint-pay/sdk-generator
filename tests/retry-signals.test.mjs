@@ -574,6 +574,99 @@ $c->close();`,
   }
 });
 
+test('truncated responses retain Retry-After and the HTTP 412 veto in generated Node and PHP', async () => {
+  const rows = [
+    {
+      name: 'retry-after',
+      status: 429,
+      headers: { 'retry-after': '10' },
+      calls: 1,
+      retryAfterMs: 10000,
+      retryAllowed: true,
+    },
+    {
+      name: 'precondition',
+      status: 412,
+      headers: { 'retry-after': '0' },
+      calls: 1,
+      retryAfterMs: 0,
+      retryAllowed: false,
+    },
+    { name: 'transport-control', status: 503, headers: {}, calls: 2 },
+  ];
+  const calls = new Map();
+  const server = createServer((request, response) => {
+    const key = request.headers['idempotency-key'];
+    const row = rows.find((row) => key.endsWith(row.name));
+    const count = (calls.get(key) ?? 0) + 1;
+    calls.set(key, count);
+    if (count > 1) {
+      response.writeHead(204);
+      response.end();
+      return;
+    }
+    response.writeHead(row.status, { ...row.headers, 'content-length': '100' });
+    response.write('{');
+    setTimeout(() => response.destroy(), 20);
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const assertError = (error, row, key) => {
+    assert.equal(error.kind, 'transport', row.name);
+    assert.equal(error.outcome, 'unknown', row.name);
+    assert.equal(error.status, row.status, row.name);
+    assert.equal(error.retryAfterMs, row.retryAfterMs, row.name);
+    assert.equal(error.retryAllowed, row.retryAllowed, row.name);
+    assert.equal(error.idempotencyKey, key, row.name);
+  };
+  try {
+    const client = new sdk.Client({ baseUrl, allowInsecureHttp: true });
+    for (const row of rows) {
+      const key = 'node-' + row.name;
+      const request = client.api.auto({}, { idempotencyKey: key, deadlineMs: 1000 });
+      if (row.calls === 1) {
+        await assert.rejects(request, (error) => {
+          assertError(error, row, key);
+          return true;
+        });
+      } else {
+        assert.equal((await request).meta.attempts, 2);
+      }
+      assert.equal(calls.get(key), row.calls, row.name);
+    }
+    const { stdout } = await promisify(execFile)('php', [
+      '-r',
+      String.raw`
+require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
+$c=new \RetrySignals\Client(new \RetrySignals\ClientOptions(baseUrl:$argv[2],allowInsecureHttp:true));
+$results=[];
+foreach(json_decode($argv[3],true) as $row){
+  $key='php-'.$row['name'];
+  try{
+    $result=$c->api->auto([],new \RetrySignals\RequestOptions(idempotencyKey:$key,deadlineMs:1000));
+    $results[]=['attempts'=>$result->meta['attempts']];
+  }catch(\RetrySignals\SdkError $e){
+    $results[]=['kind'=>$e->kind,'outcome'=>$e->outcome,'status'=>$e->status,'retryAfterMs'=>$e->retryAfterMs,'retryAllowed'=>$e->retryAllowed,'idempotencyKey'=>$e->idempotencyKey];
+  }
+}
+$c->close();echo json_encode($results);`,
+      join(output, 'php'),
+      baseUrl,
+      JSON.stringify(rows),
+    ]);
+    const results = JSON.parse(stdout);
+    for (const [index, row] of rows.entries()) {
+      const key = 'php-' + row.name;
+      if (row.calls === 1) assertError(results[index], row, key);
+      else assert.equal(results[index].attempts, 2);
+      assert.equal(calls.get(key), row.calls, row.name);
+    }
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test('keyed cancellation and protocol failures expose their resolved key without retrying', async () => {
   for (const failure of ['cancelled', 'protocol']) {
     let calls = 0;

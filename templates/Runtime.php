@@ -4096,7 +4096,7 @@ class Runtime
                     $attempt === 1 ? 'not_sent' : 'unknown',
                 );
             }
-            $retryAfter = 0;
+            $retryAfter = null;
             $meta = null;
             $diagnosticError = null;
             try {
@@ -4149,6 +4149,18 @@ class Runtime
                 );
                 if (isset($rh[$requestIdHeader])) {
                     $meta['requestId'] = $rh[$requestIdHeader];
+                }
+                if (isset($rh['retry-after'])) {
+                    $instruction = $rh['retry-after'];
+                    $date = strtotime($instruction);
+                    $milliseconds = preg_match('/^\d+(\.\d+)?$/D', $instruction)
+                        ? (float) $instruction * 1000
+                        : ($date !== false
+                            ? max(0, $date * 1000 - microtime(true) * 1000)
+                            : null);
+                    if ($milliseconds !== null && is_finite((float) $milliseconds)) {
+                        $retryAfter = max(0, $milliseconds);
+                    }
                 }
                 if (isset($response['failureCode'])) {
                     throw new \RuntimeException(
@@ -4422,19 +4434,7 @@ class Runtime
                     $details,
                     raw: $raw,
                 );
-                if (isset($rh['retry-after'])) {
-                    $instruction = $rh['retry-after'];
-                    $date = strtotime($instruction);
-                    $milliseconds = preg_match('/^\d+(\.\d+)?$/D', $instruction)
-                        ? (float) $instruction * 1000
-                        : ($date !== false
-                            ? max(0, $date * 1000 - microtime(true) * 1000)
-                            : null);
-                    if ($milliseconds !== null && is_finite((float) $milliseconds)) {
-                        $retryAfter = max(0, $milliseconds);
-                        $error->retryAfterMs = $retryAfter;
-                    }
-                }
+                $error->retryAfterMs = $retryAfter;
             } catch (SdkError $error) {
                 $diagnosticError = $error->kind;
                 throw $error;
@@ -4448,10 +4448,14 @@ class Runtime
                     $diagnosticError,
                     'Request did not produce a usable response; remote outcome is unknown',
                     'unknown',
-                    $diagnosticError === 'transport' && $safe && $policy['transport'],
+                    $diagnosticError === 'transport' &&
+                        $safe &&
+                        ($meta['status'] ?? null) !== 412 &&
+                        $policy['transport'],
                     $meta,
                     previous: $cause,
                 );
+                $error->retryAfterMs = $retryAfter;
             } finally {
                 try {
                     if ($this->options->diagnostics) {
@@ -4479,7 +4483,7 @@ class Runtime
                 $policy['baseDelayMs'] * 2 ** ($attempt - 1),
                 $policy['maxDelayMs'] ?? PHP_FLOAT_MAX,
             );
-            $wait = max($retryAfter, $d / 2 + ((random_int(0, 1000000) / 1000000) * $d) / 2);
+            $wait = max($retryAfter ?? 0, $d / 2 + ((random_int(0, 1000000) / 1000000) * $d) / 2);
             if (self::now() + $wait >= $deadline) {
                 throw $error;
             }

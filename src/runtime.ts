@@ -2631,7 +2631,7 @@ class CompiledRuntime {
       // Timers truncate fractional durations; rounding up prevents an overall
       // deadline from being reported as an earlier per-attempt transport error.
       const timer = schedule(abort, Math.ceil(Math.min(timeout, remaining)));
-      let retryAfter = 0;
+      let retryAfter: number | undefined;
       let error: SdkError | undefined;
       let diagnosticMeta: Metadata | undefined;
       let diagnosticError: ErrorKind | undefined;
@@ -2663,6 +2663,15 @@ class CompiledRuntime {
             : {}),
         };
         diagnosticMeta = meta;
+        const instruction = response.headers.get('retry-after');
+        if (instruction) {
+          const seconds = /^\d+(\.\d+)?$/.test(instruction)
+            ? Number(instruction) * 1000
+            : Date.parse(instruction) - Date.now();
+          if (Number.isFinite(seconds)) {
+            retryAfter = Math.max(0, seconds);
+          }
+        }
         const declaredResponse =
           op.responses[String(response.status)] ??
           op.responses.default ??
@@ -2919,16 +2928,7 @@ class CompiledRuntime {
           raw,
         );
         diagnosticError = kind;
-        const instruction = response.headers.get('retry-after');
-        if (instruction) {
-          const seconds = /^\d+(\.\d+)?$/.test(instruction)
-            ? Number(instruction) * 1000
-            : Date.parse(instruction) - Date.now();
-          if (Number.isFinite(seconds)) {
-            retryAfter = Math.max(0, seconds);
-            error.retryAfterMs = retryAfter;
-          }
-        }
+        if (retryAfter !== undefined) error.retryAfterMs = retryAfter;
       } catch (cause) {
         if (cause instanceof SdkError) {
           diagnosticError = cause.kind;
@@ -2944,12 +2944,16 @@ class CompiledRuntime {
           performance.now() >= deadline ? 'deadline' : 'transport',
           'Request did not produce a usable response; remote outcome is unknown',
           'unknown',
-          performance.now() < deadline && safe && policy.transport,
+          performance.now() < deadline &&
+            safe &&
+            diagnosticMeta?.status !== 412 &&
+            policy.transport,
           diagnosticMeta,
           undefined,
           undefined,
           { cause },
         );
+        if (retryAfter !== undefined) error.retryAfterMs = retryAfter;
       } finally {
         timer?.cancel();
         options.signal?.removeEventListener('abort', abort);
@@ -2972,7 +2976,7 @@ class CompiledRuntime {
       }
       if (!error?.retryAllowed || attempt >= attempts || performance.now() >= deadline) throw error;
       const d = Math.min(policy.baseDelayMs * 2 ** (attempt - 1), policy.maxDelayMs ?? Infinity);
-      const wait = Math.max(retryAfter, d / 2 + (Math.random() * d) / 2);
+      const wait = Math.max(retryAfter ?? 0, d / 2 + (Math.random() * d) / 2);
       if (performance.now() + wait >= deadline) throw error;
       await delay(wait, options.signal);
     }
