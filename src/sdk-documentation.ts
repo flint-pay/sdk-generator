@@ -1,5 +1,5 @@
 import { stable } from './canonical.js';
-import { compileRetry } from './runtime-plan.js';
+import { compileRetry, requiresIdempotencyKey } from './runtime-plan.js';
 import { directionalSchema, exactValue, valueInstruction } from './codec-plan.js';
 import type { Contract, Operation, Schema } from './contract.js';
 import { schemaNotes } from './schema-documentation.js';
@@ -329,14 +329,17 @@ export function operationGuidance(c: Contract, op: Operation): string {
     (retry.maxAttempts > 1
       ? `Retry statuses: ${retry.statuses.join(', ') || 'none'}; transport retries: ${retry.transport ? 'enabled' : 'disabled'}. `
       : 'The SDK sends at most one attempt. ') +
-    (retry.maxAttempts > 1 && retry.errors?.length
+    (retry.maxAttempts > 1 && c.config.errors?.retry
+      ? `Body retry signal: \`${cell(c.config.errors.retry.path)}\`; retry values: ${c.config.errors.retry.retryValues.map((value) => literalCell(value)).join(', ')}. A string signal overrides statuses and code rules; otherwise statuses apply. HTTP 412 never retries. `
+      : '') +
+    (retry.maxAttempts > 1 && !c.config.errors?.retry && retry.errors?.length
       ? `Code-specific retries: ${retry.errors.map((rule) => `HTTP ${rule.status} (${rule.codes.map((code) => '`' + cell(code) + '`').join(', ')})`).join('; ')}. `
       : '') +
     (replay === 'idempotency' && op.idempotency && !op.idempotency.auto
       ? 'Without an optional idempotency key, mutations send once; required keys remain required. '
       : '') +
     (op.idempotency
-      ? `Supports idempotencyKey for the declared ${op.idempotency.header} header. Persist and reuse the key for the same business action. ${op.idempotency.auto ? 'When no key is supplied, the SDK generates one for this call; automatic keys cover one SDK call only. ' : ''}`
+      ? `${requiresIdempotencyKey(op) ? 'Required idempotencyKey: save a key with the action before the first attempt and reuse it on retry. ' : ''}Supports idempotencyKey for the declared ${op.idempotency.header} header. Persist and reuse the key for the same business action. ${op.idempotency.auto ? 'When no key is supplied, the SDK generates one for this call; automatic keys cover one SDK call only. ' : ''}`
       : 'idempotencyKey is not supported on this operation. ') +
     (op.conditional
       ? `Use \`ifMatch\` to send the declared \`${op.conditional.header}\` header. `

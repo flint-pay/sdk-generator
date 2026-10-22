@@ -643,10 +643,13 @@ for (const baseline of publicationBaseline.records) {
       { severity: 'additive', subject: 'sendA' },
     ];
     // Records predate later generator capabilities (runtime and target flags); keep
-    // the comparison focused on operations and published examples.
+    // the comparison focused on operations and published examples, excluding retry migrations.
     const summarize = (findings) =>
       findings
-        .filter(({ subject }) => subject !== 'runtime' && !/^(node|php)\./.test(subject))
+        .filter(
+          ({ subject }) =>
+            subject !== 'runtime' && !/^(node|php)\./.test(subject) && !subject.endsWith('.retry'),
+        )
         .map(({ severity, subject }) => ({ severity, subject }));
     assert.deepEqual(summarize(compare(savedRecord.interface, f.contract)), expected);
     mkdirSync(f.output);

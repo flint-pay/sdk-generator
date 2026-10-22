@@ -34,6 +34,7 @@ import {
 } from './codec-plan.js';
 import {
   compileRuntimePlan,
+  requiresIdempotencyKey,
   parameterSource,
   successStatus,
   type CompiledRuntimePlan,
@@ -374,7 +375,11 @@ function operationOptions(
           .join(' | ') || 'never'
       }>`
     : 'RequestOptions';
-  return op.idempotency ? base : `_SdkWithoutIdempotency<${base}>`;
+  return requiresIdempotencyKey(op)
+    ? `_SdkRequiredIdempotency<${base}>`
+    : op.idempotency
+      ? base
+      : `_SdkWithoutIdempotency<${base}>`;
 }
 
 function compileClientOptions(c: Contract): string {
@@ -444,10 +449,15 @@ function compileRequestCall(op: Operation, c: Contract, optionsType: string) {
     return name;
   });
   const nodeArgs = [...names, ...(hasParams(op) ? ['params'] : []), 'options'].join(', ');
+  const keyRequired = requiresIdempotencyKey(op);
   const nodeSignature = [
     ...paths.map((p, i) => `${names[i]}: InputValue<${type(p.schema)}>`),
-    ...(hasParams(op) ? [`params${paramsRequired ? '' : '?'}: ${paramsType}`] : []),
-    `options?: ${optionsType}`,
+    ...(hasParams(op)
+      ? [
+          `params${paramsRequired || keyRequired ? '' : '?'}: ${paramsType}${!paramsRequired && keyRequired ? ' | undefined' : ''}`,
+        ]
+      : []),
+    `options${keyRequired ? '' : '?'}: ${optionsType}`,
   ].join(', ');
   const nodeInput = `_sdkRequestInput(${js(paths.map((p) => p.name))}, [${names.join(', ')}], ${js(fields.map((p) => p.name))}, ${Boolean(op.body)}, ${op.bodyRequired}, ${hasParams(op) ? 'params' : 'undefined'})`;
   const phpSignature = [
@@ -537,6 +547,7 @@ export interface CompiledSdkContract {
         inputRequired: boolean;
         requestOptions?: string;
         idempotencyKey?: boolean;
+        idempotencyKeyRequired?: boolean;
         authModes?: string[];
         items: string;
         known?: { type: string; codecs: CodecPlan[] };
@@ -846,6 +857,7 @@ export function compileSdkContract(source: Contract): {
               inputRequired: Boolean(inputSchema(op, c.config.apiVersion, c).required?.length),
               requestOptions: operationOptions(op, authentication),
               idempotencyKey: Boolean(op.idempotency),
+              idempotencyKeyRequired: requiresIdempotencyKey(op),
               ...(authentication ? { authModes: op.authModes?.slice().sort() ?? [] } : {}),
               items: op.pagination
                 ? [...new Set(itemSchemas(op).map((s) => namedType(s, models, true)))].join(

@@ -356,10 +356,11 @@ function publicArguments(
 function callPlan(op: Operation, plan: CompiledSdkContract, optionsType: string) {
   const prefix = pascal(op.resource) + pascal(op.method);
   const required = plan.node.operations[op.id]!.inputRequired;
+  const keyRequired = plan.node.operations[op.id]!.idempotencyKeyRequired;
   if (!positional(op))
     return {
       nodeArgs: 'input = {}, options',
-      nodeSignature: `input${required ? '' : '?'}: ${prefix}Input, options?: ${optionsType}`,
+      nodeSignature: `input${required || keyRequired ? '' : '?'}: ${prefix}Input${!required && keyRequired ? ' | undefined' : ''}, options${keyRequired ? '' : '?'}: ${optionsType}`,
       nodeInput: 'input',
       phpSignature: `${prefix}Input|array $input${required ? '' : ' = []'}, ?RequestOptions $options = null`,
       phpPrelude: '',
@@ -1297,6 +1298,9 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     if (c.operations.some((op) => !op.idempotency))
       declarations +=
         "type _SdkWithoutIdempotency<T> = T extends unknown ? Omit<T, 'idempotencyKey'> & { idempotencyKey?: never } : never;\n";
+    if (c.operations.some((op) => targetPlan.node.operations[op.id]?.idempotencyKeyRequired))
+      declarations +=
+        "type _SdkRequiredIdempotency<T> = T extends unknown ? Omit<T, 'idempotencyKey'> & { idempotencyKey: string } : never;\n";
     declarations += targetPlan.node.eventDeclarations ?? '';
     declarations += targetPlan.node.clientOptions?.declaration ?? '';
     if (targetPlan.node.authentication) declarations += targetPlan.node.authentication.declarations;
@@ -3065,7 +3069,7 @@ function runtimeGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: bo
     `${target === 'node' ? 'Import { SdkError, errors } from the package root or a resource subpath. The errors namespace provides both values and TypeScript types; errors.SdkError is the root SdkError class.' : 'Import SdkError from the package namespace and individual subclasses from its Errors sub-namespace.'} SdkError and kind remain the authoritative API.\n\n` +
     `\`\`\`${target === 'node' ? 'js' : 'php'}\n${errorClassExample(c, target)}\n\`\`\`\n\n` +
     bullets([
-      'SdkError exposes the server message (message in Node, getMessage() in PHP), status, kind, outcome, retryAllowed and optional metadata; provider codes use code in Node and errorCode in PHP.',
+      'SdkError exposes the server message (message in Node, getMessage() in PHP), status, kind, outcome, retryAllowed and optional metadata; provider codes use code in Node and errorCode in PHP. Every error after key resolution exposes idempotencyKey, including not_sent failures; results expose meta.idempotencyKey. retryAfterMs records a valid server Retry-After in milliseconds.',
       'outcome is not_sent, response or unknown. Reconcile an unknown mutation outcome with the provider and the original persisted idempotency key before resubmitting.',
       'HTTP 404 uses kind not_found; HTTP 500–599 uses server. Status is undefined in Node or null in PHP when no response is available. Provider-specific details remain unknown in TypeScript.',
       'The configured errors.messagePath selects the message (default message); missing, blank or non-string values fall back to API returned HTTP followed by the status code. Error paths traverse JSON objects and array indices; scalar values have no child fields.',
@@ -3074,11 +3078,16 @@ function runtimeGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: bo
     `\n### Undeclared and invalid responses\n\n${responseRecoveryGuide(target)}\n\n` +
     `## Retries and idempotency\n\n` +
     bullets([
-      'Retries count total attempts, include jitter and Retry-After, and never exceed the effective policy.',
+      'Retries count total attempts and never exceed the effective policy. Backoff waits uniformly between half and all of baseDelayMs * 2^(attempt - 1), capped by optional maxDelayMs. Retry-After is a minimum wait. If the next wait would exceed the deadline, the last error is returned unchanged; an attempt cut off by the overall deadline still uses kind deadline.',
       'Without a declared retry policy, GET/HEAD/OPTIONS retry transport failures and HTTP 408, 429, 500, 502, 503 and 504, with three total attempts and a 100 ms exponential jitter base. Explicit policies replace these defaults.',
+      ...(c.config.errors?.retry
+        ? [
+            `The body retry signal at ${c.config.errors.retry.path} overrides status and code rules when it is a string: only ${c.config.errors.retry.retryValues.join(', ')} permits a retry. Without a string signal, configured statuses apply. HTTP 412 never retries.`,
+          ]
+        : []),
       'Mutation retries require both declared retry and idempotency support plus a valid key; without an optional key the call sends once. Required keys remain required.',
-      'idempotencyKey is supported only on operations declaring that capability; TypeScript method options enforce this, and PHP validates it at runtime.',
-      "Persist an idempotency key across process restarts and submissions within the server's documented retention/scope. Automatic keys cover one SDK call only and can satisfy required idempotency headers; generated keys must pass the declared header validation.",
+      'idempotencyKey is supported only on operations declaring that capability. A required header with auto disabled requires options.idempotencyKey in TypeScript; PHP rejects missing keys before dispatch. Save the key with the action before the first attempt and reuse it on retry.',
+      "Persist an idempotency key across process restarts and submissions within the server's documented retention/scope. Automatic UUID v4 keys cover one SDK call only, include optional autoKeyPrefix, and must pass the declared header validation. Generation on required headers is enabled only by explicit auto configuration.",
       'Explicit keys from operation inputs, request headers or idempotencyKey are preserved; conflicting values fail before dispatch.',
       'A timeout after dispatch can leave the remote outcome unknown; inspect SdkError.outcome. Disable nested transport/application retries to avoid multiplied attempts. 409/412 are distinct conflicts and never automatically overwritten.',
     ]) +

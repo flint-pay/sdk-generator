@@ -232,7 +232,7 @@ test('HTTP errors use the independently expected class and preserve SdkError fie
       assert.equal(error.message, 'synthetic failure');
       assert.equal(error.meta.requestId, 'req_fixture');
       assert.equal(error.outcome, 'response');
-      assert.match(error.stack.split('\n')[1], /at CompiledRuntime\.request \(/);
+      assert.match(error.stack.split('\n')[1], /at CompiledRuntime\.executeRequest \(/);
       assert.doesNotMatch(error.stack, /at createSdkError/);
       assert.match(inspect(error), new RegExp(classes[kind]));
       return true;

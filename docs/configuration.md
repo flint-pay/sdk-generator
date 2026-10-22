@@ -203,7 +203,7 @@ Only declared capabilities generate helpers. Pagination and polling fields may t
 
 ### Retry
 
-All four fields (`maxAttempts`, `statuses`, `transport`, `baseDelayMs`) are required.
+All four fields (`maxAttempts`, `statuses`, `transport`, `baseDelayMs`) are required. Optional `maxDelayMs` caps exponential backoff; both delays must be finite nonnegative numbers. The wait is uniform in `[d/2, d]`, where `d = min(baseDelayMs * 2^(attempt - 1), maxDelayMs)` (uncapped when omitted). A valid `Retry-After` is a minimum wait. If that wait would reach the call deadline, the last error is thrown unchanged with `retryAfterMs` when supplied by the server.
 
 - `maxAttempts` includes the initial attempt (1–10). Client and request budgets are capped at it.
 - A policy replaces the defaults completely. Use `maxAttempts: 1` to disable retries.
@@ -212,7 +212,23 @@ All four fields (`maxAttempts`, `statuses`, `transport`, `baseDelayMs`) are requ
 - 409 and 412 cannot appear in `statuses`. 412 is never retried.
 - Transport replay applies only to fully encoded JSON bodies.
 
-Retry specific 409 error codes by adding `errors` to the policy:
+For a body-driven retry decision, configure top-level `errors.retry` together with `errors.codePath`:
+
+```json
+{
+  "errors": {
+    "codePath": "error.code",
+    "retry": {
+      "path": "error.remediation.retry",
+      "retryValues": ["same_request"]
+    }
+  }
+}
+```
+
+On a replay-safe call, a string at this path overrides both status and code rules: only a value in `retryValues` retries, including HTTP 409. Other strings, such as `after_refresh` and `none`, veto retries regardless of status. Without a string there, only configured `statuses` apply. HTTP 412 never retries. Non-GET mutation retries still require idempotency support and a key; the signal does not make an unkeyed write safe. Paths use dot-separated fields and `retryValues` must contain nonempty strings. No client-side provider code table is needed.
+
+Without `errors.retry`, retry specific 409 error codes by adding `errors` to the policy:
 
 ```json
 {
@@ -230,12 +246,12 @@ Use the provider's code and set top-level `errors.codePath` (for example `error.
 
 ### Idempotency
 
-`header`, `retention` and `scope` are required; `auto` defaults to `false`.
+`header`, `retention` and `scope` are required; `auto` defaults to `false`. Optional `autoKeyPrefix` prefixes the generated UUID v4, for example `flint-sdk-`. The prefix plus UUID must be a valid HTTP header value; generated keys also pass the declared header schema before dispatch.
 
 - Automatic keys are generated only when no explicit key was supplied, including for required headers. They pass the same header validation as explicit keys.
 - Explicit keys from operation header inputs, request headers or `idempotencyKey` are preserved across retries. See [errors and retries](using-sdks.md#errors-and-retries) for key lifetime and conflicts.
 - Empty keys and keys with leading or trailing spaces or tabs fail before dispatch, because transports can change their wire identity.
-- Callers may supply a required header through `RequestOptions.idempotencyKey` or request headers instead of the input. Input types allow omission, but a missing required key still fails before dispatch when `auto` is off.
+- With `auto` off and a required header, TypeScript requires the last options argument with `idempotencyKey: string`. Save this key with the action before the first attempt and reuse it on retry. PHP accepts keys through `RequestOptions.idempotencyKey`, input headers or request headers, and rejects a missing key before dispatch with a message naming the method and `idempotencyKey`. Every error after key resolution exposes the key, including `not_sent` errors; result metadata exposes `idempotencyKey` too.
 
 ### Pagination
 

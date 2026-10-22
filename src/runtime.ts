@@ -31,6 +31,7 @@ export interface Metadata {
   status: number;
   headers: Record<string, string>;
   requestId?: string;
+  idempotencyKey?: string;
   attempts: number;
   durationMs: number;
   url?: string;
@@ -41,6 +42,8 @@ export interface Result<T> {
   raw: T extends Uint8Array ? Uint8Array : string;
 }
 export class SdkError extends Error {
+  idempotencyKey?: string;
+  retryAfterMs?: number;
   constructor(
     public kind: ErrorKind,
     message: string,
@@ -54,6 +57,7 @@ export class SdkError extends Error {
   ) {
     super(message, options);
     this.name = errorNames.get(new.target) ?? new.target.name;
+    if (meta?.idempotencyKey !== undefined) this.idempotencyKey = meta.idempotencyKey;
   }
   get status(): number | undefined {
     return this.meta?.status;
@@ -69,6 +73,8 @@ export class SdkError extends Error {
       status: this.status,
       code: this.code,
       details: this.details,
+      idempotencyKey: this.idempotencyKey,
+      retryAfterMs: this.retryAfterMs,
       stack: this.stack,
     };
   }
@@ -248,6 +254,7 @@ function inspectedMetadata(meta: Metadata) {
   return {
     status: meta.status,
     requestId: meta.requestId,
+    idempotencyKey: meta.idempotencyKey,
     attempts: meta.attempts,
     durationMs: meta.durationMs,
   };
@@ -2337,6 +2344,36 @@ class CompiledRuntime {
     options: RequestOptions = {},
     continuation?: string,
   ): Promise<Result<T>> {
+    const op = this.operation(id);
+    const header = op?.idempotency?.header.toLowerCase();
+    const key = header
+      ? (options?.idempotencyKey ??
+        Object.entries(input ?? {}).find(([name]) => name.toLowerCase() === header)?.[1] ??
+        Object.entries(options?.headers ?? {}).find(
+          ([name]) => name.toLowerCase() === header,
+        )?.[1] ??
+        (op?.idempotency?.auto ? (op.idempotency.autoKeyPrefix ?? '') + randomUUID() : undefined))
+      : undefined;
+    try {
+      return await this.executeRequest<T>(
+        id,
+        input,
+        typeof key === 'string' && options && typeof options === 'object' && !Array.isArray(options)
+          ? { ...options, idempotencyKey: key }
+          : options,
+        continuation,
+      );
+    } catch (error) {
+      if (error instanceof SdkError && typeof key === 'string') error.idempotencyKey = key;
+      throw error;
+    }
+  }
+  private async executeRequest<T = unknown>(
+    id: string,
+    input: Record<string, unknown> = {},
+    options: RequestOptions = {},
+    continuation?: string,
+  ): Promise<Result<T>> {
     if (!input || typeof input !== 'object' || Array.isArray(input))
       bad('input', 'expected an object');
     if (!options || typeof options !== 'object' || Array.isArray(options))
@@ -2402,8 +2439,7 @@ class CompiledRuntime {
           options.idempotencyKey ??
           Object.entries(options.headers ?? {}).find(
             ([name]) => name.toLowerCase() === p.name.toLowerCase(),
-          )?.[1] ??
-          (op.idempotency?.auto ? randomUUID() : undefined);
+          )?.[1];
       }
       if (
         p.in === 'header' &&
@@ -2422,7 +2458,13 @@ class CompiledRuntime {
           value = options.ifMatch;
       }
       if (value === undefined) {
-        if (p.required) bad(p.name, 'required parameter is missing');
+        if (p.required)
+          bad(
+            p.name,
+            op.idempotency?.header.toLowerCase() === p.name.toLowerCase()
+              ? `${op.resource}.${op.method} requires idempotencyKey; save and reuse the key on retry`
+              : 'required parameter is missing',
+          );
         continue;
       }
       const normalized = this.decode(value, p.codec, { mode: 'request', path: p.name });
@@ -2532,7 +2574,13 @@ class CompiledRuntime {
       if (p.source !== 'authentication') continue;
       const value = headers[p.name.toLowerCase()];
       if (value === undefined) {
-        if (p.required) bad(p.name, 'required parameter is missing');
+        if (p.required)
+          bad(
+            p.name,
+            op.idempotency?.header.toLowerCase() === p.name.toLowerCase()
+              ? `${op.resource}.${op.method} requires idempotencyKey; save and reuse the key on retry`
+              : 'required parameter is missing',
+          );
       } else this.validateHeaderValue(value, p.codec, p.name);
     }
     if (options.ifMatch !== undefined) {
@@ -2541,8 +2589,7 @@ class CompiledRuntime {
     }
     const key =
       options.idempotencyKey ??
-      (op.idempotency ? headers[op.idempotency.header.toLowerCase()] : undefined) ??
-      (op.idempotency?.auto ? randomUUID() : undefined);
+      (op.idempotency ? headers[op.idempotency.header.toLowerCase()] : undefined);
     if (key !== undefined) {
       if (!op.idempotency || !key)
         bad('idempotencyKey', 'a nonempty key and declared capability are required');
@@ -2584,7 +2631,7 @@ class CompiledRuntime {
       // Timers truncate fractional durations; rounding up prevents an overall
       // deadline from being reported as an earlier per-attempt transport error.
       const timer = schedule(abort, Math.ceil(Math.min(timeout, remaining)));
-      let retryAfter = 0;
+      let retryAfter: number | undefined;
       let error: SdkError | undefined;
       let diagnosticMeta: Metadata | undefined;
       let diagnosticError: ErrorKind | undefined;
@@ -2601,6 +2648,7 @@ class CompiledRuntime {
         );
         const responseHeaders = Object.fromEntries(response.headers.entries());
         const meta: Metadata = {
+          ...(key !== undefined ? { idempotencyKey: key } : {}),
           status: response.status,
           headers: responseHeaders,
           attempts: attempt,
@@ -2615,6 +2663,15 @@ class CompiledRuntime {
             : {}),
         };
         diagnosticMeta = meta;
+        const instruction = response.headers.get('retry-after');
+        if (instruction) {
+          const seconds = /^\d+(\.\d+)?$/.test(instruction)
+            ? Number(instruction) * 1000
+            : Date.parse(instruction) - Date.now();
+          if (Number.isFinite(seconds)) {
+            retryAfter = Math.max(0, seconds);
+          }
+        }
         const declaredResponse =
           op.responses[String(response.status)] ??
           op.responses.default ??
@@ -2839,13 +2896,20 @@ class CompiledRuntime {
         );
         const publicCode: unknown = field(redacted, this.contract.errors?.codePath ?? 'code');
         const message: unknown = field(redacted, this.contract.errors?.messagePath ?? 'message');
+        const signal = this.contract.errors?.retry;
+        const retryValue: unknown = signal ? field(data, signal.path) : undefined;
         const eligible =
           safe &&
-          (policy.statuses.includes(response.status) ||
-            (typeof code === 'string' &&
-              (policy.errors ?? []).some(
-                (rule) => rule.status === response.status && rule.codes.includes(code),
-              )));
+          response.status !== 412 &&
+          (signal
+            ? typeof retryValue === 'string'
+              ? signal.retryValues.includes(retryValue)
+              : policy.statuses.includes(response.status)
+            : policy.statuses.includes(response.status) ||
+              (typeof code === 'string' &&
+                (policy.errors ?? []).some(
+                  (rule) => rule.status === response.status && rule.codes.includes(code),
+                )));
         error = createSdkError(
           kind,
           typeof originalMessage === 'string' &&
@@ -2864,13 +2928,7 @@ class CompiledRuntime {
           raw,
         );
         diagnosticError = kind;
-        const instruction = response.headers.get('retry-after');
-        if (instruction) {
-          const seconds = /^\d+(\.\d+)?$/.test(instruction)
-            ? Number(instruction) * 1000
-            : Date.parse(instruction) - Date.now();
-          if (Number.isFinite(seconds)) retryAfter = Math.max(0, seconds);
-        }
+        if (retryAfter !== undefined) error.retryAfterMs = retryAfter;
       } catch (cause) {
         if (cause instanceof SdkError) {
           diagnosticError = cause.kind;
@@ -2886,12 +2944,16 @@ class CompiledRuntime {
           performance.now() >= deadline ? 'deadline' : 'transport',
           'Request did not produce a usable response; remote outcome is unknown',
           'unknown',
-          safe && policy.transport,
+          performance.now() < deadline &&
+            safe &&
+            diagnosticMeta?.status !== 412 &&
+            policy.transport,
           diagnosticMeta,
           undefined,
           undefined,
           { cause },
         );
+        if (retryAfter !== undefined) error.retryAfterMs = retryAfter;
       } finally {
         timer?.cancel();
         options.signal?.removeEventListener('abort', abort);
@@ -2913,15 +2975,9 @@ class CompiledRuntime {
         }
       }
       if (!error?.retryAllowed || attempt >= attempts || performance.now() >= deadline) throw error;
-      const wait = Math.max(retryAfter, Math.random() * policy.baseDelayMs * 2 ** (attempt - 1));
-      if (performance.now() + wait >= deadline)
-        throw createSdkError(
-          'deadline',
-          'Retry wait would exceed the overall deadline',
-          error.outcome,
-          error.retryAllowed,
-          error.meta,
-        );
+      const d = Math.min(policy.baseDelayMs * 2 ** (attempt - 1), policy.maxDelayMs ?? Infinity);
+      const wait = Math.max(retryAfter ?? 0, d / 2 + (Math.random() * d) / 2);
+      if (performance.now() + wait >= deadline) throw error;
       await delay(wait, options.signal);
     }
     throw new Error('Unreachable retry state');

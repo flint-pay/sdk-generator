@@ -85,6 +85,7 @@ export interface Retry {
   errors?: { status: number; codes: string[] }[];
   transport: boolean;
   baseDelayMs: number;
+  maxDelayMs?: number;
 }
 export interface Capability {
   request?: RequestStyle;
@@ -97,7 +98,13 @@ export interface Capability {
   hidden?: boolean;
   aliases?: string[];
   retry?: Retry;
-  idempotency?: { header: string; retention: string; scope: string; auto?: boolean };
+  idempotency?: {
+    header: string;
+    retention: string;
+    scope: string;
+    auto?: boolean;
+    autoKeyPrefix?: string;
+  };
   pagination?: {
     kind: 'cursor' | 'offset' | 'link';
     items: string;
@@ -192,6 +199,7 @@ export interface Config {
   license?: string;
   errors?: {
     codePath?: string;
+    retry?: { path: string; retryValues: string[] };
     messagePath?: string;
     detailsPath?: string;
     requestIdHeader?: string;
@@ -1656,7 +1664,7 @@ export function loadContract(
       diagnostics.check(() =>
         keys(
           config.errors!,
-          ['codePath', 'messagePath', 'detailsPath', 'requestIdHeader'],
+          ['codePath', 'messagePath', 'detailsPath', 'requestIdHeader', 'retry'],
           'config/errors',
         ),
       );
@@ -1670,6 +1678,24 @@ export function loadContract(
             )
               fail(`config/errors/${key}`, 'expected a dot-separated field path');
           });
+      });
+      diagnostics.check(() => {
+        const retry = config.errors!.retry;
+        if (retry !== undefined) {
+          keys(retry, ['path', 'retryValues'], 'config/errors/retry');
+          if (!config.errors!.codePath) fail('config/errors/retry', 'requires errors.codePath');
+          if (
+            typeof retry.path !== 'string' ||
+            !/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/.test(retry.path)
+          )
+            fail('config/errors/retry/path', 'expected a dot-separated field path');
+          if (
+            !Array.isArray(retry.retryValues) ||
+            !retry.retryValues.length ||
+            retry.retryValues.some((value) => typeof value !== 'string' || !value.trim())
+          )
+            fail('config/errors/retry/retryValues', 'expected nonempty string values');
+        }
       });
       diagnostics.check(() => {
         if (config.errors!.requestIdHeader !== undefined)
@@ -2849,7 +2875,7 @@ export function loadContract(
         if (!Object.keys(responses).some((k) => successStatus(k) && k !== '304'))
           fail(p, 'declare at least one explicit success response');
         if (c.idempotency) {
-          keys(c.idempotency, ['header', 'retention', 'scope', 'auto'], p);
+          keys(c.idempotency, ['header', 'retention', 'scope', 'auto', 'autoKeyPrefix'], p);
           header(c.idempotency.header, p);
           if (
             typeof c.idempotency.retention !== 'string' ||
@@ -2860,15 +2886,28 @@ export function loadContract(
             fail(p, 'idempotency requires server retention and scope descriptions');
           if (c.idempotency.auto !== undefined && typeof c.idempotency.auto !== 'boolean')
             fail(p, 'idempotency auto must be boolean');
+          if (
+            c.idempotency.autoKeyPrefix !== undefined &&
+            (typeof c.idempotency.autoKeyPrefix !== 'string' ||
+              /[^\x20-\x7e]/.test(c.idempotency.autoKeyPrefix) ||
+              /^[ ]/.test(c.idempotency.autoKeyPrefix))
+          )
+            fail(p, 'idempotency autoKeyPrefix plus UUID must be a valid HTTP header value');
         }
         if (c.retry) {
-          keys(c.retry, ['maxAttempts', 'statuses', 'errors', 'transport', 'baseDelayMs'], p);
+          keys(
+            c.retry,
+            ['maxAttempts', 'statuses', 'errors', 'transport', 'baseDelayMs', 'maxDelayMs'],
+            p,
+          );
           if (
             !Number.isInteger(c.retry.maxAttempts) ||
             c.retry.maxAttempts < 1 ||
             c.retry.maxAttempts > 10 ||
             !Number.isFinite(c.retry.baseDelayMs) ||
             c.retry.baseDelayMs < 0 ||
+            (c.retry.maxDelayMs !== undefined &&
+              (!Number.isFinite(c.retry.maxDelayMs) || c.retry.maxDelayMs < 0)) ||
             !Array.isArray(c.retry.statuses) ||
             c.retry.statuses.some(
               (s) => !Number.isInteger(s) || s < 400 || s > 599 || [409, 412].includes(s),

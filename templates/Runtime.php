@@ -6,6 +6,8 @@ require_once __DIR__ . '/SchemaAdapter.php';
 class SdkError extends \RuntimeException
 {
     public readonly ?int $status;
+    public ?string $idempotencyKey = null;
+    public int|float|null $retryAfterMs = null;
 
     /** @param array{status?: int, requestId?: string|null, attempts?: int, durationMs?: float, ...}|null $meta */
     public function __construct(
@@ -21,6 +23,7 @@ class SdkError extends \RuntimeException
     ) {
         parent::__construct($message, 0, $previous);
         $this->status = $meta['status'] ?? null;
+        $this->idempotencyKey = $meta['idempotencyKey'] ?? null;
     }
     /** @param array{status?: int, requestId?: string|null, attempts?: int, durationMs?: float, ...}|null $meta */
     public static function create(
@@ -81,6 +84,8 @@ class SdkError extends \RuntimeException
             'retryAllowed' => $this->retryAllowed,
             'errorCode' => $this->errorCode,
             'details' => $this->details,
+            'idempotencyKey' => $this->idempotencyKey,
+            'retryAfterMs' => $this->retryAfterMs,
             'file' => $this->getFile(),
             'line' => $this->getLine(),
             // Trace arguments can contain raw response bodies and credentials.
@@ -269,7 +274,10 @@ final class CurlByteStream implements ByteStream
             while (!$this->headersDone && !$this->done) {
                 $this->pump($this->started, (int) $request['timeoutMs']);
             }
-            $this->checkFailure();
+            // Preserve received headers so Runtime can classify a failed response.
+            if (!$this->headersDone) {
+                $this->checkFailure();
+            }
         } catch (\Throwable $error) {
             $this->close();
             throw $error;
@@ -301,6 +309,7 @@ final class CurlByteStream implements ByteStream
     public function startStream(): void
     {
         try {
+            $this->checkFailure();
             $this->checkRequestTimeout();
             $this->streaming = true;
             $this->started = self::now();
@@ -3226,12 +3235,36 @@ class Runtime
         if (
             ($contract['format'] ?? null) !== 1 ||
             !is_string($contract['semantics'] ?? null) ||
-            ($contract['retrySemantics'] ?? null) !== 'budgets-1'
+            ($contract['retrySemantics'] ?? null) !== 'budgets-2'
         ) {
             throw new \InvalidArgumentException('Unsupported compiled runtime format');
         }
         if (!is_array($contract['operations'] ?? null)) {
             throw new \InvalidArgumentException('Missing compiled operations');
+        }
+        if (array_key_exists('errors', $contract) && !is_array($contract['errors'])) {
+            throw new \InvalidArgumentException('Invalid compiled error settings');
+        }
+        if (array_key_exists('retry', $contract['errors'] ?? [])) {
+            $signal = $contract['errors']['retry'];
+            if (
+                !is_array($signal) ||
+                !is_string($contract['errors']['codePath'] ?? null) ||
+                $contract['errors']['codePath'] === '' ||
+                !is_string($signal['path'] ?? null) ||
+                !preg_match('/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/D', $signal['path']) ||
+                !is_array($signal['retryValues'] ?? null) ||
+                !array_is_list($signal['retryValues']) ||
+                !$signal['retryValues'] ||
+                count(
+                    array_filter(
+                        $signal['retryValues'],
+                        fn($value) => !is_string($value) || trim($value) === '',
+                    ),
+                ) > 0
+            ) {
+                throw new \InvalidArgumentException('Invalid compiled error retry signal');
+            }
         }
         if (array_key_exists('defaultBaseUrl', $contract)) {
             $default = $contract['defaultBaseUrl'];
@@ -3325,6 +3358,12 @@ class Runtime
             ) {
                 throw new \InvalidArgumentException('Invalid compiled operation');
             }
+            if (array_key_exists('autoKeyPrefix', $op['idempotency'] ?? [])) {
+                $prefix = $op['idempotency']['autoKeyPrefix'];
+                if (!is_string($prefix) || preg_match('/[^\x20-\x7e]|^ /', $prefix)) {
+                    throw new \InvalidArgumentException('Invalid compiled automatic key prefix');
+                }
+            }
             $policy = $op['retry'] ?? null;
             if (
                 !is_array($policy) ||
@@ -3339,6 +3378,10 @@ class Runtime
                     !is_float($policy['baseDelayMs'] ?? null)) ||
                 !is_finite((float) $policy['baseDelayMs']) ||
                 $policy['baseDelayMs'] < 0 ||
+                (array_key_exists('maxDelayMs', $policy) &&
+                    ((!is_int($policy['maxDelayMs']) && !is_float($policy['maxDelayMs'])) ||
+                        !is_finite((float) $policy['maxDelayMs']) ||
+                        $policy['maxDelayMs'] < 0)) ||
                 ($op['replay'] === 'idempotency' &&
                     $policy['maxAttempts'] > 1 &&
                     !isset($op['idempotency']))
@@ -3622,6 +3665,58 @@ class Runtime
         ?RequestOptions $options = null,
         ?string $continuation = null,
     ): Result {
+        $op = $this->operation($id);
+        $header = strtolower($op['idempotency']['header'] ?? '');
+        $key = $header !== '' ? $options?->idempotencyKey : null;
+        if ($header !== '' && $key === null) {
+            foreach ([$input, $options?->headers ?? []] as $values) {
+                foreach ($values as $name => $value) {
+                    if (strtolower((string) $name) === $header && $key === null) {
+                        $key = $value;
+                    }
+                }
+            }
+            if ($key === null && ($op['idempotency']['auto'] ?? false)) {
+                $bytes = random_bytes(16);
+                $bytes[6] = chr((ord($bytes[6]) & 0x0f) | 0x40);
+                $bytes[8] = chr((ord($bytes[8]) & 0x3f) | 0x80);
+                $hex = bin2hex($bytes);
+                $key =
+                    ($op['idempotency']['autoKeyPrefix'] ?? '') .
+                    substr($hex, 0, 8) .
+                    '-' .
+                    substr($hex, 8, 4) .
+                    '-' .
+                    substr($hex, 12, 4) .
+                    '-' .
+                    substr($hex, 16, 4) .
+                    '-' .
+                    substr($hex, 20);
+            }
+        }
+        try {
+            $effective = $options;
+            if (is_string($key)) {
+                $effective = new RequestOptions(
+                    ...array_replace(get_object_vars($options ?? new RequestOptions()), [
+                        'idempotencyKey' => $key,
+                    ]),
+                );
+            }
+            return $this->executeRequest($id, $input, $effective, $continuation);
+        } catch (SdkError $error) {
+            if (is_string($key)) {
+                $error->idempotencyKey = $key;
+            }
+            throw $error;
+        }
+    }
+    private function executeRequest(
+        string $id,
+        array $input = [],
+        ?RequestOptions $options = null,
+        ?string $continuation = null,
+    ): Result {
         $o = $options ?? new RequestOptions();
         $op = $this->operation($id);
         foreach (['streamIdleTimeoutMs', 'streamLifetimeMs'] as $key) {
@@ -3713,10 +3808,6 @@ class Runtime
                         }
                     }
                 }
-                if (!$present && ($op['idempotency']['auto'] ?? false)) {
-                    $value = bin2hex(random_bytes(16));
-                    $present = true;
-                }
             }
             if (
                 $p['in'] === 'header' &&
@@ -3753,7 +3844,15 @@ class Runtime
             }
             if (!$present) {
                 if ($p['required'] ?? false) {
-                    Codec::fail($p['name'], 'required parameter is missing');
+                    Codec::fail(
+                        $p['name'],
+                        strtolower($op['idempotency']['header'] ?? '') === strtolower($p['name'])
+                            ? $op['resource'] .
+                                '.' .
+                                $op['method'] .
+                                ' requires idempotencyKey; save and reuse the key on retry'
+                            : 'required parameter is missing',
+                    );
                 }
                 continue;
             }
@@ -3932,7 +4031,15 @@ class Runtime
             $value = $headers[strtolower($p['name'])] ?? null;
             if ($value === null) {
                 if ($p['required'] ?? false) {
-                    Codec::fail($p['name'], 'required parameter is missing');
+                    Codec::fail(
+                        $p['name'],
+                        strtolower($op['idempotency']['header'] ?? '') === strtolower($p['name'])
+                            ? $op['resource'] .
+                                '.' .
+                                $op['method'] .
+                                ' requires idempotencyKey; save and reuse the key on retry'
+                            : 'required parameter is missing',
+                    );
                 }
             } else {
                 $this->validateHeaderValue($value, $p['codec'], $p['name']);
@@ -3946,8 +4053,7 @@ class Runtime
         }
         $key =
             $o->idempotencyKey ??
-            ($headers[strtolower($op['idempotency']['header'] ?? '')] ??
-                (null ?? ($op['idempotency']['auto'] ?? false ? bin2hex(random_bytes(16)) : null)));
+            ($headers[strtolower($op['idempotency']['header'] ?? '')] ?? null);
         if ($key !== null) {
             if (!isset($op['idempotency']) || $key === '') {
                 Codec::fail(
@@ -3994,7 +4100,7 @@ class Runtime
                     $attempt === 1 ? 'not_sent' : 'unknown',
                 );
             }
-            $retryAfter = 0;
+            $retryAfter = null;
             $meta = null;
             $diagnosticError = null;
             try {
@@ -4035,6 +4141,7 @@ class Runtime
                     $status < 300 &&
                     ($declaredResponse['bodyKind'] ?? null) === 'binary';
                 $meta = [
+                    ...$o->idempotencyKey !== null ? ['idempotencyKey' => $o->idempotencyKey] : [],
                     'status' => $status,
                     'headers' => $rh,
                     'attempts' => $attempt,
@@ -4046,6 +4153,18 @@ class Runtime
                 );
                 if (isset($rh[$requestIdHeader])) {
                     $meta['requestId'] = $rh[$requestIdHeader];
+                }
+                if (isset($rh['retry-after'])) {
+                    $instruction = $rh['retry-after'];
+                    $date = strtotime($instruction);
+                    $milliseconds = preg_match('/^\d+(\.\d+)?$/D', $instruction)
+                        ? (float) $instruction * 1000
+                        : ($date !== false
+                            ? max(0, $date * 1000 - microtime(true) * 1000)
+                            : null);
+                    if ($milliseconds !== null && is_finite((float) $milliseconds)) {
+                        $retryAfter = max(0, $milliseconds);
+                    }
                 }
                 if (isset($response['failureCode'])) {
                     throw new \RuntimeException(
@@ -4287,6 +4406,8 @@ class Runtime
                 if (isset($this->contract['errors']['detailsPath'])) {
                     $details = self::field($details, $this->contract['errors']['detailsPath']);
                 }
+                $signal = $this->contract['errors']['retry'] ?? null;
+                $retryValue = $signal !== null ? self::field($data, $signal['path']) : null;
                 $diagnosticError = $kind;
                 $error = SdkError::create(
                     $kind,
@@ -4298,28 +4419,26 @@ class Runtime
                         : "API returned HTTP $status",
                     'response',
                     $safe &&
-                        (in_array($status, $policy['statuses'], true) ||
-                            (is_string($code) &&
-                                count(
-                                    array_filter(
-                                        $policy['errors'] ?? [],
-                                        fn($rule) => $rule['status'] === $status &&
-                                            in_array($code, $rule['codes'], true),
-                                    ),
-                                ) > 0)),
+                        $status !== 412 &&
+                        ($signal !== null
+                            ? (is_string($retryValue)
+                                ? in_array($retryValue, $signal['retryValues'], true)
+                                : in_array($status, $policy['statuses'], true))
+                            : in_array($status, $policy['statuses'], true) ||
+                                (is_string($code) &&
+                                    count(
+                                        array_filter(
+                                            $policy['errors'] ?? [],
+                                            fn($rule) => $rule['status'] === $status &&
+                                                in_array($code, $rule['codes'], true),
+                                        ),
+                                    ) > 0)),
                     $meta,
                     is_string($code) && is_string($publicCode) ? $publicCode : null,
                     $details,
                     raw: $raw,
                 );
-                if (isset($rh['retry-after'])) {
-                    $retryAfter = max(
-                        0,
-                        is_numeric($rh['retry-after'])
-                            ? (int) ((float) $rh['retry-after'] * 1000)
-                            : ((strtotime($rh['retry-after']) ?: time()) - time()) * 1000,
-                    );
-                }
+                $error->retryAfterMs = $retryAfter;
             } catch (SdkError $error) {
                 $diagnosticError = $error->kind;
                 throw $error;
@@ -4333,10 +4452,14 @@ class Runtime
                     $diagnosticError,
                     'Request did not produce a usable response; remote outcome is unknown',
                     'unknown',
-                    $diagnosticError === 'transport' && $safe && $policy['transport'],
+                    $diagnosticError === 'transport' &&
+                        $safe &&
+                        ($meta['status'] ?? null) !== 412 &&
+                        $policy['transport'],
                     $meta,
                     previous: $cause,
                 );
+                $error->retryAfterMs = $retryAfter;
             } finally {
                 try {
                     if ($this->options->diagnostics) {
@@ -4360,20 +4483,15 @@ class Runtime
             if (!$error->retryAllowed || $attempt >= $attempts || self::now() >= $deadline) {
                 throw $error;
             }
-            $wait = max(
-                $retryAfter,
-                random_int(0, (int) ($policy['baseDelayMs'] * 2 ** ($attempt - 1))),
+            $d = min(
+                $policy['baseDelayMs'] * 2 ** ($attempt - 1),
+                $policy['maxDelayMs'] ?? PHP_FLOAT_MAX,
             );
+            $wait = max($retryAfter ?? 0, $d / 2 + ((random_int(0, 1000000) / 1000000) * $d) / 2);
             if (self::now() + $wait >= $deadline) {
-                throw SdkError::create(
-                    'deadline',
-                    'Retry wait would exceed the overall deadline',
-                    $error->outcome,
-                    $error->retryAllowed,
-                    $meta,
-                );
+                throw $error;
             }
-            self::pause($wait, $o->cancellation);
+            self::pause((int) ceil($wait), $o->cancellation);
         }
         throw new \LogicException('Unreachable retry state');
     }
