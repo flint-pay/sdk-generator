@@ -4,6 +4,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
+import { createServer as createTcpServer } from 'node:net';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { loadContract, generate, validateFixtures } from '../dist/index.js';
@@ -131,6 +132,7 @@ writeFileSync(
       watch: {
         resource: 'events',
         method: 'watch',
+        retry: { maxAttempts: 3, baseDelayMs: 1, statuses: [429, 503], transport: true },
         stream: { events: { ready: '#/components/schemas/Ready' } },
       },
     },
@@ -398,3 +400,53 @@ test('stream operations decode JSON HTTP errors before exposing an event iterato
     [1, 1],
   );
 });
+
+for (const row of [
+  { name: 'Retry-After', status: 429, retryAfterMs: 10000, retryAllowed: true },
+  { name: 'HTTP 412 veto', status: 412, retryAfterMs: 0, retryAllowed: false },
+]) {
+  test(`PHP SSE transport retains ${row.name} when a truncated response closes immediately`, async () => {
+    let requests = 0;
+    const server = createTcpServer((socket) => {
+      socket.once('data', () => {
+        requests++;
+        socket.end(
+          `HTTP/1.1 ${row.status} Error\r\nContent-Length: 100\r\nRetry-After: ${row.retryAfterMs / 1000}\r\nX-Request-Id: truncated-sse\r\nConnection: close\r\n\r\n{`,
+        );
+      });
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const { stdout } = await exec('php', [
+        '-r',
+        String.raw`
+require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
+$c=new \Example\Streams\Client(new \Example\Streams\ClientOptions(baseUrl:$argv[2],allowInsecureHttp:true));
+$results=[];
+for($i=0;$i<10;$i++) {
+try {
+  $c->events->watch(options:new \Example\Streams\RequestOptions(deadlineMs:200));
+  throw new \Exception('Expected a truncated response error');
+} catch (\Example\Streams\SdkError $e) {
+  $results[]=['kind'=>$e->kind,'outcome'=>$e->outcome,'status'=>$e->status,'retryAfterMs'=>$e->retryAfterMs,'retryAllowed'=>$e->retryAllowed];
+}
+}
+$c->close();echo json_encode($results);
+`,
+        join(out, 'php'),
+        `http://127.0.0.1:${server.address().port}`,
+      ]);
+      assert.equal(requests, 10);
+      for (const result of JSON.parse(stdout))
+        assert.deepEqual(result, {
+          kind: 'transport',
+          outcome: 'unknown',
+          status: row.status,
+          retryAfterMs: row.retryAfterMs,
+          retryAllowed: row.retryAllowed,
+        });
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+}

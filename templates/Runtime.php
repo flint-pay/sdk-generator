@@ -274,7 +274,10 @@ final class CurlByteStream implements ByteStream
             while (!$this->headersDone && !$this->done) {
                 $this->pump($this->started, (int) $request['timeoutMs']);
             }
-            $this->checkFailure();
+            // Preserve received headers so Runtime can classify a failed response.
+            if (!$this->headersDone) {
+                $this->checkFailure();
+            }
         } catch (\Throwable $error) {
             $this->close();
             throw $error;
@@ -306,6 +309,7 @@ final class CurlByteStream implements ByteStream
     public function startStream(): void
     {
         try {
+            $this->checkFailure();
             $this->checkRequestTimeout();
             $this->streaming = true;
             $this->started = self::now();
