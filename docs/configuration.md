@@ -206,7 +206,7 @@ Only declared capabilities generate helpers. Pagination and polling fields may t
 All four fields (`maxAttempts`, `statuses`, `transport`, `baseDelayMs`) are required. Optional `maxDelayMs` caps exponential backoff; both delays must be finite nonnegative numbers. The wait is uniform in `[d/2, d]`, where `d = min(baseDelayMs * 2^(attempt - 1), maxDelayMs)` (uncapped when omitted). A valid `Retry-After` is a minimum wait. If that wait would reach the call deadline, the last error is thrown unchanged with `retryAfterMs` when supplied by the server.
 
 - `maxAttempts` includes the initial attempt (1–10). Client and request budgets are capped at it.
-- A policy replaces the defaults completely. Use `maxAttempts: 1` to disable retries.
+- A policy replaces the defaults completely. Use `maxAttempts: 1` to disable ordinary retries; [credential providers](using-sdks.md#credential-providers) can still add one HTTP 401 retry.
 - Without a policy, GET/HEAD/OPTIONS use the [default read retries](using-sdks.md#errors-and-retries) and other methods send once.
 - Mutation retries need retry and idempotency declarations and a nonempty key. A missing optional key reduces the call to one attempt; required keys stay required.
 - 409 and 412 cannot appear in `statuses`. 412 is never retried.
@@ -390,7 +390,7 @@ A declared successful `text/event-stream` response produces a closeable event st
 
 ## Authentication
 
-Supported credentials: HTTP bearer and header API keys. Cookie authentication, OAuth refresh and implicit credential discovery are unsupported. Consumers pass credentials through `token`, shortcuts or `credentials`; the configuration never holds one.
+Supported credentials: HTTP bearer and header API keys. Cookie authentication, OAuth refresh and implicit credential discovery are unsupported. Consumers pass nonempty strings or credential providers through `token`, shortcuts or `credentials`; the configuration never holds a secret. Providers are resolved for each request attempt, including retries. Node providers implement `getCredential(): Promise<{ value: string; expiresAt?: Date }>` and optional `invalidate(): void`. PHP accepts a `CredentialProvider` implementing `getCredential(): Credential`, or a `Closure` returning a string or `Credential`. See [credential providers](using-sdks.md#credential-providers).
 
 ### Single scheme
 

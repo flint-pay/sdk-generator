@@ -9,7 +9,7 @@ Node webhook verification returns `VerifiedWebhook`, including `reason` when `kn
 | Capability                 | Node.js/TypeScript                                                                              | PHP                                                                                               |
 | -------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | Runtime/package            | Node 22+ ESM, 22.12+ `require()`; TypeScript 5.9+ with consumer-installed Node types (22.16.0+) | PHP 8.2+, Composer, ext-json/ext-curl                                                             |
-| Authentication             | Named complete bearer/header API-key modes with configured scalar shortcuts                     | Same                                                                                              |
+| Authentication             | Named bearer/header API-key modes, string or provider credentials, configured shortcuts         | Same                                                                                              |
 | Credential destinations    | Allowed origins; return declared redirects; reject unsafe links                                 | Same                                                                                              |
 | Per-request tenant headers | Concurrent calls with isolated options                                                          | Isolated sequential calls; no cross-thread sharing                                                |
 | Exact integers/decimals    | Numeric strings, exact JSON token serializer/parser                                             | Same shared safe integer boundary                                                                 |
@@ -89,7 +89,7 @@ Nested constraint changes in `allOf`, `anyOf`, and `not` can receive only a `rev
 ## Unsupported capabilities
 
 - File uploads, multipart bodies, binary response media other than PDF, and download resume/checksum protocols. PDF downloads are buffered; general-purpose file streaming is outside the current contract.
-- OAuth refresh and token cache coordination. Obtain the bearer token in your application and pass it as `token`.
+- Built-in OAuth refresh and token cache coordination. Obtain the bearer token in your application and pass it as a string or [credential provider](using-sdks.md#credential-providers).
 - Bulk helpers, additional protocols and languages, adaptive throttling, caching and dirty tracking, framework packages, checkout UI, portals, forwarding and replay services, and time simulation.
 
 The schema can still express per-item bulk results, resource relationships, next actions and exports as ordinary data. Automatic provider behavior requires a declared capability, except for bounded default retries on GET/HEAD/OPTIONS; a resource property alone never triggers network activity.

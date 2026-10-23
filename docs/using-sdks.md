@@ -94,6 +94,41 @@ Rules:
 - TypeScript `AuthMode` and `Credentials` list the actual modes and scheme keys, and each operation limits request options to its permitted modes.
 - Missing-credential errors name the scheme and mode without printing secret values.
 
+### Credential providers
+
+Every credential position accepts a nonempty string or a provider. The SDK resolves providers on every request attempt, so your application can refresh credentials without rebuilding the client.
+
+Node exports the `CredentialProvider` type:
+
+```ts
+import { Client, type CredentialProvider } from '@example/library';
+
+const provider: CredentialProvider = {
+  async getCredential() {
+    return { value: await loadApplicationToken() };
+  },
+  invalidate() {
+    clearApplicationTokenCache();
+  },
+};
+const client = new Client({ baseUrl, token: provider });
+```
+
+`getCredential()` returns `{ value: string; expiresAt?: Date }`. PHP exports `CredentialProvider` with `getCredential(): Credential`; construct the result as `new Credential($value, $expiresAt)`, where expiry is an optional `DateTimeInterface`. PHP also accepts a `Closure` returning a string or `Credential`:
+
+```php
+$client = new Client(
+  new ClientOptions(
+    baseUrl: $baseUrl,
+    token: fn(): Credential => new Credential(loadApplicationToken()),
+  ),
+);
+```
+
+Import `Client`, `ClientOptions` and `Credential` from your generated package namespace. The application owns token loading, caching and expiry handling; `expiresAt` is metadata and does not schedule SDK refreshes.
+
+On HTTP 401, a replay-safe request using a provider with a public `invalidate(): void` method invalidates the provider and retries once with a newly resolved credential. This adds at most one attempt to the ordinary retry budget, including when `maxAttempts` is 1, and keeps the same idempotency key. Mutations still require a declared idempotency key to replay. String credentials, closures and providers without `invalidate` never trigger this refresh retry; further 401s are surfaced immediately. Provider failures surface as authentication errors with a fixed message and no original exception, to keep secret values out of errors. Empty and malformed values use the same validation errors as string credentials.
+
 ## Make a call
 
 ### Arguments
@@ -436,7 +471,7 @@ Precedence and budgets:
 
 - Request timeout, deadline and attempt settings override client defaults.
 - The deadline is rechecked after response decoding and model construction, so an overrun returns a `deadline` error with response metadata instead of a late success.
-- `maxAttempts` budgets are capped at each operation's limit, so one client budget is safe across operations. Set `maxAttempts: 1` to disable retries. A budget cannot enable undeclared mutation retries.
+- `maxAttempts` budgets are capped at each operation's limit, so one client budget is safe across operations. Set `maxAttempts: 1` to disable ordinary retries; [provider invalidation](#credential-providers) can still add one HTTP 401 retry. A budget cannot enable undeclared mutation retries.
 - No mutable client-wide tenant headers are shared between calls.
 
 Managed headers:

@@ -34,6 +34,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ### Added
 
+- Node and PHP credential options accept providers resolved on every request attempt. Replay-safe requests invalidate provider credentials on HTTP 401 and retry once with the same idempotency key. PHP also accepts credential closures. Applications own token loading, caching and expiry handling.
+
 - Optional `errors.retry: { path, retryValues }` for body-driven retries, with configured status fallback when the path has no string. Optional `idempotency.autoKeyPrefix` prefixes generated UUID v4 keys. Keyed errors and response metadata expose `idempotencyKey`; errors expose a valid server wait as `retryAfterMs`. Both targets retain attempt/deadline bounds and never retry HTTP 412 or cancellation.
 
 - `init API_JSON SDK_JSON [--targets node|php|node,php] [--json]` writes a minimal configuration with placeholder package names, refuses overwrites and reports diagnosis while keeping the file on diagnostic failure. Library callers can use `initialConfig` without writing files.

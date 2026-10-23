@@ -133,6 +133,21 @@ final class Cancellation
         return $this->cancelled;
     }
 }
+interface CredentialProvider
+{
+    public function getCredential(): Credential;
+}
+final class Credential
+{
+    public function __construct(
+        #[\SensitiveParameter] public readonly string $value,
+        public readonly ?\DateTimeInterface $expiresAt = null,
+    ) {}
+    public function __debugInfo(): array
+    {
+        return ['value' => '[REDACTED]', 'expiresAt' => $this->expiresAt];
+    }
+}
 final class RequestOptions
 {
     public function __construct(
@@ -185,7 +200,7 @@ final class ClientOptions
 {
     public function __construct(
         public readonly ?string $baseUrl = null,
-        public readonly ?string $token = null,
+        public readonly string|CredentialProvider|\Closure|null $token = null,
         public readonly ?array $allowedOrigins = null,
         public readonly bool $allowInsecureHttp = false,
         public readonly int $timeoutMs = 10000,
@@ -3907,144 +3922,197 @@ class Runtime
         foreach ($o->headers as $k => $v) {
             $set($k, $v);
         }
-        if (isset($this->contract['authentication'])) {
-            $permitted = $op['authModes'] ?? [];
-            $shortcutAuth = function ($options) {
-                $supplied = [];
-                foreach ($this->contract['authShortcuts'] ?? [] as $key => $shortcut) {
-                    if (($options->$key ?? null) !== null) {
-                        $supplied[] = [
-                            'mode' => $shortcut['mode'],
-                            'credentials' => [$shortcut['scheme'] => $options->$key],
-                        ];
-                    }
+        $suppliedHeaders = $headers;
+        $providers = [];
+        $resolveCredential = function (
+            #[\SensitiveParameter] $source,
+            string $message,
+            bool $rejectNewlines = true,
+        ) use (&$providers): string {
+            $value = $source;
+            if ($source instanceof CredentialProvider || $source instanceof \Closure) {
+                try {
+                    $credential =
+                        $source instanceof CredentialProvider
+                            ? $source->getCredential()
+                            : $source();
+                    $value = $credential instanceof Credential ? $credential->value : $credential;
+                } catch (\Throwable) {
+                    // Do not retain provider exceptions, which may include secret values.
+                    throw SdkError::create('authentication', 'Credential provider failed');
                 }
-                if (
-                    count($supplied) > 1 ||
-                    ($supplied &&
-                        ($options->authMode !== null ||
-                            ($options->credentials !== null &&
-                                ($options instanceof RequestOptions ||
-                                    $options->credentials !== []))))
-                ) {
-                    throw SdkError::create(
-                        'authentication',
-                        'Use one authentication shortcut or explicit authMode/credentials, not both',
-                    );
+                if ($source instanceof CredentialProvider && is_callable([$source, 'invalidate'])) {
+                    $providers[spl_object_id($source)] = $source;
                 }
-                return $supplied[0] ?? null;
-            };
-            $clientShortcut = $shortcutAuth($this->options);
-            $requestShortcut = $shortcutAuth($o);
-            $defaultMode = $this->options->authMode ?? ($clientShortcut['mode'] ?? null);
-            $modeName =
-                $requestShortcut['mode'] ?? ($o->authMode ?? ($permitted ? $defaultMode : null));
-            if ($modeName === null && $op['authenticated'] && count($permitted) === 1) {
-                $modeName = $permitted[0];
             }
-            if ($modeName === null && $op['authenticated']) {
-                throw SdkError::create(
-                    'authentication',
-                    'Select an explicit authentication mode for ' .
-                        $op['id'] .
-                        '; permitted modes: ' .
-                        implode(', ', $permitted),
-                );
-            }
-            $selected =
-                $modeName === null ? null : $this->contract['authentication'][$modeName] ?? null;
             if (
-                $modeName !== null &&
-                ($selected === null || !in_array($modeName, $permitted, true))
+                !is_string($value) ||
+                $value === '' ||
+                ($rejectNewlines && preg_match('/[\r\n]/', $value))
             ) {
-                throw SdkError::create(
-                    'authentication',
-                    'Authentication mode is not permitted for ' .
-                        $op['id'] .
-                        '; permitted modes: ' .
-                        implode(', ', $permitted),
-                );
+                throw SdkError::create('authentication', $message);
             }
-            $expected = [];
-            if ($selected !== null) {
-                $credentials =
-                    $requestShortcut['credentials'] ??
-                    ($o->credentials ??
-                        (($clientShortcut['mode'] ?? null) === $modeName
-                            ? $clientShortcut['credentials']
-                            : $this->options->credentials[$modeName] ?? []));
-                foreach ($selected['schemes'] as $scheme) {
-                    $credential = $credentials[$scheme['name']] ?? null;
+            return $value;
+        };
+        $authenticate = function () use (
+            $op,
+            $o,
+            $set,
+            &$headers,
+            $suppliedHeaders,
+            $resolveCredential,
+            &$providers,
+        ): void {
+            $providers = [];
+            if (isset($this->contract['authentication'])) {
+                $permitted = $op['authModes'] ?? [];
+                $shortcutAuth = function ($options) {
+                    $supplied = [];
+                    foreach ($this->contract['authShortcuts'] ?? [] as $key => $shortcut) {
+                        if (($options->$key ?? null) !== null) {
+                            $supplied[] = [
+                                'mode' => $shortcut['mode'],
+                                'credentials' => [$shortcut['scheme'] => $options->$key],
+                            ];
+                        }
+                    }
                     if (
-                        !is_string($credential) ||
-                        $credential === '' ||
-                        preg_match('/[\r\n]/', $credential)
+                        count($supplied) > 1 ||
+                        ($supplied &&
+                            ($options->authMode !== null ||
+                                ($options->credentials !== null &&
+                                    ($options instanceof RequestOptions ||
+                                        $options->credentials !== []))))
                     ) {
                         throw SdkError::create(
                             'authentication',
+                            'Use one authentication shortcut or explicit authMode/credentials, not both',
+                        );
+                    }
+                    return $supplied[0] ?? null;
+                };
+                $clientShortcut = $shortcutAuth($this->options);
+                $requestShortcut = $shortcutAuth($o);
+                $defaultMode = $this->options->authMode ?? ($clientShortcut['mode'] ?? null);
+                $modeName =
+                    $requestShortcut['mode'] ??
+                    ($o->authMode ?? ($permitted ? $defaultMode : null));
+                if ($modeName === null && $op['authenticated'] && count($permitted) === 1) {
+                    $modeName = $permitted[0];
+                }
+                if ($modeName === null && $op['authenticated']) {
+                    throw SdkError::create(
+                        'authentication',
+                        'Select an explicit authentication mode for ' .
+                            $op['id'] .
+                            '; permitted modes: ' .
+                            implode(', ', $permitted),
+                    );
+                }
+                $selected =
+                    $modeName === null
+                        ? null
+                        : $this->contract['authentication'][$modeName] ?? null;
+                if (
+                    $modeName !== null &&
+                    ($selected === null || !in_array($modeName, $permitted, true))
+                ) {
+                    throw SdkError::create(
+                        'authentication',
+                        'Authentication mode is not permitted for ' .
+                            $op['id'] .
+                            '; permitted modes: ' .
+                            implode(', ', $permitted),
+                    );
+                }
+                $expected = [];
+                if ($selected !== null) {
+                    $credentials =
+                        $requestShortcut['credentials'] ??
+                        ($o->credentials ??
+                            (($clientShortcut['mode'] ?? null) === $modeName
+                                ? $clientShortcut['credentials']
+                                : $this->options->credentials[$modeName] ?? []));
+                    foreach ($selected['schemes'] as $scheme) {
+                        $source = $credentials[$scheme['name']] ?? null;
+                        $credential = $resolveCredential(
+                            $source,
                             'Missing or invalid credential ' .
                                 $scheme['name'] .
                                 ' for authentication mode ' .
                                 $modeName,
                         );
-                    }
-                    $expected[strtolower($scheme['header'])] =
-                        $scheme['type'] === 'bearer' ? 'Bearer ' . $credential : $credential;
-                }
-            }
-            foreach ($this->contract['authentication'] as $mode) {
-                foreach ($mode['schemes'] as $scheme) {
-                    $name = strtolower($scheme['header']);
-                    if (isset($headers[$name]) && $headers[$name] !== ($expected[$name] ?? null)) {
-                        throw SdkError::create(
-                            'authentication',
-                            'Request headers conflict with the selected authentication mode',
-                        );
+                        $expected[strtolower($scheme['header'])] =
+                            $scheme['type'] === 'bearer' ? 'Bearer ' . $credential : $credential;
                     }
                 }
-            }
-            foreach ($expected as $name => $value) {
-                $set($name, $value);
-            }
-        } elseif (
-            $op['authenticated'] ||
-            (($op['optionalAuthentication'] ?? false) && $this->options->token)
-        ) {
-            $auth = $this->contract['auth'] ?? null;
-            if (!$auth || !$this->options->token) {
-                throw SdkError::create('authentication', 'Explicit API credentials are required');
-            }
-            $set(
-                $auth['header'],
-                $auth['type'] === 'bearer'
-                    ? 'Bearer ' . $this->options->token
-                    : $this->options->token,
-            );
-        }
-        if (isset($this->contract['apiVersion'])) {
-            $set($this->contract['apiVersion']['header'], $this->contract['apiVersion']['value']);
-        }
-        foreach ($op['parameters'] as $p) {
-            if (($p['source'] ?? null) !== 'authentication') {
-                continue;
-            }
-            $value = $headers[strtolower($p['name'])] ?? null;
-            if ($value === null) {
-                if ($p['required'] ?? false) {
-                    Codec::fail(
-                        $p['name'],
-                        strtolower($op['idempotency']['header'] ?? '') === strtolower($p['name'])
-                            ? $op['resource'] .
-                                '.' .
-                                $op['method'] .
-                                ' requires idempotencyKey; save and reuse the key on retry'
-                            : 'required parameter is missing',
+                foreach ($this->contract['authentication'] as $mode) {
+                    foreach ($mode['schemes'] as $scheme) {
+                        $name = strtolower($scheme['header']);
+                        if (
+                            isset($suppliedHeaders[$name]) &&
+                            $suppliedHeaders[$name] !== ($expected[$name] ?? null)
+                        ) {
+                            throw SdkError::create(
+                                'authentication',
+                                'Request headers conflict with the selected authentication mode',
+                            );
+                        }
+                    }
+                }
+                foreach ($expected as $name => $value) {
+                    $set($name, $value);
+                }
+            } elseif (
+                $op['authenticated'] ||
+                (($op['optionalAuthentication'] ?? false) && $this->options->token)
+            ) {
+                $auth = $this->contract['auth'] ?? null;
+                if (!$auth || !$this->options->token) {
+                    throw SdkError::create(
+                        'authentication',
+                        'Explicit API credentials are required',
                     );
                 }
-            } else {
-                $this->validateHeaderValue($value, $p['codec'], $p['name']);
+                $credential = $resolveCredential(
+                    $this->options->token,
+                    'Explicit API credentials are required',
+                    false, // Legacy header validation owns newline rejection.
+                );
+                $set(
+                    $auth['header'],
+                    $auth['type'] === 'bearer' ? 'Bearer ' . $credential : $credential,
+                );
             }
-        }
+            if (isset($this->contract['apiVersion'])) {
+                $set(
+                    $this->contract['apiVersion']['header'],
+                    $this->contract['apiVersion']['value'],
+                );
+            }
+            foreach ($op['parameters'] as $p) {
+                if (($p['source'] ?? null) !== 'authentication') {
+                    continue;
+                }
+                $value = $headers[strtolower($p['name'])] ?? null;
+                if ($value === null) {
+                    if ($p['required'] ?? false) {
+                        Codec::fail(
+                            $p['name'],
+                            strtolower($op['idempotency']['header'] ?? '') ===
+                            strtolower($p['name'])
+                                ? $op['resource'] .
+                                    '.' .
+                                    $op['method'] .
+                                    ' requires idempotencyKey; save and reuse the key on retry'
+                                : 'required parameter is missing',
+                        );
+                    }
+                } else {
+                    $this->validateHeaderValue($value, $p['codec'], $p['name']);
+                }
+            }
+        };
         if ($o->ifMatch !== null) {
             if (!isset($op['conditional'])) {
                 Codec::fail('ifMatch', 'operation does not declare conditional requests');
@@ -4090,6 +4158,7 @@ class Runtime
                 Codec::fail((string) $key, 'unknown input parameter');
             }
         }
+        $credentialRetries = 0;
         for ($attempt = 1; $attempt <= $attempts; $attempt++) {
             self::checkCancel($o->cancellation, $attempt === 1 ? 'not_sent' : 'unknown');
             $remaining = $deadline - self::now();
@@ -4104,6 +4173,12 @@ class Runtime
             $meta = null;
             $diagnosticError = null;
             try {
+                $authenticate();
+                self::checkCancel($o->cancellation);
+                $remaining = $deadline - self::now();
+                if ($remaining <= 0) {
+                    throw SdkError::create('deadline', 'Overall deadline exceeded');
+                }
                 $request = [
                     'url' => $url,
                     'method' => $op['verb'],
@@ -4165,6 +4240,32 @@ class Runtime
                     if ($milliseconds !== null && is_finite((float) $milliseconds)) {
                         $retryAfter = max(0, $milliseconds);
                     }
+                }
+                if ($status === 401 && $safe && $credentialRetries === 0 && $providers) {
+                    $diagnosticError = 'authentication';
+                    if (($response['stream'] ?? null) instanceof ByteStream) {
+                        try {
+                            $response['stream']->close();
+                        } catch (\Throwable) {
+                            // The observed 401 remains authoritative if response cleanup fails.
+                        }
+                    }
+                    try {
+                        foreach ($providers as $provider) {
+                            $provider->invalidate();
+                        }
+                    } catch (\Throwable) {
+                        throw SdkError::create(
+                            'authentication',
+                            'Credential provider invalidation failed',
+                            'response',
+                            false,
+                            $meta,
+                        );
+                    }
+                    $credentialRetries++;
+                    $attempts++;
+                    continue;
                 }
                 if (isset($response['failureCode'])) {
                     throw new \RuntimeException(
@@ -4419,6 +4520,7 @@ class Runtime
                         : "API returned HTTP $status",
                     'response',
                     $safe &&
+                        $status !== 401 &&
                         $status !== 412 &&
                         ($signal !== null
                             ? (is_string($retryValue)
@@ -4443,6 +4545,16 @@ class Runtime
                 $diagnosticError = $error->kind;
                 throw $error;
             } catch (\Throwable $cause) {
+                if (($meta['status'] ?? null) === 401) {
+                    $diagnosticError = 'authentication';
+                    throw SdkError::create(
+                        'authentication',
+                        'API returned HTTP 401',
+                        'response',
+                        false,
+                        $meta,
+                    );
+                }
                 $diagnosticError = $o->cancellation?->isCancelled()
                     ? 'cancelled'
                     : (self::now() >= $deadline
@@ -4484,7 +4596,7 @@ class Runtime
                 throw $error;
             }
             $d = min(
-                $policy['baseDelayMs'] * 2 ** ($attempt - 1),
+                $policy['baseDelayMs'] * 2 ** ($attempt - $credentialRetries - 1),
                 $policy['maxDelayMs'] ?? PHP_FLOAT_MAX,
             );
             $wait = max($retryAfter ?? 0, $d / 2 + ((random_int(0, 1000000) / 1000000) * $d) / 2);

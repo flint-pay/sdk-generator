@@ -348,13 +348,13 @@ function compileAuthentication(c: Contract): NodeAuthenticationPlan | undefined 
     .sort(([a], [b]) => a.localeCompare(b))
     .map(
       ([name, shortcut]) =>
-        `${JSON.stringify(name)}?: ${JSON.stringify(shortcut.mode)} extends M ? string : never;`,
+        `${JSON.stringify(name)}?: ${JSON.stringify(shortcut.mode)} extends M ? (string | CredentialProvider) : never;`,
     )
     .join(' ');
   const declarations = `export interface Credentials {\n${Object.entries(modes)
     .map(
       ([mode, schemes]) =>
-        `  ${JSON.stringify(mode)}: { ${schemes.map((name) => `${JSON.stringify(name)}: string;`).join(' ')} };`,
+        `  ${JSON.stringify(mode)}: { ${schemes.map((name) => `${JSON.stringify(name)}: string | CredentialProvider;`).join(' ')} };`,
     )
     .join(
       '\n',
@@ -388,7 +388,7 @@ function compileClientOptions(c: Contract): string {
     return `export type ClientOptions = Omit<RuntimeClientOptions, 'baseUrl'> & { ${baseUrl} };\n`;
   const shortcuts = Object.keys(c.authShortcuts ?? {})
     .sort()
-    .map((name) => `${JSON.stringify(name)}?: string;`)
+    .map((name) => `${JSON.stringify(name)}?: string | CredentialProvider;`)
     .join(' ');
   return `export type ClientOptions = Omit<RuntimeClientOptions, 'baseUrl' | 'token' | 'authMode' | 'credentials'> & { ${baseUrl} ${shortcuts} authMode?: AuthMode; credentials?: Partial<Credentials> };\n`;
 }

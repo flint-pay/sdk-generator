@@ -118,7 +118,7 @@ function runtimeIdentity(
               ? /^node\/(runtime|codec-plan|runtime-plan|descriptor-source|package-plan|response|request)\.js$/.test(
                   name,
                 )
-              : /^php\/src\/(SchemaAdapter|classes\/(?:Runtime|Codec|Model|SdkError|Result|RequestOptions|ClientOptions|EventStream|ServerSentEvent|Cancellation|ByteStream|CurlByteStream|RawNumber|ParsedNumber|ExactNumber|SdkResponse|Errors\/\w+|Internal\/DescriptorSource))\.php$/.test(
+              : /^php\/src\/(SchemaAdapter|classes\/(?:Runtime|Codec|Model|SdkError|Result|RequestOptions|ClientOptions|Credential|CredentialProvider|EventStream|ServerSentEvent|Cancellation|ByteStream|CurlByteStream|RawNumber|ParsedNumber|ExactNumber|SdkResponse|Errors\/\w+|Internal\/DescriptorSource))\.php$/.test(
                   name,
                 ),
           ),
@@ -1294,7 +1294,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       put('request.js', readFileSync(join(here, '../templates/request.mjs'), 'utf8'));
       code = "import { requestInput as _sdkRequestInput } from './request.js';\n" + code;
     }
-    let declarations = `import type { ${c.authentication ? 'ClientOptions as RuntimeClientOptions, RequestOptions as RuntimeRequestOptions' : 'ClientOptions as RuntimeClientOptions, RequestOptions'}, Result, InputValue${c.config.webhook ? ', WebhookHeaders as _SdkWebhookHeaders' : ''} } from './runtime.js';\nimport { Model${extraValues} } from './runtime.js';\nexport { SdkError, errors, Model${extraValues}, serialize, parseExact, redact } from './runtime.js';\nexport type { ${c.authentication ? '' : 'RequestOptions, '}Result, Metadata, ErrorKind, DiagnosticEvent, InputValue${streamTypes ? ', ServerSentEvent' : ''} } from './runtime.js';\n`;
+    let declarations = `import type { ${c.authentication ? 'ClientOptions as RuntimeClientOptions, RequestOptions as RuntimeRequestOptions' : 'ClientOptions as RuntimeClientOptions, RequestOptions'}, Result, InputValue, CredentialProvider${c.config.webhook ? ', WebhookHeaders as _SdkWebhookHeaders' : ''} } from './runtime.js';\nimport { Model${extraValues} } from './runtime.js';\nexport { SdkError, errors, Model${extraValues}, serialize, parseExact, redact } from './runtime.js';\nexport type { ${c.authentication ? '' : 'RequestOptions, '}Result, Metadata, ErrorKind, DiagnosticEvent, InputValue, CredentialProvider${streamTypes ? ', ServerSentEvent' : ''} } from './runtime.js';\n`;
     if (c.operations.some((op) => !op.idempotency))
       declarations +=
         "type _SdkWithoutIdempotency<T> = T extends unknown ? Omit<T, 'idempotencyKey'> & { idempotencyKey?: never } : never;\n";
@@ -1536,7 +1536,10 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
           '    ) {\n        /* AUTH_SHORTCUT_REQUEST_PARAMETERS */\n    }',
           Object.keys(c.authShortcuts ?? {})
             .sort()
-            .map((key) => `        public readonly ?string $${key} = null,\n`)
+            .map(
+              (key) =>
+                `        public readonly string|CredentialProvider|\\Closure|null $${key} = null,\n`,
+            )
             .join('') + '    ) {}',
         )
         .replaceAll(
@@ -1544,7 +1547,10 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
           Object.keys(c.authShortcuts ?? {})
             .filter((key) => key !== 'token')
             .sort()
-            .map((key) => `        public readonly ?string $${key} = null,\n`)
+            .map(
+              (key) =>
+                `        public readonly string|CredentialProvider|\\Closure|null $${key} = null,\n`,
+            )
             .join('') + '    ) {}',
         )
         .replace(
@@ -3052,10 +3058,12 @@ function runtimeGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: bo
     `## Client and request options\n\n${c.defaultBaseUrl !== undefined ? `The default baseUrl is \`${c.defaultBaseUrl}\`; pass baseUrl to select another environment.` : 'Pass baseUrl: this SDK has no default server.'} Pass per-request options as the last method argument: a plain object in Node, or RequestOptions in PHP.\n\n${requestOptions}` +
     bullets([
       'Defaults are timeoutMs: 10000 per attempt and deadlineMs: 30000 for the overall duration (not an absolute timestamp). Request values override client defaults.',
-      'maxAttempts is a positive safe integer budget, capped at the operation limit. Request budgets override client budgets. Set maxAttempts: 1 to opt out of retries.',
+      'maxAttempts is a positive safe integer budget, capped at the operation limit. Request budgets override client budgets. Set maxAttempts: 1 to opt out of ordinary retries; provider invalidation can still add one HTTP 401 retry.',
       'Without an explicit policy, GET/HEAD/OPTIONS allow three total attempts; other methods allow one. Mutations without an optional key send once.',
       'Request headers carry tenant context without shared mutable state.',
       'Legacy authenticated clients accept token. Composed clients accept configured shortcuts or authMode and credentials keyed by mode and scheme; requests can select a mode with request-local credentials. A combined scheme set must be complete.',
+      'Credentials accept strings or providers. Node CredentialProvider.getCredential() returns a Promise of { value: string, expiresAt?: Date }; optional invalidate() clears application caches. PHP CredentialProvider.getCredential(): Credential returns new Credential(value, expiresAt), with optional DateTimeInterface expiry; a Closure may return a string or Credential. Providers resolve on every request attempt. The application owns caching and expiry handling.',
+      'A replay-safe request receiving HTTP 401 invalidates providers with invalidate() and retries once, adding at most one attempt to the ordinary budget (even with maxAttempts: 1) and preserving its idempotency key. String credentials and PHP closures never trigger this retry; repeated 401s fail immediately. Provider exceptions become authentication errors without retaining potentially sensitive causes.',
       'The SDK does not discover credentials or read environment variables; the operation example scripts read API_BASE_URL and their named credential variables explicitly.',
     ]) +
     `\n## Authentication\n\n${authenticationGuide(c)}` +

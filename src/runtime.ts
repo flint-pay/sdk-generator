@@ -197,11 +197,39 @@ function webhookScalarHeader(headers: WebhookHeaders, name: string, timestamp = 
   return value.trim();
 }
 
+export interface CredentialProvider {
+  getCredential(): Promise<{ value: string; expiresAt?: Date }>;
+  invalidate?(): void;
+}
+
+async function resolveCredential(
+  input: unknown,
+  message: string,
+  rejectNewlines = true,
+): Promise<string> {
+  let value: unknown = input;
+  if (typeof input === 'object' && input !== null && 'getCredential' in input) {
+    try {
+      const credential: unknown = await (input as CredentialProvider).getCredential();
+      value =
+        typeof credential === 'object' && credential !== null && 'value' in credential
+          ? credential.value
+          : undefined;
+    } catch {
+      // Provider exceptions may contain credentials, including in their causes.
+      throw createSdkError('authentication', 'Credential provider failed');
+    }
+  }
+  if (typeof value !== 'string' || !value || (rejectNewlines && /[\r\n]/.test(value)))
+    throw createSdkError('authentication', message);
+  return value;
+}
+
 export interface RequestOptions {
   streamIdleTimeoutMs?: number;
   streamLifetimeMs?: number;
   authMode?: string;
-  credentials?: Record<string, string>;
+  credentials?: Record<string, string | CredentialProvider>;
   headers?: Record<string, string>;
   idempotencyKey?: string;
   ifMatch?: string;
@@ -214,9 +242,9 @@ export interface RequestOptions {
 }
 export interface ClientOptions {
   baseUrl?: string;
-  token?: string;
+  token?: string | CredentialProvider;
   authMode?: string;
-  credentials?: Record<string, Record<string, string>>;
+  credentials?: Record<string, Record<string, string | CredentialProvider>>;
   allowedOrigins?: string[];
   allowInsecureHttp?: boolean;
   timeoutMs?: number;
@@ -2488,101 +2516,119 @@ class CompiledRuntime {
         );
     this.checkUrl(url);
     for (const [k, v] of Object.entries(options.headers ?? {})) setHeader(k, v);
-    if (this.contract.authentication) {
-      const permitted = op.authModes ?? [];
-      const shortcutAuth = (value: RequestOptions | ClientOptions) => {
-        const supplied = Object.entries(this.contract.authShortcuts ?? {}).filter(
-          ([key]) =>
-            Object.hasOwn(value, key) &&
-            (value as unknown as Record<string, unknown>)[key] !== undefined,
-        );
-        if (
-          supplied.length > 1 ||
-          (supplied.length && (value.authMode !== undefined || value.credentials !== undefined))
-        )
+    const suppliedHeaders = { ...headers };
+    const providers = new Set<CredentialProvider>();
+    const rememberProvider = (source: unknown) => {
+      if (typeof source === 'object' && source !== null && 'getCredential' in source)
+        providers.add(source as CredentialProvider);
+    };
+    const authenticate = async () => {
+      providers.clear();
+      if (this.contract.authentication) {
+        const permitted = op.authModes ?? [];
+        const shortcutAuth = (value: RequestOptions | ClientOptions) => {
+          const supplied = Object.entries(this.contract.authShortcuts ?? {}).filter(
+            ([key]) =>
+              Object.hasOwn(value, key) &&
+              (value as unknown as Record<string, unknown>)[key] !== undefined,
+          );
+          if (
+            supplied.length > 1 ||
+            (supplied.length && (value.authMode !== undefined || value.credentials !== undefined))
+          )
+            throw createSdkError(
+              'authentication',
+              'Use one authentication shortcut or explicit authMode/credentials, not both',
+            );
+          const entry = supplied[0];
+          return entry
+            ? {
+                mode: entry[1].mode,
+                credentials: {
+                  [entry[1].scheme]: (
+                    value as unknown as Record<string, string | CredentialProvider>
+                  )[entry[0]]!,
+                },
+              }
+            : undefined;
+        };
+        const clientShortcut = shortcutAuth(this.options);
+        const requestShortcut = shortcutAuth(options);
+        const defaultMode = this.options.authMode ?? clientShortcut?.mode;
+        let modeName =
+          requestShortcut?.mode ?? options.authMode ?? (permitted.length ? defaultMode : undefined);
+        if (modeName === undefined && op.authenticated && permitted.length === 1)
+          modeName = permitted[0];
+        if (modeName === undefined && op.authenticated)
           throw createSdkError(
             'authentication',
-            'Use one authentication shortcut or explicit authMode/credentials, not both',
+            `Select an explicit authentication mode for ${op.id}; permitted modes: ${permitted.join(', ')}`,
           );
-        const entry = supplied[0];
-        return entry
-          ? {
-              mode: entry[1].mode,
-              credentials: {
-                [entry[1].scheme]: (value as unknown as Record<string, string>)[entry[0]]!,
-              },
-            }
-          : undefined;
-      };
-      const clientShortcut = shortcutAuth(this.options);
-      const requestShortcut = shortcutAuth(options);
-      const defaultMode = this.options.authMode ?? clientShortcut?.mode;
-      let modeName =
-        requestShortcut?.mode ?? options.authMode ?? (permitted.length ? defaultMode : undefined);
-      if (modeName === undefined && op.authenticated && permitted.length === 1)
-        modeName = permitted[0];
-      if (modeName === undefined && op.authenticated)
-        throw createSdkError(
-          'authentication',
-          `Select an explicit authentication mode for ${op.id}; permitted modes: ${permitted.join(', ')}`,
-        );
-      const selected = modeName === undefined ? undefined : this.contract.authentication[modeName];
-      if (modeName !== undefined && (!selected || !permitted.includes(modeName)))
-        throw createSdkError(
-          'authentication',
-          `Authentication mode is not permitted for ${op.id}; permitted modes: ${permitted.join(', ')}`,
-        );
-      const expected: Record<string, string> = Object.create(null);
-      if (selected && modeName !== undefined) {
-        const credentials =
-          requestShortcut?.credentials ??
-          options.credentials ??
-          (clientShortcut?.mode === modeName
-            ? clientShortcut.credentials
-            : this.options.credentials?.[modeName]);
-        for (const scheme of selected.schemes) {
-          const credential = credentials?.[scheme.name];
-          if (typeof credential !== 'string' || !credential || /[\r\n]/.test(credential))
-            throw createSdkError(
-              'authentication',
+        const selected =
+          modeName === undefined ? undefined : this.contract.authentication[modeName];
+        if (modeName !== undefined && (!selected || !permitted.includes(modeName)))
+          throw createSdkError(
+            'authentication',
+            `Authentication mode is not permitted for ${op.id}; permitted modes: ${permitted.join(', ')}`,
+          );
+        const expected: Record<string, string> = Object.create(null);
+        if (selected && modeName !== undefined) {
+          const credentials =
+            requestShortcut?.credentials ??
+            options.credentials ??
+            (clientShortcut?.mode === modeName
+              ? clientShortcut.credentials
+              : this.options.credentials?.[modeName]);
+          for (const scheme of selected.schemes) {
+            const source = credentials?.[scheme.name];
+            const credential = await resolveCredential(
+              source,
               `Missing or invalid credential ${scheme.name} for authentication mode ${modeName}`,
             );
-          expected[scheme.header.toLowerCase()] =
-            scheme.type === 'bearer' ? 'Bearer ' + credential : credential;
+            rememberProvider(source);
+            expected[scheme.header.toLowerCase()] =
+              scheme.type === 'bearer' ? 'Bearer ' + credential : credential;
+          }
         }
+        for (const mode of Object.values(this.contract.authentication))
+          for (const scheme of mode.schemes) {
+            const name = scheme.header.toLowerCase();
+            if (suppliedHeaders[name] !== undefined && suppliedHeaders[name] !== expected[name])
+              throw createSdkError(
+                'authentication',
+                'Request headers conflict with the selected authentication mode',
+              );
+          }
+        for (const [name, value] of Object.entries(expected)) setHeader(name, value);
+      } else if (op.authenticated || (op.optionalAuthentication && this.options.token)) {
+        if (!this.options.token || !this.contract.auth)
+          throw createSdkError('authentication', 'Explicit API credentials are required');
+        const credential = await resolveCredential(
+          this.options.token,
+          'Explicit API credentials are required',
+          false, // Legacy header validation owns newline rejection for strings and providers.
+        );
+        rememberProvider(this.options.token);
+        setHeader(
+          this.contract.auth.header,
+          this.contract.auth.type === 'bearer' ? `Bearer ${credential}` : credential,
+        );
       }
-      for (const mode of Object.values(this.contract.authentication))
-        for (const scheme of mode.schemes) {
-          const name = scheme.header.toLowerCase();
-          if (headers[name] !== undefined && headers[name] !== expected[name])
-            throw createSdkError(
-              'authentication',
-              'Request headers conflict with the selected authentication mode',
+      if (apiVersion) setHeader(apiVersion.header, apiVersion.value);
+      for (const p of op.parameters) {
+        if (p.source !== 'authentication') continue;
+        const value = headers[p.name.toLowerCase()];
+        if (value === undefined) {
+          if (p.required)
+            bad(
+              p.name,
+              op.idempotency?.header.toLowerCase() === p.name.toLowerCase()
+                ? `${op.resource}.${op.method} requires idempotencyKey; save and reuse the key on retry`
+                : 'required parameter is missing',
             );
-        }
-      for (const [name, value] of Object.entries(expected)) setHeader(name, value);
-    } else if (op.authenticated || (op.optionalAuthentication && this.options.token)) {
-      if (!this.options.token || !this.contract.auth)
-        throw createSdkError('authentication', 'Explicit API credentials are required');
-      setHeader(
-        this.contract.auth.header,
-        this.contract.auth.type === 'bearer' ? `Bearer ${this.options.token}` : this.options.token,
-      );
-    }
-    if (apiVersion) setHeader(apiVersion.header, apiVersion.value);
-    for (const p of op.parameters) {
-      if (p.source !== 'authentication') continue;
-      const value = headers[p.name.toLowerCase()];
-      if (value === undefined) {
-        if (p.required)
-          bad(
-            p.name,
-            op.idempotency?.header.toLowerCase() === p.name.toLowerCase()
-              ? `${op.resource}.${op.method} requires idempotencyKey; save and reuse the key on retry`
-              : 'required parameter is missing',
-          );
-      } else this.validateHeaderValue(value, p.codec, p.name);
-    }
+        } else this.validateHeaderValue(value, p.codec, p.name);
+      }
+    };
     if (options.ifMatch !== undefined) {
       if (!op.conditional) bad('ifMatch', 'operation does not declare conditional requests');
       setHeader(op.conditional!.header, options.ifMatch);
@@ -2616,6 +2662,7 @@ class CompiledRuntime {
       if (key !== 'body' && !op.parameters.some((p) => p.name === key))
         bad(key, 'unknown input parameter');
     const transport = this.options.transport ?? fetch;
+    let credentialRetries = 0;
     for (let attempt = 1; attempt <= attempts; attempt++) {
       stopped(options.signal, attempt === 1 ? 'not_sent' : 'unknown');
       const remaining = deadline - performance.now();
@@ -2636,6 +2683,7 @@ class CompiledRuntime {
       let diagnosticMeta: Metadata | undefined;
       let diagnosticError: ErrorKind | undefined;
       try {
+        await abortable(authenticate(), controller.signal);
         const response = await abortable(
           transport(url, {
             method: op.verb,
@@ -2671,6 +2719,33 @@ class CompiledRuntime {
           if (Number.isFinite(seconds)) {
             retryAfter = Math.max(0, seconds);
           }
+        }
+        if (
+          response.status === 401 &&
+          safe &&
+          credentialRetries === 0 &&
+          [...providers].some((provider) => typeof provider.invalidate === 'function')
+        ) {
+          diagnosticError = 'authentication';
+          try {
+            await response.body?.cancel();
+          } catch {
+            // The observed 401 remains authoritative if response cleanup fails.
+          }
+          try {
+            for (const provider of providers) provider.invalidate?.();
+          } catch {
+            throw createSdkError(
+              'authentication',
+              'Credential provider invalidation failed',
+              'response',
+              false,
+              meta,
+            );
+          }
+          credentialRetries++;
+          attempts++;
+          continue;
         }
         const declaredResponse =
           op.responses[String(response.status)] ??
@@ -2918,7 +2993,7 @@ class CompiledRuntime {
             ? message
             : `API returned HTTP ${response.status}`,
           'response',
-          eligible,
+          response.status !== 401 && eligible,
           meta,
           typeof code === 'string' && typeof publicCode === 'string' ? publicCode : undefined,
           this.contract.errors?.detailsPath
@@ -2933,6 +3008,16 @@ class CompiledRuntime {
         if (cause instanceof SdkError) {
           diagnosticError = cause.kind;
           throw cause;
+        }
+        if (diagnosticMeta?.status === 401) {
+          diagnosticError = 'authentication';
+          throw createSdkError(
+            'authentication',
+            'API returned HTTP 401',
+            'response',
+            false,
+            diagnosticMeta,
+          );
         }
         diagnosticError = options.signal?.aborted
           ? 'cancelled'
@@ -2975,7 +3060,10 @@ class CompiledRuntime {
         }
       }
       if (!error?.retryAllowed || attempt >= attempts || performance.now() >= deadline) throw error;
-      const d = Math.min(policy.baseDelayMs * 2 ** (attempt - 1), policy.maxDelayMs ?? Infinity);
+      const d = Math.min(
+        policy.baseDelayMs * 2 ** (attempt - credentialRetries - 1),
+        policy.maxDelayMs ?? Infinity,
+      );
       const wait = Math.max(retryAfter ?? 0, d / 2 + (Math.random() * d) / 2);
       if (performance.now() + wait >= deadline) throw error;
       await delay(wait, options.signal);
