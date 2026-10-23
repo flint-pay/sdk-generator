@@ -48,6 +48,7 @@ final class RefreshingProvider extends Provider
 }
 $cases = json_decode(file_get_contents($argv[2]), true, flags: JSON_THROW_ON_ERROR);
 $surface = $argv[3];
+$defaultBaseUrl = $argv[4] ?? null;
 foreach (['provider', 'closureString', 'closureCredential'] as $form) {
     foreach ($cases as $c) {
         if ($form !== 'provider' && $c['invalidations'] > 0) {
@@ -64,7 +65,7 @@ foreach (['provider', 'closureString', 'closureCredential'] as $form) {
         }
         $seen = $keys = $events = [];
         $clientOptions = [
-            'baseUrl' => 'https://example.invalid',
+            'baseUrl' => $defaultBaseUrl ?? 'https://example.invalid',
             'diagnostics' => function ($event) use (&$events) {
                 $events[] = $event;
             },
@@ -79,9 +80,20 @@ foreach (['provider', 'closureString', 'closureCredential'] as $form) {
                 if ($status === 0) {
                     throw new RuntimeException('synthetic connection failure');
                 }
-                return ['status' => $status, 'headers' => [], 'body' => ''];
+                return [
+                    'status' => $status,
+                    'headers' => [],
+                    'body' => '',
+                    'failureCode' => in_array(count($seen) - 1, $c['bodyFailures'] ?? [], true)
+                        ? 18
+                        : null,
+                ];
             },
         ];
+        if ($defaultBaseUrl !== null) {
+            unset($clientOptions['transport']);
+            $clientOptions['allowInsecureHttp'] = true;
+        }
         $options = isset($c['maxAttempts']) ? ['maxAttempts' => $c['maxAttempts']] : [];
         switch ($surface) {
             case 'token':
@@ -119,7 +131,7 @@ foreach (['provider', 'closureString', 'closureCredential'] as $form) {
                 $result = $client->api->$op(options: $requestSettings->withDeadline(30000));
                 same(
                     $result->meta['attempts'],
-                    isset($c['requests']) ? 1 : count($seen),
+                    isset($c['requests']) ? 1 : count($c['headers']),
                     $c['name'],
                 );
             } catch (SdkError $e) {
@@ -132,13 +144,19 @@ foreach (['provider', 'closureString', 'closureCredential'] as $form) {
             $surface === 'token' ? $c['legacyError'] ?? ($c['error'] ?? null) : $c['error'] ?? null,
             $c['name'],
         );
+        if (isset($c['bodyFailures']) && $error !== null) {
+            same($error->meta['status'], 401, $c['name']);
+            same($error->outcome, 'response', $c['name']);
+        }
         if (isset($c['message'])) {
             same($error->getMessage(), $c['message'], $c['name']);
         }
         if (isset($c['error'])) {
             same($error->retryAllowed, false, $c['name']);
         }
-        same($seen, $c['headers'], $c['name']);
+        if ($defaultBaseUrl === null) {
+            same($seen, $c['headers'], $c['name']);
+        }
         same($provider->calls, $c['calls'], $c['name']);
         same($provider->invalidations, $c['invalidations'], $c['name']);
         if ($op === 'keyed') {

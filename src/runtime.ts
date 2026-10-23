@@ -2727,7 +2727,11 @@ class CompiledRuntime {
           [...providers].some((provider) => typeof provider.invalidate === 'function')
         ) {
           diagnosticError = 'authentication';
-          await response.body?.cancel();
+          try {
+            await response.body?.cancel();
+          } catch {
+            // The observed 401 remains authoritative if response cleanup fails.
+          }
           try {
             for (const provider of providers) provider.invalidate?.();
           } catch {
@@ -3004,6 +3008,16 @@ class CompiledRuntime {
         if (cause instanceof SdkError) {
           diagnosticError = cause.kind;
           throw cause;
+        }
+        if (diagnosticMeta?.status === 401) {
+          diagnosticError = 'authentication';
+          throw createSdkError(
+            'authentication',
+            'API returned HTTP 401',
+            'response',
+            false,
+            diagnosticMeta,
+          );
         }
         diagnosticError = options.signal?.aborted
           ? 'cancelled'

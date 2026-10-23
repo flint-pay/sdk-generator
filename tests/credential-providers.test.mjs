@@ -4,7 +4,8 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { createServer } from 'node:http';
+import { spawn, spawnSync } from 'node:child_process';
 import { inspect } from 'node:util';
 import { loadContract, generate } from '../dist/index.js';
 
@@ -114,7 +115,14 @@ for (const surface of surfaces)
           const status = c.statuses[seen.length - 1];
           assert.notEqual(status, undefined, c.name + ' unexpected attempt');
           if (status === 0) throw new Error('synthetic connection failure');
-          return new Response(null, { status });
+          const body = c.bodyFailures?.includes(seen.length - 1)
+            ? new ReadableStream({
+                start(controller) {
+                  controller.error(new Error('synthetic body failure'));
+                },
+              })
+            : null;
+          return new Response(body, { status });
         },
       };
       const options = { ...(c.maxAttempts ? { maxAttempts: c.maxAttempts } : {}) };
@@ -151,6 +159,10 @@ for (const surface of surfaces)
         }
       }
       assert.equal(error?.kind, surface === 'token' ? (c.legacyError ?? c.error) : c.error, c.name);
+      if (c.bodyFailures && error) {
+        assert.equal(error.meta.status, 401, c.name);
+        assert.equal(error.outcome, 'response', c.name);
+      }
       if (c.message) assert.equal(error.message, c.message, c.name);
       if (c.error) assert.equal(error.retryAllowed, false, c.name);
       if (Object.hasOwn(c, 'value') && !c.legacyError)
@@ -190,6 +202,93 @@ for (const surface of surfaces)
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.equal(r.stdout, 'ok');
   });
+
+test('default transports preserve the 401 refresh policy after truncated bodies', async () => {
+  const { Client } = await import(pathToFileURL(join(outputs.named, 'node/index.js')).href);
+  for (const c of cases.filter((c) => c.bodyFailures)) {
+    let seen = [];
+    const server = createServer((req, res) => {
+      seen.push(req.headers.authorization?.replace(/^Bearer /, '') ?? null);
+      assert.equal(req.headers['idempotency-key'], 'synthetic-key');
+      const index = seen.length - 1;
+      const status = c.statuses[index] ?? 500;
+      if (c.bodyFailures.includes(index)) {
+        res.writeHead(status, { 'content-length': '100', connection: 'close' });
+        res.flushHeaders();
+        res.end('truncated');
+      } else {
+        res.writeHead(status);
+        res.end();
+      }
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    try {
+      let calls = 0,
+        invalidations = 0;
+      const client = new Client({
+        baseUrl,
+        allowInsecureHttp: true,
+        apiKey: {
+          async getCredential() {
+            return { value: 'test-token-' + ++calls };
+          },
+          invalidate() {
+            invalidations++;
+          },
+        },
+      });
+      let error;
+      try {
+        const result = await client.api.keyed(
+          {},
+          {
+            idempotencyKey: 'synthetic-key',
+            ...(c.maxAttempts ? { maxAttempts: c.maxAttempts } : {}),
+          },
+        );
+        assert.equal(result.meta.attempts, c.headers.length, c.name);
+      } catch (e) {
+        error = e;
+      }
+      assert.equal(error?.kind, c.error, c.name);
+      if (error) {
+        assert.equal(error.retryAllowed, false, c.name);
+        assert.equal(error.meta.status, 401, c.name);
+      }
+      assert.deepEqual(seen, c.headers, c.name);
+      assert.equal(calls, c.calls, c.name);
+      assert.equal(invalidations, c.invalidations, c.name);
+      seen = [];
+      const fixture = join(root, 'truncated-case.json');
+      writeFileSync(fixture, JSON.stringify([c]));
+      const child = spawn('php', [
+        'tests/helpers/credential-providers.php',
+        join(outputs.named, 'php'),
+        fixture,
+        'clientShortcut',
+        baseUrl,
+      ]);
+      let output = '';
+      child.stdout.on('data', (chunk) => {
+        output += chunk;
+      });
+      child.stderr.on('data', (chunk) => {
+        output += chunk;
+      });
+      const code = await new Promise((resolve, reject) => {
+        child.on('error', reject);
+        child.on('close', resolve);
+      });
+      assert.equal(code, 0, output);
+      assert.equal(output, 'ok');
+      assert.deepEqual(seen, c.headers, c.name);
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  }
+});
 
 test('generated credential provider types compile for Node and PHP consumers', () => {
   const file = join(outputs.named, 'node/consumer.mts');

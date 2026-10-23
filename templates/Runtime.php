@@ -4241,15 +4241,14 @@ class Runtime
                         $retryAfter = max(0, $milliseconds);
                     }
                 }
-                if (isset($response['failureCode'])) {
-                    throw new \RuntimeException(
-                        'HTTP transport failed with code ' . $response['failureCode'],
-                    );
-                }
                 if ($status === 401 && $safe && $credentialRetries === 0 && $providers) {
                     $diagnosticError = 'authentication';
                     if (($response['stream'] ?? null) instanceof ByteStream) {
-                        $response['stream']->close();
+                        try {
+                            $response['stream']->close();
+                        } catch (\Throwable) {
+                            // The observed 401 remains authoritative if response cleanup fails.
+                        }
                     }
                     try {
                         foreach ($providers as $provider) {
@@ -4267,6 +4266,11 @@ class Runtime
                     $credentialRetries++;
                     $attempts++;
                     continue;
+                }
+                if (isset($response['failureCode'])) {
+                    throw new \RuntimeException(
+                        'HTTP transport failed with code ' . $response['failureCode'],
+                    );
                 }
                 if (
                     $status >= 200 &&
@@ -4541,6 +4545,16 @@ class Runtime
                 $diagnosticError = $error->kind;
                 throw $error;
             } catch (\Throwable $cause) {
+                if (($meta['status'] ?? null) === 401) {
+                    $diagnosticError = 'authentication';
+                    throw SdkError::create(
+                        'authentication',
+                        'API returned HTTP 401',
+                        'response',
+                        false,
+                        $meta,
+                    );
+                }
                 $diagnosticError = $o->cancellation?->isCancelled()
                     ? 'cancelled'
                     : (self::now() >= $deadline
