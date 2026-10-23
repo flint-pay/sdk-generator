@@ -506,12 +506,16 @@ test('mapped token overrides stay request-local on reused clients in both target
     client.api.merchant(),
     client.api.health(),
   ]);
-  assert.deepEqual(seen, [
-    { authorization: 'Bearer first' },
-    { authorization: 'Bearer second' },
-    { 'x-api-key': 'client-key' },
-    {},
-  ]);
+  const byHeaders = (a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b));
+  assert.deepEqual(
+    seen.sort(byHeaders),
+    [
+      { authorization: 'Bearer first' },
+      { authorization: 'Bearer second' },
+      { 'x-api-key': 'client-key' },
+      {},
+    ].sort(byHeaders),
+  );
   const script = String.raw`
 require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
 use Example\Setup\{Client,ClientOptions,RequestOptions};

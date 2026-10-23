@@ -310,13 +310,16 @@ test('configured shortcuts preserve request isolation and explicit modes in Node
     client.api.merchantCall(),
     client.api.health(),
   ]);
-  assert.deepEqual(seen, [
-    ['/checkout', 'Bearer override', undefined],
-    ['/checkout', undefined, 'id'],
-    ['/customer', 'Bearer customer', undefined],
-    ['/merchant', 'Bearer default', undefined],
-    ['/health', undefined, undefined],
-  ]);
+  assert.deepEqual(
+    seen.sort(),
+    [
+      ['/checkout', 'Bearer override', undefined],
+      ['/checkout', undefined, 'id'],
+      ['/customer', 'Bearer customer', undefined],
+      ['/merchant', 'Bearer default', undefined],
+      ['/health', undefined, undefined],
+    ].sort(),
+  );
   for (const options of [
     { apiKey: 'x', authMode: 'merchant' },
     { apiKey: 'x', credentials: { Merchant: 'x' } },

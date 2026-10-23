@@ -29,6 +29,8 @@ export function reservePublicSymbols(
       'CurlByteStream',
       'ParsedNumber',
       'Cancellation',
+      'CredentialProvider',
+      ...(targets.includes('php') ? ['Credential'] : []),
       'ClientOptions',
       'RuntimeClientOptions',
       'RequestOptions',
