@@ -168,7 +168,7 @@ for (const nested of [false, true]) {
           new Response(c.raw, {
             status: c.status,
             headers: {
-              [nested ? 'Trace-Id' : 'x-request-id']: 'req_error',
+              [nested ? 'Trace-Id' : 'x-request-id']: 'req_000MH8MWQ7PKC0N7TXERB9CJ9P',
               'set-cookie': 'cookie-secret',
             },
           }),
@@ -183,7 +183,7 @@ for (const nested of [false, true]) {
         assert.equal(error.outcome, 'response');
         assert.equal(error.retryAllowed, [408, 429, 500, 502, 503, 504].includes(c.status));
         assert.equal(error.raw, c.raw);
-        assert.equal(error.meta.requestId, 'req_error');
+        assert.equal(error.meta.requestId, 'req_000MH8MWQ7PKC0N7TXERB9CJ9P');
         if (nested && c.payload) assert.deepEqual(error.details, { reason: 'Missing payment' });
         const logged = inspect(error);
         assert.ok(logged.includes('stack:'));
@@ -228,10 +228,10 @@ for (const nested of [false, true]) {
 require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
 $results=[];
 foreach(json_decode(stream_get_contents(STDIN),true) as $c){
-  $client=new Example\Errors\Client(new Example\Errors\ClientOptions('https://example.invalid',transport:fn($r)=>['status'=>$c['status'],'headers'=>['Trace-Id'=>'req_error','x-request-id'=>'req_error','set-cookie'=>'cookie-secret'],'body'=>$c['raw']]));
+  $client=new Example\Errors\Client(new Example\Errors\ClientOptions('https://example.invalid',transport:fn($r)=>['status'=>$c['status'],'headers'=>['Trace-Id'=>'req_000MH8MWQ7PKC0N7TXERB9CJ9P','x-request-id'=>'req_000MH8MWQ7PKC0N7TXERB9CJ9P','set-cookie'=>'cookie-secret'],'body'=>$c['raw']]));
   try{$client->api->readValue();throw new Exception('Expected error');}
   catch(Example\Errors\SdkError $e){
-    if($e->status!==$e->meta['status']||$e->outcome!=='response'||$e->retryAllowed!==in_array($c['status'],[408,429,500,502,503,504],true)||$e->meta['requestId']!=='req_error')throw $e;
+    if($e->status!==$e->meta['status']||$e->outcome!=='response'||$e->retryAllowed!==in_array($c['status'],[408,429,500,502,503,504],true)||$e->meta['requestId']!=='req_000MH8MWQ7PKC0N7TXERB9CJ9P')throw $e;
     if(!array_key_exists('stack',$e->__debugInfo())||!$e->__debugInfo()['stack'])throw new Exception('Missing stack');
     ob_start();var_dump($e);$logged=ob_get_clean();
     if(str_contains($logged,'cookie-secret')||!str_contains($logged,'details')||!str_contains($logged,'errorCode'))throw new Exception('Invalid debug output');

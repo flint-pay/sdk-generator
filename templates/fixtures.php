@@ -113,6 +113,12 @@ foreach ($cases as $index => $case) {
                         : $params;
             }
         }
+        $requestOptions = [];
+        foreach ($contract['requestOptions'] as $option) {
+            if (array_key_exists($option['node'], $o)) {
+                $requestOptions[$option['php']] = $o[$option['node']];
+            }
+        }
         $arguments[] = new $requestOptionsClass(
             ...[
                 'idempotencyKey' => $o['idempotencyKey'] ?? null,
@@ -124,6 +130,7 @@ foreach ($cases as $index => $case) {
                 'authMode' => $o['authMode'] ?? null,
                 'credentials' => $o['credentials'] ?? null,
                 ...array_intersect_key($o, $contract['authShortcuts'] ?? []),
+                ...$requestOptions,
             ],
         );
         $result = $client->{$operation['resource']}->{$method}(...$arguments);

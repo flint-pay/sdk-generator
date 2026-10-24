@@ -4,7 +4,7 @@
   "files": {
     "openapi.json": "63c022c16b8a4af1826fdc7116d9f38d301f75430b0336a5edeb781611fc12c4",
     "sdk.json": "074af56d10fdfdc025eb294c905d66afcabfdb9a25c1ad4fd45baeec63788e4b",
-    "http-cases.json": "74b520744581651f3ea407d2802a9679e603c3e18d335919da25394283ba309b",
+    "http-cases.json": "cb9a8cf21a1deb85735741c2b99ba45b1b01d93d5ac3bafa28e3f67a0c508254",
     "risk-openapi.json": "7077821046302edb8c39d5e14c24b0ac6ff4ad6c28bda437534474e89210da68",
     "risk-sdk.json": "a794d021590a283b3a0ccf412b9f65a542ca70eb8c12c3ccfb31f5a7132ae832",
     "risk-http-cases.json": "81b0057b02d1880ed3051f5e6cd1f998fa4ffed491d123b480a42de73e1927fb",

@@ -115,7 +115,7 @@ function runtimeIdentity(
         stable(
           [...files].filter(([name]) =>
             target === 'node'
-              ? /^node\/(runtime|codec-plan|runtime-plan|descriptor-source|package-plan|response|request)\.js$/.test(
+              ? /^node\/(runtime|codec-plan|runtime-plan|request-options|descriptor-source|package-plan|response|request)\.js$/.test(
                   name,
                 )
               : /^php\/src\/(SchemaAdapter|classes\/(?:Runtime|Codec|Model|SdkError|Result|RequestOptions|ClientOptions|AmbientCredentialProvider|Credential|CredentialProvider|EventStream|ServerSentEvent|Cancellation|ByteStream|CurlByteStream|RawNumber|ParsedNumber|ExactNumber|SdkResponse|Errors\/\w+|Internal\/DescriptorSource))\.php$/.test(
@@ -1268,6 +1268,8 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       'php-value-plan.d.ts',
       'runtime-plan.js',
       'runtime-plan.d.ts',
+      'request-options.js',
+      'request-options.d.ts',
       'canonical.js',
       'canonical.d.ts',
       'diagnostic.js',
@@ -1540,12 +1542,26 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       'src/SchemaAdapter.php',
       readFileSync(join(here, '../templates/SchemaAdapter.php'), 'utf8')
         .replaceAll('SdkNamespace', ns)
-        .replace("/* RETRY_DEFAULTS */ '{}'", php(JSON.stringify(RETRY_DEFAULTS))),
+        .replace("/* RETRY_DEFAULTS */ '{}'", php(JSON.stringify(RETRY_DEFAULTS)))
+        .replace(
+          "/* REQUEST_OPTION_PLANS */ '{}'",
+          php(JSON.stringify(targetPlan.requestOptionPlans ?? {})),
+        ),
     );
     put(
       'src/Runtime.php',
       readFileSync(join(here, '../templates/Runtime.php'), 'utf8')
         .replaceAll('SdkNamespace', ns)
+        .replace(
+          "/* REQUEST_OPTION_PLANS */ '{}'",
+          php(JSON.stringify(targetPlan.requestOptionPlans ?? {})),
+        )
+        .replace(
+          '/* REQUEST_OPTION_FORWARD */',
+          Object.values(targetPlan.requestOptionPlans ?? {})
+            .map((option) => `$this->${option.php},`)
+            .join('\n            '),
+        )
         .replace(
           '        public readonly bool $ambientCredentials = true,\n        public readonly ?object $credentialCache = null,\n',
           '',
@@ -1558,7 +1574,11 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
               (key) =>
                 `        public readonly string|CredentialProvider|\\Closure|null $${key} = null,\n`,
             )
-            .join('') + '    ) {}',
+            .join('') +
+            Object.values(targetPlan.requestOptionPlans ?? {})
+              .map((option) => `        public readonly ?string $${option.php} = null,\n`)
+              .join('') +
+            '    ) {}',
         )
         .replaceAll(
           '    ) {\n        /* AUTH_SHORTCUT_CLIENT_PARAMETERS */\n    }',
@@ -3075,7 +3095,7 @@ function runtimeGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: bo
     : '';
   return (
     `# ${c.title} runtime guide\n\nPackage ${c.config.version}; API ${c.apiVersion}.\n\n[Back to the quickstart](README.md) · [API reference](REFERENCE.md)\n\n` +
-    `## Client and request options\n\n${c.defaultBaseUrl !== undefined ? `The default baseUrl is \`${c.defaultBaseUrl}\`; pass baseUrl to select another environment.` : 'Pass baseUrl: this SDK has no default server.'} Pass per-request options as the last method argument: a plain object in Node, or RequestOptions in PHP.\n\n${requestOptions}` +
+    `## Client and request options\n\n${c.defaultBaseUrl !== undefined ? `The default baseUrl is \`${c.defaultBaseUrl}\`; pass baseUrl to select another environment.` : 'Pass baseUrl: this SDK has no default server.'} Pass per-request options as the last method argument: a plain object in Node, or RequestOptions in PHP.\n\n${requestOptions}${c.operations.some((op) => op.parameters.some((p) => p['x-flint-request-option'] === 'client_request_id')) ? `Pass ${node ? 'clientRequestId' : 'client_request_id'} for caller correlation on operations declaring that option. The value must contain 1 to 128 visible ASCII characters (0x21 to 0x7E), without spaces. Invalid values and conflicting request headers raise a validation error before sending, even with schema validation disabled. Unset values send no header. Keep secrets and personal data out of correlation values. The response request ID in meta.requestId is the server ID, independent of this value.\n\n` : ''}` +
     bullets([
       'Defaults are timeoutMs: 10000 per attempt and deadlineMs: 30000 for the overall duration (not an absolute timestamp). Request values override client defaults.',
       'maxAttempts is a positive safe integer budget, capped at the operation limit. Request budgets override client budgets. Set maxAttempts: 1 to opt out of ordinary retries; provider invalidation can still add one HTTP 401 retry.',

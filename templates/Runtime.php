@@ -657,6 +657,7 @@ final class RequestOptions
             $this->streamIdleTimeoutMs,
             $this->streamLifetimeMs,
             /* AUTH_SHORTCUT_FORWARD */
+            /* REQUEST_OPTION_FORWARD */
         );
     }
 }
@@ -3966,10 +3967,35 @@ class Runtime
             foreach ($op['parameters'] as $parameter) {
                 if (
                     array_key_exists('source', $parameter) &&
-                    ($parameter['source'] !== 'authentication' ||
+                    (!in_array($parameter['source'], ['authentication', 'request-option'], true) ||
                         ($parameter['in'] ?? null) !== 'header')
                 ) {
                     throw new \InvalidArgumentException('Invalid compiled parameter source');
+                }
+                if (($parameter['source'] ?? null) === 'request-option') {
+                    $plans = json_decode(
+                        /* REQUEST_OPTION_PLANS */ '{}',
+                        true,
+                        512,
+                        JSON_THROW_ON_ERROR,
+                    );
+                    $option = $plans[$parameter['x-flint-request-option'] ?? ''] ?? null;
+                    if (
+                        !$option ||
+                        ($parameter['required'] ?? false) ||
+                        ($parameter['requestOption'] ?? null) !== [
+                            'node' => $option['node'],
+                            'php' => $option['php'],
+                        ] ||
+                        $parameter['codec'] != $option['codec']
+                    ) {
+                        throw new \InvalidArgumentException('Invalid compiled request option');
+                    }
+                } elseif (
+                    isset($parameter['requestOption']) ||
+                    isset($parameter['x-flint-request-option'])
+                ) {
+                    throw new \InvalidArgumentException('Missing compiled request-option source');
                 }
                 Codec::assertPlan($parameter['codec'], $op['id'] . '.parameter');
             }
@@ -4328,6 +4354,12 @@ class Runtime
                 }
                 continue;
             }
+            if (($p['source'] ?? null) === 'request-option') {
+                if (array_key_exists($p['name'], $input)) {
+                    Codec::fail($p['name'], 'supply this header through request options');
+                }
+                continue;
+            }
             $present = array_key_exists($p['name'], $input);
             $value = $present ? $input[$p['name']] : null;
             if (
@@ -4445,6 +4477,22 @@ class Runtime
         $this->checkUrl($url);
         foreach ($o->headers as $k => $v) {
             $set($k, $v);
+        }
+        foreach ($op['parameters'] as $p) {
+            if (($p['source'] ?? null) !== 'request-option') {
+                continue;
+            }
+            $name = $p['requestOption']['php'];
+            $value = $o->{$name};
+            $supplied = $headers[strtolower($p['name'])] ?? null;
+            if ($value !== null && $supplied !== null && $value !== $supplied) {
+                Codec::fail($name, 'conflicting request option and header values');
+            }
+            $effective = $value ?? $supplied;
+            if ($effective !== null) {
+                $normalized = $this->decode($effective, $p['codec'], ['path' => $name]);
+                $set($p['name'], $normalized);
+            }
         }
         $suppliedHeaders = $headers;
         $ambient = $this->contract['defaultCredentials'] ?? null;

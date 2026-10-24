@@ -220,7 +220,7 @@ test('HTTP errors use the independently expected class and preserve SdkError fie
       transport: async () =>
         new Response('{"message":"synthetic failure"}', {
           status,
-          headers: { 'x-request-id': 'req_fixture' },
+          headers: { 'x-request-id': 'req_00P5GR7C25QNQYKSNCJF346W0E' },
         }),
     });
     await assert.rejects(client.values.retrieve('value_fixture'), (error) => {
@@ -230,7 +230,7 @@ test('HTTP errors use the independently expected class and preserve SdkError fie
       assert.equal(error.kind, kind);
       assert.equal(error.status, status);
       assert.equal(error.message, 'synthetic failure');
-      assert.equal(error.meta.requestId, 'req_fixture');
+      assert.equal(error.meta.requestId, 'req_00P5GR7C25QNQYKSNCJF346W0E');
       assert.equal(error.outcome, 'response');
       assert.match(error.stack.split('\n')[1], /at CompiledRuntime\.executeRequest \(/);
       assert.doesNotMatch(error.stack, /at createSdkError/);
@@ -245,7 +245,7 @@ test('HTTP errors use the independently expected class and preserve SdkError fie
 use Example\ErrorClasses\{Client,ClientOptions,SdkError};
 $rows=[];
 foreach([401,403,404,409,412,400,422,429,500,503,599,418,408] as $status) {
-  $client=new Client(new ClientOptions('https://example.invalid',maxAttempts:1,transport:fn($r)=>['status'=>$status,'headers'=>['x-request-id'=>'req_fixture'],'body'=>'{"message":"synthetic failure"}']));
+  $client=new Client(new ClientOptions('https://example.invalid',maxAttempts:1,transport:fn($r)=>['status'=>$status,'headers'=>['x-request-id'=>'req_00P5GR7C25QNQYKSNCJF346W0E'],'body'=>'{"message":"synthetic failure"}']));
   try {$client->values->retrieve('value_fixture'); throw new Exception('accepted');}
   catch(SdkError $e) {
     $source=file($e->getFile());
@@ -264,7 +264,7 @@ echo json_encode($rows);`,
       kind,
       status,
       'synthetic failure',
-      'req_fixture',
+      'req_00P5GR7C25QNQYKSNCJF346W0E',
       'response',
     ]),
   );

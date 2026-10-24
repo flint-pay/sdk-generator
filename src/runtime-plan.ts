@@ -1,9 +1,15 @@
+import { stable } from './canonical.js';
+import { requestOption, REQUEST_OPTIONS } from './request-options.js';
 import { assertPhpRepresentation, type PhpRepresentation } from './php-value-plan.js';
-export const AUTH_SHORTCUT_RESERVED = new Set(
-  'ambientCredentials credentialCache baseUrl token authMode credentials headers idempotencyKey ifMatch timeoutMs deadlineMs maxAttempts signal cancellation maxPages maxItems streamIdleTimeoutMs streamLifetimeMs allowedOrigins allowInsecureHttp transport diagnostics redactFields constructor prototype __proto__ withDeadline this'
+export const AUTH_SHORTCUT_RESERVED = new Set([
+  ...'ambientCredentials credentialCache baseUrl token authMode credentials headers idempotencyKey ifMatch timeoutMs deadlineMs maxAttempts signal cancellation maxPages maxItems streamIdleTimeoutMs streamLifetimeMs allowedOrigins allowInsecureHttp transport diagnostics redactFields constructor prototype __proto__ withDeadline this'
     .toLowerCase()
     .split(' '),
-);
+  ...Object.values(REQUEST_OPTIONS).flatMap((option) => [
+    option.node.toLowerCase(),
+    option.php.toLowerCase(),
+  ]),
+]);
 /** token reuses the legacy client field, but may explicitly select a composed mode. */
 export function isAuthShortcutName(name: string): boolean {
   return (
@@ -77,9 +83,10 @@ export interface RuntimeContract {
 /** Headers supplied by the client have no independent operation input value. */
 export function parameterSource(
   op: Operation,
-  parameter: Pick<Parameter, 'in' | 'name'>,
+  parameter: Pick<Parameter, 'in' | 'name' | 'x-flint-request-option'>,
   settings: Pick<RuntimeContract, 'auth' | 'authentication' | 'apiVersion'>,
-): 'input' | 'authentication' | 'api-version' {
+): 'input' | 'authentication' | 'api-version' | 'request-option' {
+  if (parameter['x-flint-request-option'] !== undefined) return 'request-option';
   if (parameter.in !== 'header') return 'input';
   const name = parameter.name.toLowerCase();
   if (settings.apiVersion?.header.toLowerCase() === name) return 'api-version';
@@ -149,7 +156,8 @@ export interface CompiledOperation
   parameters: (Omit<Operation['parameters'][number], 'schema'> & {
     codec: CodecPlan;
     /** Absent in historical descriptors and for ordinary input parameters. */
-    source?: 'authentication';
+    source?: 'authentication' | 'request-option';
+    requestOption?: { node: string; php: string };
   })[];
   body?: CodecPlan;
   /** Sole JSON 2xx declaration eligible for an otherwise undeclared success. */
@@ -176,6 +184,16 @@ export interface CompiledRuntimePlan
   webhook?: Omit<Webhook, 'events'> & {
     events: Record<string, CodecPlan>;
     eventModels?: Record<string, string>;
+  };
+}
+
+/** The registry supplies both executors with the same mandatory codec. */
+export function compileRequestOption(value: unknown, path: string) {
+  const option = requestOption(value, path);
+  return {
+    node: option.node,
+    php: option.php,
+    codec: option.codec,
   };
 }
 
@@ -219,13 +237,30 @@ export function compileRuntimePlan(contract: RuntimeContract): CompiledRuntimePl
               ),
             }
           : {}),
-        parameters: parameters.map(({ schema, ...parameter }) => ({
-          ...parameter,
-          codec: root(schema),
-          ...(parameterSource(op, parameter, contract) === 'authentication'
-            ? { source: 'authentication' as const }
-            : {}),
-        })),
+        parameters: parameters.map(({ schema, ...parameter }) => {
+          const extension = parameter['x-flint-request-option'];
+          if (extension !== undefined) {
+            const option = compileRequestOption(extension, op.id + '.parameters.' + parameter.name);
+            if (parameter.in !== 'header' || parameter.required)
+              throw new Error(
+                op.id + ': x-flint-request-option requires an optional header parameter',
+              );
+            return {
+              ...parameter,
+              source: 'request-option' as const,
+              requestOption: { node: option.node, php: option.php },
+              // Request-option validity is mandatory even with validation: encoding.
+              codec: option.codec,
+            };
+          }
+          return {
+            ...parameter,
+            codec: root(schema),
+            ...(parameterSource(op, parameter, contract) === 'authentication'
+              ? { source: 'authentication' as const }
+              : {}),
+          };
+        }),
         ...(body ? { body: root(body) } : {}),
         responses: Object.fromEntries(
           Object.entries(responses).map(([status, { schema, ...response }]) => [
@@ -495,9 +530,29 @@ export function assertRuntimePlan(
         typeof field.name !== 'string' ||
         !['path', 'query', 'header'].includes(String(field.in)) ||
         field.schema !== undefined ||
-        (field.source !== undefined && (field.source !== 'authentication' || field.in !== 'header'))
+        (field.source !== undefined &&
+          (!['authentication', 'request-option'].includes(String(field.source)) ||
+            field.in !== 'header'))
       )
         throw new Error(`${op.id}: invalid compiled parameter`);
+      if (field.source === 'request-option') {
+        const option = compileRequestOption(
+          field['x-flint-request-option'],
+          String(op.id) + '.parameter.' + String(field.name),
+        );
+        const names = record(field.requestOption, 'requestOption');
+        if (
+          names.node !== option.node ||
+          names.php !== option.php ||
+          field.required ||
+          stable(field.codec) !== stable(option.codec)
+        )
+          throw new Error('Invalid compiled request option');
+      } else if (
+        field.requestOption !== undefined ||
+        (!historical && field['x-flint-request-option'] !== undefined)
+      )
+        throw new Error('Missing compiled request-option source');
       assertCodecPlan(field.codec, `${op.id}.parameter.${field.name}`);
     }
     if (op.body !== undefined) assertCodecPlan(op.body, `${op.id}.body`);

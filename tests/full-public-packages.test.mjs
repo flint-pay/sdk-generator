@@ -297,9 +297,9 @@ let reportReads = 0;
 const audit = new Client({token:'synthetic', transport:async (url, init) => {
   let body;
   let status = 200;
-  if (url.pathname === '/v1/payment-intents/pi_fixture') body = {data:payment, request_id:'req_body', meta:{trace_id:'provider'}};
+  if (url.pathname === '/v1/payment-intents/pi_fixture') body = {data:payment, request_id:'req_00RZ0FQ2N30SJR0PYX7Y97MY7N', meta:{trace_id:'provider'}};
   else if (url.pathname === '/v1/payment-intents' && init.method === 'POST') {
-    body = {data:{payment_intent:payment, payment_collection:{}}, request_id:'req_create'};
+    body = {data:{payment_intent:payment, payment_collection:{}}, request_id:'req_00HZ11BJ0WECKGX2NGJBSWMECB'};
     status = 201;
   } else if (url.pathname === '/v1/payment-intents') {
     const next = url.searchParams.get('page_token');
@@ -315,13 +315,13 @@ const audit = new Client({token:'synthetic', transport:async (url, init) => {
     body = {data:reportReads === 1 ? report : {...report,status:'succeeded',download:{expires_at:'2026-09-30T00:00:00Z',report_download_id:'rdl_fixture',url:'https://api.withflintpay.com/v1/report-downloads/rdl_fixture'}}};
   } else throw new Error('Unexpected audit request ' + url);
   const wire = JSON.stringify(body).replaceAll('"9007199254740993"','9007199254740993');
-  return new Response(wire,{status,headers:{'content-type':'application/json','x-request-id':'req_http'}});
+  return new Response(wire,{status,headers:{'content-type':'application/json','x-request-id':'req_00EBMKRW6DJV5N1V6ZRYF9EGQ9'}});
 }});
 assert.deepEqual(JSON.parse(JSON.stringify(await audit.paymentIntents.get({payment_intent_id:'pi_fixture'}))),payment);
 const fullResponse = await audit.paymentIntents.getWithResponse({payment_intent_id:'pi_fixture'});
-assert.equal(fullResponse.body.request_id,'req_body');
+assert.equal(fullResponse.body.request_id,'req_00RZ0FQ2N30SJR0PYX7Y97MY7N');
 assert.equal(fullResponse.body.meta.trace_id,'provider');
-assert.equal(fullResponse.meta.requestId,'req_http');
+assert.equal(fullResponse.meta.requestId,'req_00EBMKRW6DJV5N1V6ZRYF9EGQ9');
 const createdPayment = await audit.paymentIntents.create({body:{amount_money:{amount:'100',currency:'USD'},payment_options:['card'],capture_method:'manual'}});
 assert.equal(createdPayment.payment_intent.status,'requires_payment_method');
 const firstPage = await audit.paymentIntents.list({page_size:1});
@@ -337,7 +337,7 @@ const fullPages = await Array.fromAsync(audit.paymentIntents.listPagesWithRespon
 assert.equal(fullPages.length,2);
 assert.equal(fullPages[0].body.next_page_token,'page_two');
 assert.equal(fullPages[1].body.data[0].payment_intent_id,'pi_second');
-assert.equal(fullPages[1].meta.requestId,'req_http');
+assert.equal(fullPages[1].meta.requestId,'req_00EBMKRW6DJV5N1V6ZRYF9EGQ9');
 assert.equal(JSON.parse(fullPages[0].raw).next_page_token,'page_two');
 assert.deepEqual((await audit.balances.list()).data,[]);
 assert.equal(audit.balances.listItems,undefined);
@@ -352,7 +352,7 @@ assert.equal(reportReads,2);
 reportReads = 0;
 const waitedResponse = await audit.reports.getWaitWithResponse({report_id:'rep_fixture'},{deadlineMs:5000});
 assert.equal(waitedResponse.body.data.status,'succeeded');
-assert.equal(waitedResponse.meta.requestId,'req_http');
+assert.equal(waitedResponse.meta.requestId,'req_00EBMKRW6DJV5N1V6ZRYF9EGQ9');
 assert.equal(JSON.parse(waitedResponse.raw).data.status,'succeeded');
 assert.equal(reportReads,2);
 await audit.close();
@@ -402,7 +402,7 @@ $report = ['created_at'=>'2026-09-29T00:00:00Z','currency'=>'USD','interval_star
 $requestKeys = []; $reportReads = 0;
 $audit = new Client(new ClientOptions(token:'synthetic', transport:function($request)use($payment,$report,&$requestKeys,&$reportReads){
   $path = parse_url($request['url'],PHP_URL_PATH); $status = 200;
-  if($path === '/v1/payment-intents/pi_fixture') $body=['data'=>$payment,'request_id'=>'req_body','meta'=>['trace_id'=>'provider']];
+  if($path === '/v1/payment-intents/pi_fixture') $body=['data'=>$payment,'request_id'=>'req_00RZ0FQ2N30SJR0PYX7Y97MY7N','meta'=>['trace_id'=>'provider']];
   elseif($path === '/v1/payment-intents' && $request['method'] === 'POST') { $status=201; $body=['data'=>['payment_intent'=>$payment,'payment_collection'=>(object)[]]]; }
   elseif($path === '/v1/payment-intents') {
     parse_str(parse_url($request['url'],PHP_URL_QUERY)??'', $query);
@@ -420,12 +420,12 @@ $audit = new Client(new ClientOptions(token:'synthetic', transport:function($req
     if($reportReads>1){$value['status']='succeeded';$value['download']=['expires_at'=>'2026-09-30T00:00:00Z','report_download_id'=>'rdl_fixture','url'=>'https://api.withflintpay.com/v1/report-downloads/rdl_fixture'];}
     $body=['data'=>$value];
   } else throw new Exception('unexpected audit request '.$path);
-  return ['status'=>$status,'headers'=>['content-type'=>'application/json','x-request-id'=>'req_http'],'body'=>str_replace('"9007199254740993"','9007199254740993',json_encode($body,JSON_THROW_ON_ERROR))];
+  return ['status'=>$status,'headers'=>['content-type'=>'application/json','x-request-id'=>'req_00EBMKRW6DJV5N1V6ZRYF9EGQ9'],'body'=>str_replace('"9007199254740993"','9007199254740993',json_encode($body,JSON_THROW_ON_ERROR))];
 }));
 $got=$audit->paymentIntents->get(['payment_intent_id'=>'pi_fixture']);
 if($got->getStatus()!=='requires_payment_method' || $got->getAmountMoney()->getAmount()!=='9007199254740993')throw new Exception('unwrapped payment');
 $full=$audit->paymentIntents->getWithResponse(['payment_intent_id'=>'pi_fixture']);
-if($full->body->getRequestId()!=='req_body' || $full->body->getMeta()->getTraceId()!=='provider' || $full->meta['requestId']!=='req_http')throw new Exception('full response metadata');
+if($full->body->getRequestId()!=='req_00RZ0FQ2N30SJR0PYX7Y97MY7N' || $full->body->getMeta()->getTraceId()!=='provider' || $full->meta['requestId']!=='req_00EBMKRW6DJV5N1V6ZRYF9EGQ9')throw new Exception('full response metadata');
 $created=$audit->paymentIntents->create(['body'=>['amount_money'=>['amount'=>'100','currency'=>'USD'],'payment_options'=>['card'],'capture_method'=>'manual']]);
 if($created->getPaymentIntent()->getStatus()!=='requires_payment_method')throw new Exception('create shape');
 $first=$audit->paymentIntents->list(['page_size'=>1]);
@@ -435,7 +435,7 @@ if($ids!==['pi_fixture','pi_second'])throw new Exception('pagination items');
 $pages=iterator_to_array($audit->paymentIntents->listPages(['page_size'=>1]));
 if(count($pages)!==2 || $pages[0]->getNextPageToken()!=='page_two' || $pages[0]->getData()[0]->getPaymentIntentId()!=='pi_fixture' || $pages[1]->getData()[0]->getPaymentIntentId()!=='pi_second')throw new Exception('pagination pages');
 $fullPages=iterator_to_array($audit->paymentIntents->listPagesWithResponse(['page_size'=>1]));
-if(count($fullPages)!==2 || $fullPages[0]->body->getNextPageToken()!=='page_two' || $fullPages[1]->body->getData()[0]->getPaymentIntentId()!=='pi_second' || $fullPages[1]->meta['requestId']!=='req_http' || json_decode($fullPages[0]->raw,true)['next_page_token']!=='page_two')throw new Exception('pagination full pages');
+if(count($fullPages)!==2 || $fullPages[0]->body->getNextPageToken()!=='page_two' || $fullPages[1]->body->getData()[0]->getPaymentIntentId()!=='pi_second' || $fullPages[1]->meta['requestId']!=='req_00EBMKRW6DJV5N1V6ZRYF9EGQ9' || json_decode($fullPages[0]->raw,true)['next_page_token']!=='page_two')throw new Exception('pagination full pages');
 if($audit->balances->list()->getData()!==[] || method_exists($audit->balances,'listItems'))throw new Exception('nonpaginated balances');
 $created=$audit->reports->create(['body'=>['currency'=>'USD','interval_start_at'=>$report['interval_start_at'],'interval_end_at'=>$report['interval_end_at'],'report_type'=>$report['report_type']]]);
 if($created->status!=='pending' || count($requestKeys)!==2 || !is_string($requestKeys[0]) || $requestKeys[0]==='' || $requestKeys[0]!==$requestKeys[1])throw new Exception('stable retry key');
@@ -443,7 +443,7 @@ $waited=$audit->reports->getWait(['report_id'=>'rep_fixture'],new Example\\Flint
 if($waited->status!=='succeeded' || $reportReads!==2)throw new Exception('report polling');
 $reportReads=0;
 $waitedResponse=$audit->reports->getWaitWithResponse(['report_id'=>'rep_fixture'],new Example\\FlintFull\\RequestOptions(deadlineMs:5000));
-if($waitedResponse->body->getData()->status!=='succeeded' || $waitedResponse->meta['requestId']!=='req_http' || json_decode($waitedResponse->raw,true)['data']['status']!=='succeeded' || $reportReads!==2)throw new Exception('report full polling');
+if($waitedResponse->body->getData()->status!=='succeeded' || $waitedResponse->meta['requestId']!=='req_00EBMKRW6DJV5N1V6ZRYF9EGQ9' || json_decode($waitedResponse->raw,true)['data']['status']!=='succeeded' || $reportReads!==2)throw new Exception('report full polling');
 $audit->close();
 
 $streaming=new Client(new ClientOptions(token:'synthetic',transport:function($request){

@@ -203,7 +203,7 @@ test('README snippets run in both targets with per-action keys and actionable er
     if (mode === 'error') {
       response.writeHead(503, {
         'content-type': 'application/json',
-        'x-request-id': 'req_readme_error',
+        'x-request-id': 'req_00Q2G3GBRPJ93KYGGJ2GE8RQGF',
       });
       return response.end(JSON.stringify({ error: { code: 'UNAVAILABLE', message: 'Try later' } }));
     }
@@ -310,7 +310,7 @@ test('README snippets run in both targets with per-action keys and actionable er
         await assert.rejects(exec(command, [first], { env }), (error) => {
           assert.match(
             error.stderr,
-            errorMode === 'error' ? /req_readme_error/ : /request may have succeeded/,
+            errorMode === 'error' ? /req_00Q2G3GBRPJ93KYGGJ2GE8RQGF/ : /request may have succeeded/,
           );
           return true;
         });

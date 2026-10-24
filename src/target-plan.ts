@@ -1,3 +1,4 @@
+import { REQUEST_OPTIONS } from './request-options.js';
 import { omitProtectedExamples } from './example-protection.js';
 import { reservePublicSymbols } from './public-symbols.js';
 import { pascalWords, webhookEventTypeName } from './naming.js';
@@ -34,6 +35,7 @@ import {
 } from './codec-plan.js';
 import {
   compileRuntimePlan,
+  compileRequestOption,
   requiresIdempotencyKey,
   parameterSource,
   successStatus,
@@ -520,6 +522,7 @@ export interface CompiledSdkContract {
   semantics: string;
   targets: ('node' | 'php')[];
   runtime: CompiledRuntimePlan;
+  requestOptionPlans?: Record<string, ReturnType<typeof compileRequestOption>>;
   node: {
     /** Absent in historical records predating these additive runtime APIs. */
     errorClasses?: true;
@@ -802,6 +805,12 @@ export function compileSdkContract(source: Contract): {
       ((c.config.targets ?? ['node', 'php']).includes('php') ? '/php-entities-1' : ''),
     targets: [...(c.config.targets ?? ['node', 'php'])],
     runtime,
+    requestOptionPlans: Object.fromEntries(
+      Object.keys(REQUEST_OPTIONS).map((name) => [
+        name,
+        compileRequestOption(name, 'request options'),
+      ]),
+    ),
     node: {
       errorClasses: true,
       ...(c.config.webhook ? { webhookReasons: true, standaloneWebhook: true } : {}),

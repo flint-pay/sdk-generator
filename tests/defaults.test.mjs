@@ -194,7 +194,7 @@ test('automatic defaults generate recursive models, exact unions, direct bodies 
       bodies.push(request.body);
       return new Response('{"data":"kept-envelope"}', {
         status: 200,
-        headers: { 'x-request-id': 'req_1' },
+        headers: { 'x-request-id': 'req_00VZKVWV7E7ECWMRV2HQKH1E8M' },
       });
     },
   });
@@ -205,7 +205,7 @@ test('automatic defaults generate recursive models, exact unions, direct bodies 
   assert.equal(bodies[0], '{"amount":1.2500}');
   const response = await client.paymentIntents.createWithResponse({ child: { amount: '1.2500' } });
   assert.equal(response.body.data, 'kept-envelope');
-  assert.equal(response.meta.requestId, 'req_1');
+  assert.equal(response.meta.requestId, 'req_00VZKVWV7E7ECWMRV2HQKH1E8M');
   assert.equal(
     execFileSync(
       'php',

@@ -273,7 +273,7 @@
       {
         "status": 503,
         "headers": {
-          "x-request-id": "req-html"
+          "x-request-id": "req_00AV1QVJN55GPCW6QWTJX01DR5"
         },
         "body": "<html>upstream unavailable</html>"
       }
@@ -282,7 +282,7 @@
       "kind": "server",
       "outcome": "response",
       "status": 503,
-      "requestId": "req-html"
+      "requestId": "req_00AV1QVJN55GPCW6QWTJX01DR5"
     }
   },
   {

@@ -1,12 +1,12 @@
 {
-  "description": "Reviewed additive SDK error subclasses and Node standalone webhook verification: executable Node modules now export the errors namespace and verifier, PHP class files/autoload maps include the Errors sub-namespace, and both verifiers return reasons for unrecognized deliveries. Runtime/declaration consumer tests independently verify these changes. Existing root exports remain and errors/verifyWebhook are added. The predecessor compiled-public baseline retains its historical bytes. The PHP standalone decision adds Webhooks::verify to declared packages and shares the compiled verification implementation with Client::verifyWebhook, preserving guarded invalid-input errors and client redaction. Review fixes give built-in Node errors literal names that survive minification and preserve factory callers in Node stacks and PHP file/line metadata. Executable hashes reflect those fixes; declarations and existing exports remain unchanged. PHP omits its optional standalone verifier when a Webhooks model takes the class name, independently covered by generated-client collision regressions. Retry contract budgets-2 adds body-driven retry decisions, capped half-to-full jitter, key/error metadata and required-key options. UUID v4 automatic keys now match across runtimes. Behavioral and consumer type tests independently cover these changes; executable hashes include the changed runtimes and generated documentation. Runtime hashes include preservation of Retry-After and the HTTP 412 retry veto when response body reads fail. PHP SSE also retains these headers when the connection fails immediately after headers arrive. Credential-provider runtimes resolve credentials per attempt and retry a replay-safe HTTP 401 once after invalidation. PHP adds its provider interface and value class, and generated runtime guides document both targets. Shared synthetic fixtures verify behavior and consumer typechecks verify the new public interfaces; reviewed executable changes are confined to authentication resolution, retry accounting and provider class wiring. Observed HTTP 401 statuses remain authoritative through body or cleanup failures: both runtimes preserve the single provider refresh and terminate on a subsequent 401. Shared fixtures and local default-transport tests independently cover truncated first and second 401 responses. Declared default credentials add environment and workload identity federation in both runtimes. Undeclared packages preserve root exports and PHP class inventories; runtime bytes include additive ambientCredentials/credentialCache options, guarded discovery dispatch, and serialized-declaration validation. Independent shared conformance cases, default HTTP transports, strict consumer compilation, cache partition cases and 100-caller single-flight tests verify the changed behavior. Review corrections redact opaque exchange response tokens before error construction, restrict ambient mode defaults to permitted operations, bind 401 invalidation to each resolved partition/token, and check PHP Fiber waiters' own deadlines and cancellation on every resume. Shared synthetic redaction, partner-mode, interleaved-origin, stale-401 and independent-waiter scenarios verify these guarantees in both runtimes before refreshing executable hashes; root exports remain unchanged.",
+  "description": "Reviewed additive SDK error subclasses and Node standalone webhook verification: executable Node modules now export the errors namespace and verifier, PHP class files/autoload maps include the Errors sub-namespace, and both verifiers return reasons for unrecognized deliveries. Runtime/declaration consumer tests independently verify these changes. Existing root exports remain and errors/verifyWebhook are added. The predecessor compiled-public baseline retains its historical bytes. The PHP standalone decision adds Webhooks::verify to declared packages and shares the compiled verification implementation with Client::verifyWebhook, preserving guarded invalid-input errors and client redaction. Review fixes give built-in Node errors literal names that survive minification and preserve factory callers in Node stacks and PHP file/line metadata. Executable hashes reflect those fixes; declarations and existing exports remain unchanged. PHP omits its optional standalone verifier when a Webhooks model takes the class name, independently covered by generated-client collision regressions. Retry contract budgets-2 adds body-driven retry decisions, capped half-to-full jitter, key/error metadata and required-key options. UUID v4 automatic keys now match across runtimes. Behavioral and consumer type tests independently cover these changes; executable hashes include the changed runtimes and generated documentation. Runtime hashes include preservation of Retry-After and the HTTP 412 retry veto when response body reads fail. PHP SSE also retains these headers when the connection fails immediately after headers arrive. Credential-provider runtimes resolve credentials per attempt and retry a replay-safe HTTP 401 once after invalidation. PHP adds its provider interface and value class, and generated runtime guides document both targets. Shared synthetic fixtures verify behavior and consumer typechecks verify the new public interfaces; reviewed executable changes are confined to authentication resolution, retry accounting and provider class wiring. Observed HTTP 401 statuses remain authoritative through body or cleanup failures: both runtimes preserve the single provider refresh and terminate on a subsequent 401. Shared fixtures and local default-transport tests independently cover truncated first and second 401 responses. Declared default credentials add environment and workload identity federation in both runtimes. Undeclared packages preserve root exports and PHP class inventories; runtime bytes include additive ambientCredentials/credentialCache options, guarded discovery dispatch, and serialized-declaration validation. Independent shared conformance cases, default HTTP transports, strict consumer compilation, cache partition cases and 100-caller single-flight tests verify the changed behavior. Review corrections redact opaque exchange response tokens before error construction, restrict ambient mode defaults to permitted operations, bind 401 invalidation to each resolved partition/token, and check PHP Fiber waiters' own deadlines and cancellation on every resume. Shared synthetic redaction, partner-mode, interleaved-origin, stale-401 and independent-waiter scenarios verify these guarantees in both runtimes before refreshing executable hashes; root exports remain unchanged. Request-option dispatch now uses a shared data-only codec mapping, adds clientRequestId/client_request_id option fields, excludes marked parameters from operation inputs and validates before transport. Independent Node/PHP wire cases, strict consumer compilation and selective-bundle regressions verify the changed runtime bytes. Existing root exports and pinned webhook schemas are unchanged.",
   "fixtures": [
     {
       "name": "payment",
       "api": "tests/fixtures/payment-api.json",
       "config": "tests/fixtures/payment-sdk.json",
-      "nodeRuntimeSha256": "811b3ed4664120c7ea2c6fb5a714f7a7358d12b10dfb0cacfe3726783c036938",
-      "phpSha256": "9ae3a0a4454748e5482afadbef9c416e2c85729b926f2eb8dcc29d2271400c0c",
+      "nodeRuntimeSha256": "12e7d0aa1ac608e6a324f5475895803a4ce7b1b3c4e950eb412a3567e4e36956",
+      "phpSha256": "cc3a812f124bb221ae1c132c2981fe3f85f659fe9a3eea52a0a86f4fcafdd47e",
       "rootExports": [
         "SdkError",
         "Model",
@@ -46,17 +46,17 @@
         "verifyWebhook"
       ],
       "singleTarget": {
-        "node": "811b3ed4664120c7ea2c6fb5a714f7a7358d12b10dfb0cacfe3726783c036938",
-        "php": "9ae3a0a4454748e5482afadbef9c416e2c85729b926f2eb8dcc29d2271400c0c"
+        "node": "12e7d0aa1ac608e6a324f5475895803a4ce7b1b3c4e950eb412a3567e4e36956",
+        "php": "cc3a812f124bb221ae1c132c2981fe3f85f659fe9a3eea52a0a86f4fcafdd47e"
       },
-      "phpRuntimeSha256": "edbbd802d4b7f9055d49837a6287cf3a388d1f0abc23cc55020d2209b11ba6d8"
+      "phpRuntimeSha256": "e2c925a4799d7f3ff77952c4df707a81afdd788b32158d6868201610dd5f28e1"
     },
     {
       "name": "flint",
       "api": "tests/providers/flint/openapi.json",
       "config": "tests/providers/flint/sdk.json",
-      "nodeRuntimeSha256": "5eb5028182a5fa101bd37aef408aef17c19ecf36a89eb91470f9591ade5d92ac",
-      "phpSha256": "31050abf8f19315501d6692da00ede27318cc183eb769407b4acc0e6ffe3cad2",
+      "nodeRuntimeSha256": "b4fc1eb9596c6c748425592cc8e619ca168d062d04988e42afeb2079acdd8474",
+      "phpSha256": "712c61a59b03ec722467949046401f8a54b675884fc36d51808a51ec267ba71d",
       "rootExports": [
         "SdkError",
         "Model",
@@ -363,10 +363,10 @@
         "verifyWebhook"
       ],
       "singleTarget": {
-        "node": "f8ba5cb6bef9432cc3afc7155779cd2ed6f367e89fa1a4c05b7524b6700b6ede",
-        "php": "31050abf8f19315501d6692da00ede27318cc183eb769407b4acc0e6ffe3cad2"
+        "node": "1b95020432e5d16349b7b9e989e1afaa513aa9f3ac5b7aae91a2576f1dfd8d43",
+        "php": "712c61a59b03ec722467949046401f8a54b675884fc36d51808a51ec267ba71d"
       },
-      "phpRuntimeSha256": "64c563e092c7f364e1b9b695c15b4f1f1c9a34cce6d4489d0bea6d6b32cbf0b9"
+      "phpRuntimeSha256": "6bcd5b79dcccadcf61029af548d99cecde6e830ea743a1731ea63022cd6eecae"
     }
   ]
 }

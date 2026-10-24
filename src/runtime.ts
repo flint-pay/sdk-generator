@@ -1,3 +1,4 @@
+import type { RequestOptionValues } from './request-options.js';
 import { DescriptorSource } from './descriptor-source.js';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -565,7 +566,7 @@ async function resolveCredential(
   return value;
 }
 
-export interface RequestOptions {
+export interface RequestOptions extends RequestOptionValues {
   streamIdleTimeoutMs?: number;
   streamLifetimeMs?: number;
   authMode?: string;
@@ -2798,6 +2799,10 @@ class CompiledRuntime {
           bad(p.name, 'supply this header through authentication options');
         continue;
       }
+      if (p.source === 'request-option') {
+        if (Object.hasOwn(input, p.name)) bad(p.name, 'supply this header through request options');
+        continue;
+      }
       let value = Object.hasOwn(input, p.name) ? input[p.name] : undefined;
       if (
         value === undefined &&
@@ -2857,6 +2862,22 @@ class CompiledRuntime {
         );
     this.checkUrl(url);
     for (const [k, v] of Object.entries(options.headers ?? {})) setHeader(k, v);
+    for (const p of op.parameters) {
+      if (p.source !== 'request-option' || !p.requestOption) continue;
+      // The descriptor is validated against the option registry before execution.
+      const value = (options as Record<string, unknown>)[p.requestOption.node];
+      const supplied = headers[p.name.toLowerCase()];
+      if (value !== undefined && supplied !== undefined && value !== supplied)
+        bad(p.requestOption.node, 'conflicting request option and header values');
+      const effective = value === undefined ? supplied : value;
+      if (effective !== undefined) {
+        const normalized = this.decode(effective, p.codec, {
+          mode: 'request',
+          path: p.requestOption.node,
+        });
+        setHeader(p.name, scalar(normalized));
+      }
+    }
     const suppliedHeaders = { ...headers };
     const ambient = this.contract.defaultCredentials;
     const ambientProvider =

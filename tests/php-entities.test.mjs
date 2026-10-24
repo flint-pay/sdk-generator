@@ -77,11 +77,11 @@ function fixture(
   generate(contract, output);
   return { dir, contract, output };
 }
-const child = { id: 'child', request_id: 'req_child', metadata: {}, children: [], related: {} };
+const child = { id: 'child', request_id: 'req_00G49T7PWV0CVHAW24A9W35BQS', metadata: {}, children: [], related: {} };
 const body = {
   data: {
     id: 'pay_1',
-    request_id: 'req_1',
+    request_id: 'req_00VZKVWV7E7ECWMRV2HQKH1E8M',
     metadata: { 0: 'zero', label: 'demo' },
     children: [child],
     related: { first: child },
@@ -98,7 +98,7 @@ test('nested response entities, dictionaries, presence and raw serialization agr
 $c = new Example\Entities\Client(new Example\Entities\ClientOptions('https://example.invalid', transport: fn($r) => ['status'=>200,'headers'=>[],'body'=>$argv[2]]));
 $r=$c->payments->retrieve(); $p=$r->data->getData();
 if (!$p instanceof Example\Entities\Payment || !$p->getChildren()[0] instanceof Example\Entities\Payment || !$p->getRelated()['first'] instanceof Example\Entities\Payment) throw new Exception('entities: '.get_debug_type($p).','.get_debug_type($p->getChildren()[0]).','.get_debug_type($p->getRelated()['first']));
-if ($p->getRequestId() !== 'req_1' || $p->getMetadata()[0] !== 'zero' || $p->getAmount() !== '9007199254740993') throw new Exception('values');
+if ($p->getRequestId() !== 'req_00VZKVWV7E7ECWMRV2HQKH1E8M' || $p->getMetadata()[0] !== 'zero' || $p->getAmount() !== '9007199254740993') throw new Exception('values');
 if ($p->get('children')[0]->getId() !== 'child' || $p->children[0]->getId() !== 'child') throw new Exception('consistent access');
 if (!$p->hasNote() || $p->getNote() !== null || $p->getChildren()[0]->hasNote()) throw new Exception('presence');
 try { $p->getChildren()[0]->getNote(); throw new Exception('missing accepted'); } catch (Example\Entities\SdkError $e) {}

@@ -1,3 +1,4 @@
+import { requestOption } from './request-options.js';
 import { validateRequestStyle, validatePositional, type RequestStyle } from './request-style.js';
 import { validateResponseReturn, payloadSchemas, type ResponseReturn } from './response-return.js';
 import { operationNames, modelNames, isPublicName, webhookEventTypeName } from './naming.js';
@@ -76,6 +77,7 @@ export type Schema = {
   [key: string]: unknown;
 };
 export interface Parameter {
+  'x-flint-request-option'?: string;
   name: string;
   in: 'path' | 'query' | 'header';
   required?: boolean;
@@ -2693,6 +2695,14 @@ export function loadContract(
               fail(p, `parameter ${key} must be boolean`);
           if (!['path', 'query', 'header'].includes(param.in))
             fail(p, 'supported parameter locations: path, query, header');
+          if (param['x-flint-request-option'] !== undefined) {
+            requestOption(
+              param['x-flint-request-option'],
+              p + '/parameters/' + pointerSegment(param.name),
+            );
+            if (param.in !== 'header' || param.required)
+              fail(p, 'x-flint-request-option requires an optional header parameter');
+          }
           if (param.in === 'header') header(param.name, p);
           if (param.in === 'path' && !param.required)
             fail(p, `path parameter ${param.name} must be required`);

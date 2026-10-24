@@ -110,6 +110,35 @@ export function compareCompiledContracts(
       });
     }
   }
+  for (const current of next.runtime.operations) {
+    const old = previous.runtime.operations.find((op) => op.id === current.id);
+    if (!old) continue;
+    const options = (op: typeof current) =>
+      new Map(
+        op.parameters
+          .filter((parameter) => parameter.source === 'request-option')
+          .map((parameter) => [
+            parameter['x-flint-request-option'],
+            {
+              header: parameter.name.toLowerCase(),
+              option: parameter.requestOption,
+              codec: parameter.codec,
+            },
+          ]),
+      );
+    const before = options(old),
+      after = options(current);
+    for (const name of new Set([...before.keys(), ...after.keys()])) {
+      if (stable(before.get(name)) === stable(after.get(name))) continue;
+      findings.push({
+        severity: !before.has(name) ? 'additive' : 'breaking',
+        subject: current.id + '.requestOptions.' + name,
+        message: !before.has(name)
+          ? 'Added a per-call request option in Node and PHP.'
+          : 'Removed or changed a per-call request option; review option names, validation and headers in both targets.',
+      });
+    }
+  }
   for (const old of previous.runtime.operations) {
     const current = next.runtime.operations.find((op) => op.id === old.id);
     if (

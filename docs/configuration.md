@@ -436,6 +436,27 @@ With one declared scheme, clients take `token`. With several, select one: `"auth
 
 Client and request options, origins, deadlines and transports are in the [consumer guide](using-sdks.md#client-and-request-options).
 
+An optional OpenAPI header parameter can declare `"x-flint-request-option": "client_request_id"`.
+The shared compiler routes it to per-call options, `clientRequestId` in Node and
+`client_request_id` in PHP, and excludes it from object inputs and positional arguments.
+The extension value selects the behavior; the parameter name selects the wire header
+(`X-Request-Id` for Flint). Unsupported values, non-header locations and required
+parameters fail generation. Values must contain 1 to 128 visible ASCII characters
+(0x21 to 0x7E), even with `validation: "encoding"`.
+
+```json
+{
+  "in": "header",
+  "name": "X-Request-Id",
+  "required": false,
+  "schema": { "type": "string" },
+  "x-flint-request-option": "client_request_id"
+}
+```
+
+Keep `errors.requestIdHeader: "x-request-id"` for Flint responses. The caller's
+correlation value and the server's request ID have separate meanings.
+
 ### Default credentials and workload identity
 
 Declare discovery alongside named authentication modes. The selected mode must contain exactly one bearer scheme. All environment names and exchange routing belong to provider configuration, never generator code. For example:
