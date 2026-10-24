@@ -180,6 +180,9 @@ export function runtimeContract(c: Contract) {
     ...(c.definitions ? { definitions: c.definitions } : {}),
     ...(c.auth ? { auth: c.auth } : {}),
     ...(c.authentication ? { authentication: c.authentication } : {}),
+    ...(c.config.auth && 'defaultCredentials' in c.config.auth && c.config.auth.defaultCredentials
+      ? { defaultCredentials: c.config.auth.defaultCredentials }
+      : {}),
     ...(c.authShortcuts ? { authShortcuts: c.authShortcuts } : {}),
     ...(c.config.apiVersion ? { apiVersion: c.config.apiVersion } : {}),
     ...(c.config.webhook ? { webhook: c.config.webhook } : {}),

@@ -1,6 +1,6 @@
 import { assertPhpRepresentation, type PhpRepresentation } from './php-value-plan.js';
 export const AUTH_SHORTCUT_RESERVED = new Set(
-  'baseUrl token authMode credentials headers idempotencyKey ifMatch timeoutMs deadlineMs maxAttempts signal cancellation maxPages maxItems streamIdleTimeoutMs streamLifetimeMs allowedOrigins allowInsecureHttp transport diagnostics redactFields constructor prototype __proto__ withDeadline this'
+  'ambientCredentials credentialCache baseUrl token authMode credentials headers idempotencyKey ifMatch timeoutMs deadlineMs maxAttempts signal cancellation maxPages maxItems streamIdleTimeoutMs streamLifetimeMs allowedOrigins allowInsecureHttp transport diagnostics redactFields constructor prototype __proto__ withDeadline this'
     .toLowerCase()
     .split(' '),
 );
@@ -41,6 +41,7 @@ import type {
   IncomingWebhook,
   AuthenticationMode,
   AuthShortcuts,
+  DefaultCredentials,
   Parameter,
 } from './contract.js';
 import {
@@ -66,6 +67,7 @@ export interface RuntimeContract {
   auth?: Auth;
   authentication?: Record<string, AuthenticationMode>;
   authShortcuts?: AuthShortcuts;
+  defaultCredentials?: DefaultCredentials;
   apiVersion?: { header: string; value: string };
   webhook?: Webhook;
   money?: { currencies: Record<string, number> };
@@ -264,6 +266,69 @@ export function compileRuntimePlan(contract: RuntimeContract): CompiledRuntimePl
   };
 }
 
+/** Owns discovery declaration validation for configuration and serialized runtime plans. */
+export function assertDefaultCredentials(
+  value: unknown,
+  authentication: unknown,
+): asserts value is DefaultCredentials {
+  const record = (value: unknown, path: string): Record<string, unknown> => {
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+      throw new Error(path + ': expected an object');
+    return value as Record<string, unknown>;
+  };
+  const keys = (value: Record<string, unknown>, allowed: string[]) => {
+    if (Object.keys(value).some((key) => !allowed.includes(key)))
+      throw new Error('unknown defaultCredentials field');
+  };
+  const d = record(value, 'defaultCredentials');
+  keys(d, ['mode', 'scheme', 'environment', 'workloadIdentity']);
+  const modes = record(authentication, 'authentication');
+  const mode =
+    typeof d.mode === 'string' && Object.hasOwn(modes, d.mode)
+      ? record(modes[d.mode], 'mode')
+      : undefined;
+  const schemes = mode?.schemes;
+  if (
+    typeof d.scheme !== 'string' ||
+    !Array.isArray(schemes) ||
+    schemes.length !== 1 ||
+    record(schemes[0], 'scheme').name !== d.scheme ||
+    record(schemes[0], 'scheme').type !== 'bearer'
+  )
+    throw new Error('default credentials must target the sole bearer scheme of a declared mode');
+  const environment = record(d.environment, 'environment');
+  const identity = record(d.workloadIdentity, 'workloadIdentity');
+  keys(environment, ['apiKey', 'token']);
+  keys(identity, ['tokenPath', 'credentialParameter', 'envPrefix']);
+  for (const entry of [environment.apiKey, environment.token, identity.envPrefix])
+    if (typeof entry !== 'string' || !/^[A-Z_][A-Z0-9_]*$/.test(entry))
+      throw new Error('declare environment names and prefix');
+  if (environment.apiKey === environment.token)
+    throw new Error('API key and token variables must differ');
+  if (
+    typeof identity.tokenPath !== 'string' ||
+    !/^\/(?!\/)[A-Za-z0-9/_-]+$/.test(identity.tokenPath)
+  )
+    throw new Error('declare an absolute token path without an origin, query or fragment');
+  if (
+    typeof identity.credentialParameter !== 'string' ||
+    !/^[a-z][a-z0-9_]*$/.test(identity.credentialParameter) ||
+    [
+      'grant_type',
+      'subject_token',
+      'subject_token_type',
+      'requested_token_type',
+      'scope',
+      'client_id',
+      'client_secret',
+      'audience',
+      'resource',
+      'actor_token',
+    ].includes(identity.credentialParameter)
+  )
+    throw new Error('declare a distinct credential form parameter');
+}
+
 export function assertRuntimePlan(
   value: unknown,
   historical = false,
@@ -322,6 +387,8 @@ export function assertRuntimePlan(
         destinations.add(scheme.header.toLowerCase());
       }
     }
+  if (plan.defaultCredentials !== undefined)
+    assertDefaultCredentials(plan.defaultCredentials, plan.authentication);
   if (plan.authShortcuts !== undefined) {
     for (const [name, value] of Object.entries(record(plan.authShortcuts, 'authShortcuts'))) {
       const shortcut = record(value, 'auth shortcut');

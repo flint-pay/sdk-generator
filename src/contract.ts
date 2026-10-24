@@ -21,7 +21,12 @@ import {
 } from './diagnostic.js';
 import { valueInstruction, exactValue, discriminatorBindings } from './codec-plan.js';
 import { stable } from './canonical.js';
-import { successStatus, isAuthShortcutName, isDefaultBaseUrl } from './runtime-plan.js';
+import {
+  successStatus,
+  isAuthShortcutName,
+  isDefaultBaseUrl,
+  assertDefaultCredentials,
+} from './runtime-plan.js';
 import { visitIntersectedProperties } from './schema-intersections.js';
 import { resolve, dirname, relative as relativePath } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -146,6 +151,12 @@ export interface Auth {
   type: 'bearer' | 'apiKey';
   header: string;
 }
+export interface DefaultCredentials {
+  mode: string;
+  scheme: string;
+  environment: { apiKey: string; token: string };
+  workloadIdentity: { tokenPath: string; credentialParameter: string; envPrefix: string };
+}
 export type AuthShortcuts = Record<string, { mode: string; scheme: string }>;
 export interface AuthenticationMode {
   schemes: (Auth & { name: string })[];
@@ -176,6 +187,7 @@ export interface Config {
     | {
         modes: Record<string, { schemes: string[]; operations?: string[] }>;
         shortcuts?: AuthShortcuts;
+        defaultCredentials?: DefaultCredentials;
       };
   targets?: ('node' | 'php')[];
   version: string;
@@ -2444,7 +2456,7 @@ export function loadContract(
         ? undefined
         : Object.keys(schemes)[0];
   if (namedAuth) {
-    keys(namedAuth, ['modes', 'shortcuts'], 'config/auth');
+    keys(namedAuth, ['modes', 'shortcuts', 'defaultCredentials'], 'config/auth');
     record(namedAuth.modes, 'config/auth/modes');
     if (!Object.keys(namedAuth.modes).length)
       fail('config/auth/modes', 'declare at least one authentication mode');
@@ -2488,6 +2500,16 @@ export function loadContract(
           mode.schemes[0]!.name !== shortcut.scheme
         )
           fail(path, 'shortcut must target the sole scheme of a declared authentication mode');
+      }
+    }
+    if (namedAuth.defaultCredentials !== undefined) {
+      try {
+        assertDefaultCredentials(namedAuth.defaultCredentials, authentication);
+      } catch (error) {
+        fail(
+          'config/auth/defaultCredentials',
+          error instanceof Error ? error.message : 'invalid declaration',
+        );
       }
     }
   } else {

@@ -118,7 +118,7 @@ function runtimeIdentity(
               ? /^node\/(runtime|codec-plan|runtime-plan|descriptor-source|package-plan|response|request)\.js$/.test(
                   name,
                 )
-              : /^php\/src\/(SchemaAdapter|classes\/(?:Runtime|Codec|Model|SdkError|Result|RequestOptions|ClientOptions|Credential|CredentialProvider|EventStream|ServerSentEvent|Cancellation|ByteStream|CurlByteStream|RawNumber|ParsedNumber|ExactNumber|SdkResponse|Errors\/\w+|Internal\/DescriptorSource))\.php$/.test(
+              : /^php\/src\/(SchemaAdapter|classes\/(?:Runtime|Codec|Model|SdkError|Result|RequestOptions|ClientOptions|AmbientCredentialProvider|Credential|CredentialProvider|EventStream|ServerSentEvent|Cancellation|ByteStream|CurlByteStream|RawNumber|ParsedNumber|ExactNumber|SdkResponse|Errors\/\w+|Internal\/DescriptorSource))\.php$/.test(
                   name,
                 ),
           ),
@@ -1290,11 +1290,19 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       put,
     );
     let code = `import { runtimeFromPlan, modelFromCodec, isKnownCodec${c.config.webhook ? ', verifyWebhookFromPlan' : ''} } from './runtime.js';\nexport { SdkError, errors, Model${extraValues}, serialize, parseExact, redact } from './runtime.js';\n${descriptorOutput.source(groups, './', true)}\nexport class Client {\n  #runtime;\n  constructor(options = {}) {\n    this.#runtime = runtimeFromPlan(_sdkDescriptors, options);\n`;
+    const defaultCredentials = compiledRuntime.defaultCredentials;
+    if (defaultCredentials) {
+      code =
+        `import { configuredDefaultCredentials, configuredWorkloadIdentityCredentials } from './runtime.js';\nexport function defaultCredentials() { return configuredDefaultCredentials(${js(defaultCredentials)}, ${js(c.defaultBaseUrl ?? null)} ?? undefined); }\nexport function workloadIdentityCredentials(options) { return configuredWorkloadIdentityCredentials(${js(defaultCredentials)}, options, ${js(c.defaultBaseUrl ?? null)} ?? undefined); }\n` +
+        code;
+    }
     if (c.operations.some(positional)) {
       put('request.js', readFileSync(join(here, '../templates/request.mjs'), 'utf8'));
       code = "import { requestInput as _sdkRequestInput } from './request.js';\n" + code;
     }
-    let declarations = `import type { ${c.authentication ? 'ClientOptions as RuntimeClientOptions, RequestOptions as RuntimeRequestOptions' : 'ClientOptions as RuntimeClientOptions, RequestOptions'}, Result, InputValue, CredentialProvider${c.config.webhook ? ', WebhookHeaders as _SdkWebhookHeaders' : ''} } from './runtime.js';\nimport { Model${extraValues} } from './runtime.js';\nexport { SdkError, errors, Model${extraValues}, serialize, parseExact, redact } from './runtime.js';\nexport type { ${c.authentication ? '' : 'RequestOptions, '}Result, Metadata, ErrorKind, DiagnosticEvent, InputValue, CredentialProvider${streamTypes ? ', ServerSentEvent' : ''} } from './runtime.js';\n`;
+    let declarations = `import type { ${c.authentication ? 'ClientOptions as RuntimeClientOptions, RequestOptions as RuntimeRequestOptions' : 'ClientOptions as RuntimeClientOptions, RequestOptions'}, Result, InputValue, CredentialProvider${defaultCredentials ? ', WorkloadIdentityOptions' : ''}${c.config.webhook ? ', WebhookHeaders as _SdkWebhookHeaders' : ''} } from './runtime.js';\nimport { Model${extraValues} } from './runtime.js';\nexport { SdkError, errors, Model${extraValues}, serialize, parseExact, redact } from './runtime.js';\nexport type { ${c.authentication ? '' : 'RequestOptions, '}Result, Metadata, ErrorKind, DiagnosticEvent, InputValue, CredentialProvider${streamTypes ? ', ServerSentEvent' : ''} } from './runtime.js';\n`;
+    if (defaultCredentials)
+      declarations += `export type { WorkloadIdentityOptions, WorkloadIdentitySource } from './runtime.js';\nexport declare function defaultCredentials(): CredentialProvider;\nexport declare function workloadIdentityCredentials(options: WorkloadIdentityOptions): CredentialProvider;\n`;
     if (c.operations.some((op) => !op.idempotency))
       declarations +=
         "type _SdkWithoutIdempotency<T> = T extends unknown ? Omit<T, 'idempotencyKey'> & { idempotencyKey?: never } : never;\n";
@@ -1517,10 +1525,16 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         autoload: {
           'psr-4': { [ns + '\\']: 'src/classes/' },
           classmap: ['src/SchemaAdapter.php', 'custom/'],
+          ...(phpContract.defaultCredentials ? { files: ['src/credentials.php'] } : {}),
         },
         archive: { exclude: ['/vendor', '/composer.lock', '/.git', '/*.zip'] },
       }),
     );
+    if (phpContract.defaultCredentials)
+      put(
+        'src/credentials.php',
+        `<?php\ndeclare(strict_types=1);\nnamespace ${ns};\nfunction defaultCredentials(): CredentialProvider { return new AmbientCredentialProvider(${'json_decode(' + php(JSON.stringify(phpContract.defaultCredentials)) + ', true)'}, null, ${c.defaultBaseUrl === undefined ? 'null' : php(c.defaultBaseUrl)}); }\n/** @param array{workloadIdentityId: string, source?: 'auto'|'none'|'token'|'token_file', audience?: string, scope?: string} $options */\nfunction workloadIdentityCredentials(array $options): CredentialProvider { return new AmbientCredentialProvider(${'json_decode(' + php(JSON.stringify(phpContract.defaultCredentials)) + ', true)'}, $options, ${c.defaultBaseUrl === undefined ? 'null' : php(c.defaultBaseUrl)}); }\n`,
+      );
     put('custom/.gitkeep', '');
     put(
       'src/SchemaAdapter.php',
@@ -1532,6 +1546,10 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       'src/Runtime.php',
       readFileSync(join(here, '../templates/Runtime.php'), 'utf8')
         .replaceAll('SdkNamespace', ns)
+        .replace(
+          '        public readonly bool $ambientCredentials = true,\n        public readonly ?object $credentialCache = null,\n',
+          '',
+        )
         .replaceAll(
           '    ) {\n        /* AUTH_SHORTCUT_REQUEST_PARAMETERS */\n    }',
           Object.keys(c.authShortcuts ?? {})
@@ -1551,7 +1569,8 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
               (key) =>
                 `        public readonly string|CredentialProvider|\\Closure|null $${key} = null,\n`,
             )
-            .join('') + '    ) {}',
+            .join('') +
+            '        public readonly bool $ambientCredentials = true,\n        public readonly ?object $credentialCache = null,\n    ) {}',
         )
         .replace(
           '/* AUTH_SHORTCUT_RESERVED */ []',
@@ -1689,6 +1708,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       ...splitPhpClasses(files.get('php/src/Runtime.php')!),
       ...splitPhpClasses(code),
     ]);
+    if (!phpContract.defaultCredentials) phpClasses.delete('AmbientCredentialProvider');
     if (hasPayloadReturns) {
       for (const [name, value] of splitPhpClasses(files.get('php/src/SdkResponse.php')!))
         phpClasses.set(name, value);
@@ -1739,7 +1759,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
           .map(([name, path]) => php(name.toLowerCase()) + ' => ' + php(path))
           .join(',') +
         ']'
-      };\nspl_autoload_register(static function (string $name) use ($classes): void { $path = $classes[strtolower($name)] ?? null; if ($path !== null) require_once __DIR__ . '/' . $path; });\n`,
+      };\nspl_autoload_register(static function (string $name) use ($classes): void { $path = $classes[strtolower($name)] ?? null; if ($path !== null) require_once __DIR__ . '/' . $path; });\n${phpContract.defaultCredentials ? "require_once __DIR__ . '/credentials.php';\n" : ''}`,
     );
     for (const name of ['Runtime', 'Client', ...(hasPayloadReturns ? ['SdkResponse'] : [])])
       put(
@@ -3064,7 +3084,13 @@ function runtimeGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: bo
       'Legacy authenticated clients accept token. Composed clients accept configured shortcuts or authMode and credentials keyed by mode and scheme; requests can select a mode with request-local credentials. A combined scheme set must be complete.',
       'Credentials accept strings or providers. Node CredentialProvider.getCredential() returns a Promise of { value: string, expiresAt?: Date }; optional invalidate() clears application caches. PHP CredentialProvider.getCredential(): Credential returns new Credential(value, expiresAt), with optional DateTimeInterface expiry; a Closure may return a string or Credential. Providers resolve on every request attempt. The application owns caching and expiry handling.',
       'A replay-safe request receiving HTTP 401 invalidates providers with invalidate() and retries once, adding at most one attempt to the ordinary budget (even with maxAttempts: 1) and preserving its idempotency key. String credentials and PHP closures never trigger this retry; repeated 401s fail immediately. Provider exceptions become authentication errors without retaining potentially sensitive causes.',
-      'The SDK does not discover credentials or read environment variables; the operation example scripts read API_BASE_URL and their named credential variables explicitly.',
+      ...(c.config.auth && 'defaultCredentials' in c.config.auth && c.config.auth.defaultCredentials
+        ? [
+            'This SDK discovers credentials lazily: explicit credentials, then the configured API key or access token environment variable (both set is ambiguous_credentials), then workload identity when its ID environment variable is set. Set ambientCredentials: false to disable discovery. defaultCredentials() and workloadIdentityCredentials(options) return credential providers in Node and PHP (namespace functions). Federation supports token and token_file sources, refreshes cached tokens ahead of expiry, and re-exchanges once on replay-safe HTTP 401. PHP credentialCache accepts an optional PSR-16 cache; protect it as a credential store.',
+          ]
+        : [
+            'The SDK does not discover credentials or read environment variables; the operation example scripts read API_BASE_URL and their named credential variables explicitly.',
+          ]),
     ]) +
     `\n## Authentication\n\n${authenticationGuide(c)}` +
     `## Responses and errors\n\n` +

@@ -47,7 +47,7 @@ $client->close();
 - The base URL's path prefix is kept when operation paths are appended. Don't repeat `/v1` if operation paths already include it.
 - HTTP URLs require `allowInsecureHttp: true`. This includes `http://localhost`, even for anonymous APIs. `allowedOrigins` still applies.
 - A missing or malformed URL fails with a structured `baseUrl` validation error. Destination errors distinguish protocol failures from allowed-origin failures.
-- The SDK never reads environment variables or discovers credentials. Pass them from your application's configuration.
+- SDKs with `auth.defaultCredentials` discover credentials lazily. Other SDKs require explicit credentials from your application's configuration.
 
 All client and request settings are listed under [client and request options](#client-and-request-options).
 
@@ -128,6 +128,54 @@ $client = new Client(
 Import `Client`, `ClientOptions` and `Credential` from your generated package namespace. The application owns token loading, caching and expiry handling; `expiresAt` is metadata and does not schedule SDK refreshes.
 
 On HTTP 401, a replay-safe request using a provider with a public `invalidate(): void` method invalidates the provider and retries once with a newly resolved credential. This adds at most one attempt to the ordinary retry budget, including when `maxAttempts` is 1, and keeps the same idempotency key. Mutations still require a declared idempotency key to replay. String credentials, closures and providers without `invalidate` never trigger this refresh retry; further 401s are surfaced immediately. Provider failures surface as authentication errors with a fixed message and no original exception, to keep secret values out of errors. Empty and malformed values use the same validation errors as string credentials.
+
+### Default credentials
+
+When the provider declares `auth.defaultCredentials`, a client without explicit credentials tries the configured API key and access token environment variables (both set is `ambiguous_credentials`), then workload identity only when its configured ID variable is set. Client and request credentials always win. Anonymous operations do not discover credentials. Use `ambientCredentials: false` for applications that must never use the process's identity implicitly.
+
+```js
+import { Client, defaultCredentials, workloadIdentityCredentials } from 'example-sdk';
+const ambient = new Client();
+const isolated = new Client({ ambientCredentials: false });
+const explicit = new Client({
+  apiKey: workloadIdentityCredentials({
+    workloadIdentityId: 'wid_example',
+    source: 'token_file',
+    audience: 'https://api.example.com',
+    scope: 'records.read',
+  }),
+});
+// defaultCredentials() can also be passed wherever a credential provider is accepted.
+```
+
+```php
+use Example\Sdk\{Client, ClientOptions};
+use function Example\Sdk\{defaultCredentials, workloadIdentityCredentials};
+$ambient = new Client(new ClientOptions());
+$isolated = new Client(new ClientOptions(ambientCredentials: false));
+$explicit = new Client(
+  new ClientOptions(
+    apiKey: workloadIdentityCredentials([
+      'workloadIdentityId' => 'wid_example',
+      'source' => 'token_file',
+      'audience' => 'https://api.example.com',
+      'scope' => 'records.read',
+    ]),
+  ),
+);
+```
+
+Option and namespace names in these snippets depend on the generated package. The explicit workload identity provider uses the configured token environment variable or file; its ID, source, audience and scope options override the corresponding environment values. `defaultCredentials()` uses the complete chain. Exported providers receive the client's actual base URL and transport, including per-request deadlines. Calling a provider directly uses the generated default base URL and default transport.
+
+With `envPrefix: "EXAMPLE"`, set `EXAMPLE_WORKLOAD_IDENTITY_ID` plus `EXAMPLE_OIDC_TOKEN` or `EXAMPLE_OIDC_TOKEN_FILE`. Optional `EXAMPLE_OIDC_SOURCE` selects `auto`, `none`, `token`, or `token_file`; `auto` prefers the token environment variable. `EXAMPLE_OIDC_AUDIENCE` defaults to the base URL's origin, and `EXAMPLE_OIDC_SCOPE` narrows the requested permissions. Token files are reread on every exchange. No cloud metadata, CI endpoint, other service's token file, or CLI session is consulted.
+
+The SDK checks the unverified subject JWT's audience and expiry before sending it. The server verifies its signature and trust conditions. Token exchange uses the configured path on the base origin, HTTPS or loopback only, with redirects disabled. Transient HTTP 429 and 5xx responses retry up to three attempts, respecting Retry-After and the request deadline.
+
+The process cache separates base origin, workload identity ID, audience, scope, and source. It refreshes when less than `max(60 seconds, 20% of lifetime)` remains and never uses a token with 30 seconds or less remaining. Subject expiry also caps the cached lifetime. A transient refresh failure can use the previous token only above that 30-second boundary. Node coalesces simultaneous exchanges across clients; PHP clients share a static process cache and in-flight state. A Fiber scheduler must resume waiting Fibers when the exchange finishes or their own deadline or cancellation is reached; each waiter yields its monotonic `deadline` in milliseconds and `cancellation` token to the scheduler. A stopped waiter leaves the owner's exchange running. A replay-safe HTTP 401 invalidates only the rejected token's cache partition and re-exchanges once, using the credential-provider retry policy above. A late 401 cannot invalidate a newer token.
+
+PHP `ClientOptions(credentialCache: $cache)` accepts a PSR-16 compatible object implementing `get`, `set`, and `delete`. APCu-backed implementations can share tokens between requests; protect the cache as a credential store. The SDK's static cache coordinates one process; cross-process locking is the cache implementation's responsibility.
+
+Failures are authentication errors with `code` (Node) or `errorCode` (PHP): `no_credentials`, `ambiguous_credentials`, `source_unavailable`, `subject_token_request_failed`, `audience_mismatch`, `exchange_rejected`, or `exchange_unavailable`. Safe messages/details identify the source, workload identity ID, JWT issuer/subject/audience, and server error description when available. Subject and access token values are redacted. Injected transports are a privileged boundary and necessarily receive tokens; avoid logging their headers or bodies.
 
 ## Make a call
 

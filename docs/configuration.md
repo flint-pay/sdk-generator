@@ -390,7 +390,7 @@ A declared successful `text/event-stream` response produces a closeable event st
 
 ## Authentication
 
-Supported credentials: HTTP bearer and header API keys. Cookie authentication, OAuth refresh and implicit credential discovery are unsupported. Consumers pass nonempty strings or credential providers through `token`, shortcuts or `credentials`; the configuration never holds a secret. Providers are resolved for each request attempt, including retries. Node providers implement `getCredential(): Promise<{ value: string; expiresAt?: Date }>` and optional `invalidate(): void`. PHP accepts a `CredentialProvider` implementing `getCredential(): Credential`, or a `Closure` returning a string or `Credential`. See [credential providers](using-sdks.md#credential-providers).
+Supported credentials: HTTP bearer and header API keys. Cookie authentication and built-in OAuth refresh are unsupported. Credential discovery requires an explicit `auth.defaultCredentials` declaration. Consumers pass nonempty strings or credential providers through `token`, shortcuts or `credentials`; the configuration never holds a secret. Providers are resolved for each request attempt, including retries. Node providers implement `getCredential(): Promise<{ value: string; expiresAt?: Date }>` and optional `invalidate(): void`. PHP accepts a `CredentialProvider` implementing `getCredential(): Credential`, or a `Closure` returning a string or `Credential`. See [credential providers](using-sdks.md#credential-providers).
 
 ### Single scheme
 
@@ -435,6 +435,37 @@ With one declared scheme, clients take `token`. With several, select one: `"auth
 - HTTP defaults still require the consumer's `allowInsecureHttp: true`.
 
 Client and request options, origins, deadlines and transports are in the [consumer guide](using-sdks.md#client-and-request-options).
+
+### Default credentials and workload identity
+
+Declare discovery alongside named authentication modes. The selected mode must contain exactly one bearer scheme. All environment names and exchange routing belong to provider configuration, never generator code. For example:
+
+```json
+{
+  "auth": {
+    "modes": { "service": { "schemes": ["BearerAuth"] } },
+    "shortcuts": { "apiKey": { "mode": "service", "scheme": "BearerAuth" } },
+    "defaultCredentials": {
+      "mode": "service",
+      "scheme": "BearerAuth",
+      "environment": { "apiKey": "EXAMPLE_API_KEY", "token": "EXAMPLE_ACCESS_TOKEN" },
+      "workloadIdentity": {
+        "tokenPath": "/v1/oauth/token",
+        "credentialParameter": "workload_identity_id",
+        "envPrefix": "EXAMPLE"
+      }
+    }
+  }
+}
+```
+
+Every field is required. Environment names and the prefix use uppercase letters, digits and underscores; API key and token variables must differ. `tokenPath` is an absolute path on the base URL's origin, without query or fragment. `credentialParameter` is a distinct form parameter, excluding reserved OAuth parameters. Incomplete or incompatible declarations produce diagnostics.
+
+Discovery is lazy and applies only where the configured mode is permitted. Explicit credentials take precedence, including an explicitly supplied empty credential map (which fails rather than falling back). Otherwise the configured API key or access token variable supplies the bearer credential; setting both produces `ambiguous_credentials`. Federation is considered only when `EXAMPLE_WORKLOAD_IDENTITY_ID` is set. `ambientCredentials: false` disables automatic discovery; explicitly supplied discovery providers still run.
+
+The prefix defines `_WORKLOAD_IDENTITY_ID`, `_OIDC_SOURCE`, `_OIDC_AUDIENCE`, `_OIDC_SCOPE`, `_OIDC_TOKEN`, and `_OIDC_TOKEN_FILE` suffixes. Sources are `auto` (token, then token file), `none` (disable federation), `token`, and `token_file`. Files are reread on every exchange, including retries after HTTP 401. Cloud, CI and CLI-process sources are not implemented. The audience defaults to the base URL's origin. JWT payload audience and expiry checks run before exchange; these checks do not verify signatures or replace server verification.
+
+Exchange uses HTTPS or loopback only, never follows redirects, and sends an RFC 8693 form with the configured credential parameter and optional scope. The response is flat: `access_token`, `issued_token_type`, `token_type: Bearer`, numeric `expires_in`, optional `scope`, and provider identity fields. No refresh token is used. Renew by exchanging again. See [consumer behavior](using-sdks.md#default-credentials).
 
 ## Errors
 
