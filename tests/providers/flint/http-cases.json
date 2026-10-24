@@ -30,7 +30,7 @@
       {
         "status": 201,
         "headers": {
-          "x-request-id": "req_fixture"
+          "x-request-id": "req_00P5GR7C25QNQYKSNCJF346W0E"
         },
         "body": "{\"data\":{\"payment_collection\":{},\"payment_intent\":{\"amount_money\":{\"amount\":9007199254740993,\"currency\":\"USD\"},\"payment_flow\":\"api\",\"payment_intent_id\":\"pi_fixture\",\"payment_options\":[\"card\"],\"status\":\"requires_capture\",\"support_reference\":\"support_fixture\",\"risk\":null,\"last_payment_error\":null}}}"
       }
@@ -92,7 +92,7 @@
       {
         "status": 201,
         "headers": {
-          "x-request-id": "req_fixture"
+          "x-request-id": "req_00P5GR7C25QNQYKSNCJF346W0E"
         },
         "body": "{\"data\":{\"amount_money\":{\"amount\":100,\"currency\":\"USD\"},\"refund_id\":\"ref_fixture\",\"refunded_tip_money\":{\"amount\":0,\"currency\":\"USD\"},\"status\":\"pending\"}}"
       }
@@ -137,7 +137,7 @@
       {
         "status": 200,
         "headers": {
-          "x-request-id": "req_fixture"
+          "x-request-id": "req_00P5GR7C25QNQYKSNCJF346W0E"
         },
         "body": "{\"data\":{\"amount_money\":{\"amount\":9007199254740993,\"currency\":\"USD\"},\"payment_flow\":\"api\",\"payment_intent_id\":\"pi_fixture\",\"payment_options\":[\"card\"],\"status\":\"succeeded\",\"support_reference\":\"support_fixture\",\"risk\":null,\"last_payment_error\":null}}"
       }
@@ -178,7 +178,7 @@
       {
         "status": 200,
         "headers": {
-          "x-request-id": "req_fixture"
+          "x-request-id": "req_00P5GR7C25QNQYKSNCJF346W0E"
         },
         "body": "{\"data\":{\"amount_money\":{\"amount\":9007199254740993,\"currency\":\"USD\"},\"payment_flow\":\"api\",\"payment_intent_id\":\"pi_fixture\",\"payment_options\":[\"card\"],\"status\":\"future_review\",\"support_reference\":\"support_fixture\"}}"
       }
@@ -216,7 +216,7 @@
       {
         "status": 200,
         "headers": {
-          "x-request-id": "req_fixture"
+          "x-request-id": "req_00P5GR7C25QNQYKSNCJF346W0E"
         },
         "body": "{\"data\":{\"amount_money\":{\"amount\":100,\"currency\":\"USD\"},\"refund_id\":\"ref_fixture\",\"refunded_tip_money\":{\"amount\":0,\"currency\":\"USD\"},\"status\":\"pending\"}}"
       }
@@ -256,7 +256,7 @@
       {
         "status": 200,
         "headers": {
-          "x-request-id": "req_fixture"
+          "x-request-id": "req_00P5GR7C25QNQYKSNCJF346W0E"
         },
         "body": "{\"data\":[{\"amount_money\":{\"amount\":9007199254740993,\"currency\":\"USD\"},\"payment_flow\":\"api\",\"payment_intent_id\":\"pi_fixture\",\"payment_options\":[\"card\"],\"status\":\"requires_capture\",\"support_reference\":\"support_fixture\",\"risk\":null,\"last_payment_error\":null}],\"next_page_token\":\"next_cursor\"}"
       }
@@ -299,7 +299,7 @@
       {
         "status": 200,
         "headers": {
-          "x-request-id": "req_fixture"
+          "x-request-id": "req_00P5GR7C25QNQYKSNCJF346W0E"
         },
         "body": "{\"data\":[{\"amount_money\":{\"amount\":100,\"currency\":\"USD\"},\"refund_id\":\"ref_fixture\",\"refunded_tip_money\":{\"amount\":0,\"currency\":\"USD\"},\"status\":\"pending\"}]}"
       }
@@ -347,7 +347,7 @@
       {
         "status": 409,
         "headers": {
-          "x-request-id": "req_conflict"
+          "x-request-id": "req_00NTMGWYVABSHCP6B25TX1X37W"
         },
         "body": "{\"error\":{\"type\":\"conflict_error\",\"code\":\"IDEMPOTENCY_KEY_REUSED\",\"message\":\"Different request\"}}"
       }
@@ -355,7 +355,7 @@
     "error": {
       "kind": "conflict",
       "code": "IDEMPOTENCY_KEY_REUSED",
-      "requestId": "req_conflict"
+      "requestId": "req_00NTMGWYVABSHCP6B25TX1X37W"
     },
     "options": {
       "idempotencyKey": "durable-refund-key"
@@ -454,7 +454,7 @@
       {
         "status": 201,
         "headers": {
-          "x-request-id": "req_fixture"
+          "x-request-id": "req_00P5GR7C25QNQYKSNCJF346W0E"
         },
         "body": "{\"data\":{\"amount_money\":{\"amount\":100,\"currency\":\"USD\"},\"refund_id\":\"ref_fixture\",\"refunded_tip_money\":{\"amount\":0,\"currency\":\"USD\"},\"status\":\"pending\"}}"
       }
@@ -501,7 +501,7 @@
       {
         "status": 201,
         "headers": {
-          "x-request-id": "req_fixture"
+          "x-request-id": "req_00P5GR7C25QNQYKSNCJF346W0E"
         },
         "body": "{\"data\":{\"amount_money\":{\"amount\":100,\"currency\":\"USD\"},\"refund_id\":\"ref_fixture\",\"refunded_tip_money\":{\"amount\":0,\"currency\":\"USD\"},\"status\":\"pending\"}}"
       }
@@ -543,7 +543,7 @@
       {
         "status": 200,
         "headers": {
-          "x-request-id": "req_fixture"
+          "x-request-id": "req_00P5GR7C25QNQYKSNCJF346W0E"
         },
         "body": "{\"data\":{\"amount_money\":{\"amount\":9007199254740993,\"currency\":\"USD\"},\"payment_flow\":\"api\",\"payment_intent_id\":\"pi_fixture\",\"payment_options\":[\"card\"],\"status\":\"succeeded\",\"support_reference\":\"support_fixture\",\"last_payment_error\":null,\"risk\":null}}"
       }

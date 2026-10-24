@@ -497,23 +497,35 @@ Verification does not deduplicate delivery. Commit a unique event ID and durable
 
 Pass client defaults to `new Client({...})` in Node or `new Client(new ClientOptions(...))` in PHP. Pass request overrides as the last method argument.
 
-| Option                    | Where             | Default and behavior                                                                                                                                                |
-| ------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `baseUrl`                 | Client            | First declared server, if present; otherwise required. Explicit values override the default. No credentials, query or fragment.                                     |
-| `token`                   | Client            | Absent. See [authenticate](#authenticate) for when it is available.                                                                                                 |
-| `allowedOrigins`          | Client            | Only the base URL origin. Applies to every destination, including pagination links.                                                                                 |
-| `allowInsecureHttp`       | Client            | `false`; enable only for deliberate local HTTP tests.                                                                                                               |
-| `timeoutMs`               | Client or request | `10000`; positive duration per attempt, including response body consumption.                                                                                        |
-| `deadlineMs`              | Client or request | `30000`; positive overall duration, not an absolute timestamp. Includes retry waits. Iterator and polling scope: [pagination and polling](#pagination-and-polling). |
-| `maxAttempts`             | Client or request | A positive safe integer budget capped at the operation limit. Defaults follow [retries](#errors-and-retries).                                                       |
-| `transport`               | Client            | Native fetch in Node, reusable cURL in PHP. Injected transports are caller-owned.                                                                                   |
-| `diagnostics`             | Client            | Optional callback receiving operation, attempt, status, request ID, timing and error kind, without bodies or credentials.                                           |
-| `redactFields`            | Client            | Additional field names to redact in model inspection, error messages and parsed error details. Does not change response data.                                       |
-| `headers`                 | Request           | Request-local header map; includes tenant context and optional User-Agent override. A configured API-version pin takes precedence.                                  |
-| `idempotencyKey`          | Request           | Caller-owned stable key for a declared idempotent operation. Persist across retries and process restarts.                                                           |
-| `ifMatch`                 | Request           | Value for the declared conditional header, including when that header is `If-None-Match`.                                                                           |
-| `signal` / `cancellation` | Request           | Node `AbortSignal` / PHP `Cancellation` token. Stops local work, not a remote mutation.                                                                             |
-| `maxPages`, `maxItems`    | Request           | Optional positive limits for generated iterators.                                                                                                                   |
+| Option                                  | Where             | Default and behavior                                                                                                                                                |
+| --------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `baseUrl`                               | Client            | First declared server, if present; otherwise required. Explicit values override the default. No credentials, query or fragment.                                     |
+| `token`                                 | Client            | Absent. See [authenticate](#authenticate) for when it is available.                                                                                                 |
+| `allowedOrigins`                        | Client            | Only the base URL origin. Applies to every destination, including pagination links.                                                                                 |
+| `allowInsecureHttp`                     | Client            | `false`; enable only for deliberate local HTTP tests.                                                                                                               |
+| `timeoutMs`                             | Client or request | `10000`; positive duration per attempt, including response body consumption.                                                                                        |
+| `deadlineMs`                            | Client or request | `30000`; positive overall duration, not an absolute timestamp. Includes retry waits. Iterator and polling scope: [pagination and polling](#pagination-and-polling). |
+| `maxAttempts`                           | Client or request | A positive safe integer budget capped at the operation limit. Defaults follow [retries](#errors-and-retries).                                                       |
+| `transport`                             | Client            | Native fetch in Node, reusable cURL in PHP. Injected transports are caller-owned.                                                                                   |
+| `diagnostics`                           | Client            | Optional callback receiving operation, attempt, status, request ID, timing and error kind, without bodies or credentials.                                           |
+| `redactFields`                          | Client            | Additional field names to redact in model inspection, error messages and parsed error details. Does not change response data.                                       |
+| `headers`                               | Request           | Request-local header map; includes tenant context and optional User-Agent override. A configured API-version pin takes precedence.                                  |
+| `idempotencyKey`                        | Request           | Caller-owned stable key for a declared idempotent operation. Persist across retries and process restarts.                                                           |
+| `clientRequestId` / `client_request_id` | Request           | Node / PHP caller correlation value for a header marked `x-flint-request-option: client_request_id`. Omitted when unset.                                            |
+| `ifMatch`                               | Request           | Value for the declared conditional header, including when that header is `If-None-Match`.                                                                           |
+| `signal` / `cancellation`               | Request           | Node `AbortSignal` / PHP `Cancellation` token. Stops local work, not a remote mutation.                                                                             |
+| `maxPages`, `maxItems`                  | Request           | Optional positive limits for generated iterators.                                                                                                                   |
+
+For operations declaring the client request ID option, pass `{ clientRequestId: 'order-123' }`
+in Node or `new RequestOptions(client_request_id: 'order-123')` in PHP. Values must
+contain 1 to 128 visible ASCII characters without spaces. Invalid values raise a
+`validation` error with `outcome: "not_sent"` before transport, including when schema
+validation is disabled. Conflicting option and header values also fail before transport.
+Keep secrets and personal data out of correlation values.
+
+Flint sends its own request ID in the response `X-Request-Id` header, such as
+`req_01KWM6WAHG3N9Q8T2V5XRZ7C4D`. Results and errors expose that ID as
+`meta.requestId`; it is independent of the caller's value.
 
 Precedence and budgets:
 

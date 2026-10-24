@@ -4,6 +4,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ## Unreleased (generator 0.1.0)
 
+- Route optional headers marked `x-flint-request-option: client_request_id` to Node `clientRequestId` and PHP `client_request_id` per-call options, excluding them from operation inputs and positional params. Validate 1 to 128 visible ASCII characters before transport in both validation modes. Reject unknown extensions and conflicting header values. Preserve response request IDs and report request-option compatibility changes.
+
 - Add opt-in `auth.defaultCredentials` configuration and lazy environment/workload identity providers in Node and PHP, with `defaultCredentials()` and `workloadIdentityCredentials()` exports and an `ambientCredentials: false` opt-out. Token and token-file sources exchange RFC 8693 forms, validate audience/expiry before sending, redact credentials in failures, refresh process-cached tokens ahead of expiry, retry transient exchanges within request deadlines, and invalidate/re-exchange once on replay-safe HTTP 401. PHP also accepts a PSR-16 compatible credential cache. Shared conformance cases cover both runtimes.
 
 ### Breaking changes for generator automation

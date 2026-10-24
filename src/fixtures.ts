@@ -1,3 +1,4 @@
+import { REQUEST_OPTIONS } from './request-options.js';
 import { requestArguments } from './request-style.js';
 import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -194,6 +195,7 @@ export async function validateFixturesWithProgress(
         writeFileSync(
           runtimePath,
           JSON.stringify({
+            requestOptions: Object.values(REQUEST_OPTIONS),
             composedAuthentication: c.authentication !== undefined,
             authShortcuts: contract.authShortcuts,
             operations: contract.operations.map((op) => ({
@@ -205,7 +207,9 @@ export async function validateFixturesWithProgress(
               response: op.response,
               ...(op.body !== undefined ? { body: true } : {}),
               bodyRequired: op.bodyRequired,
-              parameters: op.parameters.map(({ name, in: location }) => ({ name, in: location })),
+              parameters: op.parameters
+                .filter((p) => p['x-flint-request-option'] === undefined)
+                .map(({ name, in: location }) => ({ name, in: location })),
             })),
           }),
         );

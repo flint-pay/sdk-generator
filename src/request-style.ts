@@ -25,7 +25,10 @@ export function pathParameters(op: Operation) {
 }
 export const positional = (op: Operation) => op.request?.style === 'positional';
 export const hasParams = (op: Operation) =>
-  Boolean(op.body || op.parameters.some((p) => p.in !== 'path'));
+  Boolean(
+    op.body ||
+      op.parameters.some((p) => p.in !== 'path' && p['x-flint-request-option'] === undefined),
+  );
 
 export function validatePositional(op: Operation, definitions: Record<string, Schema>): void {
   if (!positional(op) || !op.body) return;
@@ -39,7 +42,9 @@ export function validatePositional(op: Operation, definitions: Record<string, Sc
   };
   if (!body || objectConstraint(body) !== 'object')
     fail('positional requests require a non-null object body');
-  for (const parameter of op.parameters.filter((p) => p.in !== 'path')) {
+  for (const parameter of op.parameters.filter(
+    (p) => p.in !== 'path' && p['x-flint-request-option'] === undefined,
+  )) {
     if (scopes.some((s) => Object.hasOwn(s.properties ?? {}, parameter.name)))
       fail('body field conflicts with parameter ' + parameter.name);
     // A typed dictionary intersected with params would incorrectly constrain query/header values.
@@ -55,7 +60,9 @@ export function requestArguments(op: Operation, value: unknown): unknown[] {
   const values = pathParameters(op).map((p) => input[p.name]);
   if (hasParams(op)) {
     const params: Record<string, unknown> = { ...((input.body as object) ?? {}) };
-    for (const p of op.parameters.filter((p) => p.in !== 'path'))
+    for (const p of op.parameters.filter(
+      (p) => p.in !== 'path' && p['x-flint-request-option'] === undefined,
+    ))
       if (Object.hasOwn(input, p.name)) params[p.name] = input[p.name];
     // Preserve absent optional bodies, distinct from an explicitly supplied empty body.
     values.push(

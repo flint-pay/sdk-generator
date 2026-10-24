@@ -135,7 +135,7 @@ test('getBundle retains its original referenced graph and decodes inherited disc
           ],
         },
       },
-      request_id: 'req_fixture',
+      request_id: 'req_00P5GR7C25QNQYKSNCJF346W0E',
     };
     const wire = JSON.stringify(data)
       .replace('"9007199254740993"', '9007199254740993')

@@ -82,7 +82,7 @@ async function client(
     transport: async () =>
       new Response(status === 204 ? null : body, {
         status,
-        headers: { 'content-type': 'application/json', 'x-request-id': 'req_1' },
+        headers: { 'content-type': 'application/json', 'x-request-id': 'req_00VZKVWV7E7ECWMRV2HQKH1E8M' },
       }),
   });
 }
@@ -93,7 +93,7 @@ function php(f, program, body = '{"data":{"id":"p_1","amount":9007199254740993},
       '-r',
       `require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
 use Example\\ResponseReturn\\{Client,ClientOptions};
-$c=new Client(new ClientOptions('https://example.invalid',transport:fn($r)=>['status'=>200,'headers'=>['content-type'=>'application/json','x-request-id'=>'req_1'],'body'=>$argv[2]]));
+$c=new Client(new ClientOptions('https://example.invalid',transport:fn($r)=>['status'=>200,'headers'=>['content-type'=>'application/json','x-request-id'=>'req_00VZKVWV7E7ECWMRV2HQKH1E8M'],'body'=>$argv[2]]));
 ${program}`,
       join(f.output, 'php'),
       body,
@@ -198,7 +198,7 @@ test('WithResponse inspection preserves redaction while retaining explicit raw a
         headers: {
           'content-type': 'application/json',
           'set-cookie': 'private-cookie',
-          'x-request-id': 'req_safe',
+          'x-request-id': 'req_00CMVKYVWSTB31XHTN7P81RAQC',
         },
       }),
   });
@@ -206,7 +206,7 @@ test('WithResponse inspection preserves redaction while retaining explicit raw a
   const debug = inspect(full);
   assert.doesNotMatch(debug, /sensitive-body|private-value|private-cookie|https:|raw:|headers:/);
   assert.match(debug, /REDACTED/);
-  assert.match(debug, /req_safe/);
+  assert.match(debug, /req_00CMVKYVWSTB31XHTN7P81RAQC/);
   assert.equal(full.body.secret, 'sensitive-body');
   assert.equal(full.body.personal, 'private-value');
   assert.equal(full.meta.headers['set-cookie'], 'private-cookie');
@@ -439,7 +439,7 @@ for (const mode of ['result', 'whole', 'projected']) {
             state:
               phase === 'failed' ? 'failed' : phase === 'wait' && calls === 1 ? 'queued' : 'done',
           },
-          { headers: { 'x-request-id': 'req_helper' } },
+          { headers: { 'x-request-id': 'req_003NEZWWW0H0Z8VJPZ0T3E1AYE' } },
         );
       },
     });
@@ -469,7 +469,7 @@ for (const mode of ['result', 'whole', 'projected']) {
       for await (const page of complete) {
         assert.equal(page.body.data[0].id, 'p_1');
         assert.equal(page.body.next, 'two');
-        assert.equal(page.meta.requestId, 'req_helper');
+        assert.equal(page.meta.requestId, 'req_003NEZWWW0H0Z8VJPZ0T3E1AYE');
         assert.equal(page.raw, '{"data":[{"id":"p_1"}],"next":"two","state":"done"}');
         assert.equal(page.data, undefined);
       }
@@ -495,14 +495,14 @@ for (const mode of ['result', 'whole', 'projected']) {
       assert.equal(calls, 2, 'polling state outside the projected payload remains visible');
       if (method.endsWith('WithResponse')) {
         assert.equal(result.body.state, 'done');
-        assert.equal(result.meta.requestId, 'req_helper');
+        assert.equal(result.meta.requestId, 'req_003NEZWWW0H0Z8VJPZ0T3E1AYE');
         assert.match(result.raw, /"state":"done"/);
       } else assert.deepEqual(ids(result), ['p_1']);
       phase = 'failed';
       calls = 0;
       await assert.rejects(
         c.api[method](),
-        (error) => error.kind === 'api' && error.meta.requestId === 'req_helper',
+        (error) => error.kind === 'api' && error.meta.requestId === 'req_003NEZWWW0H0Z8VJPZ0T3E1AYE',
       );
       assert.equal(calls, 1);
       calls = 0;
@@ -536,7 +536,7 @@ use Example\ResponseReturn\{Client,ClientOptions,RequestOptions,Cancellation,Sdk
 $mode=$argv[2];$phase='pages';$calls=0;
 $c=new Client(new ClientOptions('https://example.invalid',transport:function($r)use(&$calls,&$phase){
  parse_str(parse_url($r['url'],PHP_URL_QUERY)??'', $q);$second=($q['cursor']??null)==='two';$calls++;
- return ['status'=>200,'headers'=>['x-request-id'=>'req_helper'],'body'=>json_encode(['data'=>[['id'=>$second?'p_2':'p_1']],'next'=>$second?null:'two','state'=>$phase==='failed'?'failed':($phase==='wait'&&$calls===1?'queued':'done')])];
+ return ['status'=>200,'headers'=>['x-request-id'=>'req_003NEZWWW0H0Z8VJPZ0T3E1AYE'],'body'=>json_encode(['data'=>[['id'=>$second?'p_2':'p_1']],'next'=>$second?null:'two','state'=>$phase==='failed'?'failed':($phase==='wait'&&$calls===1?'queued':'done')])];
 }));
 function ids($p,$mode){$values=$mode==='result'?$p->data->data:($mode==='whole'?$p->data:$p);return array_map(fn($v)=>$v->id,$values);}
 $iterator=$c->api->getItemPages();if($calls!==0)exit(2);$seen=[];foreach($iterator as $p)$seen=array_merge($seen,ids($p,$mode));if($calls!==2||$seen!==['p_1','p_2'])exit(3);
@@ -544,13 +544,13 @@ $calls=0;foreach($c->api->getItemPages() as $p){if(ids($p,$mode)!==['p_1'])exit(
 $calls=0;$cancel=new Cancellation();try{foreach($c->api->getItemPages(options:new RequestOptions(cancellation:$cancel)) as $p)$cancel->cancel();exit(6);}catch(SdkError $e){if($e->kind!=='cancelled'||$calls!==1)exit(7);}
 if($mode!=='result'){
  $calls=0;$pages=$c->api->getItemPagesWithResponse(options:new RequestOptions(maxPages:1));if($calls!==0)exit(8);
- foreach($pages as $r)if($r->body->data[0]->id!=='p_1'||$r->meta['requestId']!=='req_helper'||strpos($r->raw,'"next":"two"')===false)exit(9);
+ foreach($pages as $r)if($r->body->data[0]->id!=='p_1'||$r->meta['requestId']!=='req_003NEZWWW0H0Z8VJPZ0T3E1AYE'||strpos($r->raw,'"next":"two"')===false)exit(9);
  if($calls!==1)exit(10);
 }elseif(method_exists($c->api,'getItemPagesWithResponse')||method_exists($c->api,'getItemWaitWithResponse'))exit(11);
 foreach(array_merge(['getItemWait'],$mode!=='result'?['getItemWaitWithResponse']:[]) as $method){
  $phase='wait';$calls=0;$p=$c->api->$method();if($calls!==2)exit(12);
- if(str_ends_with($method,'WithResponse')){if($p->body->state!=='done'||$p->meta['requestId']!=='req_helper'||strpos($p->raw,'"state":"done"')===false)exit(13);}elseif(ids($p,$mode)!==['p_1'])exit(14);
- $phase='failed';$calls=0;try{$c->api->$method();exit(15);}catch(SdkError $e){if($e->kind!=='api'||$e->meta['requestId']!=='req_helper'||$calls!==1)exit(16);}
+ if(str_ends_with($method,'WithResponse')){if($p->body->state!=='done'||$p->meta['requestId']!=='req_003NEZWWW0H0Z8VJPZ0T3E1AYE'||strpos($p->raw,'"state":"done"')===false)exit(13);}elseif(ids($p,$mode)!==['p_1'])exit(14);
+ $phase='failed';$calls=0;try{$c->api->$method();exit(15);}catch(SdkError $e){if($e->kind!=='api'||$e->meta['requestId']!=='req_003NEZWWW0H0Z8VJPZ0T3E1AYE'||$calls!==1)exit(16);}
  $calls=0;try{$c->api->$method(options:new RequestOptions(cancellation:$cancel));exit(17);}catch(SdkError $e){if($e->kind!=='cancelled'||$calls!==0)exit(18);}
 }
 echo 'ok';`;

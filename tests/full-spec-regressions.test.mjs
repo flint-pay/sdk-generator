@@ -847,7 +847,7 @@ test('exact fractional union samples produce executable and typechecked examples
     let raw = '';
     for await (const chunk of req) raw += chunk;
     seen.push(raw);
-    res.writeHead(204, { 'X-Request-ID': 'example-ok' });
+    res.writeHead(204, { 'X-Request-ID': 'req_00W3XY2P5W6CS7WE0QCVZ6VZBD' });
     res.end();
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -911,7 +911,7 @@ test('exact fractional union samples produce executable and typechecked examples
         const execution = await exec(command, localArgs, { env });
         rmSync(localFile);
         // Examples show response data before the request ID.
-        assert.match(execution.stdout.trim(), /(?:^|\n)example-ok$/);
+        assert.match(execution.stdout.trim(), /(?:^|\n)req_00W3XY2P5W6CS7WE0QCVZ6VZBD$/);
         assert.deepEqual(JSON.parse(seen.at(-1)), JSON.parse(wire));
       }
     }

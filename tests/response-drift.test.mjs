@@ -222,7 +222,7 @@ test('generated Node and PHP preserve typed successes and actionable recovery on
         calls++;
         return new Response([204, 304].includes(c.status) ? null : c.raw, {
           status: c.status ?? 200,
-          headers: { 'content-type': 'application/json', 'x-request-id': 'req_synthetic' },
+          headers: { 'content-type': 'application/json', 'x-request-id': 'req_00HAPCA3GDPS4T064K3TRG20D0' },
         });
       },
     });
@@ -235,7 +235,7 @@ test('generated Node and PHP preserve typed successes and actionable recovery on
           assert.equal(error.outcome, 'response');
           assert.equal(error.retryAllowed, false);
           assert.equal(error.status, c.status ?? 200);
-          assert.equal(error.meta.requestId, 'req_synthetic');
+          assert.equal(error.meta.requestId, 'req_00HAPCA3GDPS4T064K3TRG20D0');
           assert.equal(error.raw, c.raw);
           assert.equal(Boolean(error.cause), c.cause);
           assert.ok(!inspect(error).includes('synthetic-private-value'));
@@ -277,7 +277,7 @@ foreach(json_decode(file_get_contents($argv[2]),true) as $case){
     $client=new Client(new ClientOptions(baseUrl:'https://example.invalid',
         diagnostics:function($event)use(&$events){$events[]=$event;},
         transport:function($request)use(&$calls,$case){$calls++;return [
-            'status'=>$case['status']??200,'headers'=>['content-type'=>'application/json','x-request-id'=>'req_synthetic'], 'body'=>$case['raw']];}));
+            'status'=>$case['status']??200,'headers'=>['content-type'=>'application/json','x-request-id'=>'req_00HAPCA3GDPS4T064K3TRG20D0'], 'body'=>$case['raw']];}));
     try{
         $result=$client->api->{$case['op']}();
         $data=($case['payload']??false)?$result:(($case['withResponse']??false)?$result->body:$result->data);
@@ -320,7 +320,7 @@ echo json_encode($results,JSON_THROW_ON_ERROR);
           status: c.status ?? 200,
           raw: c.raw,
           cause: c.cause,
-          requestId: 'req_synthetic',
+          requestId: 'req_00HAPCA3GDPS4T064K3TRG20D0',
           leaked: false,
           calls: 1,
           events: undefined,

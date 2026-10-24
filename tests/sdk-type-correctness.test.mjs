@@ -613,7 +613,7 @@ for (const style of ['object', 'positional']) {
       credentials: { session: { SessionID: 'session-id', SessionSecret: 'session-secret' } },
       transport: async (_url, r) => {
         seen.push(r.headers);
-        return new Response(null, { status: 204, headers: { 'X-Request-Id': 'response-id' } });
+        return new Response(null, { status: 204, headers: { 'X-Request-Id': 'req_007ARQX9HRSSV4DWBYC52DZKJ6' } });
       },
     });
     const args =
@@ -633,7 +633,7 @@ for (const style of ['object', 'positional']) {
     const response = await c.api.sendWithResponse(...args, {
       headers: { 'X-API-VERSION': 'ignored' },
     });
-    assert.equal(response.meta.requestId, 'response-id');
+    assert.equal(response.meta.requestId, 'req_007ARQX9HRSSV4DWBYC52DZKJ6');
     for (const [name, value] of Object.entries({
       'x-session-id': 'session-id',
       'x-session-secret': 'session-secret',
@@ -682,11 +682,11 @@ $inputClass=new ReflectionClass(Example\Types\ApiSendInput::class);
 foreach(['getXSessionId','getXSessionSecret','getXApiVersion'] as $method)if($inputClass->hasMethod($method))throw new Exception('Duplicate header getter');
 foreach(['getIdempotencyKey','getXRequestId','getXTenant'] as $method)if(!$inputClass->hasMethod($method))throw new Exception('Ordinary header getter removed');
 $seen=[];
-$c=new Example\Types\Client(new Example\Types\ClientOptions(baseUrl:'https://example.invalid',authMode:'session',credentials:['session'=>['SessionID'=>'session-id','SessionSecret'=>'session-secret']],transport:function($r)use(&$seen){$seen[]=$r['headers'];return ['status'=>204,'headers'=>['x-request-id'=>'response-id'],'body'=>''];}));
+$c=new Example\Types\Client(new Example\Types\ClientOptions(baseUrl:'https://example.invalid',authMode:'session',credentials:['session'=>['SessionID'=>'session-id','SessionSecret'=>'session-secret']],transport:function($r)use(&$seen){$seen[]=$r['headers'];return ['status'=>204,'headers'=>['x-request-id'=>'req_007ARQX9HRSSV4DWBYC52DZKJ6'],'body'=>''];}));
 ` +
         `$response=$c->api->sendWithResponse(${phpArgs},new Example\\Types\\RequestOptions(headers:['X-API-VERSION'=>'ignored']));\n` +
         String.raw`
-if($response->meta['requestId']!=='response-id')throw new Exception('Request ID metadata');
+if($response->meta['requestId']!=='req_007ARQX9HRSSV4DWBYC52DZKJ6')throw new Exception('Request ID metadata');
 foreach(['x-session-id'=>'session-id','x-session-secret'=>'session-secret','x-api-version'=>'v1','idempotency-key'=>'saved-key','x-request-id'=>'caller-id','x-tenant'=>'tenant'] as $name=>$value)if($seen[0][$name]!==$value)throw new Exception('Header '.$name);
 ` +
         `foreach([new Example\\Types\\RequestOptions(credentials:['SessionID'=>'x','SessionSecret'=>'session-secret']),new Example\\Types\\RequestOptions(headers:['X-Session-ID'=>'conflict']),new Example\\Types\\RequestOptions(idempotencyKey:'conflict')] as $options){try{$c->api->send(${phpArgs},$options);throw new Exception('Expected failure');}catch(Example\\Types\\SdkError $e){}}\n` +

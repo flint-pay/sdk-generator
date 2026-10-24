@@ -27,6 +27,8 @@ node dist/cli.js validate .generated/flint-risk --fixtures tests/providers/flint
 
 When updating the fixture set, obtain a matching versioned source export, retain the original schemas, and record any required corrections in the profiles with a source-backed reason. Keep the API date, header pin and generated types aligned. Verify expected HTTP behavior independently of generator output before updating hashes; the manifest is an integrity check, not proof of provider acceptance.
 
+Synthetic HTTP response request IDs use `req_` plus 26 Crockford base32 characters. The pinned source exports retain their historical annotations.
+
 Large amounts and future status values probe serialization and response compatibility. They do not assert transaction eligibility or a successful server mutation. Schema checks do not replace provider business validation. The slice wire cases cover selected behavior; the full export suite below checks every outbound operation and incoming declaration.
 
 ## Full public export

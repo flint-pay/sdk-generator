@@ -169,7 +169,7 @@ test('both generated default transports yield before EOF and close the connectio
     closed = 0;
   const server = createServer((request, response) => {
     requests++;
-    response.writeHead(200, { 'Content-Type': 'text/event-stream', 'x-request-id': 'stream-test' });
+    response.writeHead(200, { 'Content-Type': 'text/event-stream', 'x-request-id': 'req_00V8185E0Q3QQVSA6GHPBQP2VS' });
     response.write('event: ready\ndata: {"sequence":9007199254740993}\n\n');
     const timer = setTimeout(() => response.end('data: too late\n\n'), 5000);
     response.on('close', () => {
@@ -189,7 +189,7 @@ test('both generated default transports yield before EOF and close the connectio
       break;
     }
     assert.ok(performance.now() - start < 2000, 'Node buffered until EOF');
-    assert.equal(result.meta.requestId, 'stream-test');
+    assert.equal(result.meta.requestId, 'req_00V8185E0Q3QQVSA6GHPBQP2VS');
     await client.close();
     writeFileSync(
       join(dir, 'transport.php'),
@@ -202,7 +202,7 @@ $start=microtime(true);
 $result=$client->events->watch(options: new RequestOptions(timeoutMs: 1000));
 foreach ($result->data as $frame) { if ($frame->data->sequence !== '9007199254740993') throw new Exception('precision'); break; }
 if (microtime(true)-$start > 2) throw new Exception('PHP buffered until EOF');
-if ($result->meta['requestId'] !== 'stream-test') throw new Exception('metadata');
+if ($result->meta['requestId'] !== 'req_00V8185E0Q3QQVSA6GHPBQP2VS') throw new Exception('metadata');
 $client->close();
 echo 'ok';
 `,
@@ -411,7 +411,7 @@ for (const row of [
       socket.once('data', () => {
         requests++;
         socket.end(
-          `HTTP/1.1 ${row.status} Error\r\nContent-Length: 100\r\nRetry-After: ${row.retryAfterMs / 1000}\r\nX-Request-Id: truncated-sse\r\nConnection: close\r\n\r\n{`,
+          `HTTP/1.1 ${row.status} Error\r\nContent-Length: 100\r\nRetry-After: ${row.retryAfterMs / 1000}\r\nX-Request-Id: req_004953BNP8V8R1P0JWWR8E8EAG\r\nConnection: close\r\n\r\n{`,
         );
       });
     });

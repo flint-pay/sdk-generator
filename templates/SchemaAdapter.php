@@ -125,6 +125,33 @@ final class SchemaAdapter
             $op['replay'] = $safe ? 'safe' : 'idempotency';
             $op['retry'] ??= $defaults[$safe ? 'read' : 'mutation'];
             foreach ($op['parameters'] as &$parameter) {
+                if (array_key_exists('x-flint-request-option', $parameter)) {
+                    $plans = json_decode(
+                        /* REQUEST_OPTION_PLANS */ '{}',
+                        true,
+                        512,
+                        JSON_THROW_ON_ERROR,
+                    );
+                    $extension = $parameter['x-flint-request-option'];
+                    $option = is_string($extension) ? $plans[$extension] ?? null : null;
+                    if (
+                        !$option ||
+                        $parameter['in'] !== 'header' ||
+                        ($parameter['required'] ?? false)
+                    ) {
+                        throw new \InvalidArgumentException(
+                            'Unknown or invalid x-flint-request-option',
+                        );
+                    }
+                    $parameter['source'] = 'request-option';
+                    $parameter['requestOption'] = [
+                        'node' => $option['node'],
+                        'php' => $option['php'],
+                    ];
+                    $parameter['codec'] = $option['codec'];
+                    unset($parameter['schema']);
+                    continue;
+                }
                 $parameter['codec'] = $root($parameter['schema']);
                 unset($parameter['schema']);
                 if (($parameter['in'] ?? null) === 'header') {

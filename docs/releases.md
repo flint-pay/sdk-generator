@@ -229,3 +229,18 @@ Node packages have resource subpaths and split declaration files; PHP emits one 
 - The PHP `contract.json` artifact is replaced by descriptor groups. Call `SchemaRegistry::contract()` for the complete plan.
 - Descriptors decode on first use, so the first call can cost more. Package validation checks every descriptor group before release.
 - Compiled compatibility snapshots keep their recorded semantic representation.
+
+### Client request ID options
+
+Regenerate with `x-flint-request-option: client_request_id` on optional request
+headers before publishing a spec that adds these headers. Both targets keep them
+out of operation inputs and positional params. Callers use `clientRequestId` in
+Node and `client_request_id` in PHP. Response request ID configuration stays
+`x-request-id`.
+
+Compared with a shipped contract without the header input, the compiled report
+shows an additive per-call option and a `compiled codecs` review for the changed
+execution descriptor, with no breaking input change. A hypothetical older package
+that already exposed the header as an operation input can report input removal or
+positional params changes. That report describes that package accurately; do not
+publish the intermediate input shape. Existing compatibility findings are retained.

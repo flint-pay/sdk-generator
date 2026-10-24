@@ -27,6 +27,7 @@ const semantic = new Set([
   'response-plan',
   'response-return',
   'request-style',
+  'request-options',
   'response-compatibility',
   'compiled-compatibility',
   'compiled-record',

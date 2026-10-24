@@ -385,7 +385,7 @@ test('concurrent tenants have independent request headers and diagnostics omit s
       if (init.headers['x-tenant'] === 'b') releaseFirst();
       return Response.json(
         { id: init.headers['x-tenant'], amount: 1, status: 'pending' },
-        { headers: { 'x-request-id': 'r1' } },
+        { headers: { 'x-request-id': 'req_00GBSYKHMNVHNRT6RHG66NE0CH' } },
       );
     },
   });
@@ -398,7 +398,7 @@ test('concurrent tenants have independent request headers and diagnostics omit s
   );
   assert.deepEqual(seen, ['b', 'a']);
   assert.ok(!JSON.stringify(events).includes('secret-key'));
-  assert.equal(events[0].requestId, 'r1');
+  assert.equal(events[0].requestId, 'req_00GBSYKHMNVHNRT6RHG66NE0CH');
   const model = new Model(
     { nested: { secret: 'hidden' } },
     {
@@ -501,7 +501,7 @@ test('default Node and PHP transports perform real local HTTP requests', async (
     let body = '';
     for await (const chunk of req) body += chunk;
     requests.push({ url: req.url, body, auth: req.headers.authorization });
-    res.writeHead(200, { 'content-type': 'application/json', 'x-request-id': 'local-http' });
+    res.writeHead(200, { 'content-type': 'application/json', 'x-request-id': 'req_009F6TJWNX0RPXAJBYGBXR1N38' });
     res.end('{"id":"p","amount":9007199254740993,"status":"pending"}');
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -703,7 +703,7 @@ test('all generated JavaScript, TypeScript and PHP operation examples execute', 
       req.method === 'GET' && ['/payments', '/links'].includes(req.url.split('?')[0]);
     res.writeHead(req.method === 'POST' && req.url === '/payments' ? 201 : 200, {
       'content-type': 'application/json',
-      'x-request-id': 'quickstart-request',
+      'x-request-id': 'req_0014YYCZGR3ZM8Q1KMYD4AMVDB',
     });
     res.end(collection ? '{"items":[],"next":null}' : '{"id":"p","amount":100,"status":"pending"}');
   });
@@ -733,7 +733,7 @@ test('all generated JavaScript, TypeScript and PHP operation examples execute', 
         rmSync(localFile);
         assert.equal(code, 0, file + ': ' + stderr);
         // Examples show response data before the request ID.
-        assert.match(stdout.trim(), /(?:^|\n)quickstart-request$/);
+        assert.match(stdout.trim(), /(?:^|\n)req_0014YYCZGR3ZM8Q1KMYD4AMVDB$/);
       }
     }
     assert.equal(calls, contract.operations.length * 3);
