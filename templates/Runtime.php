@@ -153,9 +153,8 @@ final class AmbientCredentialProvider implements CredentialProvider
 {
     private static array $tokens = [];
     private static array $active = [];
-    private ?string $key = null;
-    private ?string $lastValue = null;
-    private ?object $cache = null;
+    private ?Credential $lastCredential = null;
+    private ?\WeakMap $invalidations = null;
     public function __construct(
         private readonly array $config,
         private readonly ?array $identity = null,
@@ -165,18 +164,16 @@ final class AmbientCredentialProvider implements CredentialProvider
     {
         return ['credentials' => '[REDACTED]'];
     }
-    public function canInvalidate(): bool
+    public function canInvalidate(?Credential $credential = null): bool
     {
-        return $this->key !== null;
+        $credential ??= $this->lastCredential;
+        return $credential !== null && isset($this->invalidations[$credential]);
     }
-    public function invalidate(): void
+    public function invalidate(?Credential $credential = null): void
     {
-        if (
-            $this->key !== null &&
-            (self::$tokens[$this->key]['value'] ?? null) === $this->lastValue
-        ) {
-            unset(self::$tokens[$this->key]);
-            $this->cache?->delete($this->key);
+        $credential ??= $this->lastCredential;
+        if ($credential !== null && isset($this->invalidations[$credential])) {
+            $this->invalidations[$credential]();
         }
     }
     public function getCredential(): Credential
@@ -193,12 +190,12 @@ final class AmbientCredentialProvider implements CredentialProvider
         $id = $this->identity['workloadIdentityId'] ?? $read('WORKLOAD_IDENTITY_ID');
         $source = $this->identity['source'] ?? ($read('OIDC_SOURCE') ?? 'auto');
         $subject = '';
-        $responseToken = '';
+        $responseTokens = [];
         $claims = [];
         $environment = $this->config['environment'];
         $clean = static function (#[\SensitiveParameter] $value) use (
             &$subject,
-            &$responseToken,
+            &$responseTokens,
             $environment,
         ): string {
             $text = is_string($value)
@@ -208,13 +205,13 @@ final class AmbientCredentialProvider implements CredentialProvider
             foreach (
                 [
                     $subject,
-                    $responseToken,
+                    ...$responseTokens,
                     getenv($environment['apiKey']),
                     getenv($environment['token']),
                 ]
                 as $secret
             ) {
-                if ($secret) {
+                if (is_string($secret) && $secret !== '') {
                     $text = str_replace([$secret, rawurlencode($secret)], '[REDACTED]', $text);
                 }
             }
@@ -261,11 +258,11 @@ final class AmbientCredentialProvider implements CredentialProvider
                 );
             }
             if ($apiKey !== false && $apiKey !== '') {
-                $this->key = null;
+                $this->lastCredential = null;
                 return new Credential($apiKey);
             }
             if ($token !== false && $token !== '') {
-                $this->key = null;
+                $this->lastCredential = null;
                 return new Credential($token);
             }
             if ($id === null || $id === '') {
@@ -334,9 +331,8 @@ final class AmbientCredentialProvider implements CredentialProvider
                 $sourceKey,
             ]),
         );
-        $this->key = $key;
-        $this->cache = $context['credentialCache'] ?? null;
-        $cached = self::$tokens[$key] ?? $this->cache?->get($key);
+        $cache = $context['credentialCache'] ?? null;
+        $cached = self::$tokens[$key] ?? $cache?->get($key);
         if (
             !is_array($cached) ||
             !is_string($cached['value'] ?? null) ||
@@ -345,26 +341,50 @@ final class AmbientCredentialProvider implements CredentialProvider
         ) {
             $cached = null;
         }
-        $credential = function (array $entry): Credential {
-            $this->lastValue = $entry['value'];
-            return new Credential(
+        // Each resolution retains its own partition and rejected-token comparison.
+        $credential = function (array $entry) use ($key, $cache): Credential {
+            $result = new Credential(
                 $entry['value'],
                 new \DateTimeImmutable('@' . (int) $entry['expiresAt']),
             );
+            $this->invalidations ??= new \WeakMap();
+            $this->invalidations[$result] = static function () use ($key, $cache, $entry): void {
+                if ((self::$tokens[$key]['value'] ?? null) === $entry['value']) {
+                    unset(self::$tokens[$key]);
+                    $cache?->delete($key);
+                }
+            };
+            return $this->lastCredential = $result;
         };
         $remaining = $cached ? $cached['expiresAt'] - microtime(true) : 0;
         if ($cached && $remaining > 30 && $remaining >= max(60, $cached['lifetime'] * 0.2)) {
             self::$tokens[$key] = $cached;
             return $credential($cached);
         }
-        // Fiber schedulers resume waiters after the owner completes its synchronous transport.
+        // Yield each waiter's own wake conditions so schedulers can resume it independently.
+        $deadline = $context['deadline'] ?? hrtime(true) / 1e6 + 30000;
+        $checkWaiter = static function () use ($context, $deadline): void {
+            if (($context['cancellation'] ?? null)?->isCancelled()) {
+                throw SdkError::create('cancelled', 'Request cancelled', 'not_sent');
+            }
+            if (hrtime(true) / 1e6 >= $deadline) {
+                throw SdkError::create('deadline', 'Overall deadline exceeded', 'not_sent');
+            }
+        };
         if (isset(self::$active[$key])) {
             $flight = self::$active[$key];
             if (\Fiber::getCurrent() === null) {
                 $fail('exchange_unavailable', 'Reentrant token exchange without a Fiber scheduler');
             }
-            while (!$flight->done) {
-                \Fiber::suspend();
+            while (true) {
+                $checkWaiter();
+                if ($flight->done) {
+                    break;
+                }
+                \Fiber::suspend([
+                    'deadline' => $deadline,
+                    'cancellation' => $context['cancellation'] ?? null,
+                ]);
             }
             if ($flight->error !== null) {
                 throw $flight->error;
@@ -421,7 +441,6 @@ final class AmbientCredentialProvider implements CredentialProvider
             if ($scope !== null) {
                 $form['scope'] = $scope;
             }
-            $deadline = $context['deadline'] ?? hrtime(true) / 1e6 + 30000;
             for ($attempt = 0; $attempt < 3; $attempt++) {
                 $remaining = $deadline - hrtime(true) / 1e6;
                 if ($remaining <= 0 || ($context['cancellation'] ?? null)?->isCancelled()) {
@@ -450,10 +469,15 @@ final class AmbientCredentialProvider implements CredentialProvider
                 }
                 $status = $response['status'];
                 $body = json_decode($response['body'] ?? '', true);
-                $responseToken =
-                    is_array($body) && is_string($body['access_token'] ?? null)
-                        ? $body['access_token']
-                        : '';
+                foreach (is_array($body) ? $body : [] as $name => $value) {
+                    if (
+                        ($name === 'token' || str_ends_with((string) $name, '_token')) &&
+                        is_string($value) &&
+                        $value !== ''
+                    ) {
+                        $responseTokens[] = $value;
+                    }
+                }
                 $description =
                     is_array($body) && is_string($body['error_description'] ?? null)
                         ? $body['error_description']
@@ -513,7 +537,7 @@ final class AmbientCredentialProvider implements CredentialProvider
                     'lifetime' => $lifetime,
                 ];
                 self::$tokens[$key] = $entry;
-                $this->cache?->set($key, $entry, max(1, (int) floor($lifetime - 30)));
+                $cache?->set($key, $entry, max(1, (int) floor($lifetime - 30)));
                 $flight->result = $entry;
                 return $credential($entry);
             }
@@ -4464,9 +4488,13 @@ class Runtime
                 if (
                     $source instanceof CredentialProvider &&
                     is_callable([$source, 'invalidate']) &&
-                    (!($source instanceof AmbientCredentialProvider) || $source->canInvalidate())
+                    (!($source instanceof AmbientCredentialProvider) ||
+                        $source->canInvalidate($credential))
                 ) {
-                    $providers[spl_object_id($source)] = $source;
+                    $providers[spl_object_id($source)] =
+                        $source instanceof AmbientCredentialProvider
+                            ? static fn() => $source->invalidate($credential)
+                            : static fn() => $source->invalidate();
                 }
             }
             if (
@@ -4521,7 +4549,10 @@ class Runtime
                 $requestShortcut = $shortcutAuth($o);
                 $defaultMode =
                     $this->options->authMode ??
-                    ($clientShortcut['mode'] ?? ($ambientProvider ? $ambient['mode'] : null));
+                    ($clientShortcut['mode'] ??
+                        ($ambientProvider && in_array($ambient['mode'], $permitted, true)
+                            ? $ambient['mode']
+                            : null));
                 $modeName =
                     $requestShortcut['mode'] ??
                     ($o->authMode ?? ($permitted ? $defaultMode : null));
@@ -4785,8 +4816,8 @@ class Runtime
                         }
                     }
                     try {
-                        foreach ($providers as $provider) {
-                            $provider->invalidate();
+                        foreach ($providers as $invalidate) {
+                            $invalidate();
                         }
                     } catch (\Throwable) {
                         throw SdkError::create(

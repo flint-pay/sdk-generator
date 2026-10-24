@@ -143,7 +143,7 @@ namespace {
             }
             $seen[] = isset($r['headers']['authorization'])
                 ? preg_replace('/^Bearer /', '', $r['headers']['authorization'])
-                : null;
+                : $r['headers']['x-partner-key'] ?? null;
             return [
                 'status' => $c['apiStatuses'][count($seen) - 1] ?? 204,
                 'headers' => [],
@@ -167,6 +167,9 @@ namespace {
                 'service' => $c['emptyMap'] ?? false ? [] : ['Bearer' => $c['explicitMap']],
             ];
         }
+        if (isset($c['partnerCredential'])) {
+            $options['credentials'] = ['partner' => ['Partner' => $c['partnerCredential']]];
+        }
         if (isset($c['provider'])) {
             $options['apiKey'] =
                 $c['provider'] === 'identity'
@@ -185,7 +188,7 @@ namespace {
                 file_put_contents($file, jwt(['sub' => 'rotated-subject'], $GLOBALS['fixtureNow']));
             }
             try {
-                $method = $c['anonymous'] ?? false ? 'anonymous' : 'read';
+                $method = $c['method'] ?? ($c['anonymous'] ?? false ? 'anonymous' : 'read');
                 $client->api->$method(
                     [],
                     isset($c['requestCredential'])
@@ -227,6 +230,25 @@ namespace {
         ob_start();
         var_dump([$client, $options['apiKey'] ?? null, $error, $events]);
         $debug = ob_get_clean() . json_encode([$error, $events]);
+        foreach ($c['redactedTokens'] ?? [] as $token) {
+            foreach ([$token, rawurlencode($token)] as $value) {
+                foreach (
+                    [
+                        $error->getMessage(),
+                        json_encode($error->details),
+                        json_encode($error->__debugInfo()),
+                        $debug,
+                    ]
+                    as $surface
+                ) {
+                    check(!str_contains($surface, $value), $c['name'] . ' response token leaked');
+                }
+            }
+            check(
+                str_contains($error->details['error_description'], '[REDACTED]'),
+                'redaction missing',
+            );
+        }
         if ($subject) {
             check(!str_contains($debug, $subject), $c['name'] . ' subject leaked');
         }
@@ -338,5 +360,137 @@ namespace {
         check($fiber->isTerminated(), 'Fiber did not finish');
     }
     check($exchanges === 1 && $requests === 100, 'PHP single-flight failed');
+    $scenarios = json_decode(
+        file_get_contents(dirname($argv[2]) . '/default-credentials-concurrency.json'),
+        true,
+        flags: JSON_THROW_ON_ERROR,
+    );
+    foreach ($scenarios as $index => $c) {
+        foreach (
+            [
+                'API_KEY',
+                'ACCESS_TOKEN',
+                'OIDC_TOKEN_FILE',
+                'OIDC_SOURCE',
+                'OIDC_SCOPE',
+                'OIDC_AUDIENCE',
+            ]
+            as $key
+        ) {
+            putenv('EXAMPLE_' . $key);
+        }
+        putenv(
+            'EXAMPLE_OIDC_TOKEN=' .
+                jwt(
+                    ['aud' => ['https://example.invalid', 'https://other.invalid']],
+                    $GLOBALS['fixtureNow'],
+                ),
+        );
+        $provider = \Example\Discovery\workloadIdentityCredentials([
+            'workloadIdentityId' => 'wid_concurrency_' . $index,
+        ]);
+        $exchanges = [];
+        $seen = [];
+        $transport = function ($r) use ($c, &$exchanges, &$seen) {
+            $origin = 'https://' . parse_url($r['url'], PHP_URL_HOST);
+            if (str_ends_with($r['url'], '/token')) {
+                $exchanges[] = $origin;
+                if ($c['kind'] === 'waiter') {
+                    \Fiber::suspend();
+                }
+                return [
+                    'status' => 200,
+                    'headers' => [],
+                    'body' => json_encode([
+                        'access_token' => 'synthetic-shared-' . count($exchanges),
+                        'token_type' => 'Bearer',
+                        'issued_token_type' => 'urn:ietf:params:oauth:token-type:access_token',
+                        'expires_in' => 3600,
+                    ]),
+                ];
+            }
+            $seen[] = preg_replace('/^Bearer /', '', $r['headers']['authorization']);
+            $call = count($seen);
+            if ($c['kind'] === 'invalidation' && $call === 1) {
+                \Fiber::suspend();
+                return ['status' => 401, 'headers' => [], 'body' => ''];
+            }
+            return [
+                'status' => $c['kind'] === 'invalidation' && $call === 2 ? $c['secondStatus'] : 204,
+                'headers' => [],
+                'body' => '',
+            ];
+        };
+        $client = static fn($baseUrl) => new Client(
+            new ClientOptions(apiKey: $provider, baseUrl: $baseUrl, transport: $transport),
+        );
+        if ($c['kind'] === 'invalidation') {
+            $first = new \Fiber(static fn() => $client($c['origins'][0])->api->read());
+            $first->start();
+            $second = $client($c['origins'][1]);
+            $second->api->read();
+            $first->resume();
+            check($first->isTerminated(), $c['name'] . ' first request incomplete');
+            $second->api->read();
+            check($exchanges === $c['exchangeOrigins'], $c['name'] . ' exchange origins');
+            check($seen === $c['headers'], $c['name'] . ' headers');
+        } else {
+            $owner = new \Fiber(static fn() => $client('https://example.invalid')->api->read());
+            $owner->start();
+            $cancellation = new \Example\Discovery\Cancellation();
+            $waiter = new \Fiber(static function () use ($client, $c, $cancellation) {
+                try {
+                    return $client('https://example.invalid')->api->read(
+                        [],
+                        new RequestOptions(
+                            deadlineMs: $c['deadlineMs'],
+                            cancellation: $cancellation,
+                        ),
+                    );
+                } catch (\Example\Discovery\SdkError $error) {
+                    return $error;
+                }
+            });
+            $wake = $waiter->start();
+            check(
+                is_array($wake) &&
+                    is_numeric($wake['deadline'] ?? null) &&
+                    $wake['cancellation'] === $cancellation,
+                $c['name'] . ' missing scheduler wake conditions',
+            );
+            // A scheduler can resume a waiter before the owner finishes, without completing it.
+            $waiter->resume();
+            check($waiter->isSuspended(), $c['name'] . ' waiter finished early');
+            if ($c['stop'] === 'cancelled') {
+                $cancellation->cancel();
+            } else {
+                // Sleep until this waiter's advertised deadline, independently of its owner.
+                usleep((int) max(0, ceil(($wake['deadline'] - hrtime(true) / 1e6 + 5) * 1000)));
+            }
+            if ($c['ownerFirst']) {
+                $owner->resume();
+            }
+            $waiter->resume();
+            check($waiter->isTerminated(), $c['name'] . ' waiter did not stop');
+            $error = $waiter->getReturn();
+            check(
+                $error instanceof \Example\Discovery\SdkError && $error->kind === $c['stop'],
+                $c['name'] . ' wrong error',
+            );
+            if (!$c['ownerFirst']) {
+                check(
+                    $owner->isSuspended() && count($seen) === 0,
+                    $c['name'] . ' owner must still be waiting',
+                );
+                $owner->resume();
+            }
+            check($owner->isTerminated(), $c['name'] . ' owner did not finish');
+            $client('https://example.invalid')->api->read();
+            check(
+                count($exchanges) === 1 && $seen === ['synthetic-shared-1', 'synthetic-shared-1'],
+                $c['name'] . ' owner exchange not preserved',
+            );
+        }
+    }
     echo 'ok';
 }

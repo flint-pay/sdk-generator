@@ -1,12 +1,12 @@
 {
-  "description": "Reviewed additive SDK error subclasses and Node standalone webhook verification: executable Node modules now export the errors namespace and verifier, PHP class files/autoload maps include the Errors sub-namespace, and both verifiers return reasons for unrecognized deliveries. Runtime/declaration consumer tests independently verify these changes. Existing root exports remain and errors/verifyWebhook are added. The predecessor compiled-public baseline retains its historical bytes. The PHP standalone decision adds Webhooks::verify to declared packages and shares the compiled verification implementation with Client::verifyWebhook, preserving guarded invalid-input errors and client redaction. Review fixes give built-in Node errors literal names that survive minification and preserve factory callers in Node stacks and PHP file/line metadata. Executable hashes reflect those fixes; declarations and existing exports remain unchanged. PHP omits its optional standalone verifier when a Webhooks model takes the class name, independently covered by generated-client collision regressions. Retry contract budgets-2 adds body-driven retry decisions, capped half-to-full jitter, key/error metadata and required-key options. UUID v4 automatic keys now match across runtimes. Behavioral and consumer type tests independently cover these changes; executable hashes include the changed runtimes and generated documentation. Runtime hashes include preservation of Retry-After and the HTTP 412 retry veto when response body reads fail. PHP SSE also retains these headers when the connection fails immediately after headers arrive. Credential-provider runtimes resolve credentials per attempt and retry a replay-safe HTTP 401 once after invalidation. PHP adds its provider interface and value class, and generated runtime guides document both targets. Shared synthetic fixtures verify behavior and consumer typechecks verify the new public interfaces; reviewed executable changes are confined to authentication resolution, retry accounting and provider class wiring. Observed HTTP 401 statuses remain authoritative through body or cleanup failures: both runtimes preserve the single provider refresh and terminate on a subsequent 401. Shared fixtures and local default-transport tests independently cover truncated first and second 401 responses. Declared default credentials add environment and workload identity federation in both runtimes. Undeclared packages preserve root exports and PHP class inventories; runtime bytes include additive ambientCredentials/credentialCache options, guarded discovery dispatch, and serialized-declaration validation. Independent shared conformance cases, default HTTP transports, strict consumer compilation, cache partition cases and 100-caller single-flight tests verify the changed behavior.",
+  "description": "Reviewed additive SDK error subclasses and Node standalone webhook verification: executable Node modules now export the errors namespace and verifier, PHP class files/autoload maps include the Errors sub-namespace, and both verifiers return reasons for unrecognized deliveries. Runtime/declaration consumer tests independently verify these changes. Existing root exports remain and errors/verifyWebhook are added. The predecessor compiled-public baseline retains its historical bytes. The PHP standalone decision adds Webhooks::verify to declared packages and shares the compiled verification implementation with Client::verifyWebhook, preserving guarded invalid-input errors and client redaction. Review fixes give built-in Node errors literal names that survive minification and preserve factory callers in Node stacks and PHP file/line metadata. Executable hashes reflect those fixes; declarations and existing exports remain unchanged. PHP omits its optional standalone verifier when a Webhooks model takes the class name, independently covered by generated-client collision regressions. Retry contract budgets-2 adds body-driven retry decisions, capped half-to-full jitter, key/error metadata and required-key options. UUID v4 automatic keys now match across runtimes. Behavioral and consumer type tests independently cover these changes; executable hashes include the changed runtimes and generated documentation. Runtime hashes include preservation of Retry-After and the HTTP 412 retry veto when response body reads fail. PHP SSE also retains these headers when the connection fails immediately after headers arrive. Credential-provider runtimes resolve credentials per attempt and retry a replay-safe HTTP 401 once after invalidation. PHP adds its provider interface and value class, and generated runtime guides document both targets. Shared synthetic fixtures verify behavior and consumer typechecks verify the new public interfaces; reviewed executable changes are confined to authentication resolution, retry accounting and provider class wiring. Observed HTTP 401 statuses remain authoritative through body or cleanup failures: both runtimes preserve the single provider refresh and terminate on a subsequent 401. Shared fixtures and local default-transport tests independently cover truncated first and second 401 responses. Declared default credentials add environment and workload identity federation in both runtimes. Undeclared packages preserve root exports and PHP class inventories; runtime bytes include additive ambientCredentials/credentialCache options, guarded discovery dispatch, and serialized-declaration validation. Independent shared conformance cases, default HTTP transports, strict consumer compilation, cache partition cases and 100-caller single-flight tests verify the changed behavior. Review corrections redact opaque exchange response tokens before error construction, restrict ambient mode defaults to permitted operations, bind 401 invalidation to each resolved partition/token, and check PHP Fiber waiters' own deadlines and cancellation on every resume. Shared synthetic redaction, partner-mode, interleaved-origin, stale-401 and independent-waiter scenarios verify these guarantees in both runtimes before refreshing executable hashes; root exports remain unchanged.",
   "fixtures": [
     {
       "name": "payment",
       "api": "tests/fixtures/payment-api.json",
       "config": "tests/fixtures/payment-sdk.json",
-      "nodeRuntimeSha256": "4b9d2a196510b51d80ea4570007737dcc2d0319e825e6a5768743fe7ea18d8d4",
-      "phpSha256": "7a8559023d04f0301e2fdefaf40d722db11f3c6a1fef5c27df81e931c406782a",
+      "nodeRuntimeSha256": "811b3ed4664120c7ea2c6fb5a714f7a7358d12b10dfb0cacfe3726783c036938",
+      "phpSha256": "9ae3a0a4454748e5482afadbef9c416e2c85729b926f2eb8dcc29d2271400c0c",
       "rootExports": [
         "SdkError",
         "Model",
@@ -46,17 +46,17 @@
         "verifyWebhook"
       ],
       "singleTarget": {
-        "node": "4b9d2a196510b51d80ea4570007737dcc2d0319e825e6a5768743fe7ea18d8d4",
-        "php": "7a8559023d04f0301e2fdefaf40d722db11f3c6a1fef5c27df81e931c406782a"
+        "node": "811b3ed4664120c7ea2c6fb5a714f7a7358d12b10dfb0cacfe3726783c036938",
+        "php": "9ae3a0a4454748e5482afadbef9c416e2c85729b926f2eb8dcc29d2271400c0c"
       },
-      "phpRuntimeSha256": "537a817ad68614b73085afb774bdd78baea7fc11f2f497d02eea8408276fcad8"
+      "phpRuntimeSha256": "edbbd802d4b7f9055d49837a6287cf3a388d1f0abc23cc55020d2209b11ba6d8"
     },
     {
       "name": "flint",
       "api": "tests/providers/flint/openapi.json",
       "config": "tests/providers/flint/sdk.json",
-      "nodeRuntimeSha256": "adeb80b89357f6d0e0ce74a9ca8c35bc2cbaadc46583bf303fce31c512689ef4",
-      "phpSha256": "1c6bad2909d7e3a3068d4544cf641662f9df6934a710741b95ee888129b55125",
+      "nodeRuntimeSha256": "5eb5028182a5fa101bd37aef408aef17c19ecf36a89eb91470f9591ade5d92ac",
+      "phpSha256": "31050abf8f19315501d6692da00ede27318cc183eb769407b4acc0e6ffe3cad2",
       "rootExports": [
         "SdkError",
         "Model",
@@ -363,10 +363,10 @@
         "verifyWebhook"
       ],
       "singleTarget": {
-        "node": "814bd8561da571ded3204ae057c2bebc86397c6af34b2744b50cf4d39e914ceb",
-        "php": "1c6bad2909d7e3a3068d4544cf641662f9df6934a710741b95ee888129b55125"
+        "node": "f8ba5cb6bef9432cc3afc7155779cd2ed6f367e89fa1a4c05b7524b6700b6ede",
+        "php": "31050abf8f19315501d6692da00ede27318cc183eb769407b4acc0e6ffe3cad2"
       },
-      "phpRuntimeSha256": "1d88b2da08bd82893cf58bc01ba6ece5047975d477b6b8239ea9ccf44fd57bf5"
+      "phpRuntimeSha256": "64c563e092c7f364e1b9b695c15b4f1f1c9a34cce6d4489d0bea6d6b32cbf0b9"
     }
   ]
 }

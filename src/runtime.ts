@@ -237,8 +237,8 @@ export function configuredWorkloadIdentityCredentials(
 }
 
 class AmbientCredentialProvider implements CredentialProvider {
-  private key?: string;
-  #lastValue: string | undefined;
+  #lastCredential: object | undefined;
+  #invalidations = new WeakMap<object, () => void>();
   constructor(
     private readonly config: DefaultCredentials,
     private readonly identity?: WorkloadIdentityOptions,
@@ -250,12 +250,11 @@ class AmbientCredentialProvider implements CredentialProvider {
   [inspect.custom]() {
     return { credentials: '[REDACTED]' };
   }
-  canInvalidate() {
-    return this.key !== undefined;
+  canInvalidate(credential = this.#lastCredential) {
+    return credential !== undefined && this.#invalidations.has(credential);
   }
-  invalidate() {
-    if (this.key && identityTokens.get(this.key)?.value === this.#lastValue)
-      identityTokens.delete(this.key);
+  invalidate(credential = this.#lastCredential) {
+    if (credential) this.#invalidations.get(credential)?.();
   }
   async getCredential(context?: CredentialContext): Promise<{ value: string; expiresAt?: Date }> {
     const env = this.config.environment;
@@ -265,10 +264,15 @@ class AmbientCredentialProvider implements CredentialProvider {
     let source: string = this.identity?.source ?? read('OIDC_SOURCE') ?? 'auto';
     let claims: Record<string, unknown> = {};
     let subject = '';
-    let responseToken = '';
+    const responseTokens = new Set<string>();
     const clean = (value: unknown): string => {
       let text = typeof value === 'string' ? value : (JSON.stringify(value) ?? '');
-      for (const token of [subject, responseToken, process.env[env.apiKey], process.env[env.token]])
+      for (const token of [
+        subject,
+        ...responseTokens,
+        process.env[env.apiKey],
+        process.env[env.token],
+      ])
         if (token)
           for (const encoded of [token, encodeURIComponent(token)])
             text = text.split(encoded).join('[REDACTED]');
@@ -302,7 +306,7 @@ class AmbientCredentialProvider implements CredentialProvider {
       if (apiKey && token)
         fail('ambiguous_credentials', `Set only one of ${env.apiKey} and ${env.token}`);
       if (apiKey || token) {
-        delete this.key;
+        this.#lastCredential = undefined;
         return { value: apiKey || token || '' };
       }
       if (!id)
@@ -344,18 +348,24 @@ class AmbientCredentialProvider implements CredentialProvider {
       source,
       sourceKey,
     ]);
-    this.key = key;
+    // Each resolution retains its own partition and rejected-token comparison.
+    const credential = (entry: CachedCredential) => {
+      const result = { value: entry.value, expiresAt: entry.expiresAt };
+      this.#invalidations.set(result, () => {
+        if (identityTokens.get(key)?.value === entry.value) identityTokens.delete(key);
+      });
+      this.#lastCredential = result;
+      return result;
+    };
     const cached = identityTokens.get(key);
     const remaining = cached ? cached.expiresAt.getTime() - Date.now() : 0;
     if (cached && remaining > 30000 && remaining >= Math.max(60000, cached.lifetime * 0.2)) {
-      this.#lastValue = cached.value;
-      return cached;
+      return credential(cached);
     }
     const existing = identityFlights.get(key);
     if (existing) {
       const value = await existing;
-      this.#lastValue = value.value;
-      return value;
+      return credential(value);
     }
     const exchange = async (): Promise<CachedCredential> => {
       try {
@@ -447,6 +457,9 @@ class AmbientCredentialProvider implements CredentialProvider {
           body && typeof body === 'object' && !Array.isArray(body)
             ? (body as Record<string, unknown>)
             : {};
+        for (const [name, value] of Object.entries(data))
+          if ((name === 'token' || name.endsWith('_token')) && typeof value === 'string' && value)
+            responseTokens.add(value);
         const description =
           typeof data.error_description === 'string' ? data.error_description : '';
         if (response.status === 429 || response.status >= 500) {
@@ -508,8 +521,7 @@ class AmbientCredentialProvider implements CredentialProvider {
       });
     identityFlights.set(key, flight);
     const value = await flight;
-    this.#lastValue = value.value;
-    return value;
+    return credential(value);
   }
 }
 
@@ -518,6 +530,7 @@ async function resolveCredential(
   message: string,
   rejectNewlines = true,
   context?: CredentialContext,
+  providers?: Map<CredentialProvider, () => void>,
 ): Promise<string> {
   let value: unknown = input;
   if (typeof input === 'object' && input !== null && 'getCredential' in input) {
@@ -525,6 +538,18 @@ async function resolveCredential(
       const credential: unknown = await (input instanceof AmbientCredentialProvider
         ? input.getCredential(context)
         : (input as CredentialProvider).getCredential());
+      if (input instanceof AmbientCredentialProvider) {
+        if (
+          typeof credential === 'object' &&
+          credential !== null &&
+          input.canInvalidate(credential)
+        )
+          providers?.set(input, () => input.invalidate(credential));
+      } else {
+        const provider = input as CredentialProvider;
+        if (typeof provider.invalidate === 'function')
+          providers?.set(provider, () => provider.invalidate?.());
+      }
       value =
         typeof credential === 'object' && credential !== null && 'value' in credential
           ? credential.value
@@ -2844,16 +2869,7 @@ class CompiledRuntime {
       deadline,
       ...(options.signal ? { signal: options.signal } : {}),
     };
-    const providers = new Set<CredentialProvider>();
-    const rememberProvider = (source: unknown) => {
-      if (
-        typeof source === 'object' &&
-        source !== null &&
-        'getCredential' in source &&
-        (!(source instanceof AmbientCredentialProvider) || source.canInvalidate())
-      )
-        providers.add(source as CredentialProvider);
-    };
+    const providers = new Map<CredentialProvider, () => void>();
     const authenticate = async () => {
       providers.clear();
       if (this.contract.authentication) {
@@ -2889,7 +2905,9 @@ class CompiledRuntime {
         const defaultMode =
           this.options.authMode ??
           clientShortcut?.mode ??
-          (ambientProvider ? ambient?.mode : undefined);
+          (ambientProvider && ambient && permitted.includes(ambient.mode)
+            ? ambient.mode
+            : undefined);
         let modeName =
           requestShortcut?.mode ?? options.authMode ?? (permitted.length ? defaultMode : undefined);
         if (modeName === undefined && op.authenticated && permitted.length === 1)
@@ -2927,8 +2945,8 @@ class CompiledRuntime {
               `Missing or invalid credential ${scheme.name} for authentication mode ${modeName}`,
               true,
               credentialContext,
+              providers,
             );
-            rememberProvider(source);
             expected[scheme.header.toLowerCase()] =
               scheme.type === 'bearer' ? 'Bearer ' + credential : credential;
           }
@@ -2951,8 +2969,8 @@ class CompiledRuntime {
           'Explicit API credentials are required',
           false, // Legacy header validation owns newline rejection for strings and providers.
           credentialContext,
+          providers,
         );
-        rememberProvider(this.options.token);
         setHeader(
           this.contract.auth.header,
           this.contract.auth.type === 'bearer' ? `Bearer ${credential}` : credential,
@@ -3064,12 +3082,7 @@ class CompiledRuntime {
             retryAfter = Math.max(0, seconds);
           }
         }
-        if (
-          response.status === 401 &&
-          safe &&
-          credentialRetries === 0 &&
-          [...providers].some((provider) => typeof provider.invalidate === 'function')
-        ) {
+        if (response.status === 401 && safe && credentialRetries === 0 && providers.size > 0) {
           diagnosticError = 'authentication';
           try {
             await response.body?.cancel();
@@ -3077,7 +3090,7 @@ class CompiledRuntime {
             // The observed 401 remains authoritative if response cleanup fails.
           }
           try {
-            for (const provider of providers) provider.invalidate?.();
+            for (const invalidate of providers.values()) invalidate();
           } catch {
             throw createSdkError(
               'authentication',

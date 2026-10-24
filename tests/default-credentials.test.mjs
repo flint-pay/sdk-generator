@@ -25,14 +25,20 @@ const doc = {
   openapi: '3.1.0',
   info: { title: 'Discovery', version: '1' },
   servers: [{ url: 'https://example.invalid' }],
-  components: { securitySchemes: { Bearer: { type: 'http', scheme: 'bearer' } } },
+  components: {
+    securitySchemes: {
+      Bearer: { type: 'http', scheme: 'bearer' },
+      Partner: { type: 'apiKey', in: 'header', name: 'x-partner-key' },
+    },
+  },
   paths: Object.fromEntries(
-    ['read', 'anonymous'].map((id) => [
+    ['read', 'anonymous', 'partner'].map((id) => [
       '/' + id,
       {
         get: {
           operationId: id,
-          security: id === 'anonymous' ? [] : [{ Bearer: [] }],
+          security:
+            id === 'anonymous' ? [] : id === 'partner' ? [{ Partner: [] }] : [{ Bearer: [] }],
           responses: { 204: { description: 'Done' } },
         },
       },
@@ -46,13 +52,14 @@ const config = {
   requests: { style: 'object' },
   responses: { return: 'result' },
   auth: {
-    modes: { service: { schemes: ['Bearer'] } },
+    modes: { service: { schemes: ['Bearer'] }, partner: { schemes: ['Partner'] } },
     shortcuts: { apiKey: { mode: 'service', scheme: 'Bearer' } },
     defaultCredentials: defaults,
   },
   operations: {
     read: { resource: 'api', method: 'read' },
     anonymous: { resource: 'api', method: 'anonymous' },
+    partner: { resource: 'api', method: 'partner' },
   },
 };
 writeFileSync(join(root, 'api.json'), JSON.stringify(doc));
@@ -160,13 +167,18 @@ test('shared default credential conformance in Node and PHP', async () => {
               headers: { 'retry-after': c.retryAfter ?? '0' },
             });
           }
-          seen.push(init.headers.authorization?.replace(/^Bearer /, '') ?? null);
+          seen.push(
+            init.headers.authorization?.replace(/^Bearer /, '') ??
+              init.headers['x-partner-key'] ??
+              null,
+          );
           return new Response(null, { status: c.apiStatuses?.[seen.length - 1] ?? 204 });
         },
       };
       if (c.explicit) options.apiKey = c.explicit;
       if (c.explicitMap || c.emptyMap)
         options.credentials = { service: c.emptyMap ? {} : { Bearer: c.explicitMap } };
+      if (c.partnerCredential) options.credentials = { partner: { Partner: c.partnerCredential } };
       if (c.provider)
         options.apiKey =
           c.provider === 'identity'
@@ -179,7 +191,7 @@ test('shared default credential conformance in Node and PHP', async () => {
         now += advance * 1000;
         if (advance && c.rotateFile) writeFileSync(file, jwt({ sub: 'rotated-subject' }, now));
         try {
-          await client.api[c.anonymous ? 'anonymous' : 'read'](
+          await client.api[c.method ?? (c.anonymous ? 'anonymous' : 'read')](
             {},
             c.requestCredential ? { credentials: { Bearer: c.requestCredential } } : {},
           );
@@ -205,6 +217,18 @@ test('shared default credential conformance in Node and PHP', async () => {
       const debug =
         inspect([client, options.apiKey, error, events], { depth: 20 }) +
         JSON.stringify([options.apiKey, error, events]);
+      for (const token of c.redactedTokens ?? []) {
+        for (const value of [token, encodeURIComponent(token)]) {
+          for (const surface of [
+            error.message,
+            JSON.stringify(error.details),
+            inspect(error),
+            debug,
+          ])
+            assert.ok(!surface.includes(value), c.name + ' response token leaked');
+        }
+        assert.ok(error.details.error_description.includes('[REDACTED]'));
+      }
       if (subject) assert.ok(!debug.includes(subject), c.name + ' subject leaked');
       assert.doesNotMatch(debug, /synthetic-exchanged-|synthetic-api-key|synthetic-access-token/);
     }
@@ -252,6 +276,98 @@ test('100 concurrent requests across clients share one exchange', async () => {
     await Promise.all(Array.from({ length: 100 }, () => new sdk.Client({ transport }).api.read()));
     assert.equal(exchanges, 1);
     assert.equal(calls, 100);
+  } finally {
+    clearEnv();
+  }
+});
+
+test('shared credential concurrency scenarios in Node', async () => {
+  const scenarios = JSON.parse(
+    readFileSync('tests/fixtures/default-credentials-concurrency.json', 'utf8'),
+  );
+  try {
+    for (const c of scenarios) {
+      clearEnv();
+      process.env.EXAMPLE_OIDC_TOKEN = jwt(
+        { aud: ['https://example.invalid', 'https://other.invalid'] },
+        Date.now(),
+      );
+      const provider = sdk.workloadIdentityCredentials({
+        workloadIdentityId: 'wid_concurrency_' + scenarios.indexOf(c),
+      });
+      let release, started;
+      const gate = new Promise((resolve) => {
+        release = resolve;
+      });
+      const dispatched = new Promise((resolve) => {
+        started = resolve;
+      });
+      const exchanges = [],
+        seen = [];
+      const transport = async (url, init) => {
+        const origin = new URL(url).origin;
+        if (new URL(url).pathname.endsWith('/token')) {
+          exchanges.push(origin);
+          if (c.kind === 'waiter') {
+            started();
+            await gate;
+          }
+          return Response.json({
+            access_token: 'synthetic-shared-' + exchanges.length,
+            token_type: 'Bearer',
+            issued_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+            expires_in: 3600,
+          });
+        }
+        seen.push(init.headers.authorization.replace(/^Bearer /, ''));
+        const call = seen.length;
+        if (c.kind === 'invalidation' && call === 1) {
+          started();
+          await gate;
+          return new Response(null, { status: 401 });
+        }
+        return new Response(null, {
+          status: c.kind === 'invalidation' && call === 2 ? c.secondStatus : 204,
+        });
+      };
+      const client = (baseUrl) => new sdk.Client({ apiKey: provider, baseUrl, transport });
+      if (c.kind === 'invalidation') {
+        const first = client(c.origins[0]).api.read();
+        await dispatched;
+        const second = client(c.origins[1]);
+        await second.api.read();
+        release();
+        await first;
+        await second.api.read();
+        assert.deepEqual(exchanges, c.exchangeOrigins, c.name);
+        assert.deepEqual(seen, c.headers, c.name);
+      } else {
+        const owner = client('https://example.invalid').api.read();
+        await dispatched;
+        const controller = new AbortController();
+        const waiter = client('https://example.invalid')
+          .api.read({}, { deadlineMs: c.deadlineMs, signal: controller.signal })
+          .catch((error) => error);
+        // Allow the waiter to join the owner's exchange, then wake it independently.
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        if (c.stop === 'cancelled') controller.abort();
+        else await new Promise((resolve) => setTimeout(resolve, c.deadlineMs + 10));
+        if (c.ownerFirst) {
+          release();
+          await owner;
+        }
+        const error = await waiter;
+        assert.equal(error?.kind, c.stop, c.name);
+        if (!c.ownerFirst) {
+          assert.equal(seen.length, 0, c.name + ' owner must still be waiting');
+          release();
+          await owner;
+        }
+        await client('https://example.invalid').api.read();
+        assert.equal(exchanges.length, 1, c.name);
+        assert.deepEqual(seen, ['synthetic-shared-1', 'synthetic-shared-1'], c.name);
+      }
+    }
   } finally {
     clearEnv();
   }
