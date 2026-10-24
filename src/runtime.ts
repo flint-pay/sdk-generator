@@ -1,5 +1,7 @@
 import { DescriptorSource } from './descriptor-source.js';
-import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import type { DefaultCredentials } from './contract.js';
 import { inspect } from 'node:util';
 import type { Schema } from './contract.js';
 import {
@@ -202,20 +204,333 @@ export interface CredentialProvider {
   invalidate?(): void;
 }
 
+export type WorkloadIdentitySource = 'auto' | 'none' | 'token' | 'token_file';
+export interface WorkloadIdentityOptions {
+  workloadIdentityId: string;
+  source?: WorkloadIdentitySource;
+  audience?: string;
+  scope?: string;
+}
+type CredentialContext = {
+  baseUrl: string;
+  transport: typeof fetch;
+  deadline: number;
+  signal?: AbortSignal;
+};
+type CachedCredential = { value: string; expiresAt: Date; lifetime: number };
+const identityTokens = new Map<string, CachedCredential>();
+const identityFlights = new Map<string, Promise<CachedCredential>>();
+
+/** Generated package wrappers supply provider configuration; no provider names live here. */
+export function configuredDefaultCredentials(
+  config: DefaultCredentials,
+  baseUrl?: string,
+): CredentialProvider {
+  return new AmbientCredentialProvider(config, undefined, baseUrl);
+}
+export function configuredWorkloadIdentityCredentials(
+  config: DefaultCredentials,
+  options: WorkloadIdentityOptions,
+  baseUrl?: string,
+): CredentialProvider {
+  return new AmbientCredentialProvider(config, options, baseUrl);
+}
+
+class AmbientCredentialProvider implements CredentialProvider {
+  private key?: string;
+  #lastValue: string | undefined;
+  constructor(
+    private readonly config: DefaultCredentials,
+    private readonly identity?: WorkloadIdentityOptions,
+    private readonly baseUrl?: string,
+  ) {}
+  toJSON() {
+    return { credentials: '[REDACTED]' };
+  }
+  [inspect.custom]() {
+    return { credentials: '[REDACTED]' };
+  }
+  canInvalidate() {
+    return this.key !== undefined;
+  }
+  invalidate() {
+    if (this.key && identityTokens.get(this.key)?.value === this.#lastValue)
+      identityTokens.delete(this.key);
+  }
+  async getCredential(context?: CredentialContext): Promise<{ value: string; expiresAt?: Date }> {
+    const env = this.config.environment;
+    const prefix = this.config.workloadIdentity.envPrefix;
+    const read = (suffix: string) => process.env[prefix + '_' + suffix] || undefined;
+    const id = this.identity?.workloadIdentityId ?? read('WORKLOAD_IDENTITY_ID');
+    let source: string = this.identity?.source ?? read('OIDC_SOURCE') ?? 'auto';
+    let claims: Record<string, unknown> = {};
+    let subject = '';
+    let responseToken = '';
+    const clean = (value: unknown): string => {
+      let text = typeof value === 'string' ? value : (JSON.stringify(value) ?? '');
+      for (const token of [subject, responseToken, process.env[env.apiKey], process.env[env.token]])
+        if (token)
+          for (const encoded of [token, encodeURIComponent(token)])
+            text = text.split(encoded).join('[REDACTED]');
+      return text
+        .replace(/eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, '[REDACTED]')
+        .slice(0, 2048);
+    };
+    const fail = (reason: string, description = ''): never => {
+      const details = {
+        reason,
+        source: clean(source),
+        workloadIdentityId: clean(id ?? ''),
+        iss: clean(claims.iss),
+        sub: clean(claims.sub),
+        aud: clean(claims.aud),
+        error_description: clean(description),
+      };
+      throw createSdkError(
+        'authentication',
+        clean(JSON.stringify(details)),
+        'not_sent',
+        false,
+        undefined,
+        reason,
+        details,
+      );
+    };
+    if (!this.identity) {
+      const apiKey = process.env[env.apiKey],
+        token = process.env[env.token];
+      if (apiKey && token)
+        fail('ambiguous_credentials', `Set only one of ${env.apiKey} and ${env.token}`);
+      if (apiKey || token) {
+        delete this.key;
+        return { value: apiKey || token || '' };
+      }
+      if (!id)
+        fail(
+          'no_credentials',
+          `Set ${env.apiKey}, ${env.token}, or ${prefix}_WORKLOAD_IDENTITY_ID with ${prefix}_OIDC_TOKEN or ${prefix}_OIDC_TOKEN_FILE`,
+        );
+    }
+    if (typeof id !== 'string' || !id || /[\r\n]/.test(id))
+      fail('source_unavailable', 'A workload identity ID is required');
+    const base = context?.baseUrl ?? this.baseUrl;
+    if (!base) fail('source_unavailable', 'Pass this provider to a client with a base URL');
+    const url = new URL(base ?? fail('source_unavailable'));
+    if (
+      url.protocol !== 'https:' &&
+      !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))
+    )
+      fail('exchange_unavailable', 'Token exchange requires HTTPS or loopback');
+    const audience = this.identity?.audience ?? read('OIDC_AUDIENCE') ?? url.origin;
+    const scope = this.identity?.scope ?? read('OIDC_SCOPE');
+    const file = read('OIDC_TOKEN_FILE');
+    if (source === 'auto') source = read('OIDC_TOKEN') ? 'token' : file ? 'token_file' : 'none';
+    if (source !== 'token' && source !== 'token_file')
+      fail('source_unavailable', 'Supported sources: token, token_file');
+    const sourceKey =
+      source === 'token'
+        ? createHash('sha256')
+            .update(read('OIDC_TOKEN') ?? '')
+            .digest('hex')
+        : file;
+    const key = JSON.stringify([
+      url.origin,
+      this.config.workloadIdentity.tokenPath,
+      this.config.workloadIdentity.credentialParameter,
+      prefix,
+      id,
+      audience,
+      scope ?? '',
+      source,
+      sourceKey,
+    ]);
+    this.key = key;
+    const cached = identityTokens.get(key);
+    const remaining = cached ? cached.expiresAt.getTime() - Date.now() : 0;
+    if (cached && remaining > 30000 && remaining >= Math.max(60000, cached.lifetime * 0.2)) {
+      this.#lastValue = cached.value;
+      return cached;
+    }
+    const existing = identityFlights.get(key);
+    if (existing) {
+      const value = await existing;
+      this.#lastValue = value.value;
+      return value;
+    }
+    const exchange = async (): Promise<CachedCredential> => {
+      try {
+        subject =
+          source === 'token'
+            ? (read('OIDC_TOKEN') ?? '')
+            : file
+              ? (await readFile(file, 'utf8')).trim()
+              : '';
+      } catch {
+        fail('subject_token_request_failed', 'Cannot read the configured token file');
+      }
+      if (!subject) fail('source_unavailable', 'The selected token source is empty');
+      try {
+        const parts = subject.split('.');
+        if (
+          parts.length !== 3 ||
+          parts[1] === undefined ||
+          !parts.every((part) => /^[A-Za-z0-9_-]+$/.test(part))
+        )
+          throw new Error();
+        const payload: unknown = JSON.parse(
+          Buffer.from(parts[1] ?? '', 'base64url').toString('utf8'),
+        );
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error();
+        // The parsed payload has passed the non-array object guard.
+        claims = payload as Record<string, unknown>;
+      } catch {
+        fail('audience_mismatch', 'Subject token must be a JWT with aud and exp');
+      }
+      if (
+        !(
+          claims.aud === audience ||
+          (Array.isArray(claims.aud) && claims.aud.includes(audience))
+        ) ||
+        typeof claims.exp !== 'number' ||
+        !Number.isFinite(claims.exp) ||
+        claims.exp * 1000 <= Date.now()
+      )
+        fail('audience_mismatch', 'Subject token audience differs or expiry has passed');
+      const form = new URLSearchParams({
+        grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
+        subject_token: subject,
+        subject_token_type: 'urn:ietf:params:oauth:token-type:jwt',
+        requested_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+        [this.config.workloadIdentity.credentialParameter]: id ?? fail('source_unavailable'),
+        ...(scope === undefined ? {} : { scope }),
+      });
+      const deadline = context?.deadline ?? performance.now() + 30000;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const remaining = deadline - performance.now();
+        if (remaining <= 0) fail('exchange_unavailable', 'Exchange deadline exceeded');
+        const controller = new AbortController();
+        const abort = () => controller.abort();
+        context?.signal?.addEventListener('abort', abort, { once: true });
+        if (context?.signal?.aborted) controller.abort();
+        const timer = schedule(abort, remaining);
+        let response: Response, body: unknown;
+        try {
+          response = await abortable(
+            (context?.transport ?? fetch)(
+              new URL(this.config.workloadIdentity.tokenPath, url.origin),
+              {
+                method: 'POST',
+                headers: {
+                  'content-type': 'application/x-www-form-urlencoded',
+                  accept: 'application/json',
+                },
+                body: form.toString(),
+                redirect: 'manual',
+                signal: controller.signal,
+              },
+            ),
+            controller.signal,
+          );
+          const raw = await abortable(response.text(), controller.signal);
+          try {
+            body = JSON.parse(raw);
+          } catch {
+            body = undefined;
+          }
+        } catch {
+          return fail('exchange_unavailable', 'Token exchange transport failed');
+        } finally {
+          timer.cancel();
+          context?.signal?.removeEventListener('abort', abort);
+        }
+        const data =
+          body && typeof body === 'object' && !Array.isArray(body)
+            ? (body as Record<string, unknown>)
+            : {};
+        const description =
+          typeof data.error_description === 'string' ? data.error_description : '';
+        if (response.status === 429 || response.status >= 500) {
+          const instruction = response.headers.get('retry-after');
+          const wait = instruction
+            ? /^\d+(\.\d+)?$/.test(instruction)
+              ? Number(instruction) * 1000
+              : Date.parse(instruction) - Date.now()
+            : 100 * 2 ** attempt;
+          const pause = Number.isFinite(wait) ? Math.max(0, wait) : 100 * 2 ** attempt;
+          if (attempt === 2 || performance.now() + pause >= deadline)
+            fail('exchange_unavailable', description);
+          await delay(pause, context?.signal);
+          continue;
+        }
+        if (response.status !== 200) fail('exchange_rejected', description);
+        if (
+          typeof data.access_token !== 'string' ||
+          !data.access_token ||
+          /[\r\n]/.test(data.access_token) ||
+          data.token_type !== 'Bearer' ||
+          data.issued_token_type !== 'urn:ietf:params:oauth:token-type:access_token' ||
+          typeof data.expires_in !== 'number' ||
+          !Number.isFinite(data.expires_in) ||
+          data.expires_in <= 30 ||
+          (data.scope !== undefined && typeof data.scope !== 'string')
+        )
+          fail('exchange_rejected', 'Invalid token exchange response');
+        // Subject expiry is an upper bound even if the server or local clock disagrees.
+        const lifetime = Math.min(
+          Number(data.expires_in) * 1000,
+          Number(claims.exp) * 1000 - Date.now(),
+        );
+        if (lifetime <= 30000)
+          fail('exchange_rejected', 'Exchanged token has at most 30 seconds remaining');
+        const token = {
+          value: String(data.access_token),
+          expiresAt: new Date(Date.now() + lifetime),
+          lifetime,
+        };
+        identityTokens.set(key, token);
+        return token;
+      }
+      return fail('exchange_unavailable');
+    };
+    const flight = exchange()
+      .catch((error) => {
+        if (
+          cached &&
+          cached.expiresAt.getTime() - Date.now() > 30000 &&
+          error instanceof SdkError &&
+          error.code === 'exchange_unavailable'
+        )
+          return cached;
+        throw error;
+      })
+      .finally(() => {
+        if (identityFlights.get(key) === flight) identityFlights.delete(key);
+      });
+    identityFlights.set(key, flight);
+    const value = await flight;
+    this.#lastValue = value.value;
+    return value;
+  }
+}
+
 async function resolveCredential(
   input: unknown,
   message: string,
   rejectNewlines = true,
+  context?: CredentialContext,
 ): Promise<string> {
   let value: unknown = input;
   if (typeof input === 'object' && input !== null && 'getCredential' in input) {
     try {
-      const credential: unknown = await (input as CredentialProvider).getCredential();
+      const credential: unknown = await (input instanceof AmbientCredentialProvider
+        ? input.getCredential(context)
+        : (input as CredentialProvider).getCredential());
       value =
         typeof credential === 'object' && credential !== null && 'value' in credential
           ? credential.value
           : undefined;
-    } catch {
+    } catch (error) {
+      if (input instanceof AmbientCredentialProvider && error instanceof SdkError) throw error;
       // Provider exceptions may contain credentials, including in their causes.
       throw createSdkError('authentication', 'Credential provider failed');
     }
@@ -241,6 +556,7 @@ export interface RequestOptions {
   maxItems?: number;
 }
 export interface ClientOptions {
+  ambientCredentials?: boolean;
   baseUrl?: string;
   token?: string | CredentialProvider;
   authMode?: string;
@@ -2517,9 +2833,25 @@ class CompiledRuntime {
     this.checkUrl(url);
     for (const [k, v] of Object.entries(options.headers ?? {})) setHeader(k, v);
     const suppliedHeaders = { ...headers };
+    const ambient = this.contract.defaultCredentials;
+    const ambientProvider =
+      ambient && this.options.ambientCredentials !== false
+        ? configuredDefaultCredentials(ambient, this.base.href)
+        : undefined;
+    const credentialContext: CredentialContext = {
+      baseUrl: this.base.href,
+      transport: this.options.transport ?? fetch,
+      deadline,
+      ...(options.signal ? { signal: options.signal } : {}),
+    };
     const providers = new Set<CredentialProvider>();
     const rememberProvider = (source: unknown) => {
-      if (typeof source === 'object' && source !== null && 'getCredential' in source)
+      if (
+        typeof source === 'object' &&
+        source !== null &&
+        'getCredential' in source &&
+        (!(source instanceof AmbientCredentialProvider) || source.canInvalidate())
+      )
         providers.add(source as CredentialProvider);
     };
     const authenticate = async () => {
@@ -2554,7 +2886,10 @@ class CompiledRuntime {
         };
         const clientShortcut = shortcutAuth(this.options);
         const requestShortcut = shortcutAuth(options);
-        const defaultMode = this.options.authMode ?? clientShortcut?.mode;
+        const defaultMode =
+          this.options.authMode ??
+          clientShortcut?.mode ??
+          (ambientProvider ? ambient?.mode : undefined);
         let modeName =
           requestShortcut?.mode ?? options.authMode ?? (permitted.length ? defaultMode : undefined);
         if (modeName === undefined && op.authenticated && permitted.length === 1)
@@ -2580,10 +2915,18 @@ class CompiledRuntime {
               ? clientShortcut.credentials
               : this.options.credentials?.[modeName]);
           for (const scheme of selected.schemes) {
-            const source = credentials?.[scheme.name];
+            const source =
+              credentials?.[scheme.name] ??
+              (credentials === undefined &&
+              modeName === ambient?.mode &&
+              scheme.name === ambient.scheme
+                ? ambientProvider
+                : undefined);
             const credential = await resolveCredential(
               source,
               `Missing or invalid credential ${scheme.name} for authentication mode ${modeName}`,
+              true,
+              credentialContext,
             );
             rememberProvider(source);
             expected[scheme.header.toLowerCase()] =
@@ -2607,6 +2950,7 @@ class CompiledRuntime {
           this.options.token,
           'Explicit API credentials are required',
           false, // Legacy header validation owns newline rejection for strings and providers.
+          credentialContext,
         );
         rememberProvider(this.options.token);
         setHeader(

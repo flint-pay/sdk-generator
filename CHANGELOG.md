@@ -4,6 +4,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ## Unreleased (generator 0.1.0)
 
+- Add opt-in `auth.defaultCredentials` configuration and lazy environment/workload identity providers in Node and PHP, with `defaultCredentials()` and `workloadIdentityCredentials()` exports and an `ambientCredentials: false` opt-out. Token and token-file sources exchange RFC 8693 forms, validate audience/expiry before sending, redact credentials in failures, refresh process-cached tokens ahead of expiry, retry transient exchanges within request deadlines, and invalidate/re-exchange once on replay-safe HTTP 401. PHP also accepts a PSR-16 compatible credential cache. Shared conformance cases cover both runtimes.
+
 ### Breaking changes for generator automation
 
 - **CLI output.** Commands print readable summaries by default. Pass `--json` to keep the previous JSON on stdout and JSON errors and warnings on stderr; JSON shapes are unchanged. `effective` still prints JSON. Library functions are unchanged.

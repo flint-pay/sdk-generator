@@ -148,6 +148,446 @@ final class Credential
         return ['value' => '[REDACTED]', 'expiresAt' => $this->expiresAt];
     }
 }
+/** Lazy built-in provider. Transport injection is privileged and sees exchange credentials. */
+final class AmbientCredentialProvider implements CredentialProvider
+{
+    private static array $tokens = [];
+    private static array $active = [];
+    private ?string $key = null;
+    private ?string $lastValue = null;
+    private ?object $cache = null;
+    public function __construct(
+        private readonly array $config,
+        private readonly ?array $identity = null,
+        private readonly ?string $baseUrl = null,
+    ) {}
+    public function __debugInfo(): array
+    {
+        return ['credentials' => '[REDACTED]'];
+    }
+    public function canInvalidate(): bool
+    {
+        return $this->key !== null;
+    }
+    public function invalidate(): void
+    {
+        if (
+            $this->key !== null &&
+            (self::$tokens[$this->key]['value'] ?? null) === $this->lastValue
+        ) {
+            unset(self::$tokens[$this->key]);
+            $this->cache?->delete($this->key);
+        }
+    }
+    public function getCredential(): Credential
+    {
+        return $this->resolve([]);
+    }
+    public function resolve(#[\SensitiveParameter] array $context): Credential
+    {
+        $prefix = $this->config['workloadIdentity']['envPrefix'];
+        $read = static function (string $suffix) use ($prefix): ?string {
+            $value = getenv($prefix . '_' . $suffix);
+            return $value === false || $value === '' ? null : $value;
+        };
+        $id = $this->identity['workloadIdentityId'] ?? $read('WORKLOAD_IDENTITY_ID');
+        $source = $this->identity['source'] ?? ($read('OIDC_SOURCE') ?? 'auto');
+        $subject = '';
+        $responseToken = '';
+        $claims = [];
+        $environment = $this->config['environment'];
+        $clean = static function (#[\SensitiveParameter] $value) use (
+            &$subject,
+            &$responseToken,
+            $environment,
+        ): string {
+            $text = is_string($value)
+                ? $value
+                : (json_encode($value, JSON_INVALID_UTF8_SUBSTITUTE) ?:
+                '');
+            foreach (
+                [
+                    $subject,
+                    $responseToken,
+                    getenv($environment['apiKey']),
+                    getenv($environment['token']),
+                ]
+                as $secret
+            ) {
+                if ($secret) {
+                    $text = str_replace([$secret, rawurlencode($secret)], '[REDACTED]', $text);
+                }
+            }
+            return substr(
+                preg_replace(
+                    '/eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/',
+                    '[REDACTED]',
+                    $text,
+                ),
+                0,
+                2048,
+            );
+        };
+        $fail = static function (
+            string $reason,
+            #[\SensitiveParameter] string $description = '',
+        ) use (&$source, $id, &$claims, $clean): never {
+            $details = [
+                'reason' => $reason,
+                'source' => $clean($source),
+                'workloadIdentityId' => $clean($id ?? ''),
+                'iss' => $clean($claims['iss'] ?? null),
+                'sub' => $clean($claims['sub'] ?? null),
+                'aud' => $clean($claims['aud'] ?? null),
+                'error_description' => $clean($description),
+            ];
+            throw SdkError::create(
+                'authentication',
+                $clean(json_encode($details)),
+                'not_sent',
+                false,
+                null,
+                $reason,
+                $details,
+            );
+        };
+        if ($this->identity === null) {
+            $apiKey = getenv($environment['apiKey']);
+            $token = getenv($environment['token']);
+            if ($apiKey !== false && $apiKey !== '' && $token !== false && $token !== '') {
+                $fail(
+                    'ambiguous_credentials',
+                    'Set only one of ' . $environment['apiKey'] . ' and ' . $environment['token'],
+                );
+            }
+            if ($apiKey !== false && $apiKey !== '') {
+                $this->key = null;
+                return new Credential($apiKey);
+            }
+            if ($token !== false && $token !== '') {
+                $this->key = null;
+                return new Credential($token);
+            }
+            if ($id === null || $id === '') {
+                $fail(
+                    'no_credentials',
+                    'Set ' .
+                        $environment['apiKey'] .
+                        ', ' .
+                        $environment['token'] .
+                        ', or ' .
+                        $prefix .
+                        '_WORKLOAD_IDENTITY_ID with ' .
+                        $prefix .
+                        '_OIDC_TOKEN or ' .
+                        $prefix .
+                        '_OIDC_TOKEN_FILE',
+                );
+            }
+        }
+        if (!is_string($id) || $id === '' || preg_match('/[\r\n]/', $id)) {
+            $fail('source_unavailable', 'A workload identity ID is required');
+        }
+        $base = $context['baseUrl'] ?? $this->baseUrl;
+        if (!$base) {
+            $fail('source_unavailable', 'Pass this provider to a client with a base URL');
+        }
+        $parts = parse_url($base);
+        $scheme = strtolower($parts['scheme'] ?? '');
+        $host = strtolower($parts['host'] ?? '');
+        if (
+            $scheme !== 'https' &&
+            !($scheme === 'http' && in_array($host, ['localhost', '127.0.0.1', '[::1]'], true))
+        ) {
+            $fail('exchange_unavailable', 'Token exchange requires HTTPS or loopback');
+        }
+        $port = $parts['port'] ?? null;
+        $origin =
+            $scheme .
+            '://' .
+            $host .
+            ($port !== null &&
+            !(($scheme === 'http' && $port === 80) || ($scheme === 'https' && $port === 443))
+                ? ':' . $port
+                : '');
+        $audience = $this->identity['audience'] ?? ($read('OIDC_AUDIENCE') ?? $origin);
+        $scope = $this->identity['scope'] ?? $read('OIDC_SCOPE');
+        $file = $read('OIDC_TOKEN_FILE');
+        if ($source === 'auto') {
+            $source = $read('OIDC_TOKEN') ? 'token' : ($file ? 'token_file' : 'none');
+        }
+        if (!in_array($source, ['token', 'token_file'], true)) {
+            $fail('source_unavailable', 'Supported sources: token, token_file');
+        }
+        $sourceKey = $source === 'token' ? hash('sha256', $read('OIDC_TOKEN') ?? '') : $file;
+        $key = hash(
+            'sha256',
+            json_encode([
+                $origin,
+                $this->config['workloadIdentity']['tokenPath'],
+                $this->config['workloadIdentity']['credentialParameter'],
+                $prefix,
+                $id,
+                $audience,
+                $scope ?? '',
+                $source,
+                $sourceKey,
+            ]),
+        );
+        $this->key = $key;
+        $this->cache = $context['credentialCache'] ?? null;
+        $cached = self::$tokens[$key] ?? $this->cache?->get($key);
+        if (
+            !is_array($cached) ||
+            !is_string($cached['value'] ?? null) ||
+            !is_numeric($cached['expiresAt'] ?? null) ||
+            !is_numeric($cached['lifetime'] ?? null)
+        ) {
+            $cached = null;
+        }
+        $credential = function (array $entry): Credential {
+            $this->lastValue = $entry['value'];
+            return new Credential(
+                $entry['value'],
+                new \DateTimeImmutable('@' . (int) $entry['expiresAt']),
+            );
+        };
+        $remaining = $cached ? $cached['expiresAt'] - microtime(true) : 0;
+        if ($cached && $remaining > 30 && $remaining >= max(60, $cached['lifetime'] * 0.2)) {
+            self::$tokens[$key] = $cached;
+            return $credential($cached);
+        }
+        // Fiber schedulers resume waiters after the owner completes its synchronous transport.
+        if (isset(self::$active[$key])) {
+            $flight = self::$active[$key];
+            if (\Fiber::getCurrent() === null) {
+                $fail('exchange_unavailable', 'Reentrant token exchange without a Fiber scheduler');
+            }
+            while (!$flight->done) {
+                \Fiber::suspend();
+            }
+            if ($flight->error !== null) {
+                throw $flight->error;
+            }
+            return $credential($flight->result);
+        }
+        $flight = (object) ['done' => false, 'result' => null, 'error' => null];
+        self::$active[$key] = $flight;
+        try {
+            if ($source === 'token') {
+                $subject = $read('OIDC_TOKEN') ?? '';
+            } else {
+                $value = $file ? @file_get_contents($file) : '';
+                if ($value === false) {
+                    $fail('subject_token_request_failed', 'Cannot read the configured token file');
+                }
+                $subject = trim($value);
+            }
+            if ($subject === '') {
+                $fail('source_unavailable', 'The selected token source is empty');
+            }
+            $jwt = explode('.', $subject);
+            if (
+                count($jwt) !== 3 ||
+                count(
+                    array_filter($jwt, static fn($p) => preg_match('/^[A-Za-z0-9_-]+$/D', $p)),
+                ) !== 3
+            ) {
+                $fail('audience_mismatch', 'Subject token must be a JWT with aud and exp');
+            }
+            $payload = base64_decode(strtr($jwt[1], '-_', '+/'), true);
+            $claims = $payload === false ? null : json_decode($payload, true);
+            if (!is_array($claims)) {
+                $claims = [];
+                $fail('audience_mismatch', 'Subject token must be a JWT with aud and exp');
+            }
+            $aud = $claims['aud'] ?? null;
+            $exp = $claims['exp'] ?? null;
+            if (
+                !($aud === $audience || (is_array($aud) && in_array($audience, $aud, true))) ||
+                !(is_int($exp) || is_float($exp)) ||
+                !is_finite((float) $exp) ||
+                $exp <= microtime(true)
+            ) {
+                $fail('audience_mismatch', 'Subject token audience differs or expiry has passed');
+            }
+            $form = [
+                'grant_type' => 'urn:ietf:params:oauth:grant-type:token-exchange',
+                'subject_token' => $subject,
+                'subject_token_type' => 'urn:ietf:params:oauth:token-type:jwt',
+                'requested_token_type' => 'urn:ietf:params:oauth:token-type:access_token',
+                $this->config['workloadIdentity']['credentialParameter'] => $id,
+            ];
+            if ($scope !== null) {
+                $form['scope'] = $scope;
+            }
+            $deadline = $context['deadline'] ?? hrtime(true) / 1e6 + 30000;
+            for ($attempt = 0; $attempt < 3; $attempt++) {
+                $remaining = $deadline - hrtime(true) / 1e6;
+                if ($remaining <= 0 || ($context['cancellation'] ?? null)?->isCancelled()) {
+                    $fail('exchange_unavailable', 'Exchange deadline exceeded or cancelled');
+                }
+                $request = [
+                    'url' => $origin . $this->config['workloadIdentity']['tokenPath'],
+                    'method' => 'POST',
+                    'headers' => [
+                        'content-type' => 'application/x-www-form-urlencoded',
+                        'accept' => 'application/json',
+                    ],
+                    'body' => http_build_query($form, '', '&', PHP_QUERY_RFC3986),
+                    'timeoutMs' => max(1, (int) ceil($remaining)),
+                    'cancellation' => $context['cancellation'] ?? null,
+                ];
+                try {
+                    $response = isset($context['transport'])
+                        ? $context['transport']($request)
+                        : self::send($request);
+                } catch (\Throwable) {
+                    $fail('exchange_unavailable', 'Token exchange transport failed');
+                }
+                if ($response['failureCode'] ?? null) {
+                    $fail('exchange_unavailable', 'Token exchange transport failed');
+                }
+                $status = $response['status'];
+                $body = json_decode($response['body'] ?? '', true);
+                $responseToken =
+                    is_array($body) && is_string($body['access_token'] ?? null)
+                        ? $body['access_token']
+                        : '';
+                $description =
+                    is_array($body) && is_string($body['error_description'] ?? null)
+                        ? $body['error_description']
+                        : '';
+                if ($status === 429 || $status >= 500) {
+                    $headers = array_change_key_case($response['headers'] ?? [], CASE_LOWER);
+                    $instruction = $headers['retry-after'] ?? null;
+                    $wait =
+                        $instruction !== null
+                            ? (is_numeric($instruction)
+                                ? (float) $instruction * 1000
+                                : ((strtotime($instruction) ?: 0) - microtime(true)) * 1000)
+                            : 100 * 2 ** $attempt;
+                    $wait = max(0, $wait);
+                    if ($attempt === 2 || hrtime(true) / 1e6 + $wait >= $deadline) {
+                        $fail('exchange_unavailable', $description);
+                    }
+                    $until = hrtime(true) / 1e6 + $wait;
+                    do {
+                        if (($context['cancellation'] ?? null)?->isCancelled()) {
+                            $fail('exchange_unavailable', 'Exchange cancelled');
+                        }
+                        $left = $until - hrtime(true) / 1e6;
+                        if ($left > 0) {
+                            usleep((int) min(50000, ceil($left * 1000)));
+                        }
+                    } while ($left > 0);
+                    continue;
+                }
+                if ($status !== 200) {
+                    $fail('exchange_rejected', $description);
+                }
+                if (
+                    !is_array($body) ||
+                    !is_string($body['access_token'] ?? null) ||
+                    $body['access_token'] === '' ||
+                    preg_match('/[\r\n]/', $body['access_token']) ||
+                    ($body['token_type'] ?? null) !== 'Bearer' ||
+                    ($body['issued_token_type'] ?? null) !==
+                        'urn:ietf:params:oauth:token-type:access_token' ||
+                    !(
+                        is_int($body['expires_in'] ?? null) || is_float($body['expires_in'] ?? null)
+                    ) ||
+                    !is_finite((float) $body['expires_in']) ||
+                    $body['expires_in'] <= 30 ||
+                    (isset($body['scope']) && !is_string($body['scope']))
+                ) {
+                    $fail('exchange_rejected', 'Invalid token exchange response');
+                }
+                $lifetime = min($body['expires_in'], $exp - microtime(true));
+                if ($lifetime <= 30) {
+                    $fail('exchange_rejected', 'Exchanged token has at most 30 seconds remaining');
+                }
+                $entry = [
+                    'value' => $body['access_token'],
+                    'expiresAt' => microtime(true) + $lifetime,
+                    'lifetime' => $lifetime,
+                ];
+                self::$tokens[$key] = $entry;
+                $this->cache?->set($key, $entry, max(1, (int) floor($lifetime - 30)));
+                $flight->result = $entry;
+                return $credential($entry);
+            }
+            $fail('exchange_unavailable');
+        } catch (\Throwable $caught) {
+            $error =
+                $caught instanceof SdkError
+                    ? $caught
+                    : SdkError::create(
+                        'authentication',
+                        'Token exchange failed',
+                        'not_sent',
+                        false,
+                        null,
+                        'exchange_unavailable',
+                    );
+            if (
+                $cached &&
+                $cached['expiresAt'] - microtime(true) > 30 &&
+                $error->errorCode === 'exchange_unavailable'
+            ) {
+                $flight->result = $cached;
+                return $credential($cached);
+            }
+            $flight->error = $error;
+            throw $error;
+        } finally {
+            $flight->done = true;
+            unset(self::$active[$key]);
+        }
+    }
+    private static function send(#[\SensitiveParameter] array $request): array
+    {
+        $ch = curl_init();
+        $headers = [];
+        try {
+            curl_setopt_array($ch, [
+                CURLOPT_URL => $request['url'],
+                CURLOPT_POST => true,
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_FOLLOWLOCATION => false,
+                CURLOPT_TIMEOUT_MS => $request['timeoutMs'],
+                CURLOPT_POSTFIELDS => $request['body'],
+                CURLOPT_HTTPHEADER => [
+                    'Content-Type: application/x-www-form-urlencoded',
+                    'Accept: application/json',
+                ],
+                CURLOPT_NOPROGRESS => false,
+                CURLOPT_XFERINFOFUNCTION => static fn() => $request['cancellation']?->isCancelled()
+                    ? 1
+                    : 0,
+                CURLOPT_HEADERFUNCTION => static function ($ch, string $line) use (&$headers): int {
+                    if (str_starts_with($line, 'HTTP/')) {
+                        $headers = [];
+                    } elseif (str_contains($line, ':')) {
+                        [$name, $value] = explode(':', $line, 2);
+                        $headers[strtolower(trim($name))] = trim($value);
+                    }
+                    return strlen($line);
+                },
+            ]);
+            $body = curl_exec($ch);
+            return [
+                'status' => curl_getinfo($ch, CURLINFO_RESPONSE_CODE),
+                'headers' => $headers,
+                'body' => $body === false ? '' : $body,
+                'failureCode' => $body === false ? curl_errno($ch) : null,
+            ];
+        } finally {
+            curl_close($ch);
+        }
+    }
+}
+
 final class RequestOptions
 {
     public function __construct(
@@ -212,6 +652,8 @@ final class ClientOptions
         public readonly array $redactFields = [],
         public readonly ?string $authMode = null,
         public readonly array $credentials = [],
+        public readonly bool $ambientCredentials = true,
+        public readonly ?object $credentialCache = null,
     ) {
         /* AUTH_SHORTCUT_CLIENT_PARAMETERS */
     }
@@ -3295,6 +3737,64 @@ class Runtime
                 throw new \InvalidArgumentException('Invalid defaultBaseUrl in compiled runtime');
             }
         }
+        if (array_key_exists('defaultCredentials', $contract)) {
+            $d = $contract['defaultCredentials'];
+            if (
+                !is_array($d) ||
+                !is_string($d['mode'] ?? null) ||
+                !is_string($d['scheme'] ?? null) ||
+                !is_array($d['environment'] ?? null) ||
+                !is_array($d['workloadIdentity'] ?? null)
+            ) {
+                throw new \InvalidArgumentException('Invalid defaultCredentials declaration');
+            }
+            $schemes = $contract['authentication'][$d['mode']]['schemes'] ?? [];
+            $env = $d['environment'];
+            $identity = $d['workloadIdentity'];
+            if (
+                count($schemes) !== 1 ||
+                ($schemes[0]['name'] ?? null) !== $d['scheme'] ||
+                ($schemes[0]['type'] ?? null) !== 'bearer' ||
+                array_diff(array_keys($d), ['mode', 'scheme', 'environment', 'workloadIdentity']) ||
+                array_diff(array_keys($env), ['apiKey', 'token']) ||
+                array_diff(array_keys($identity), ['tokenPath', 'credentialParameter', 'envPrefix'])
+            ) {
+                throw new \InvalidArgumentException('Invalid defaultCredentials mode or fields');
+            }
+            foreach (
+                [$env['apiKey'] ?? null, $env['token'] ?? null, $identity['envPrefix'] ?? null]
+                as $name
+            ) {
+                if (!is_string($name) || !preg_match('/^[A-Z_][A-Z0-9_]*$/D', $name)) {
+                    throw new \InvalidArgumentException('Invalid defaultCredentials environment');
+                }
+            }
+            if (
+                $env['apiKey'] === $env['token'] ||
+                !is_string($identity['tokenPath'] ?? null) ||
+                !preg_match('~^/(?!/)[A-Za-z0-9/_-]+$~D', $identity['tokenPath']) ||
+                !is_string($identity['credentialParameter'] ?? null) ||
+                !preg_match('/^[a-z][a-z0-9_]*$/D', $identity['credentialParameter']) ||
+                in_array(
+                    $identity['credentialParameter'],
+                    [
+                        'grant_type',
+                        'subject_token',
+                        'subject_token_type',
+                        'requested_token_type',
+                        'scope',
+                        'client_id',
+                        'client_secret',
+                        'audience',
+                        'resource',
+                        'actor_token',
+                    ],
+                    true,
+                )
+            ) {
+                throw new \InvalidArgumentException('Invalid defaultCredentials exchange settings');
+            }
+        }
         foreach ($contract['authShortcuts'] ?? [] as $name => $shortcut) {
             $schemes = $contract['authentication'][$shortcut['mode'] ?? '']['schemes'] ?? [];
             if (
@@ -3923,25 +4423,49 @@ class Runtime
             $set($k, $v);
         }
         $suppliedHeaders = $headers;
+        $ambient = $this->contract['defaultCredentials'] ?? null;
+        $ambientProvider =
+            $ambient && $this->options->ambientCredentials
+                ? new AmbientCredentialProvider($ambient, null, $this->baseUrl)
+                : null;
+        $credentialContext = [
+            'baseUrl' => $this->baseUrl,
+            'deadline' => $deadline,
+            'transport' => $this->options->transport,
+            'credentialCache' => $this->options->credentialCache,
+            'cancellation' => $o->cancellation,
+        ];
         $providers = [];
         $resolveCredential = function (
             #[\SensitiveParameter] $source,
             string $message,
             bool $rejectNewlines = true,
-        ) use (&$providers): string {
+        ) use (&$providers, $credentialContext): string {
             $value = $source;
             if ($source instanceof CredentialProvider || $source instanceof \Closure) {
                 try {
                     $credential =
                         $source instanceof CredentialProvider
-                            ? $source->getCredential()
+                            ? ($source instanceof AmbientCredentialProvider
+                                ? $source->resolve($credentialContext)
+                                : $source->getCredential())
                             : $source();
                     $value = $credential instanceof Credential ? $credential->value : $credential;
-                } catch (\Throwable) {
+                } catch (\Throwable $error) {
+                    if (
+                        $source instanceof AmbientCredentialProvider &&
+                        $error instanceof SdkError
+                    ) {
+                        throw $error;
+                    }
                     // Do not retain provider exceptions, which may include secret values.
                     throw SdkError::create('authentication', 'Credential provider failed');
                 }
-                if ($source instanceof CredentialProvider && is_callable([$source, 'invalidate'])) {
+                if (
+                    $source instanceof CredentialProvider &&
+                    is_callable([$source, 'invalidate']) &&
+                    (!($source instanceof AmbientCredentialProvider) || $source->canInvalidate())
+                ) {
                     $providers[spl_object_id($source)] = $source;
                 }
             }
@@ -3962,6 +4486,8 @@ class Runtime
             $suppliedHeaders,
             $resolveCredential,
             &$providers,
+            $ambient,
+            $ambientProvider,
         ): void {
             $providers = [];
             if (isset($this->contract['authentication'])) {
@@ -3993,7 +4519,9 @@ class Runtime
                 };
                 $clientShortcut = $shortcutAuth($this->options);
                 $requestShortcut = $shortcutAuth($o);
-                $defaultMode = $this->options->authMode ?? ($clientShortcut['mode'] ?? null);
+                $defaultMode =
+                    $this->options->authMode ??
+                    ($clientShortcut['mode'] ?? ($ambientProvider ? $ambient['mode'] : null));
                 $modeName =
                     $requestShortcut['mode'] ??
                     ($o->authMode ?? ($permitted ? $defaultMode : null));
@@ -4032,9 +4560,15 @@ class Runtime
                         ($o->credentials ??
                             (($clientShortcut['mode'] ?? null) === $modeName
                                 ? $clientShortcut['credentials']
-                                : $this->options->credentials[$modeName] ?? []));
+                                : $this->options->credentials[$modeName] ?? null));
                     foreach ($selected['schemes'] as $scheme) {
-                        $source = $credentials[$scheme['name']] ?? null;
+                        $source =
+                            $credentials[$scheme['name']] ??
+                            ($credentials === null &&
+                            $modeName === ($ambient['mode'] ?? null) &&
+                            $scheme['name'] === $ambient['scheme']
+                                ? $ambientProvider
+                                : null);
                         $credential = $resolveCredential(
                             $source,
                             'Missing or invalid credential ' .

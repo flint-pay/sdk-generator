@@ -30,6 +30,15 @@ export function reservePublicSymbols(
       'ParsedNumber',
       'Cancellation',
       'CredentialProvider',
+      ...(c.config.auth && 'defaultCredentials' in c.config.auth && c.config.auth.defaultCredentials
+        ? [
+            'AmbientCredentialProvider',
+            'defaultCredentials',
+            'workloadIdentityCredentials',
+            'WorkloadIdentityOptions',
+            'WorkloadIdentitySource',
+          ]
+        : []),
       ...(targets.includes('php') ? ['Credential'] : []),
       'ClientOptions',
       'RuntimeClientOptions',
