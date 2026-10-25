@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://unpkg.com/@public-sdk/generator@0.1.0/sdk-config.schema.json",
   "title": "SDK generator configuration",
-  "description": "SDK configuration and profile fragments. Run diagnose to validate resolved defaults, profiles and API-dependent capabilities.",
+  "description": "SDK configuration and profile fragments: validates shape and value types. Run diagnose for completeness after profile merging, resolved defaults and API-dependent capabilities.",
   "type": "object",
   "properties": {
     "$schema": {
@@ -23,8 +23,7 @@
       "items": {
         "enum": ["node", "php"]
       },
-      "uniqueItems": true,
-      "minItems": 1
+      "uniqueItems": true
     },
     "requests": {
       "$ref": "#/$defs/request"
@@ -90,8 +89,7 @@
               "type": "string"
             }
           },
-          "additionalProperties": false,
-          "required": ["type", "url"]
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -147,7 +145,7 @@
       "type": "object"
     },
     "auth": {
-      "oneOf": [
+      "anyOf": [
         {
           "type": "object",
           "properties": {
@@ -155,8 +153,7 @@
               "type": "string"
             }
           },
-          "additionalProperties": false,
-          "required": ["scheme"]
+          "additionalProperties": false
         },
         {
           "type": "object",
@@ -170,8 +167,7 @@
                     "type": "array",
                     "items": {
                       "type": "string"
-                    },
-                    "minItems": 1
+                    }
                   },
                   "operations": {
                     "type": "array",
@@ -180,8 +176,7 @@
                     }
                   }
                 },
-                "additionalProperties": false,
-                "required": ["schemes"]
+                "additionalProperties": false
               }
             },
             "shortcuts": {
@@ -196,8 +191,7 @@
                     "type": "string"
                   }
                 },
-                "additionalProperties": false,
-                "required": ["mode", "scheme"]
+                "additionalProperties": false
               }
             },
             "defaultCredentials": {
@@ -219,8 +213,7 @@
                       "type": "string"
                     }
                   },
-                  "additionalProperties": false,
-                  "required": ["apiKey", "token"]
+                  "additionalProperties": false
                 },
                 "workloadIdentity": {
                   "type": "object",
@@ -235,16 +228,13 @@
                       "type": "string"
                     }
                   },
-                  "additionalProperties": false,
-                  "required": ["tokenPath", "credentialParameter", "envPrefix"]
+                  "additionalProperties": false
                 }
               },
-              "additionalProperties": false,
-              "required": ["mode", "scheme", "environment", "workloadIdentity"]
+              "additionalProperties": false
             }
           },
-          "additionalProperties": false,
-          "required": ["modes"]
+          "additionalProperties": false
         }
       ]
     },
@@ -283,8 +273,7 @@
           "type": "string"
         }
       },
-      "additionalProperties": false,
-      "required": ["algorithm", "header", "separator", "toleranceSeconds", "events", "typeField"]
+      "additionalProperties": false
     },
     "money": {
       "type": "object",
@@ -298,8 +287,7 @@
           }
         }
       },
-      "additionalProperties": false,
-      "required": ["currencies"]
+      "additionalProperties": false
     },
     "apiVersion": {
       "type": "object",
@@ -311,8 +299,7 @@
           "type": "string"
         }
       },
-      "additionalProperties": false,
-      "required": ["header", "value"]
+      "additionalProperties": false
     },
     "license": {
       "type": "string"
@@ -336,8 +323,7 @@
               }
             }
           },
-          "additionalProperties": false,
-          "required": ["path", "retryValues"]
+          "additionalProperties": false
         },
         "messagePath": {
           "type": "string"
@@ -809,8 +795,7 @@
               "minimum": 1
             }
           },
-          "additionalProperties": false,
-          "required": ["state", "success", "failure", "intervalMs"]
+          "additionalProperties": false
         },
         "conditional": {
           "type": "object",
@@ -819,8 +804,7 @@
               "type": "string"
             }
           },
-          "additionalProperties": false,
-          "required": ["header"]
+          "additionalProperties": false
         },
         "example": {
           "type": "object"

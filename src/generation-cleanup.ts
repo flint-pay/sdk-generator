@@ -1,6 +1,6 @@
 import {
   existsSync,
-  readFileSync,
+  readSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -14,10 +14,50 @@ import {
 import { randomUUID } from 'node:crypto';
 import { resolve, dirname, basename, join } from 'node:path';
 
+export interface GenerationOwner {
+  pid: number;
+  token: string;
+}
+const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+
+export function isGenerationOwner(value: unknown): value is GenerationOwner {
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    'pid' in value &&
+    typeof value.pid === 'number' &&
+    Number.isSafeInteger(value.pid) &&
+    value.pid > 0 &&
+    'token' in value &&
+    typeof value.token === 'string' &&
+    uuid.test(value.token)
+  );
+}
+function readOwner(fd: number): unknown {
+  const size = fstatSync(fd).size;
+  if (size > 65536) return undefined;
+  const contents = Buffer.alloc(size);
+  let offset = 0;
+  while (offset < size) {
+    const bytes = readSync(fd, contents, offset, size - offset, offset);
+    if (!bytes) return undefined;
+    offset += bytes;
+  }
+  try {
+    return JSON.parse(contents.toString('utf8'));
+  } catch {
+    return undefined;
+  }
+}
+function matchesOwner(value: unknown, expected: GenerationOwner): value is GenerationOwner {
+  return isGenerationOwner(value) && isGenerationOwner(expected) && value.token === expected.token;
+}
+
 /** Publish a complete owner record atomically; interrupts never leave an empty lock. */
-export function acquireGenerationLock(path: string, owner: object): number {
-  const temporary = path + '.acquire-' + process.pid + '-' + randomUUID();
-  const fd = openSync(temporary, 'wx', 0o600);
+export function acquireGenerationLock<T extends GenerationOwner>(path: string, owner: T): number {
+  if (!isGenerationOwner(owner)) throw new Error('generation lock requires a transaction token');
+  const temporary = path + '.acquire-' + owner.pid + '-' + owner.token + '-' + randomUUID();
+  const fd = openSync(temporary, 'wx+', 0o600);
   try {
     writeFileSync(fd, JSON.stringify(owner));
     linkSync(temporary, path);
@@ -30,19 +70,22 @@ export function acquireGenerationLock(path: string, owner: object): number {
   }
 }
 
-/** Retire the published inode, then verify it before deleting it. */
-export function releaseGenerationLock(path: string, fd: number): void {
-  const retired = path + '.release-' + process.pid + '-' + randomUUID();
+/** Check transaction identity before retiring the pathname, then verify its inode. */
+export function releaseGenerationLock(path: string, fd: number, owner: GenerationOwner): void {
+  if (!matchesOwner(readOwner(fd), owner)) throw new Error('generation lock ownership changed');
+  const expected = fstatSync(fd);
+  const retired = path + '.release-' + process.pid + '-' + owner.token + '-' + randomUUID();
   try {
+    const published = statSync(path);
+    if (expected.dev !== published.dev || expected.ino !== published.ino)
+      throw new Error('generation lock ownership changed; preserved the replacement lock');
     renameSync(path, retired);
   } catch (error) {
     if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return;
     throw error;
   }
-  const expected = fstatSync(fd),
-    actual = statSync(retired);
+  const actual = statSync(retired);
   if (expected.dev !== actual.dev || expected.ino !== actual.ino) {
-    // Preserve a replacement owner. Never overwrite a lock acquired since the rename.
     linkSync(retired, path);
     rmSync(retired);
     throw new Error('generation lock ownership changed; preserved the replacement lock');
@@ -55,23 +98,25 @@ export class GenerationRecoveryBusy extends Error {}
 /** All stale recovery and supervisor filesystem cleanup share this lease. */
 export function withGenerationRecovery<T>(
   output: string,
-  action: (cleanup: (pid: number) => void) => T,
+  action: (cleanup: (owner: GenerationOwner) => void) => T,
+  owner: GenerationOwner = { pid: process.pid, token: randomUUID() },
 ): T {
   output = resolve(output);
   const recovery = output + '.sdk-generator.lock.recovery';
+  const lease = { pid: process.pid, token: owner.token };
   let fd: number;
   try {
-    fd = acquireGenerationLock(recovery, { pid: process.pid });
+    fd = acquireGenerationLock(recovery, lease);
   } catch (error) {
     if (error && typeof error === 'object' && 'code' in error && error.code === 'EEXIST')
       throw new GenerationRecoveryBusy('another process holds the generation recovery lease');
     throw error;
   }
   try {
-    return action((pid) => cleanupUnderLease(output, pid));
+    return action((expected) => cleanupOwnedGeneration(output, expected));
   } finally {
     try {
-      releaseGenerationLock(recovery, fd);
+      releaseGenerationLock(recovery, fd, lease);
     } finally {
       closeSync(fd);
     }
@@ -79,35 +124,30 @@ export function withGenerationRecovery<T>(
 }
 
 /** Called only after the supervised generation worker has exited. */
-export function cleanupInterruptedGeneration(output: string, pid: number): void {
+export function cleanupInterruptedGeneration(output: string, owner: GenerationOwner): void {
+  if (!isGenerationOwner(owner)) return;
   output = resolve(output);
   const lock = output + '.sdk-generator.lock';
   const parent = dirname(output);
   if (!existsSync(parent)) return;
+  // An interrupted publication can leave an incomplete record. Its filename
+  // carries the supervisor's token so PID reuse cannot claim another worker's file.
   for (const path of readdirSync(parent))
     if (
-      [basename(lock), basename(lock) + '.recovery'].some(
-        (prefix) =>
-          path.startsWith(prefix + '.acquire-' + pid + '-') &&
-          /^[a-f0-9-]{36}$/.test(path.slice((prefix + '.acquire-' + pid + '-').length)),
+      [basename(lock), basename(lock) + '.recovery'].some((prefix) =>
+        ['acquire', 'release'].some((kind) => {
+          const start = prefix + '.' + kind + '-' + owner.pid + '-' + owner.token + '-';
+          return path.startsWith(start) && uuid.test(path.slice(start.length));
+        }),
       )
     )
       rmSync(join(parent, path), { force: true });
   const recovery = lock + '.recovery';
-  // Only this supervisor can retire its dead child's lease. Recoverers never
-  // remove another process's lease, including one held by this supervisor.
   let recoveryFd: number | undefined;
   try {
     recoveryFd = openSync(recovery, 'r');
-    let lease: unknown;
-    try {
-      lease = JSON.parse(readFileSync(recoveryFd, 'utf8'));
-    } catch {
-      // An unknown lease owner requires manual inspection.
-      return;
-    }
-    if (lease && typeof lease === 'object' && 'pid' in lease && lease.pid === pid)
-      releaseGenerationLock(recovery, recoveryFd);
+    const lease = readOwner(recoveryFd);
+    if (matchesOwner(lease, owner)) releaseGenerationLock(recovery, recoveryFd, owner);
   } catch (error) {
     if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'ENOENT')
       throw error;
@@ -115,14 +155,17 @@ export function cleanupInterruptedGeneration(output: string, pid: number): void 
     if (recoveryFd !== undefined) closeSync(recoveryFd);
   }
   try {
-    withGenerationRecovery(output, (cleanup) => cleanup(pid));
+    withGenerationRecovery(output, (cleanup) => cleanup(owner), owner);
   } catch (error) {
     // A concurrent recovery now owns cleanup of the dead worker's transaction.
     if (!(error instanceof GenerationRecoveryBusy)) throw error;
   }
 }
 
-function cleanupUnderLease(output: string, pid: number): void {
+/** Caller owns the active transaction or holds the shared recovery lease. */
+export function cleanupOwnedGeneration(output: string, expected: GenerationOwner): void {
+  if (!isGenerationOwner(expected)) return;
+  output = resolve(output);
   const lock = output + '.sdk-generator.lock';
   let fd: number;
   try {
@@ -132,19 +175,14 @@ function cleanupUnderLease(output: string, pid: number): void {
     throw error;
   }
   try {
-    let owner: unknown;
-    try {
-      owner = JSON.parse(readFileSync(fd, 'utf8'));
-    } catch {
-      return;
-    }
-    if (!owner || typeof owner !== 'object' || !('pid' in owner) || owner.pid !== pid) return;
+    const owner = readOwner(fd);
+    if (!matchesOwner(owner, expected)) return;
     const sibling = (key: 'stage' | 'backup'): string | undefined => {
       const value: unknown = Reflect.get(owner, key);
       const prefix = output + '.' + key + '-';
       return typeof value === 'string' &&
         value.startsWith(prefix) &&
-        /^[a-f0-9-]{36}$/.test(value.slice(prefix.length))
+        uuid.test(value.slice(prefix.length))
         ? value
         : undefined;
     };
@@ -155,7 +193,7 @@ function cleanupUnderLease(output: string, pid: number): void {
       else rmSync(backup, { recursive: true, force: true });
     }
     if (stage) rmSync(stage, { recursive: true, force: true });
-    releaseGenerationLock(lock, fd);
+    releaseGenerationLock(lock, fd, expected);
   } finally {
     closeSync(fd);
   }

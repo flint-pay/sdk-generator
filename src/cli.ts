@@ -26,6 +26,7 @@ import { initialConfig } from './initial-config.js';
 import { readFileSync, writeFileSync, existsSync, lstatSync } from 'node:fs';
 import { resolve, relative } from 'node:path';
 import { fork } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { cleanupInterruptedGeneration } from './generation-cleanup.js';
 const args = process.argv.slice(2);
 // Select the error format before parsing, including unknown commands/flags;
@@ -346,8 +347,10 @@ try {
     } else if (command === 'generate' && !process.send) {
       // A responsive supervisor can stop synchronous compilation/rendering and
       // recover its transaction even while the worker's JavaScript is busy.
+      const token = randomUUID();
       const child = fork(new URL('./cli.js', import.meta.url), process.argv.slice(2), {
         stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
+        env: { ...process.env, SDK_GENERATOR_TRANSACTION_TOKEN: token },
       });
       let interrupted: NodeJS.Signals | undefined;
       const stop = (signal: NodeJS.Signals) => {
@@ -363,7 +366,8 @@ try {
           child.once('error', reject);
           child.once('exit', (code) => resolve(code ?? 1));
         });
-        if (interrupted && child.pid) cleanupInterruptedGeneration(positional[2]!, child.pid);
+        if (interrupted && child.pid)
+          cleanupInterruptedGeneration(positional[2]!, { pid: child.pid, token });
         process.exitCode =
           interrupted === 'SIGINT' ? 130 : interrupted === 'SIGTERM' ? 143 : status;
       } finally {
@@ -382,6 +386,7 @@ try {
         },
         output,
         (warning) => pendingWarnings.push(warning),
+        process.env.SDK_GENERATOR_TRANSACTION_TOKEN,
       );
       console.log(
         json

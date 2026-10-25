@@ -2,7 +2,8 @@ import { substituteTemplate } from './template.js';
 import {
   withGenerationRecovery,
   GenerationRecoveryBusy,
-  releaseGenerationLock,
+  cleanupOwnedGeneration,
+  isGenerationOwner,
   acquireGenerationLock,
 } from './generation-cleanup.js';
 import { removesPublishedExamples } from './example-protection.js';
@@ -2481,8 +2482,9 @@ export function generateFromInputs(
   load: () => Contract,
   output: string,
   onWarning?: (warning: { code: string; warning: string }) => void,
+  token?: string,
 ) {
-  return generationTransaction(load, output, onWarning);
+  return generationTransaction(load, output, onWarning, token);
 }
 
 export function modifiedFileDiffs(plan: ReturnType<typeof preview>, output: string): string[] {
@@ -2503,6 +2505,7 @@ function generationTransaction(
   output: string,
   onWarning: (warning: { code: string; warning: string }) => void = (warning) =>
     console.error(JSON.stringify(warning)),
+  token: string = randomUUID(),
 ) {
   output = resolve(output);
   if (output === dirname(output))
@@ -2511,53 +2514,51 @@ function generationTransaction(
   const lock = output + '.sdk-generator.lock';
   const stage = output + '.stage-' + randomUUID();
   const backup = output + '.backup-' + randomUUID();
+  const owner = { pid: process.pid, token };
   let fd: number;
   const openLock = () =>
-    acquireGenerationLock(lock, { pid: process.pid, generator: version, stage, backup });
+    acquireGenerationLock(lock, { ...owner, generator: version, stage, backup });
   try {
     fd = openLock();
   } catch (error) {
     if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'EEXIST')
       throw error;
     try {
-      fd = withGenerationRecovery(output, (cleanup) => {
-        let owner: unknown;
-        try {
-          owner = JSON.parse(readFileSync(lock, 'utf8'));
-        } catch {
-          /* Unknown locks require manual inspection. */
-        }
-        if (
-          !owner ||
-          typeof owner !== 'object' ||
-          !('pid' in owner) ||
-          typeof owner.pid !== 'number' ||
-          !Number.isSafeInteger(owner.pid) ||
-          owner.pid <= 0
-        )
-          throw new Diagnostic(
-            lock,
-            'generation lock has no valid owner; inspect it and remove it only after checking no generation is running',
-          );
-        let alive = true;
-        try {
-          process.kill(owner.pid, 0);
-        } catch (probe) {
-          if (probe && typeof probe === 'object' && 'code' in probe && probe.code === 'ESRCH')
-            alive = false;
-        }
-        if (alive)
-          throw new Diagnostic(
-            lock,
-            `another generation is running (pid ${owner.pid}); wait for that process to finish`,
-          );
-        cleanup(owner.pid);
-        onWarning({
-          code: 'STALE_GENERATION_LOCK',
-          warning: `Recovered stale generation lock for dead pid ${owner.pid}: ${relative(process.cwd(), lock)}`,
-        });
-        return openLock();
-      });
+      fd = withGenerationRecovery(
+        output,
+        (cleanup) => {
+          let owner: unknown;
+          try {
+            owner = JSON.parse(readFileSync(lock, 'utf8'));
+          } catch {
+            /* Unknown locks require manual inspection. */
+          }
+          if (!isGenerationOwner(owner))
+            throw new Diagnostic(
+              lock,
+              'generation lock has no valid transaction owner/token; inspect it and remove it only after checking no generation is running',
+            );
+          let alive = true;
+          try {
+            process.kill(owner.pid, 0);
+          } catch (probe) {
+            if (probe && typeof probe === 'object' && 'code' in probe && probe.code === 'ESRCH')
+              alive = false;
+          }
+          if (alive)
+            throw new Diagnostic(
+              lock,
+              `another generation is running (pid ${owner.pid}); wait for that process to finish`,
+            );
+          cleanup(owner);
+          onWarning({
+            code: 'STALE_GENERATION_LOCK',
+            warning: `Recovered stale generation lock for dead pid ${owner.pid}: ${relative(process.cwd(), lock)}`,
+          });
+          return openLock();
+        },
+        owner,
+      );
     } catch (recoveryError) {
       if (recoveryError instanceof GenerationRecoveryBusy)
         throw new Diagnostic(
@@ -2568,10 +2569,8 @@ function generationTransaction(
     }
   }
   const cleanup = () => {
-    if (existsSync(backup) && !existsSync(output)) renameSync(backup, output);
-    rmSync(stage, { recursive: true, force: true });
     try {
-      releaseGenerationLock(lock, fd);
+      cleanupOwnedGeneration(output, owner);
     } finally {
       closeSync(fd);
     }

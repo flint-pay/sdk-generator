@@ -46,7 +46,7 @@ The npm package includes [sdk-config.schema.json](../sdk-config.schema.json), al
 }
 ```
 
-A source checkout can use `./sdk-config.schema.json`. Profiles may carry the same metadata. Run `diagnose` to check merged profiles, required fields and declarations against the API; an editor schema cannot establish wire support or validate header names against a separate specification.
+A source checkout can use `./sdk-config.schema.json`. Profiles may carry the same metadata. The schema checks shape and value types in each file, allowing nested declarations to be split across profiles. Run `diagnose` to check completeness after profile merging and declarations against the API; an editor schema cannot establish wire support or validate header names against a separate specification.
 
 ## Configuration fields
 

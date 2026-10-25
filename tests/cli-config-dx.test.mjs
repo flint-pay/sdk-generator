@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { spawnSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { randomUUID } from 'node:crypto';
 import {
   mkdtempSync,
   writeFileSync,
@@ -32,6 +33,7 @@ import {
   releaseGenerationLock,
 } from '../dist/generation-cleanup.js';
 const cli = resolve('dist/cli.js');
+const transactionOwner = (pid = process.pid) => ({ pid, token: randomUUID() });
 const retry = { maxAttempts: 3, statuses: [503], transport: true, baseDelayMs: 0 };
 const idempotency = {
   header: 'Idempotency-Key',
@@ -164,6 +166,63 @@ test('published schema and loader agree on profile metadata, request defaults an
     assert.equal(validate(f.config), accepted, name + ': ' + JSON.stringify(validate.errors));
     if (accepted) assert.doesNotThrow(() => f.load(), name);
     else assert.throws(() => f.load(), undefined, name);
+  }
+});
+test('schema accepts nested profile splits while loader enforces merged completeness', (t) => {
+  const validate = new Ajv({ strict: true }).compile(
+    JSON.parse(readFileSync('sdk-config.schema.json', 'utf8')),
+  );
+  const f = fixture(t);
+  const config = JSON.parse(readFileSync('tests/fixtures/payment-sdk.json', 'utf8'));
+  config.npm.repository = { type: 'git', url: 'https://example.invalid/sdk.git', directory: 'sdk' };
+  config.auth = {
+    modes: { merchant: { schemes: ['bearer'] } },
+    shortcuts: { token: { mode: 'merchant', scheme: 'bearer' } },
+  };
+  const leaves = [];
+  const visit = (value, path = []) => {
+    for (const [key, child] of Object.entries(value)) {
+      const next = [...path, key];
+      if (child && typeof child === 'object' && !Array.isArray(child)) visit(child, next);
+      else leaves.push([next, child]);
+    }
+  };
+  visit(config);
+  const set = (object, path, value) => {
+    for (const key of path.slice(0, -1)) object = object[key] ??= {};
+    object[path.at(-1)] = value;
+  };
+  for (const [path, value] of leaves) {
+    const base = structuredClone(config);
+    let parent = base;
+    for (const key of path.slice(0, -1)) parent = parent[key];
+    delete parent[path.at(-1)];
+    const split = { profiles: ['base.json'] };
+    set(split, path, value);
+    const root = { profiles: ['split.json'] };
+    for (const [name, part] of [
+      ['base', base],
+      ['split', split],
+      ['root', root],
+    ]) {
+      assert.equal(validate(part), true, path.join('/') + ': ' + JSON.stringify(validate.errors));
+      writeFileSync(join(f.dir, name + '.json'), JSON.stringify(part));
+    }
+    assert.doesNotThrow(
+      () => loadContract(resolve('tests/fixtures/payment-api.json'), join(f.dir, 'root.json')),
+      path.join('/'),
+    );
+  }
+  assert.ok(leaves.length > 50);
+  for (const incomplete of [
+    { auth: { shortcuts: {} } },
+    { webhook: { header: 'X-Signature' } },
+    { apiVersion: { value: '1' } },
+    { operations: { getPayment: { polling: { intervalMs: 1 } } } },
+  ]) {
+    assert.equal(validate(incomplete), true, JSON.stringify(validate.errors));
+    writeFileSync(f.sdk, JSON.stringify({ ...config, ...incomplete }));
+    assert.throws(() => loadContract(resolve('tests/fixtures/payment-api.json'), f.sdk));
   }
 });
 test('SDK defaults resolve independently in both targets and overrides preserve explicit contracts', async (t) => {
@@ -402,7 +461,7 @@ test('lock precedes planning, stale dead owners recover, private records stay co
   const f = fixture(t);
   const contract = f.load();
   const lock = f.output + '.sdk-generator.lock';
-  writeFileSync(lock, JSON.stringify({ pid: process.pid }));
+  writeFileSync(lock, JSON.stringify(transactionOwner()));
   const invalid = structuredClone(contract);
   invalid.operations[0].resource = 'class';
   assert.throws(() => generate(invalid, f.output), /another generation is running/);
@@ -415,7 +474,7 @@ test('lock precedes planning, stale dead owners recover, private records stay co
   mkdirSync(stage);
   mkdirSync(backup);
   writeFileSync(join(backup, 'custom.txt'), 'preserved');
-  writeFileSync(lock, JSON.stringify({ pid, stage, backup }));
+  writeFileSync(lock, JSON.stringify({ ...transactionOwner(pid), stage, backup }));
   generate(contract, f.output);
   assert.equal(readFileSync(join(f.output, 'custom.txt'), 'utf8'), 'preserved');
   assert.equal(existsSync(stage), false);
@@ -464,10 +523,11 @@ test(
 test('interruption cleanup never removes another worker’s lock or arbitrary sibling directories', (t) => {
   const f = fixture(t);
   const lock = f.output + '.sdk-generator.lock';
-  writeFileSync(lock, JSON.stringify({ pid: process.pid, stage: f.dir, backup: f.dir }));
-  cleanupInterruptedGeneration(f.output, process.pid + 1);
+  const owner = transactionOwner();
+  writeFileSync(lock, JSON.stringify({ ...owner, stage: f.dir, backup: f.dir }));
+  cleanupInterruptedGeneration(f.output, transactionOwner(process.pid + 1));
   assert.ok(existsSync(lock));
-  cleanupInterruptedGeneration(f.output, process.pid);
+  cleanupInterruptedGeneration(f.output, owner);
   assert.ok(existsSync(f.dir));
   assert.equal(existsSync(lock), false);
 });
@@ -487,7 +547,8 @@ test(
     const paused = join(f.dir, 'paused'),
       resume = join(f.dir, 'resume');
     mkdirSync(stage);
-    writeFileSync(lock, JSON.stringify({ pid, stage }));
+    const deadOwner = transactionOwner(pid);
+    writeFileSync(lock, JSON.stringify({ ...deadOwner, stage }));
     const cleanupModule = pathToFileURL(resolve('dist/generation-cleanup.js')).href;
     const supervisor = spawn(
       process.execPath,
@@ -497,7 +558,7 @@ test(
         `
     import fs from 'node:fs';
     import { syncBuiltinESMExports } from 'node:module';
-    const [output, stage, paused, resume, pid] = process.argv.slice(1);
+    const [output, stage, paused, resume, identity] = process.argv.slice(1);
     const remove = fs.rmSync;
     fs.rmSync = (path, options) => {
       if (path === stage) {
@@ -512,13 +573,13 @@ test(
     };
     syncBuiltinESMExports();
     const { cleanupInterruptedGeneration } = await import(${JSON.stringify(cleanupModule)});
-    cleanupInterruptedGeneration(output, Number(pid));
+    cleanupInterruptedGeneration(output, JSON.parse(identity));
   `,
         f.output,
         stage,
         paused,
         resume,
-        String(pid),
+        JSON.stringify(deadOwner),
       ],
       { stdio: ['ignore', 'pipe', 'pipe'] },
     );
@@ -546,17 +607,18 @@ test(
     assert.equal(existsSync(lock + '.recovery'), false);
     assert.equal(existsSync(stage), false);
     // A subsequent live owner survives late cleanup, and excludes a third generator.
-    const fd = acquireGenerationLock(lock, { pid: process.pid });
+    const liveOwner = transactionOwner();
+    const fd = acquireGenerationLock(lock, liveOwner);
     try {
       const owned = statSync(lock);
-      cleanupInterruptedGeneration(f.output, pid);
+      cleanupInterruptedGeneration(f.output, deadOwner);
       assert.equal(statSync(lock).ino, owned.ino);
       const third = f.run('generate', f.api, f.sdk, f.output, '--json');
       assert.equal(third.status, 1);
       assert.match(third.stderr, /another generation is running/);
       assert.equal(statSync(lock).ino, owned.ino);
     } finally {
-      releaseGenerationLock(lock, fd);
+      releaseGenerationLock(lock, fd, liveOwner);
       closeSync(fd);
     }
   },
@@ -568,35 +630,156 @@ test('supervisor respects a recovery lease and retires only its dead worker’s 
     encoding: 'utf8',
   });
   const pid = Number(dead.stdout.trim());
-  writeFileSync(lock, JSON.stringify({ pid }));
+  const deadOwner = transactionOwner(pid);
+  writeFileSync(lock, JSON.stringify(deadOwner));
   withGenerationRecovery(f.output, (cleanup) => {
     const lease = statSync(lock + '.recovery');
-    cleanupInterruptedGeneration(f.output, pid);
+    cleanupInterruptedGeneration(f.output, deadOwner);
     assert.ok(existsSync(lock));
     assert.equal(statSync(lock + '.recovery').ino, lease.ino);
-    cleanup(pid);
+    cleanup(deadOwner);
     assert.equal(existsSync(lock), false);
   });
-  writeFileSync(lock, JSON.stringify({ pid }));
-  writeFileSync(lock + '.recovery', JSON.stringify({ pid }));
-  cleanupInterruptedGeneration(f.output, pid);
+  writeFileSync(lock, JSON.stringify(deadOwner));
+  writeFileSync(lock + '.recovery', JSON.stringify(deadOwner));
+  cleanupInterruptedGeneration(f.output, deadOwner);
   assert.equal(existsSync(lock), false);
   assert.equal(existsSync(lock + '.recovery'), false);
+});
+test(
+  'same PID with a different transaction token preserves a live generation and its lease',
+  { timeout: 30000 },
+  async (t) => {
+    const f = fixture(t);
+    f.save();
+    const paused = join(f.dir, 'paused'),
+      resume = join(f.dir, 'resume');
+    const generator = pathToFileURL(resolve('dist/generate.js')).href;
+    const worker = spawn(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        `
+    import fs from 'node:fs';
+    import { syncBuiltinESMExports } from 'node:module';
+    const [api, config, output, paused, resume] = process.argv.slice(1);
+    const mkdir = fs.mkdirSync;
+    fs.mkdirSync = (path, options) => {
+      const result = mkdir(path, options);
+      if (String(path).startsWith(output + '.stage-')) {
+        fs.writeFileSync(paused, 'ready');
+        const deadline = Date.now() + 20000;
+        while (!fs.existsSync(resume)) {
+          if (Date.now() > deadline) throw new Error('generation barrier timed out');
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+        }
+      }
+      return result;
+    };
+    syncBuiltinESMExports();
+    const { generateFromInputs, loadContract } = await import(${JSON.stringify(generator)});
+    generateFromInputs(() => loadContract(api, config), output);
+  `,
+        f.api,
+        f.sdk,
+        f.output,
+        paused,
+        resume,
+      ],
+      { stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    t.after(() => worker.kill('SIGKILL'));
+    let errors = '';
+    worker.stderr.on('data', (chunk) => {
+      errors += chunk;
+    });
+    const exited = once(worker, 'exit');
+    const deadline = Date.now() + 10000;
+    while (!existsSync(paused)) {
+      assert.ok(Date.now() < deadline, 'generator did not reach stage barrier: ' + errors);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    const lock = f.output + '.sdk-generator.lock';
+    const record = JSON.parse(readFileSync(lock));
+    assert.equal(record.pid, worker.pid);
+    assert.match(record.token, /^[a-f0-9-]{36}$/);
+    const delayed = transactionOwner(worker.pid);
+    mkdirSync(record.backup);
+    writeFileSync(join(record.backup, 'preserve.txt'), 'prior output');
+    const scratch = lock + '.acquire-' + record.pid + '-' + record.token + '-' + randomUUID();
+    writeFileSync(scratch, 'unfinished new transaction record');
+    const leaseFd = acquireGenerationLock(lock + '.recovery', record);
+    try {
+      const before = [lock, lock + '.recovery', record.stage, record.backup].map(
+        (path) => statSync(path).ino,
+      );
+      cleanupInterruptedGeneration(f.output, delayed);
+      assert.deepEqual(
+        [lock, lock + '.recovery', record.stage, record.backup].map((path) => statSync(path).ino),
+        before,
+      );
+      assert.equal(
+        existsSync(f.output),
+        false,
+        'delayed cleanup must not restore another transaction backup',
+      );
+      assert.ok(existsSync(scratch));
+      const third = f.run('generate', f.api, f.sdk, f.output, '--json');
+      assert.equal(third.status, 1);
+      assert.match(third.stderr, /another process is recovering/);
+    } finally {
+      releaseGenerationLock(lock + '.recovery', leaseFd, record);
+      closeSync(leaseFd);
+    }
+    cleanupInterruptedGeneration(f.output, delayed);
+    assert.ok(existsSync(record.stage));
+    assert.equal(readFileSync(join(record.backup, 'preserve.txt'), 'utf8'), 'prior output');
+    const third = f.run('generate', f.api, f.sdk, f.output, '--json');
+    assert.equal(third.status, 1);
+    assert.match(third.stderr, /another generation is running/);
+    // Let the real transaction finish without the synthetic backup/scratch fixture.
+    rmSync(record.backup, { recursive: true });
+    rmSync(scratch);
+    writeFileSync(resume, 'continue');
+    assert.equal((await exited)[0], 0, errors);
+    assert.ok(existsSync(join(f.output, '.sdk-generator.json')));
+    assert.equal(existsSync(lock), false);
+  },
+);
+test('ambiguous legacy transaction owners fail closed', (t) => {
+  const f = fixture(t);
+  const contract = f.load(),
+    lock = f.output + '.sdk-generator.lock';
+  const stage = f.output + '.stage-' + randomUUID(),
+    backup = f.output + '.backup-' + randomUUID();
+  mkdirSync(stage);
+  mkdirSync(backup);
+  writeFileSync(lock, JSON.stringify({ pid: process.pid, stage, backup }));
+  cleanupInterruptedGeneration(f.output, { pid: process.pid });
+  cleanupInterruptedGeneration(f.output, transactionOwner());
+  assert.ok(existsSync(lock));
+  assert.ok(existsSync(stage));
+  assert.ok(existsSync(backup));
+  assert.equal(existsSync(f.output), false);
+  assert.throws(() => generate(contract, f.output), /no valid transaction owner\/token.*inspect/);
 });
 test('lock release verifies the retired inode and preserves a replacement owner', (t) => {
   const f = fixture(t),
     lock = f.output + '.sdk-generator.lock';
-  const original = acquireGenerationLock(lock, { pid: process.pid });
+  const originalOwner = transactionOwner();
+  const replacementOwner = transactionOwner(process.pid + 1);
+  const original = acquireGenerationLock(lock, originalOwner);
   rmSync(lock);
-  const replacement = acquireGenerationLock(lock, { pid: process.pid + 1 });
+  const replacement = acquireGenerationLock(lock, replacementOwner);
   try {
     const owned = statSync(lock);
-    assert.throws(() => releaseGenerationLock(lock, original), /ownership changed/);
+    assert.throws(() => releaseGenerationLock(lock, original, originalOwner), /ownership changed/);
     assert.equal(statSync(lock).ino, owned.ino);
-    assert.deepEqual(JSON.parse(readFileSync(lock)), { pid: process.pid + 1 });
+    assert.deepEqual(JSON.parse(readFileSync(lock)), replacementOwner);
     assert.ok(readdirSync(f.dir).every((name) => !name.includes('.release-')));
   } finally {
-    releaseGenerationLock(lock, replacement);
+    releaseGenerationLock(lock, replacement, replacementOwner);
     closeSync(original);
     closeSync(replacement);
   }
@@ -672,7 +855,7 @@ test('CLI lock errors precede even invalid input parsing', (t) => {
   const f = fixture(t);
   f.save();
   writeFileSync(f.api, 'invalid JSON');
-  writeFileSync(f.output + '.sdk-generator.lock', JSON.stringify({ pid: process.pid }));
+  writeFileSync(f.output + '.sdk-generator.lock', JSON.stringify(transactionOwner()));
   const result = spawnSync(process.execPath, [cli, 'generate', f.api, f.sdk, f.output, '--json'], {
     encoding: 'utf8',
   });
