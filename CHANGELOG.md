@@ -16,6 +16,7 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 - **npm package names.** Configuration validation now rejects `npm.name` values over 214 characters, including the scope. Shorten any oversized names before generation.
 
 - **Compatibility baseline lifecycle.** New output is an unreleased draft until successful release preparation records its baseline. Release preparation now updates the private generation record; later generations compare against that prepared release. Existing records retain their historical comparisons. Use `setCompatibilityBaseline(output, 'draft' | 'released')` to reset an unpublished draft or adopt an externally released SDK. Reports group shared schemas, so finding counts and repeated subjects can change. See [saved baselines](docs/releases.md#saved-baselines).
+- **Compatibility severity.** Nested named request models use full input rules before findings are grouped; adding an optional typed field can restrict formerly arbitrary values and require a major SDK release. Required response keys remain guarantees even without property declarations. Losing one is breaking, including when an optional property declaration is added at the same time. Grouped findings retain the maximum severity.
 
 ### Breaking changes for regenerated SDKs
 

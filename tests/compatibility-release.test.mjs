@@ -12,7 +12,7 @@ import {
   setCompatibilityBaseline,
   compare,
 } from '../dist/index.js';
-import { compareSchemas } from '../dist/compatibility.js';
+import { compareSchemas, dedupeCompatibility } from '../dist/compatibility.js';
 import { restoreCompiledSnapshot } from '../dist/compiled-record.js';
 
 function fixture(t, targets = ['node', 'php']) {
@@ -132,6 +132,169 @@ test('a shared response model is compared once rather than at every response use
   assert.equal(repeated[0].subject, 'models.Value.response.id');
   assert.equal(findings.filter((c) => c.message.includes('previous string guarantee')).length, 1);
   assert(findings.some((c) => c.severity === 'breaking'));
+});
+
+test('nested request model narrowing stays breaking when grouped with response model additions', async (t) => {
+  const f = fixture(t);
+  f.doc.components.schemas.Envelope = {
+    type: 'object',
+    properties: { value: { $ref: '#/components/schemas/Value' } },
+    required: ['value'],
+  };
+  f.doc.paths['/submit'] = {
+    post: {
+      operationId: 'submit',
+      requestBody: {
+        required: true,
+        content: { 'application/json': { schema: { $ref: '#/components/schemas/Envelope' } } },
+      },
+      responses: { 204: { description: 'Saved' } },
+    },
+  };
+  const before = f.load();
+  assert.equal(before.config.schemaSharing, 'named');
+  generate(before, f.output);
+  setCompatibilityBaseline(f.output, 'released');
+  let sent = 0;
+  const options = {
+    baseUrl: 'https://example.invalid',
+    transport: async (_url, init) => {
+      sent++;
+      assert.deepEqual(JSON.parse(init.body), { value: { id: 'v', label: 123 } });
+      return new Response(null, { status: 204 });
+    },
+  };
+  const phpRequest = () => {
+    const result = spawnSync(
+      'php',
+      [
+        '-r',
+        String.raw`require $argv[1].'/src/Runtime.php'; require $argv[1].'/src/Client.php'; $sent=0; $client=new CompatibilityExample\Client(new CompatibilityExample\ClientOptions('https://example.invalid',transport:function($request)use(&$sent){$sent++;if(json_decode($request['body'],true)!==['value'=>['id'=>'v','label'=>123]])throw new Exception('request changed');return ['status'=>204,'headers'=>[],'body'=>''];})); try{$client->api->submit(['body'=>['value'=>['id'=>'v','label'=>123]]]);echo json_encode(['sent'=>$sent]);}catch(CompatibilityExample\SdkError $e){echo json_encode(['sent'=>$sent,'kind'=>$e->kind]);}`,
+        join(f.output, 'php'),
+      ],
+      { encoding: 'utf8' },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  };
+  const oldSdk = await import(new URL('file://' + join(f.output, 'node/index.js')));
+  await new oldSdk.Client(options).api.submit({ body: { value: { id: 'v', label: 123 } } });
+  assert.deepEqual(phpRequest(), { sent: 1 });
+
+  f.doc.components.schemas.Value.properties.label = { type: 'string' };
+  f.cfg.version = '1.1.0';
+  const after = f.load();
+  const findings = compare(before, after);
+  const narrowed = findings.filter(
+    (c) => c.subject === 'models.Value.input.label' && /field added/.test(c.message),
+  );
+  assert.equal(narrowed.length, 1, JSON.stringify(findings));
+  assert.equal(narrowed[0].severity, 'breaking');
+  assert(
+    findings.some((c) => c.subject === 'models.Value.response.label' && c.severity === 'additive'),
+  );
+  generate(after, f.output);
+  const newSdk = await import(new URL('file://' + join(f.output, 'node/index.js') + '?after'));
+  await assert.rejects(
+    new newSdk.Client(options).api.submit({ body: { value: { id: 'v', label: 123 } } }),
+    { kind: 'validation' },
+  );
+  assert.equal(sent, 1);
+  assert.deepEqual(phpRequest(), { sent: 0, kind: 'validation' });
+  assert.throws(() => prepareRelease(f.output, join(f.dir, 'minor')), /major/);
+});
+
+test('nested named response models retain required keys without property declarations', async (t) => {
+  for (const target of ['node', 'php'])
+    await t.test(target, async (t) => {
+      const f = fixture(t, [target]);
+      f.doc.components.schemas.Value = { type: 'object', required: ['id'] };
+      f.doc.components.schemas.Envelope = {
+        type: 'object',
+        properties: { value: { $ref: '#/components/schemas/Value' } },
+        required: ['value'],
+      };
+      for (const path of Object.values(f.doc.paths))
+        path.get.responses[200].content['application/json'].schema = {
+          $ref: '#/components/schemas/Envelope',
+        };
+      const before = f.load();
+      generate(before, f.output);
+      setCompatibilityBaseline(f.output, 'released');
+      const phpResponse = () => {
+        const result = spawnSync(
+          'php',
+          [
+            '-r',
+            String.raw`require $argv[1].'/src/Runtime.php'; require $argv[1].'/src/Client.php'; $client=new CompatibilityExample\Client(new CompatibilityExample\ClientOptions('https://example.invalid',transport:fn($request)=>['status'=>200,'headers'=>[],'body'=>'{"value":{}}'])); try{$client->api->one();echo 'accepted';}catch(CompatibilityExample\SdkError $e){echo $e->kind;}`,
+            join(f.output, 'php'),
+          ],
+          { encoding: 'utf8' },
+        );
+        assert.equal(result.status, 0, result.stderr);
+        return result.stdout;
+      };
+      const options = {
+        baseUrl: 'https://example.invalid',
+        transport: async () => new Response('{"value":{}}'),
+      };
+      if (target === 'node') {
+        const oldSdk = await import(new URL('file://' + join(f.output, 'node/index.js')));
+        await assert.rejects(new oldSdk.Client(options).api.one(), { kind: 'protocol' });
+      } else assert.equal(phpResponse(), 'protocol');
+
+      f.doc.components.schemas.Value = { type: 'object', properties: { id: { type: 'string' } } };
+      f.cfg.version = '1.1.0';
+      const after = f.load();
+      const findings = compare(before, after);
+      const lost = findings.filter(
+        (c) => c.subject === 'models.Value.response.id' && /now optional/.test(c.message),
+      );
+      assert.equal(lost.length, 1, JSON.stringify(findings));
+      assert.equal(lost[0].severity, 'breaking');
+      generate(after, f.output);
+      if (target === 'node') {
+        const newSdk = await import(
+          new URL('file://' + join(f.output, 'node/index.js') + '?after')
+        );
+        await new newSdk.Client(options).api.one();
+      } else assert.equal(phpResponse(), 'accepted');
+      assert.throws(() => prepareRelease(f.output, join(f.dir, 'minor')), /major/);
+    });
+});
+
+test('requiredness changes are independent of property additions and removals', () => {
+  for (const direction of ['input', 'response'])
+    for (const properties of [undefined, { id: { type: 'string' } }]) {
+      const before = { type: 'object', required: ['id'], ...(properties ? { properties } : {}) };
+      const after = {
+        type: 'object',
+        ...(properties ? {} : { properties: { id: { type: 'string' } } }),
+      };
+      for (const [old, next, required] of [
+        [before, after, false],
+        [after, before, true],
+      ]) {
+        const findings = compareSchemas(old, next, 'value', direction).filter((c) =>
+          /field is now/.test(c.message),
+        );
+        assert.equal(findings.length, 1);
+        assert.equal(
+          findings[0].severity,
+          (direction === 'input' ? required : !required) ? 'breaking' : 'additive',
+        );
+      }
+    }
+});
+
+test('deduplicating compatibility findings keeps the maximum severity in any order', () => {
+  const findings = ['additive', 'breaking', 'review'].map((severity) => ({
+    severity,
+    subject: 'models.Value.input.label',
+    message: 'Input guarantee changed.',
+  }));
+  for (const order of [findings, [...findings].reverse()])
+    assert.deepEqual(dedupeCompatibility(order), [{ ...findings[0], severity: 'breaking' }]);
 });
 
 test('enum addition describes newly accepted inputs, while removal explains migration', () => {

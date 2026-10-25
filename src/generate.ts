@@ -34,7 +34,12 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
-import { comparePolicies, policyPair } from './compatibility.js';
+import {
+  comparePolicies,
+  policyPair,
+  requestDefinitions,
+  dedupeCompatibility,
+} from './compatibility.js';
 import { artifactHashes, prepareSite, verifyRelease, npmPackResult } from './distribution.js';
 import { checkVersionPolicy } from './version.js';
 import { DiagnosticGroup, pointerSegment } from './diagnostic.js';
@@ -2001,6 +2006,22 @@ function compareWithCompiled(
     changes.push({ severity, subject, message });
   const oldModels = oldPlan.policy.models,
     newModels = newPlan.policy.models;
+  const requestReachable = new Set([
+    ...requestDefinitions(
+      Object.values(oldPlan.policy.operations).map((op) => op.input),
+      oldPlan.policy.definitions,
+    ),
+    ...requestDefinitions(
+      Object.values(newPlan.policy.operations).map((op) => op.input),
+      newPlan.policy.definitions,
+    ),
+  ]);
+  const requestChanges = new Set<string>();
+  for (const name of requestReachable) {
+    const previous = oldPlan.policy.definitions[name],
+      next = newPlan.policy.definitions[name];
+    if (previous && next) requestChanges.add(policyPair(previous.input, next.input, 'input'));
+  }
   const shared = new Map<string, string>();
   for (const [name, previous] of Object.entries(oldModels)) {
     const next = newModels[name];
@@ -2025,7 +2046,12 @@ function compareWithCompiled(
             next[direction],
             `models.${name}.${direction}`,
             direction,
-            { model: true, shared },
+            {
+              model: !requestChanges.has(
+                policyPair(previous[direction], next[direction], direction),
+              ),
+              shared,
+            },
           ),
         );
   }
@@ -2045,7 +2071,7 @@ function compareWithCompiled(
             next[direction],
             `definitions.${name}`,
             direction,
-            { shared },
+            { model: !requestReachable.has(name), shared },
           ),
         );
   }
@@ -2093,6 +2119,7 @@ function compareWithCompiled(
         newPlan.policy.operations[old.id]!.input,
         `${old.id}.input`,
         'input',
+        { shared },
       ),
     );
     for (const status of new Set([
@@ -2287,7 +2314,7 @@ function compareWithCompiled(
     }
     changes.push(...compareCompiledContracts(previousPlan, nextPlan, owners));
   }
-  return [...new Map(changes.map((finding) => [stable(finding), finding])).values()];
+  return dedupeCompatibility(changes);
 }
 function safeTree(path: string): void {
   let stat;

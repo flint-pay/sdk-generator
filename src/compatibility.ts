@@ -31,7 +31,9 @@ export function comparePolicies(
   context: { model?: boolean; shared?: ReadonlyMap<string, string> } = {},
 ): Compatibility[] {
   const owner = context.shared?.get(policyPair(before, after, direction));
-  if (owner && owner !== subject) return [];
+  // Canonicalize subjects, but compare every use before deduplicating. A model
+  // factory and a request definition can have different input obligations.
+  if (owner) subject = owner;
   if (stable(before) === stable(after)) return [];
   const changes: Compatibility[] = [];
   const add = (severity: Compatibility['severity'], message: string) =>
@@ -131,7 +133,7 @@ export function comparePolicies(
     const path = `${subject}.${key}`;
     const wasRequired = before.requiredKeys?.includes(key) ?? false;
     const required = after.requiredKeys?.includes(key) ?? false;
-    if (Boolean(old) === Boolean(next) && wasRequired !== required)
+    if (wasRequired !== required)
       changes.push({
         severity: (direction === 'input' ? required : !required) ? 'breaking' : 'additive',
         subject: path,
@@ -249,4 +251,44 @@ export function policyPair(
   direction: 'input' | 'response',
 ): string {
   return stable([direction, before, after]);
+}
+
+/** Follow operation inputs through named definitions, including recursive uses. */
+export function requestDefinitions(
+  roots: readonly SchemaPolicy[],
+  definitions: Readonly<Record<string, { input: SchemaPolicy }>>,
+): Set<string> {
+  const reachable = new Set<string>();
+  const visited = new Set<SchemaPolicy>();
+  const visit = (policy: SchemaPolicy) => {
+    if (visited.has(policy)) return;
+    visited.add(policy);
+    if (policy.reference && !reachable.has(policy.reference)) {
+      reachable.add(policy.reference);
+      const definition = definitions[policy.reference];
+      if (definition) visit(definition.input);
+    }
+    for (const child of Object.values(policy.fields)) visit(child);
+    if (policy.element) visit(policy.element);
+    if (typeof policy.extra === 'object') visit(policy.extra);
+    for (const variant of policy.variants ?? []) visit(variant);
+    for (const branch of Object.values(policy.compositions))
+      if (Array.isArray(branch)) for (const child of branch) visit(child);
+      else visit(branch);
+  };
+  for (const root of roots) visit(root);
+  return reachable;
+}
+
+/** Repeated findings retain the strongest assessment of the same change. */
+export function dedupeCompatibility(changes: readonly Compatibility[]): Compatibility[] {
+  const severity = { additive: 0, review: 1, breaking: 2 };
+  const grouped = new Map<string, Compatibility>();
+  for (const finding of changes) {
+    const key = stable([finding.subject, finding.message]);
+    const previous = grouped.get(key);
+    if (!previous || severity[finding.severity] > severity[previous.severity])
+      grouped.set(key, finding);
+  }
+  return [...grouped.values()];
 }
