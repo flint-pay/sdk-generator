@@ -1,4 +1,5 @@
 import { REQUEST_OPTIONS } from './request-options.js';
+import { responseOnlyModels } from './schema-usage.js';
 import { omitProtectedExamples } from './example-protection.js';
 import { reservePublicSymbols } from './public-symbols.js';
 import { pascalWords, webhookEventTypeName } from './naming.js';
@@ -585,6 +586,7 @@ export interface CompiledSdkContract {
   >;
   responses: Record<string, Record<string, { body?: ResponsePlan }>>;
   policy: {
+    responseOnlyModels?: string[];
     models: Record<string, { input: SchemaPolicy; response: SchemaPolicy }>;
     definitions: Record<string, { input: SchemaPolicy; response: SchemaPolicy }>;
     operations: Record<string, { input: SchemaPolicy; responses: Record<string, SchemaPolicy> }>;
@@ -1002,6 +1004,7 @@ export function compileSdkContract(source: Contract): {
       ]),
     ),
     policy: {
+      responseOnlyModels: responseOnlyModels(source),
       models: Object.fromEntries(
         Object.entries(modelsUsed(source)).map(([name, s]) => [
           name,

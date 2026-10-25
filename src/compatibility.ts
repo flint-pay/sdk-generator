@@ -28,7 +28,7 @@ export function comparePolicies(
   after: SchemaPolicy,
   subject: string,
   direction: 'input' | 'response',
-  context: { model?: boolean; shared?: ReadonlyMap<string, string> } = {},
+  context: { responseOnly?: boolean; shared?: ReadonlyMap<string, string> } = {},
 ): Compatibility[] {
   const owner = context.shared?.get(policyPair(before, after, direction));
   // Canonicalize subjects, but compare every use before deduplicating. A model
@@ -143,12 +143,12 @@ export function comparePolicies(
     if (!old || !next) {
       const breaking =
         !next ||
-        (direction === 'input' && (required || (!context.model && before.extra !== false)));
+        (direction === 'input' && (required || (!context.responseOnly && before.extra !== false)));
       changes.push({
         severity: breaking ? 'breaking' : 'additive',
         subject: path,
         message: next
-          ? `${required ? 'Required' : 'Optional'} ${direction} field added.${direction === 'input' && required ? ' Supply this field in every affected call.' : direction === 'input' && !context.model && before.extra !== false ? ' This name previously accepted arbitrary additional values; update existing values to its declared type.' : ''}`
+          ? `${required ? 'Required' : 'Optional'} ${direction} field added.${direction === 'input' && required ? ' Supply this field in every affected call.' : direction === 'input' && !context.responseOnly && before.extra !== false ? ' This name previously accepted arbitrary additional values; update existing values to its declared type.' : ''}`
           : `${direction} field removed. ${direction === 'input' ? 'Stop sending this field; confirm the replacement operation or field with the provider.' : 'Remove reliance on this field or migrate to its documented replacement.'}`,
       });
       continue;
@@ -251,33 +251,6 @@ export function policyPair(
   direction: 'input' | 'response',
 ): string {
   return stable([direction, before, after]);
-}
-
-/** Follow operation inputs through named definitions, including recursive uses. */
-export function requestDefinitions(
-  roots: readonly SchemaPolicy[],
-  definitions: Readonly<Record<string, { input: SchemaPolicy }>>,
-): Set<string> {
-  const reachable = new Set<string>();
-  const visited = new Set<SchemaPolicy>();
-  const visit = (policy: SchemaPolicy) => {
-    if (visited.has(policy)) return;
-    visited.add(policy);
-    if (policy.reference && !reachable.has(policy.reference)) {
-      reachable.add(policy.reference);
-      const definition = definitions[policy.reference];
-      if (definition) visit(definition.input);
-    }
-    for (const child of Object.values(policy.fields)) visit(child);
-    if (policy.element) visit(policy.element);
-    if (typeof policy.extra === 'object') visit(policy.extra);
-    for (const variant of policy.variants ?? []) visit(variant);
-    for (const branch of Object.values(policy.compositions))
-      if (Array.isArray(branch)) for (const child of branch) visit(child);
-      else visit(branch);
-  };
-  for (const root of roots) visit(root);
-  return reachable;
 }
 
 /** Repeated findings retain the strongest assessment of the same change. */

@@ -258,6 +258,12 @@ export function assertCompiledSnapshot(value: unknown): asserts value is Compile
     fields(doc, ['reserveKnown'], 'boolean', name);
   }
   const policy = object(plan.policy, 'policy');
+  if (
+    policy.responseOnlyModels !== undefined &&
+    (!Array.isArray(policy.responseOnlyModels) ||
+      policy.responseOnlyModels.some((name) => typeof name !== 'string'))
+  )
+    throw new Error('Invalid response-only model provenance');
   for (const key of ['models', 'definitions'])
     for (const [name, value] of Object.entries(object(policy[key], 'policy.' + key))) {
       const pair = object(value, name);

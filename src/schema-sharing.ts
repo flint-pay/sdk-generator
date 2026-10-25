@@ -66,12 +66,47 @@ export function shareContractSchemas(
   contract: Contract,
   referenceNames: Readonly<WeakMap<object, string>> = new WeakMap(),
   typeNames: Readonly<WeakMap<object, string>> = new WeakMap(),
-): void {
+  responseOnlyCandidates: ReadonlySet<string> = new Set(),
+): string[] {
   // Public Node names are declaration hints, separate from shared codec references
   // and PHP class identities. Sharing must not rename a source component's return type.
   const identity = identities();
   const catalog = { ...contract.models, ...contract.definitions };
   const names = new Map(Object.entries(catalog).map(([name, schema]) => [identity(schema), name]));
+  const responseOnly = new Set([...names.keys()]);
+  // Sharing can alias otherwise unrelated names and inline request schemas.
+  // Every alias must have source proof, and every request position vetoes it.
+  for (const [name, schema] of Object.entries(catalog))
+    if (!responseOnlyCandidates.has(name)) responseOnly.delete(identity(schema));
+  const visited = new Set<Schema>();
+  const input = (schema: Schema): void => {
+    if (visited.has(schema)) return;
+    visited.add(schema);
+    responseOnly.delete(identity(schema));
+    const reference = schema['x-sdk-ref'];
+    if (reference) {
+      const target = catalog[reference];
+      if (target) input(target);
+      else responseOnly.clear();
+    }
+    for (const child of Object.values(schema.properties ?? {})) input(child);
+    if (schema.items) input(schema.items);
+    if (typeof schema.additionalProperties === 'object') input(schema.additionalProperties);
+    for (const keyword of ['allOf', 'anyOf', 'oneOf'] as const)
+      for (const child of schema[keyword] ?? []) input(child);
+    for (const keyword of ['not', 'contains', 'if', 'then', 'else'] as const)
+      if (schema[keyword]) input(schema[keyword]);
+  };
+  for (const op of contract.operations) {
+    for (const parameter of op.parameters) input(parameter.schema);
+    if (op.body) input(op.body);
+  }
+  for (const incoming of contract.incoming ?? []) input(incoming.schema);
+  for (const event of Object.values(contract.config.webhook?.events ?? {})) input(event);
+  const proven = Object.entries(catalog)
+    .filter(([, schema]) => responseOnly.has(identity(schema)))
+    .map(([name]) => name)
+    .sort();
   const compact = (schema: Schema, nested = false): Schema => {
     const reference = referenceNames.get(schema);
     if (nested && reference) {
@@ -150,4 +185,5 @@ export function shareContractSchemas(
         compactRoot(schema),
       ]),
     );
+  return proven;
 }

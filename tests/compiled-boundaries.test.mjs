@@ -11,6 +11,7 @@ const semantic = new Set([
   'package-plan',
   'runtime-plan',
   'schema-policy',
+  'schema-usage',
   'schema-intersections',
   'target-types',
   'php-types',
@@ -63,6 +64,16 @@ test('semantic modules have effect-free dependencies and no implementation cycle
         )
           return;
         const dependency = node.moduleSpecifier.text.replace(/^\.\//, '').replace(/\.js$/, '');
+        // Source-use proof uses deterministic hashing, without random or I/O APIs.
+        if (name === 'schema-usage' && dependency === 'node:crypto') {
+          assert(bindings && ts.isNamedImports(bindings));
+          assert(
+            bindings.elements.every(
+              (binding) => (binding.propertyName ?? binding.name).text === 'createHash',
+            ),
+          );
+          return;
+        }
         assert.ok(
           semantic.has(dependency),
           `${name} must not depend on implementation ${dependency}`,
