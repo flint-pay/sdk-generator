@@ -1,5 +1,5 @@
 import { Diagnostic, pointerSegment } from './diagnostic.js';
-import { extname } from 'node:path';
+import { extname, relative } from 'node:path';
 
 /** Compare decimal values without expanding exponents or using floating point. */
 function decimalIdentity(token: string): string {
@@ -84,12 +84,16 @@ function invalidTokenOffset(text: string): number {
 
 /** Retain precision-loss provenance without changing parsed JSON or metadata. */
 export class SourceJson {
-  private readonly rounded = new WeakMap<object, Map<string, { source: string; file: string }>>();
+  private readonly rounded = new WeakMap<
+    object,
+    Map<string, { source: string; file: string; pointer?: string }>
+  >();
 
   parse(text: string, file: string): unknown {
     const rounded = this.rounded;
+    let hasRounded = false;
     try {
-      return JSON.parse(
+      const parsed: unknown = JSON.parse(
         text,
         function (
           this: object,
@@ -107,11 +111,25 @@ export class SourceJson {
               const fields = rounded.get(this) ?? new Map();
               fields.set(key, { source: context.source, file });
               rounded.set(this, fields);
+              hasRounded = true;
             }
           }
           return value;
         },
       );
+      // Only inputs with rounded literals need this walk. Preserve the source
+      // pointer before reference resolution gives a constraint a synthetic path.
+      const locate = (value: unknown, path: string): void => {
+        if (!value || typeof value !== 'object') return;
+        for (const key of Object.keys(value)) {
+          const pointer = path + '/' + pointerSegment(key);
+          const literal = rounded.get(value)?.get(key);
+          if (literal) literal.pointer = pointer;
+          locate(Reflect.get(value, key), pointer);
+        }
+      };
+      if (hasRounded) locate(parsed, '');
+      return parsed;
     } catch (error) {
       if (!(error instanceof SyntaxError)) throw error;
       const position = /\bin JSON at position (\d+) \(line (\d+) column (\d+)\)$/.exec(
@@ -128,7 +146,7 @@ export class SourceJson {
       const yaml = /\.ya?ml$/i.test(extname(file)) || !/^[\s]*[\[{]/.test(text);
       throw new Diagnostic(
         file,
-        `expected valid JSON at line ${line}, column ${column}${yaml ? '; YAML is not supported' : ''}`,
+        `expected valid JSON at line ${line}, column ${column}${yaml ? '; YAML is not supported; convert the input to OpenAPI JSON before running the generator' : ''}`,
       );
     }
   }
@@ -136,11 +154,17 @@ export class SourceJson {
   /** Check only consumed constraints; ignored examples and excluded schemas stay data. */
   assertMember(value: object, key: string, path: string): void {
     const rounded = this.rounded.get(value)?.get(key);
-    if (rounded)
-      throw new Diagnostic(
-        path,
-        `numeric literal ${rounded.source} loses precision in the generator's JSON parser (${rounded.file}); use a decimal value that round-trips exactly, or explicitly replace it with a provider override`,
+    if (rounded) {
+      const source = relative(process.cwd(), rounded.file).replaceAll('\\', '/');
+      const finding = new Diagnostic(
+        rounded.pointer === undefined
+          ? path
+          : (path.startsWith('config/') ? 'config' : '') + rounded.pointer,
+        `numeric literal ${rounded.source} loses precision in the generator's JSON parser (${source}); use a decimal value that round-trips exactly, or explicitly replace it with a provider override`,
       );
+      finding.source = source;
+      throw finding;
+    }
     this.assertExact(Reflect.get(value, key), path);
   }
 

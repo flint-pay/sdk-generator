@@ -191,7 +191,7 @@ test('combined header conflicts and stale role bindings fail diagnosis', () => {
           },
         },
       }),
-    /not a supported standalone|unknown operation binding/,
+    /not a complete supported alternative|unknown operation binding/,
   );
 });
 

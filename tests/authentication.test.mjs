@@ -82,11 +82,11 @@ test('authentication selection cannot weaken required combinations or invent an 
   );
   assert.throws(
     () => load(doc, { ...config, auth: { scheme: 'SecretHeader' } }),
-    /standalone alternative/,
+    /complete supported alternative/,
   );
   const d = structuredClone(doc);
   d.paths['/value'].get.security = [{ BearerAuth: [], SecretHeader: [] }];
-  assert.throws(() => load(d), /standalone alternative/);
+  assert.throws(() => load(d), /complete supported alternative/);
 });
 
 test('optional authentication follows caller credentials without requiring them', async () => {

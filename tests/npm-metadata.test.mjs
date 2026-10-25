@@ -116,7 +116,14 @@ test('publication metadata rejects invalid values with configuration paths', () 
   ]) {
     assert.throws(
       () => contract({ repository: { ...repository, url } }),
-      /config\/npm\/repository\/url:/,
+      (error) => {
+        assert.equal(
+          error.location,
+          url === undefined ? 'config/npm/repository' : 'config/npm/repository/url',
+        );
+        if (url === undefined) assert.match(error.detail, /config\/npm\/repository\/url/);
+        return true;
+      },
     );
   }
   for (const directory of [

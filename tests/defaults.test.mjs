@@ -102,7 +102,7 @@ test('model suffix rules reserve explicit names and resolve inferred collisions 
 
 test('reserved inferred operation names fall back to valid operation IDs', async () => {
   for (const [id, tag] of [
-    ['deleteUser', 'users'],
+    ['catchUser', 'users'],
     ['closeAccount', 'accounts'],
     ['requestToken', 'tokens'],
     ['getClient', 'client'],
@@ -126,9 +126,10 @@ test('reserved inferred operation names fall back to valid operation IDs', async
     assert.equal((await client.api[id + 'WithResponse']({})).body.data, 'ok');
   }
   assert.deepEqual(operationNames('listUsers', ['users']), { resource: 'users', method: 'list' });
-  assert.throws(
-    () => fixture({ operations: { createPaymentIntent: { method: 'delete' } } }),
-    /reserved word or SDK runtime member/,
+  assert.equal(
+    fixture({ operations: { createPaymentIntent: { method: 'delete' } } }).contract.operations[0]
+      .method,
+    'delete',
   );
 });
 

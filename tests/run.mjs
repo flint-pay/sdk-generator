@@ -23,6 +23,8 @@ try {
     if (!batch.length) continue;
     runRequired(process.execPath, [
       '--test',
+      '--import',
+      fileURLToPath(new URL('./helpers/config-schema-hook.mjs', import.meta.url)),
       ...flags,
       ...batch.map((name) => fileURLToPath(new URL(name, directory))),
     ]);

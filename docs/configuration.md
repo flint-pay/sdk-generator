@@ -33,12 +33,29 @@ node dist/cli.js validate .generated/widgets
 - Names come from tags and operation IDs. With operations `createWidget` and `getWidget` tagged `widgets`, the SDK exposes `client.widgets.create()` and `client.widgets.get()`. See [names](#names).
 - Run `diagnose` first. It reports unsupported constructs and missing declarations with their source locations.
 
+## Editor schema
+
+The npm package includes [sdk-config.schema.json](../sdk-config.schema.json), also exported as `@public-sdk/generator/sdk-config.schema.json`. Add a top-level `$schema` key for editor completion and structural validation:
+
+```json
+{
+  "$schema": "./node_modules/@public-sdk/generator/sdk-config.schema.json",
+  "version": "1.0.0",
+  "targets": ["node"],
+  "npm": { "name": "@acme/widgets" }
+}
+```
+
+A source checkout can use `./sdk-config.schema.json`. Profiles may carry the same metadata. The schema checks shape and value types in each file, allowing nested declarations to be split across profiles. Run `diagnose` to check completeness after profile merging and declarations against the API; an editor schema cannot establish wire support or validate header names against a separate specification.
+
 ## Configuration fields
 
 Unknown configuration keys fail with a source location. Capability declarations go under the relevant `operations` entry unless marked top-level below.
 
 | Top-level field        | Purpose and default                                                                                                                                             |
 | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `$schema`              | Optional editor schema URI; generation stays local and never fetches it.                                                                                        |
+| `defaults`             | Shared idempotency, retry and pagination fields; see [capability defaults](#capability-defaults).                                                               |
 | `version`              | Required generated package SemVer; independent of the generator version and API version.                                                                        |
 | `targets`              | `node`, `php`, or both; defaults to both.                                                                                                                       |
 | `npm`                  | `name` required for Node; optional `registry`, `access`, `homepage` and `repository`; see [publication metadata](#publication-metadata).                        |
@@ -108,11 +125,40 @@ Stale operation and model customization targets fail diagnosis.
 - Without them, a uniquely matching operation tag supplies the resource: `createPaymentIntent` tagged `payment_intents` becomes `paymentIntents.create`.
   - Tags are normalized from camelCase, snake_case or words. Singular and plural resource words are matched against the operation ID and removed from the method name.
   - Acronyms become camelCase: `createAPIKey` tagged `api_keys` becomes `apiKeys.create`.
-  - Missing, unrelated or ambiguous tags fall back to resource `api` and the unchanged operation ID. Paths are never used to guess names.
+  - Missing, unrelated, ambiguous or reserved tag-derived names fall back to resource `api` and the unchanged operation ID. Diagnosis reports the reason and the `operations.<id>.resource` / `method` settings to edit. The portable method names `list` and `delete` are allowed; model and resource reserved-word checks still apply. Paths are never used to guess names.
 - Public name collisions fail diagnosis; resolve them with explicit names.
 - `models` maps component schema names to SDK names. Resolved names apply consistently to recursive references and dependencies.
 - Upstream model names ending in `Input` default to `Request` (`PaymentInput` becomes `PaymentRequest`), keeping the generated `PaymentRequestInput` helper distinct. Existing names and explicit mappings are reserved first; inferred collisions use `RequestModel`, then numbered suffixes.
 - Pin names explicitly when upgrading an existing SDK to keep its public interface.
+
+### Capability defaults
+
+`defaults` applies idempotency, retry and pagination field defaults to every selected operation. An operation object overrides individual fields; arrays replace the complete default array. Set a capability to `false` to omit that configured capability, or set an individual field to `null` to remove an inherited field. Removing a required field fails diagnosis.
+
+```json
+{
+  "defaults": {
+    "idempotency": {
+      "header": "Idempotency-Key",
+      "retention": "24 hours, per the provider contract",
+      "scope": "account and operation",
+      "auto": true
+    },
+    "retry": {
+      "maxAttempts": 3,
+      "statuses": [429, 503],
+      "transport": true,
+      "baseDelayMs": 100
+    }
+  },
+  "operations": {
+    "createWidget": { "retry": { "maxAttempts": 2 } },
+    "listWidgets": { "idempotency": false, "retry": false }
+  }
+}
+```
+
+Use defaults only for capabilities the provider supports. Opt out every operation that does not share the contract, especially mutation retries and pagination helpers. `retry: false` removes the configured policy; ordinary bounded GET/HEAD/OPTIONS retries still apply. Set `retry.maxAttempts: 1` with the other required retry fields (or inherited defaults) to ensure a single attempt. Profiles use their existing conflict rules before capability defaults are resolved.
 
 ### Aliases and deprecation
 

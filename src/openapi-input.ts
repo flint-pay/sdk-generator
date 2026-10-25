@@ -15,7 +15,7 @@ export function readInput(file: string, sourceJson = new SourceJson()) {
 
 export function openApiObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value))
-    throw new Diagnostic('/', 'expected an OpenAPI object');
+    throw new Diagnostic('', 'expected an OpenAPI object');
   // JSON objects have string keys; the parser leaves all member values untrusted.
   return value as Record<string, unknown>;
 }

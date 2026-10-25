@@ -185,6 +185,10 @@ For example, with `validation: "schema"`, adding `minLength: 3` to a string inpu
 
 ## Upgrade an existing SDK
 
+CLI automation must read failed `diagnose --json` reports from stdout. Other JSON failures remain on stderr and now include stable codes, diagnostic source files and relative file paths. Diagnostic locations point to existing nodes; missing settings are named in the message. JSON previews omit diffs by default: pass `preview --json --diff` and read its modified-file `diffs` array. The library's dry-run diff API is unchanged.
+
+The method name `delete` is now allowed in both targets. For an existing SDK whose `deleteWidget` operation was inferred as `api.deleteWidget`, pin `resource: "api"` and `method: "deleteWidget"` to preserve that public call, or review the move to `widgets.delete` as a breaking change. Other fallback names are unchanged and now produce warnings. Shared [capability defaults](configuration.md#capability-defaults) are optional; compare generated output before replacing explicit blocks. Replace `@example/` and `example/` package vendors before publishing.
+
 Regenerate older SDKs to remove schema examples/defaults from sensitive, write-only and password locations, including shared reference targets and compositions. Removing previously published annotation values requires review; publication provenance alone does not change compatibility. Rendering, generation and release preparation require reloading the source inputs for records that predate publication protection, including PHP-only SDKs. Private records preserve source examples and must remain private.
 
 Regenerate packages as a complete unit, review the preview and compatibility findings, and follow the version policy. Do not publish breaking findings as a compatible patch. The [changelog](../CHANGELOG.md) lists every generator change that affects regenerated SDKs.

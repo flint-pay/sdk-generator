@@ -1,7 +1,14 @@
+import { locateDiagnostic } from './input-diagnostics.js';
 import { requestOption } from './request-options.js';
 import { validateRequestStyle, validatePositional, type RequestStyle } from './request-style.js';
 import { validateResponseReturn, payloadSchemas, type ResponseReturn } from './response-return.js';
-import { operationNames, modelNames, isPublicName, webhookEventTypeName } from './naming.js';
+import {
+  operationNames,
+  operationNamingReason,
+  modelNames,
+  isPublicName,
+  webhookEventTypeName,
+} from './naming.js';
 import { shareContractSchemas } from './schema-sharing.js';
 import { schemaAnnotations, isSchemaAnnotation } from './schema-annotations.js';
 import {
@@ -123,6 +130,11 @@ export interface Capability {
   example?: Record<string, unknown>;
   deprecated?: string;
 }
+const capabilityFields = {
+  idempotency: ['header', 'retention', 'scope', 'auto', 'autoKeyPrefix'],
+  retry: ['maxAttempts', 'statuses', 'errors', 'transport', 'baseDelayMs', 'maxDelayMs'],
+  pagination: ['kind', 'items', 'next', 'parameter'],
+};
 export interface Operation extends Capability {
   streamEventSchemas?: Record<string, Schema>;
   id: string;
@@ -175,7 +187,15 @@ export interface Webhook {
   events: Record<string, Schema>;
   typeField: string;
 }
+type DefaultCapability = 'idempotency' | 'retry' | 'pagination';
+export type CapabilityOverride = Omit<Capability, DefaultCapability> & {
+  [K in DefaultCapability]?:
+    | { [P in keyof NonNullable<Capability[K]>]?: NonNullable<Capability[K]>[P] | null }
+    | false;
+};
 export interface Config {
+  $schema?: string;
+  defaults?: { [K in DefaultCapability]?: Partial<NonNullable<Capability[K]>> };
   requests?: RequestStyle;
   responses?: ResponseReturn;
   profiles?: string[];
@@ -201,7 +221,7 @@ export interface Config {
     repository?: { type: 'git'; url: string; directory?: string };
   };
   composer: { name: string; namespace: string };
-  operations?: Record<string, Capability>;
+  operations?: Record<string, CapabilityOverride>;
   models?: Record<string, string>;
   phpFieldClasses?: Record<string, Record<string, string>>;
   include?: string[];
@@ -290,7 +310,7 @@ function keys(object: object, allowed: string[], path: string, hint = '') {
       (k, index) =>
         new Diagnostic(
           `${path}/${pointerSegment(k)}`,
-          `unsupported setting.${suggestion(k, allowed)}${index === 0 ? ` Valid settings: ${allowed.join(', ')}${hint}` : ''}`,
+          `unsupported setting.${suggestion(k, allowed)}${index === 0 ? ` Valid settings: ${allowed.filter((key) => !['numericUnions', 'schemaSharing'].includes(key)).join(', ')}${hint}` : ''}`,
         ),
     );
   if (findings.length === 1) throw findings[0];
@@ -1113,9 +1133,57 @@ export function loadContract(
   configPath: string,
   options: { collectDiagnostics?: boolean; onWarning?: (warning: Diagnostic) => void } = {},
 ): Contract {
+  const documents = new Map<string, unknown>();
+  const locate = (finding: Diagnostic): Diagnostic => {
+    if (finding.source) return finding;
+    const config = finding.location === 'config' || finding.location.startsWith('config/');
+    if (
+      !config &&
+      finding.location !== '' &&
+      finding.location !== '/' &&
+      !/^\/(?:paths|components|openapi|servers|webhooks|info|security)(?:\/|$)/.test(
+        finding.location,
+      )
+    )
+      return finding;
+    return locateDiagnostic(
+      finding,
+      [...documents]
+        .filter(([file]) =>
+          config ? file !== resolve(definitionPath) : file === resolve(definitionPath),
+        )
+        .map(([file, value]) => ({
+          source: relativePath(process.cwd(), file).replaceAll('\\', '/'),
+          value,
+        })),
+      config ? 'config' : '',
+    );
+  };
+  try {
+    return loadContractInput(
+      definitionPath,
+      configPath,
+      {
+        ...options,
+        onWarning: (warning) => options.onWarning?.(locate(warning)),
+      },
+      documents,
+    );
+  } catch (error) {
+    if (error instanceof DiagnosticGroup) throw new DiagnosticGroup(error.findings.map(locate));
+    if (error instanceof Diagnostic) throw locate(error);
+    throw error;
+  }
+}
+
+function loadContractInput(
+  definitionPath: string,
+  configPath: string,
+  options: { collectDiagnostics?: boolean; onWarning?: (warning: Diagnostic) => void },
+  documents: Map<string, unknown>,
+): Contract {
   const diagnostics = new DiagnosticCollector(options.collectDiagnostics ?? false);
   const sources: Record<string, string> = {};
-  const documents = new Map<string, unknown>();
   const sourceJson = new SourceJson();
   const rootDir = dirname(resolve(definitionPath));
   const references: { path: string; model: string }[] = [];
@@ -1494,7 +1562,10 @@ export function loadContract(
     sourceJson.assertExact(source, 'config');
     const input = structuredClone(source);
     record(input, 'config');
-    const { profiles, ...local } = input;
+    const { profiles, $schema, ...settings } = input;
+    if ($schema !== undefined && typeof $schema !== 'string')
+      fail('config/$schema', 'expected a JSON Schema URI string');
+    const local = stack.size === 0 && $schema !== undefined ? { ...settings, $schema } : settings;
     let combined: unknown = {};
     if (profiles !== undefined) {
       strings(profiles, 'config/profiles');
@@ -1540,6 +1611,7 @@ export function loadContract(
     'overrides',
     'documentation',
     'release',
+    'defaults',
   ] as const)
     if (config[key] !== undefined && !diagnostics.check(() => record(config[key], 'config/' + key)))
       invalidConfig.add(key);
@@ -1556,6 +1628,9 @@ export function loadContract(
         'responses',
         'targets',
         'validation',
+        '$schema',
+        'defaults',
+        'profiles',
         'numericUnions',
         'schemaSharing',
         'auth',
@@ -1581,6 +1656,18 @@ export function loadContract(
         ? ' SDK_JSON looks like an OpenAPI document; check whether the API_JSON and SDK_JSON arguments are swapped.'
         : '',
     );
+  });
+  diagnostics.check(() => {
+    if (config.$schema !== undefined && typeof config.$schema !== 'string')
+      fail('config/$schema', 'expected a JSON Schema URI string');
+  });
+  checkConfig(['defaults'], () => {
+    if (config.defaults) {
+      keys(config.defaults, ['idempotency', 'retry', 'pagination'], 'config/defaults');
+      for (const key of ['idempotency', 'retry', 'pagination'] as const)
+        if (config.defaults[key] !== undefined)
+          keys(config.defaults[key]!, capabilityFields[key], 'config/defaults/' + key);
+    }
   });
   diagnostics.check(() => {
     if (config.schemaSharing !== undefined && config.schemaSharing !== 'named')
@@ -2436,18 +2523,22 @@ export function loadContract(
     if (Reflect.get(declaration, 'type') === 'apiKey' && typeof name === 'string')
       apiKeyNames.add(name.toLowerCase());
   }
-  const compileScheme = (key: string): Auth & { name: string } => {
-    if (!Object.hasOwn(schemes, key)) fail('config/auth', 'select an existing security scheme');
+  const compileScheme = (key: string, path = 'config/auth/scheme'): Auth & { name: string } => {
+    if (!Object.hasOwn(schemes, key))
+      fail(
+        path,
+        `select an existing security scheme.${suggestion(key, Object.keys(schemes))} Candidates: ${Object.keys(schemes).join(', ') || '(none)'}`,
+      );
     const declaration = schemes[key];
     if (declaration.type === 'http' && declaration.scheme === 'bearer')
       return { name: key, type: 'bearer', header: 'Authorization' };
     if (declaration.type === 'apiKey' && declaration.in === 'header') {
-      header(declaration.name, 'securitySchemes/' + pointerSegment(key) + '/name');
+      header(declaration.name, '/components/securitySchemes/' + pointerSegment(key) + '/name');
       return { name: key, type: 'apiKey', header: declaration.name };
     }
     return fail(
-      'securitySchemes/' + pointerSegment(key),
-      'supported authentication: bearer or header API key; refresh/OAuth must be supplied by an explicit caller-owned transport',
+      '/components/securitySchemes/' + pointerSegment(key),
+      `unsupported security scheme; supported authentication is HTTP bearer or a header API key. OAuth2 and HTTP basic declarations are unsupported. Select a supported scheme in config/auth, or exclude operations requiring this scheme with include or hidden; do not relabel credentials unless the provider supports that wire contract.`,
     );
   };
   const namedAuth = config.auth && 'modes' in config.auth ? config.auth : undefined;
@@ -2471,7 +2562,9 @@ export function loadContract(
         fail('config/auth/modes/' + pointerSegment(mode), 'a mode requires a complete scheme set');
       if (settings.operations !== undefined)
         strings(settings.operations, 'config/auth/modes/' + pointerSegment(mode) + '/operations');
-      const compiled = settings.schemes.map(compileScheme);
+      const compiled = settings.schemes.map((key, index) =>
+        compileScheme(key, 'config/auth/modes/' + pointerSegment(mode) + '/schemes/' + index),
+      );
       if (new Set(compiled.map((scheme) => scheme.header.toLowerCase())).size !== compiled.length)
         fail(
           'config/auth/modes/' + pointerSegment(mode),
@@ -2518,7 +2611,10 @@ export function loadContract(
     if (config.auth) {
       keys(config.auth, ['scheme'], 'config/auth');
       if (typeof selectedScheme !== 'string' || !Object.hasOwn(schemes, selectedScheme))
-        fail('config/auth/scheme', 'select an existing security scheme');
+        fail(
+          'config/auth/scheme',
+          `select an existing security scheme.${suggestion(String(selectedScheme), Object.keys(schemes))} Candidates: ${Object.keys(schemes).join(', ')}`,
+        );
     }
     if (Object.keys(schemes).length > 1 && !config.auth)
       fail(
@@ -2565,7 +2661,36 @@ export function loadContract(
         }
         if (ids.has(id)) fail(p, 'operationId must be unique');
         ids.add(id);
-        const c: Capability = own(config.operations, id) ?? {};
+        const cp = `config/operations/${pointerSegment(id)}`;
+        const local = own(config.operations, id) ?? {};
+        const {
+          idempotency: _idempotency,
+          retry: _retry,
+          pagination: _pagination,
+          ...metadata
+        } = local;
+        const c: Capability = { ...metadata };
+        const capabilityPath = (key: 'idempotency' | 'retry' | 'pagination', field?: string) =>
+          Object.hasOwn(local, key) && (!field || (local[key] && Object.hasOwn(local[key], field)))
+            ? cp + '/' + key
+            : 'config/defaults/' + key;
+        for (const key of ['idempotency', 'retry', 'pagination'] as const) {
+          const configured: unknown = local[key];
+          const fallback = config.defaults?.[key];
+          if (configured === false) delete c[key];
+          else if (configured !== undefined || fallback !== undefined) {
+            if (configured !== undefined) {
+              record(configured, cp + '/' + key);
+              keys(configured, capabilityFields[key], cp + '/' + key);
+            }
+            if (fallback !== undefined) record(fallback, 'config/defaults/' + key);
+            // Defaults are shallow field defaults; arrays and per-operation fields replace them.
+            const merged = { ...fallback, ...configured };
+            for (const field of Object.keys(merged))
+              if (Reflect.get(merged, field) === null) Reflect.deleteProperty(merged, field);
+            Object.assign(c, { [key]: merged });
+          }
+        }
         keys(
           c,
           [
@@ -2611,7 +2736,7 @@ export function loadContract(
           if (c[key] !== undefined)
             strings(c[key], `config/operations/${pointerSegment(id)}/${key}`);
         if (c.hidden !== undefined && typeof c.hidden !== 'boolean')
-          fail(p, 'hidden must be boolean');
+          fail(cp + '/hidden', 'hidden must be boolean');
         if (c.requestMediaType !== undefined && typeof c.requestMediaType !== 'string')
           fail(
             `config/operations/${pointerSegment(id)}/requestMediaType`,
@@ -2642,7 +2767,7 @@ export function loadContract(
           c.deprecated !== undefined &&
           (typeof c.deprecated !== 'string' || !c.deprecated.trim())
         )
-          fail(p, 'deprecated must be a nonempty migration message');
+          fail(cp + '/deprecated', 'deprecated must be a nonempty migration message');
         if (op.deprecated !== undefined && typeof op.deprecated !== 'boolean')
           fail(p, 'OpenAPI deprecated must be boolean');
         if (
@@ -2654,8 +2779,25 @@ export function loadContract(
         const inferred = operationNames(id, op.tags);
         const resource = c.resource ?? inferred.resource;
         const method = c.method ?? inferred.method;
-        name(resource, `${p}/resource`);
-        name(method, `${p}/method`, true);
+        name(resource, c.resource !== undefined ? cp + '/resource' : p + '/operationId');
+        try {
+          name(method, c.method !== undefined ? cp + '/method' : p + '/operationId', true);
+        } catch (error) {
+          if (error instanceof Diagnostic && c.method === undefined)
+            fail(
+              p + '/operationId',
+              error.detail +
+                `; configure ${cp}/resource and ${cp}/method to choose portable public names`,
+            );
+          throw error;
+        }
+        if (inferred.resource === 'api' && c.method === undefined)
+          options.onWarning?.(
+            new Diagnostic(
+              p + '/operationId',
+              `inferred ${resource}.${method}: ${operationNamingReason(id, op.tags)}; configure ${cp}/resource and ${cp}/method to choose the public name`,
+            ),
+          );
         const spelling = resourceSpellings.get(resource.toLowerCase());
         if (spelling && spelling !== resource)
           fail(p, 'resource names collide case-insensitively in PHP');
@@ -2670,9 +2812,13 @@ export function loadContract(
           ...(payloadReturn && c.polling ? [method + 'WaitWithResponse'] : []),
         ];
         for (const n of allNames) {
-          name(n, `${p}/method`, true);
+          name(n, cp + (n === method ? '/method' : '/aliases'), true);
           const key = `${resource}.${n}`.toLowerCase();
-          if (publicNames.has(key)) fail(p, `public method collision: ${key}`);
+          if (publicNames.has(key))
+            fail(
+              p,
+              `public method collision: ${key}; configure ${cp}/resource, ${cp}/method or ${cp}/aliases to use distinct names`,
+            );
           publicNames.add(key);
         }
         for (const forbidden of ['callbacks', 'servers'])
@@ -2686,7 +2832,17 @@ export function loadContract(
         const params = new Map<string, Parameter>();
         for (const list of [item.parameters, op.parameters])
           if (list !== undefined && !Array.isArray(list)) fail(p, 'parameters must be an array');
-        for (const param of [...(item.parameters ?? []), ...(op.parameters ?? [])] as Parameter[]) {
+        const declaredParameters: { param: Parameter; location: string }[] = [
+          ...(item.parameters ?? []).map((param: Parameter, index: number) => ({
+            param,
+            location: `/paths/${pointerSegment(path)}/parameters/${index}`,
+          })),
+          ...(op.parameters ?? []).map((param: Parameter, index: number) => ({
+            param,
+            location: `${p}/parameters/${index}`,
+          })),
+        ];
+        for (const { param, location } of declaredParameters) {
           record(param, p + '/parameters');
           if (typeof param.name !== 'string' || !param.name)
             fail(p, 'parameters require nonempty names');
@@ -2710,11 +2866,11 @@ export function loadContract(
             fail(p, `parameter name ${param.name} conflicts with SDK input`);
           schema(
             param.schema,
-            `${p}/parameters/${pointerSegment(param.name)}`,
+            location + '/schema',
             raw.openapi.startsWith('3.0.'),
             config.numericUnions === 'explicit',
           );
-          parameterType(param.schema, `${p}/parameters/${pointerSegment(param.name)}`);
+          parameterType(param.schema, location + '/schema');
           // Reject unsafe parameter metadata before it can enter descriptors or
           // examples. Include every declared API-key name, even unselected schemes
           // and schemes in locations unsupported by authentication compilation.
@@ -2786,7 +2942,7 @@ export function loadContract(
         if (!anonymous && !selectedAuthentication)
           fail(
             p,
-            `selected authentication scheme ${selectedScheme ?? '(none)'} is not a supported standalone alternative for this operation`,
+            `selected authentication scheme ${selectedScheme ?? '(none)'} is not a complete supported alternative for this operation. Configure config/auth with a complete declared scheme set. Bearer/API-key requirements must use empty scope arrays; OAuth scopes are unsupported. Available schemes: ${Object.keys(schemes).join(', ') || '(none)'}`,
           );
         let body: Schema | undefined;
         let mediaType: string | undefined;
@@ -2834,11 +2990,11 @@ export function loadContract(
           if (!['application/json', 'application/merge-patch+json'].includes(media))
             fail(
               p,
-              `unsupported request media type ${media}; file transfer is not in the initial reference contracts`,
+              `unsupported request media type ${media}; select application/json or application/merge-patch+json using operations.${id}.requestMediaType, or exclude this operation with include or hidden`,
             );
           schema(
             content.schema,
-            `${p}/requestBody`,
+            `${p}/requestBody/content/${pointerSegment(media)}/schema`,
             raw.openapi.startsWith('3.0.'),
             config.numericUnions === 'explicit',
           );
@@ -2881,10 +3037,14 @@ export function loadContract(
             if (['application/pdf', 'text/event-stream'].includes(media) && successStatus(status)) {
               r.bodyKind = media === 'application/pdf' ? 'binary' : 'sse';
             } else {
-              if (media !== 'application/json') fail(p, `unsupported response media type ${media}`);
+              if (media !== 'application/json')
+                fail(
+                  p + '/responses/' + pointerSegment(status) + '/content/' + pointerSegment(media),
+                  `unsupported response media type ${media}; declare application/json, a successful application/pdf or text/event-stream response, or exclude this operation with include or operations.${id}.hidden`,
+                );
               schema(
                 value.schema,
-                `${p}/responses/${pointerSegment(status)}`,
+                `${p}/responses/${pointerSegment(status)}/content/${pointerSegment(media)}/schema`,
                 raw.openapi.startsWith('3.0.'),
                 config.numericUnions === 'explicit',
               );
@@ -2905,32 +3065,59 @@ export function loadContract(
         if (c.stream && !Object.values(responses).some((response) => response.bodyKind === 'sse'))
           fail(`config/operations/${pointerSegment(id)}/stream`, 'operation has no SSE response');
         if (!Object.keys(responses).some((k) => successStatus(k) && k !== '304'))
-          fail(p, 'declare at least one explicit success response');
+          fail(
+            p + '/responses',
+            'declare at least one explicit numeric 2xx success response; default is supported only alongside an explicit success response. Correct the specification or exclude this operation with include or hidden',
+          );
         if (c.idempotency) {
-          keys(c.idempotency, ['header', 'retention', 'scope', 'auto', 'autoKeyPrefix'], p);
-          header(c.idempotency.header, p);
+          keys(
+            c.idempotency,
+            ['header', 'retention', 'scope', 'auto', 'autoKeyPrefix'],
+            capabilityPath('idempotency'),
+          );
+          header(c.idempotency.header, capabilityPath('idempotency', 'header') + '/header');
+          const candidates = parameters
+            .filter((parameter) => parameter.in === 'header')
+            .map((parameter) => parameter.name);
+          if (
+            !candidates.some(
+              (candidate) => candidate.toLowerCase() === c.idempotency!.header.toLowerCase(),
+            )
+          )
+            options.onWarning?.(
+              new Diagnostic(
+                capabilityPath('idempotency', 'header') + '/header',
+                `header is not declared by this operation.${suggestion(c.idempotency.header, candidates)} Declared request headers: ${candidates.join(', ') || '(none)'}. Check the spelling or add the provider's header declaration to the specification.`,
+              ),
+            );
           if (
             typeof c.idempotency.retention !== 'string' ||
             !c.idempotency.retention.trim() ||
             typeof c.idempotency.scope !== 'string' ||
             !c.idempotency.scope.trim()
           )
-            fail(p, 'idempotency requires server retention and scope descriptions');
+            fail(
+              capabilityPath('idempotency'),
+              'idempotency requires server retention and scope descriptions',
+            );
           if (c.idempotency.auto !== undefined && typeof c.idempotency.auto !== 'boolean')
-            fail(p, 'idempotency auto must be boolean');
+            fail(capabilityPath('idempotency'), 'idempotency auto must be boolean');
           if (
             c.idempotency.autoKeyPrefix !== undefined &&
             (typeof c.idempotency.autoKeyPrefix !== 'string' ||
               /[^\x20-\x7e]/.test(c.idempotency.autoKeyPrefix) ||
               /^[ ]/.test(c.idempotency.autoKeyPrefix))
           )
-            fail(p, 'idempotency autoKeyPrefix plus UUID must be a valid HTTP header value');
+            fail(
+              capabilityPath('idempotency'),
+              'idempotency autoKeyPrefix plus UUID must be a valid HTTP header value',
+            );
         }
         if (c.retry) {
           keys(
             c.retry,
             ['maxAttempts', 'statuses', 'errors', 'transport', 'baseDelayMs', 'maxDelayMs'],
-            p,
+            capabilityPath('retry'),
           );
           if (
             !Number.isInteger(c.retry.maxAttempts) ||
@@ -2947,7 +3134,7 @@ export function loadContract(
             typeof c.retry.transport !== 'boolean'
           )
             fail(
-              p,
+              capabilityPath('retry'),
               'retry requires 1–10 attempts, nonnegative delay, explicit statuses (excluding conflicts), and transport boolean',
             );
           if (
@@ -2955,11 +3142,15 @@ export function loadContract(
             !['get', 'head', 'options'].includes(verb) &&
             !c.idempotency
           )
-            fail(p, 'mutation retries require a declared idempotency contract');
+            fail(
+              capabilityPath('retry'),
+              'mutation retries require a declared idempotency contract',
+            );
           if (c.retry.errors !== undefined) {
-            if (!Array.isArray(c.retry.errors)) fail(p, 'retry.errors must be an array');
+            if (!Array.isArray(c.retry.errors))
+              fail(capabilityPath('retry'), 'retry.errors must be an array');
             for (const rule of c.retry.errors) {
-              keys(rule, ['status', 'codes'], p);
+              keys(rule, ['status', 'codes'], capabilityPath('retry'));
               if (
                 !Number.isInteger(rule.status) ||
                 rule.status < 400 ||
@@ -2970,12 +3161,12 @@ export function loadContract(
                 rule.codes.some((code) => typeof code !== 'string' || !code.trim())
               )
                 fail(
-                  p,
+                  capabilityPath('retry'),
                   'retry.errors requires an HTTP error status other than 412 and explicit nonempty codes',
                 );
               if (rule.status === 409 && (!c.idempotency || c.conditional))
                 fail(
-                  p,
+                  capabilityPath('retry'),
                   'retrying a specific 409 code requires idempotency and cannot retry conditional updates',
                 );
             }
@@ -2983,7 +3174,15 @@ export function loadContract(
         }
         if (c.pagination) {
           const pg = c.pagination;
-          keys(pg, ['kind', 'items', 'next', 'parameter'], p);
+          const queryParameters = parameters
+            .filter((parameter) => parameter.in === 'query')
+            .map((parameter) => parameter.name);
+          if (pg.kind !== 'link' && !queryParameters.includes(pg.parameter ?? ''))
+            fail(
+              capabilityPath('pagination', 'parameter') + '/parameter',
+              `select a declared query parameter.${suggestion(pg.parameter ?? '', queryParameters)} Candidates: ${queryParameters.join(', ') || '(none)'}`,
+            );
+          keys(pg, ['kind', 'items', 'next', 'parameter'], capabilityPath('pagination'));
           if (
             !['cursor', 'offset', 'link'].includes(pg.kind) ||
             typeof pg.items !== 'string' ||
@@ -2994,14 +3193,17 @@ export function loadContract(
               !parameters.some((v) => v.in === 'query' && v.name === pg.parameter))
           )
             fail(
-              p,
+              capabilityPath('pagination'),
               'pagination requires item/continuation fields and a declared query parameter (except links)',
             );
-          if (verb !== 'get') fail(p, 'pagination helpers require GET');
+          if (verb !== 'get') fail(capabilityPath('pagination'), 'pagination helpers require GET');
           const parameter = parameters.find((v) => v.in === 'query' && v.name === pg.parameter);
           const nextType = pg.kind === 'offset' ? 'integer' : 'string';
           if (pg.kind !== 'link' && parameter && parameterType(parameter.schema, p) !== nextType)
-            fail(p, `${pg.kind} pagination requires a scalar ${nextType} query parameter`);
+            fail(
+              capabilityPath('pagination'),
+              `${pg.kind} pagination requires a scalar ${nextType} query parameter`,
+            );
           // Follow same-instance conjuncts and alternatives, just as field/type
           // projection does; formats may be supplied by referenced siblings.
           const exactInteger = (shape: Schema): boolean =>
@@ -3016,7 +3218,7 @@ export function loadContract(
             const next = schemaField(response.schema, pg.next);
             if (!items || !hasType(items, 'array') || !next || !hasType(next, nextType))
               fail(
-                p,
+                capabilityPath('pagination'),
                 `pagination items/next must address declared array and ${nextType} response fields`,
               );
             if (
@@ -3027,15 +3229,15 @@ export function loadContract(
               exactInteger(next)
             )
               fail(
-                p,
+                capabilityPath('pagination'),
                 'offset pagination returns exact integer strings but its query parameter requires a native integer; use compatible integer formats or omit the pagination helper',
               );
           }
         }
         if (c.polling) {
-          keys(c.polling, ['state', 'success', 'failure', 'intervalMs'], p);
-          strings(c.polling.success, `${p}/polling/success`);
-          strings(c.polling.failure, `${p}/polling/failure`);
+          keys(c.polling, ['state', 'success', 'failure', 'intervalMs'], cp + '/polling');
+          strings(c.polling.success, cp + '/polling/success');
+          strings(c.polling.failure, cp + '/polling/failure');
           if (
             verb !== 'get' ||
             typeof c.polling.state !== 'string' ||
@@ -3046,18 +3248,35 @@ export function loadContract(
             c.polling.intervalMs < 1 ||
             c.polling.success.some((s) => c.polling!.failure.includes(s))
           )
-            fail(p, 'polling requires GET, distinct terminal states, and positive intervalMs');
+            fail(
+              cp + '/polling',
+              'polling requires GET, distinct terminal states, and positive intervalMs',
+            );
           for (const [, response] of Object.entries(responses).filter(([status]) =>
             /^2\d\d$/.test(status),
           )) {
             const states = schemaField(response.schema, c.polling.state);
             if (!states || !hasType(states, 'string'))
-              fail(p, 'polling state must address a declared string response field');
+              fail(cp + '/polling', 'polling state must address a declared string response field');
           }
         }
         if (c.conditional) {
-          keys(c.conditional, ['header'], p);
-          header(c.conditional.header, p);
+          keys(c.conditional, ['header'], cp + '/conditional');
+          header(c.conditional.header, cp + '/conditional' + '/header');
+          const candidates = parameters
+            .filter((parameter) => parameter.in === 'header')
+            .map((parameter) => parameter.name);
+          if (
+            !candidates.some(
+              (candidate) => candidate.toLowerCase() === c.conditional!.header.toLowerCase(),
+            )
+          )
+            options.onWarning?.(
+              new Diagnostic(
+                cp + '/conditional' + '/header',
+                `header is not declared by this operation.${suggestion(c.conditional.header, candidates)} Declared request headers: ${candidates.join(', ') || '(none)'}. Check the spelling or add the provider's header declaration to the specification.`,
+              ),
+            );
         }
         const operation: Operation = {
           ...c,
@@ -3108,7 +3327,7 @@ export function loadContract(
       if (!ids.has(id))
         fail(
           'config/auth/modes/' + pointerSegment(mode) + '/operations',
-          'unknown operation binding ' + id,
+          'unknown operation binding ' + id + '.' + suggestion(id, [...ids]),
         );
   if (config.webhook) {
     const w = config.webhook;
@@ -3233,6 +3452,87 @@ export function loadContract(
     )
       fail('config/apiVersion/value', 'expected a nonempty safe header value');
   }
+  const warnHeader = (
+    value: string | undefined,
+    path: string,
+    candidates: string[],
+    direction: string,
+  ) => {
+    if (
+      value !== undefined &&
+      !candidates.some((candidate) => candidate.toLowerCase() === value.toLowerCase())
+    )
+      options.onWarning?.(
+        new Diagnostic(
+          path,
+          `header is not declared in the selected ${direction} contract.${suggestion(value, candidates)} Declared headers: ${[...new Set(candidates)].sort().join(', ') || '(none)'}. Check the spelling or add the provider's header declaration to the specification.`,
+        ),
+      );
+  };
+  const requestHeaders = operations.flatMap((op) =>
+    op.parameters
+      .filter((parameter) => parameter.in === 'header')
+      .map((parameter) => parameter.name),
+  );
+  const responseHeaders = Object.values(doc.paths).flatMap((item) => {
+    if (!item || typeof item !== 'object') return [];
+    return Object.values(item).flatMap((op) => {
+      if (
+        !op ||
+        typeof op !== 'object' ||
+        !('responses' in op) ||
+        !op.responses ||
+        typeof op.responses !== 'object'
+      )
+        return [];
+      return Object.values(op.responses).flatMap((response) =>
+        response &&
+        typeof response === 'object' &&
+        'headers' in response &&
+        response.headers &&
+        typeof response.headers === 'object'
+          ? Object.keys(response.headers)
+          : [],
+      );
+    });
+  });
+  const incomingHeaders = Object.values(doc.webhooks ?? {}).flatMap((item) => {
+    if (!item || typeof item !== 'object') return [];
+    const lists: unknown[] = ['parameters' in item ? item.parameters : undefined];
+    for (const verb of ['get', 'post', 'put', 'patch', 'delete', 'head', 'options']) {
+      const operation: unknown = Reflect.get(item, verb);
+      if (operation && typeof operation === 'object' && 'parameters' in operation)
+        lists.push(operation.parameters);
+    }
+    return lists.flatMap((list) =>
+      Array.isArray(list)
+        ? list.flatMap((parameter: unknown) =>
+            parameter &&
+            typeof parameter === 'object' &&
+            'in' in parameter &&
+            parameter.in === 'header' &&
+            'name' in parameter &&
+            typeof parameter.name === 'string'
+              ? [parameter.name]
+              : [],
+          )
+        : [],
+    );
+  });
+  for (const field of ['header', 'timestampHeader', 'idHeader'] as const)
+    warnHeader(
+      config.webhook?.[field],
+      'config/webhook/' + field,
+      incomingHeaders,
+      'incoming webhook',
+    );
+  warnHeader(config.apiVersion?.header, 'config/apiVersion/header', requestHeaders, 'request');
+  warnHeader(
+    config.errors?.requestIdHeader,
+    'config/errors/requestIdHeader',
+    responseHeaders,
+    'response',
+  );
   // Index operation reference prefixes once. Large exports can contain millions
   // of reference occurrences; rescanning them for every operation is quadratic.
   type ReferencePrefix = { children: Map<string, ReferencePrefix>; models?: Set<string> };

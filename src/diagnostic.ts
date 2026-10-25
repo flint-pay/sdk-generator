@@ -2,6 +2,7 @@ export const pointerSegment = (value: string): string =>
   value.replaceAll('~', '~0').replaceAll('/', '~1');
 
 export class Diagnostic extends Error {
+  declare source?: string;
   constructor(
     public location: string,
     public detail: string,

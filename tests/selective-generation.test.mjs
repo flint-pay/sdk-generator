@@ -189,7 +189,12 @@ for (const target of ['node', 'php']) {
     delete f.cfg[selected];
     assert.throws(
       () => f.load(),
-      new RegExp('config/' + selected + ': required for the ' + target),
+      (error) => {
+        assert.equal(error.location, 'config');
+        assert.match(error.detail, new RegExp('required for the ' + target));
+        assert.ok(error.detail.includes('config/' + selected));
+        return true;
+      },
     );
   });
 

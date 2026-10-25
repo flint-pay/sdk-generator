@@ -143,7 +143,15 @@ test('coercion hook method names require an explicit safe customization', () => 
   for (const id of ['toString', 'toJSON', 'valueOf']) {
     const d = structuredClone(doc);
     d.paths['/values'].post.operationId = id;
-    assert.throws(() => load(d, { ...config, operations: {} }), /method.*reserved/);
+    assert.throws(
+      () => load(d, { ...config, operations: {} }),
+      (error) => {
+        assert.equal(error.location, '/paths/~1values/post/operationId');
+        assert.match(error.detail, /reserved word or SDK runtime member/);
+        assert.ok(error.detail.includes('config/operations/' + id + '/method'));
+        return true;
+      },
+    );
     const c = load(d, { ...config, operations: { [id]: { method: 'save' } } });
     assert.equal(c.operations[0].method, 'save');
   }

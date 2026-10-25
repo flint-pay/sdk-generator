@@ -13,7 +13,7 @@ import {
   chmodSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { resolve, join, dirname, delimiter } from 'node:path';
+import { resolve, join, dirname, delimiter, relative } from 'node:path';
 import { spawnSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import {
@@ -70,8 +70,8 @@ test('the package exports the documented library API', async () => {
 function failure(args, env) {
   const result = run([args[0], '--json', ...args.slice(1)], env);
   assert.equal(result.status, 1, result.stdout + result.stderr);
-  assert.equal(result.stdout, '');
-  const output = JSON.parse(result.stderr);
+  assert.equal(args[0] === 'diagnose' ? result.stderr : result.stdout, '');
+  const output = JSON.parse(args[0] === 'diagnose' ? result.stdout : result.stderr);
   assert.equal(typeof output.error, 'string');
   return output.error;
 }
@@ -85,8 +85,9 @@ function fixture(t, targets = ['php'], { generated = true } = {}) {
     version: '1.0.0',
     targets,
     requests: { style: 'object' },
-    npm: { name: '@example/todos' },
-    composer: { name: 'example/todos', namespace: 'Todos' },
+    npm: { name: '@synthetic/todos' },
+    composer: { name: 'synthetic/todos', namespace: 'Todos' },
+    operations: { listTodos: { resource: 'api', method: 'listTodos' } },
   };
   writeFileSync(
     api,
@@ -123,7 +124,7 @@ test('init writes only the expected minimal config and reports diagnosis and nex
     encoding: 'utf8',
   });
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stderr, '');
+  assert.match(result.stderr, /inferred api.listTodos/);
   const config = {
     version: '0.1.0',
     targets: ['node', 'php'],
@@ -138,8 +139,8 @@ test('init writes only the expected minimal config and reports diagnosis and nex
     result.stdout,
     'Wrote sdk.json (targets: node, php)\n' +
       diagnosis.stdout +
-      'Next: replace the @example/example package names, then run\n' +
-      '  sdk-generator generate api.json sdk.json OUTPUT\n',
+      'Next: replace @example/synthetic-todos and example/synthetic-todos, then run\n' +
+      `  ${process.execPath} ${cli} generate api.json sdk.json OUTPUT\n`,
   );
 });
 
@@ -234,7 +235,7 @@ test('init quotes shell-sensitive paths only in the human generate suggestion', 
       });
     const human = invoke(false);
     assert.equal(human.status, 0, human.stderr);
-    assert.ok(human.stdout.endsWith(`  sdk-generator generate ${expected} OUTPUT\n`));
+    assert.ok(human.stdout.endsWith(`  ${process.execPath} ${cli} generate ${expected} OUTPUT\n`));
     // Ask a POSIX shell to parse the displayed arguments without executing generation.
     const parsed = spawnSync('sh', ['-c', `printf '%s\\n' ${expected}`], {
       cwd: f.dir,
@@ -259,7 +260,7 @@ test('init target selection omits unselected metadata and preserves diagnose JSO
   ]) {
     const result = run(['init', '--targets', option, f.api, f.sdk, '--json']);
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(result.stderr, '');
+    assert.match(result.stderr, /inferred api.listTodos/);
     const diagnosis = run(['diagnose', f.api, f.sdk, '--json']);
     assert.equal(diagnosis.status, 0, diagnosis.stderr);
     const config = {
@@ -291,7 +292,7 @@ test('init rejects invalid flags and target values before writing', (t) => {
   const f = fixture(t, ['node'], { generated: false });
   for (const args of [
     ['--unknown'],
-    ['--force'],
+    ['--force', '--force'],
     ['--targets'],
     ['--targets', ''],
     ['--targets', 'ruby'],
@@ -311,8 +312,8 @@ test('init refuses existing files, directories and symlinks without changing the
   writeFileSync(f.sdk, original);
   const refuse = () => {
     const error = failure(['init', f.api, f.sdk]);
-    assert.ok(error.includes(f.sdk));
-    assert.match(error, /already exists; refusing to overwrite/);
+    assert.ok(error.includes(relative(process.cwd(), f.sdk)));
+    assert.match(error, /already exists; use --force/);
   };
   refuse();
   assert.equal(readFileSync(f.sdk, 'utf8'), original);
@@ -346,7 +347,7 @@ test('init keeps the written config and reports the same diagnosis on failure', 
       assert.deepEqual(JSON.parse(result.stderr), {
         written: f.sdk,
         config: initialConfig(f.api),
-        diagnose: JSON.parse(diagnosis.stderr),
+        diagnose: JSON.parse(diagnosis.stdout),
       });
     } else {
       assert.equal(result.stdout, `Wrote ${f.sdk} (targets: node, php)\n`);
@@ -375,8 +376,14 @@ test('init uses the existing input diagnostics and does not write unreadable or 
     const diagnosis = run(['diagnose', f.api, existingSdk, '--json']);
     assert.equal(diagnosis.status, 1);
     const error = failure(['init', f.api, f.sdk]);
-    assert.equal(error, JSON.parse(diagnosis.stderr).error);
-    assert.throws(() => initialConfig(f.api), { message: error });
+    assert.equal(
+      /supported input|expected valid JSON|expected an OpenAPI object/.test(error),
+      true,
+    );
+    assert.throws(
+      () => initialConfig(f.api),
+      (caught) => caught.detail === error.slice(error.indexOf(': ') + 2),
+    );
     assert.equal(existsSync(f.sdk), false);
   }
   rmSync(f.api);
@@ -530,11 +537,13 @@ test('global and command help are plain text and describe arguments and side eff
       assert.match(result.stdout, /write|written|upload|deploy|caches/i);
       assert.ok(
         result.stdout.includes(
-          '--json  Print machine-readable JSON (stdout) and JSON errors (stderr).',
+          '--json  Print machine-readable JSON; diagnose failures use stdout, other errors use stderr.',
         ),
       );
       if (command === 'preview')
-        assert.ok(result.stdout.includes('--diff  Print diffs for modified files.'));
+        assert.ok(
+          result.stdout.includes('--diff  Include modified-file diffs (also with --json).'),
+        );
     }
   }
   assert.match(run(['validate', '--help']).stdout, /--fixtures HTTP_CASES_JSON/);
@@ -670,7 +679,8 @@ test('preview, generate and release report every hand edit without changing gene
     ['release', f.output, join(f.dir, 'release')],
   ]) {
     const message = failure(args);
-    for (const path of paths) assert.ok(message.includes(join(f.output, path)));
+    for (const path of paths)
+      assert.ok(message.includes(relative(process.cwd(), join(f.output, path))));
     assert.equal((message.match(/generated file was edited/g) ?? []).length, 2);
     assert.deepEqual(
       paths.map((p) => readFileSync(join(f.output, p), 'utf8')),
@@ -767,25 +777,23 @@ function jsonFailure(args, execute, env) {
   }
   assert.ok(error instanceof Error);
   const command = args[0];
-  const expected = {
-    error: error.message,
-    ...(command === 'diagnose'
-      ? {
-          valid: false,
-          diagnostics: (error instanceof DiagnosticGroup
-            ? error.findings
-            : error instanceof Diagnostic
-              ? [error]
-              : []
-          ).map((f) => ({ location: f.location, message: f.detail })),
-        }
-      : {}),
-  };
   const result = run([...args, '--json'], env);
   assert.equal(result.status, 1);
-  assert.equal(result.stdout, '');
-  assert.equal(result.stderr, stable(expected) + '\n');
-  assert.deepEqual(JSON.parse(result.stderr), expected);
+  const channel = command === 'diagnose' ? result.stdout : result.stderr;
+  assert.equal(command === 'diagnose' ? result.stderr : result.stdout, '');
+  const report = JSON.parse(channel);
+  assert.match(report.code, /^[A-Z_]+$/);
+  assert.equal(typeof report.error, 'string');
+  assert.ok(Array.isArray(report.diagnostics));
+  if (error instanceof Diagnostic) {
+    const details = error instanceof DiagnosticGroup ? error.findings : [error];
+    assert.deepEqual(
+      report.diagnostics.map((finding) => finding.message),
+      details.map((finding) => finding.detail.replaceAll(process.cwd() + '/', '')),
+    );
+  }
+  if (command === 'diagnose') assert.equal(report.valid, false);
+  assert.equal(channel, stable(report) + '\n');
 }
 function casesFile(f) {
   const path = join(f.dir, 'cases.json');
@@ -822,7 +830,10 @@ test('--json preserves every command success byte for byte, including publicatio
   assert.equal(humanEffective.stdout, stable(effective) + '\n');
   assert.equal(humanEffective.status, 0);
   const fresh = join(f.dir, 'fresh');
-  jsonSuccess(['preview', f.api, f.sdk, fresh], generate(contract, fresh, true));
+  jsonSuccess(['preview', f.api, f.sdk, fresh], {
+    changes: preview(contract, fresh).changes,
+    compatibility: preview(contract, fresh).compatibility,
+  });
   assert.equal(existsSync(fresh), false);
   const generated = generate(contract, fresh);
   rmSync(fresh, { recursive: true });
@@ -976,11 +987,7 @@ test('human regeneration lists sorted paths and every finding; --diff prints onl
     );
   }
   assert.doesNotMatch(plain.stdout, /@@|\+\+\+/);
-  assert.ok(
-    plain.stdout.endsWith(
-      'Use --diff to show modified-file diffs, or --json for the full report.\n',
-    ),
-  );
+  assert.ok(plain.stdout.endsWith('Use --diff to show modified-file diffs (also with --json).\n'));
   const diff = run(['preview', f.api, f.sdk, f.output, '--diff']);
   assert.equal(diff.status, 0, diff.stderr);
   assert.match(diff.stdout, /Diffs \(12 modified files\):\n/);
@@ -996,7 +1003,7 @@ test('human regeneration lists sorted paths and every finding; --diff prints onl
     generated.stdout,
     plain.stdout
       .replace(`Preview of ${f.output} (no files written)`, `Generated ${f.output}`)
-      .replace('Use --diff to show modified-file diffs, or --json for the full report.\n', ''),
+      .replace('Use --diff to show modified-file diffs (also with --json).\n', ''),
   );
   // Regeneration preserves the comparison baseline, so unchanged files keep their findings.
   const again = run(['preview', f.api, f.sdk, f.output]);
@@ -1070,19 +1077,16 @@ test('human errors and literal --json selection survive argument parsing failure
   ]) {
     const result = run(args);
     assert.equal(result.status, 1);
-    assert.equal(result.stdout, '');
-    assert.match(JSON.parse(result.stderr).error, /arguments: unknown/);
+    assert.equal(args[0] === 'diagnose' ? result.stderr : result.stdout, '');
+    assert.match(
+      JSON.parse(args[0] === 'diagnose' ? result.stdout : result.stderr).error,
+      /arguments: unknown/,
+    );
   }
-  assert.equal(
+  assert.match(
     JSON.parse(run(['preview', '--diff', '--json']).stderr).error,
-    'arguments: --diff applies to human output; --json already includes every diff',
+    /missing required argument API_JSON/,
   );
-  const conflict = run(['preview', 'api', 'sdk', 'output', '--diff', '--json']);
-  assert.equal(conflict.status, 1);
-  assert.equal(conflict.stdout, '');
-  assert.deepEqual(JSON.parse(conflict.stderr), {
-    error: 'arguments: --diff applies to human output; --json already includes every diff',
-  });
   for (const command of Object.keys(commandArguments).filter((c) => c !== 'preview')) {
     const result = run([command, '--diff']);
     assert.equal(result.status, 1);
@@ -1093,7 +1097,7 @@ test('human errors and literal --json selection survive argument parsing failure
   assert.match(literal.stderr, /^error: missing required argument SDK_JSON/);
   const repeated = run(['diagnose', '--json', '--json']);
   assert.equal(repeated.status, 1);
-  assert.match(JSON.parse(repeated.stderr).error, /provided more than once/);
+  assert.match(JSON.parse(repeated.stdout).error, /provided more than once/);
 });
 
 test('human diagnose success and failure list counts and each location and message', (t) => {
@@ -1113,7 +1117,7 @@ test('human diagnose success and failure list counts and each location and messa
   assert.match(result.stderr, /^Invalid: 2 findings\n/);
   assert.match(result.stderr, /\n  config\/version: expected a semantic package version\n/);
   assert.match(result.stderr, /\n  config\/operatons: unsupported setting/);
-  const findings = JSON.parse(run(['diagnose', f.api, f.sdk, '--json']).stderr).diagnostics;
+  const findings = JSON.parse(run(['diagnose', f.api, f.sdk, '--json']).stdout).diagnostics;
   assert.equal(
     result.stderr,
     'Invalid: 2 findings\n' + findings.map((f) => `  ${f.location}: ${f.message}\n`).join(''),
@@ -1153,7 +1157,7 @@ test('human release and publication formats include review state, receipts and n
     result.stdout,
     [
       `Prepared release 1.0.0 in ${directory}. Nothing was published.`,
-      'Packages: npm @example/todos, Composer example/todos',
+      'Packages: npm @synthetic/todos, Composer synthetic/todos',
       'Previous version: none',
       'Compatibility: no findings',
       'Review acknowledged: no',
@@ -1188,7 +1192,7 @@ test('human release prints prior version, required review, acknowledgment and op
   const directory = join(f.dir, 'php-release');
   const result = run(['release', f.output, directory, '--acknowledge-review'], env);
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /Packages: Composer example\/todos\nPrevious version: 1.0.0\n/);
+  assert.match(result.stdout, /Packages: Composer synthetic\/todos\nPrevious version: 1.0.0\n/);
   assert.match(
     result.stdout,
     /Compatibility: \d+ breaking, \d+ review, \d+ additive; review required\n/,

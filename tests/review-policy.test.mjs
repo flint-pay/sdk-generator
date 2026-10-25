@@ -145,7 +145,7 @@ test('untyped HTTP parameters fail diagnosis while explicit scalar parameters re
       });
       if (location === 'path')
         ((f.doc.paths['/values/{value}'] = f.doc.paths['/values']), delete f.doc.paths['/values']);
-      assert.throws(() => load(f), /parameters\/value.*explicit non-null scalar/);
+      assert.throws(() => load(f), /parameters\/0\/schema.*explicit non-null scalar/);
     }
   }
   const f = fixture('typed-parameters', {

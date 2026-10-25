@@ -71,7 +71,7 @@ export function generationText(
   }
   if (command === 'preview' && modified.length) {
     if (diffs) lines.push(`Diffs (${modified.length} modified files):`, diffs.join('\n'));
-    else lines.push('Use --diff to show modified-file diffs, or --json for the full report.');
+    else lines.push('Use --diff to show modified-file diffs (also with --json).');
   }
   return lines.join('\n');
 }

@@ -113,6 +113,9 @@ assert.deepEqual(preview(restored,${JSON.stringify(output)}).changes,[],'full ex
         `full generation peak RSS ${summary.maxRSS} KiB exceeds 4 GiB budget`,
       );
       assert.ok(size(output) < 300 * 1024 * 1024, 'full package/record size budget exceeded');
+      const recordBytes = statSync(join(output, '.sdk-generator.json')).size;
+      console.log('Private generation record ' + JSON.stringify({ bytes: recordBytes }));
+      assert.ok(recordBytes < 100 * 1024 * 1024, 'private generation record exceeds 100 MiB');
       const preview = JSON.parse(
         run(process.execPath, ['dist/cli.js', 'preview', api, config, output, '--json']),
       );

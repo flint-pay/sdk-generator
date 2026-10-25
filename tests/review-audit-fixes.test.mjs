@@ -2,7 +2,7 @@ import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { loadContract, generate, Diagnostic } from '../dist/index.js';
 
@@ -148,7 +148,9 @@ test('consumed numeric constraints reject source rounding with their constraint 
         () => loadContract(i.api, i.sdk),
         (error) =>
           precisionError(error) &&
-          error.location.endsWith('/' + keyword + (keyword === 'enum' ? '/0' : '')),
+          error.location ===
+            '/components/schemas/Payload/' + keyword + (keyword === 'enum' ? '/0' : '') &&
+          resolve(error.source) === i.api,
       );
     }
   }
@@ -217,8 +219,22 @@ test('external references and profile overrides retain source precision diagnost
     (error) =>
       precisionError(error) &&
       error.message.includes('schema.json') &&
-      error.location.endsWith('/multipleOf'),
+      error.location === '/value/multipleOf' &&
+      resolve(error.source) === join(i.dir, 'schema.json'),
   );
+  const diagnosed = spawnSync(
+    process.execPath,
+    ['dist/cli.js', 'diagnose', i.api, i.sdk, '--json'],
+    {
+      encoding: 'utf8',
+    },
+  );
+  assert.equal(diagnosed.status, 1);
+  assert.equal(diagnosed.stderr, '');
+  const finding = JSON.parse(diagnosed.stdout).diagnostics[0];
+  assert.equal(finding.location, '/value/multipleOf');
+  assert.equal(resolve(finding.source), join(i.dir, 'schema.json'));
+  assert.equal(finding.message.includes('(' + i.dir), false);
   const j = inputs({ type: 'number', minimum: 0 }, { requests: { style: 'object' } });
   writeFileSync(
     join(j.dir, 'profile.json'),
