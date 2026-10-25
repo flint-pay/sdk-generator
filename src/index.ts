@@ -16,6 +16,7 @@ export {
   validate,
   publishRelease,
   prepareRelease,
+  setCompatibilityBaseline,
 } from './generate.js';
 export { validateFixtures } from './fixtures.js';
 export { publishSite } from './distribution.js';

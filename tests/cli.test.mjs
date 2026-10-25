@@ -25,6 +25,7 @@ import {
   validate,
   validateFixtures,
   prepareRelease,
+  setCompatibilityBaseline,
   publishRelease,
   publishSite,
   Diagnostic,
@@ -58,6 +59,7 @@ test('the package exports the documented library API', async () => {
       'initialConfig',
       'loadContract',
       'prepareRelease',
+      'setCompatibilityBaseline',
       'preview',
       'publishRelease',
       'publishSite',
@@ -715,6 +717,7 @@ test('release acknowledgment records approval while default preparation remains 
 
 test('release acknowledgment does not bypass semantic version policy', (t) => {
   const f = fixture(t);
+  setCompatibilityBaseline(f.output, 'released');
   f.config.version = '1.0.1';
   f.config.release = { policy: 'semver' };
   f.config.operations = { listTodos: { method: 'renamed' } };
@@ -943,6 +946,7 @@ test('human preview and generation summarize first generation and unchanged file
 
 test('human regeneration lists sorted paths and every finding; --diff prints only modified library diffs', (t) => {
   const f = fixture(t, ['node', 'php']);
+  setCompatibilityBaseline(f.output, 'released');
   f.config.targets = ['node'];
   f.config.version = '2.0.0';
   f.config.operations = { listTodos: { method: 'fetch' } };
@@ -1184,6 +1188,7 @@ test('human release and publication formats include review state, receipts and n
 
 test('human release prints prior version, required review, acknowledgment and optional site base URL', (t) => {
   const f = fixture(t);
+  setCompatibilityBaseline(f.output, 'released');
   const env = fakeTools(f);
   f.config.version = '2.0.0';
   f.config.operations = { listTodos: { method: 'fetch' } };
@@ -1272,6 +1277,7 @@ test('human fixture failures identify the finished failing target group', (t) =>
 
 test('human preview lists additive findings after the other severities', (t) => {
   const f = fixture(t, ['node']);
+  setCompatibilityBaseline(f.output, 'released');
   f.config.operations = {
     listTodos: { method: 'fetch', deprecated: 'Use the new todos operation.' },
   };

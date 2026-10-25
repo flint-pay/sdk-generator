@@ -7,7 +7,14 @@ import { join, resolve } from 'node:path';
 import { execFile, spawnSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createServer } from 'node:http';
-import { loadContract, generate, compare, validate, prepareRelease } from '../dist/index.js';
+import {
+  setCompatibilityBaseline,
+  loadContract,
+  generate,
+  compare,
+  validate,
+  prepareRelease,
+} from '../dist/index.js';
 import { compileSdkContract } from '../dist/target-plan.js';
 import { compareCompiledContracts } from '../dist/compiled-compatibility.js';
 import { restoreCompiledSnapshot, storeCompiledSnapshot } from '../dist/compiled-record.js';
@@ -150,6 +157,7 @@ for (const [kind, status, response] of [
   test(`adding ${kind} results to an empty operation breaks consumers and blocks stable patch releases`, async () => {
     const f = fixture('addition-' + kind, { 204: empty });
     generate(f.contract, f.output);
+    setCompatibilityBaseline(f.output, 'released');
     const consumer = join(f.dir, 'consumer.mts');
     writeFileSync(
       consumer,

@@ -28,7 +28,10 @@ export function comparePolicies(
   after: SchemaPolicy,
   subject: string,
   direction: 'input' | 'response',
+  context: { model?: boolean; shared?: ReadonlyMap<string, string> } = {},
 ): Compatibility[] {
+  const owner = context.shared?.get(policyPair(before, after, direction));
+  if (owner && owner !== subject) return [];
   if (stable(before) === stable(after)) return [];
   const changes: Compatibility[] = [];
   const add = (severity: Compatibility['severity'], message: string) =>
@@ -112,7 +115,7 @@ export function comparePolicies(
     const narrowed = after.members && (!before.members || removed.length > 0);
     add(
       direction === 'input' && narrowed ? 'breaking' : 'additive',
-      `${direction} enum changed; ${direction === 'input' ? 'replace removed input values with provider-supported values.' : 'retain unknown-value handling and review newly documented states; do not infer success.'}`,
+      `${direction} enum changed; ${direction === 'input' ? (narrowed ? 'replace removed input values with provider-supported values.' : 'additional input values are accepted; existing values remain supported.') : 'retain unknown-value handling and review newly documented states; do not infer success.'}`,
     );
   }
   const oldProperties = before.fields ?? {};
@@ -128,7 +131,7 @@ export function comparePolicies(
     const path = `${subject}.${key}`;
     const wasRequired = before.requiredKeys?.includes(key) ?? false;
     const required = after.requiredKeys?.includes(key) ?? false;
-    if (wasRequired !== required)
+    if (Boolean(old) === Boolean(next) && wasRequired !== required)
       changes.push({
         severity: (direction === 'input' ? required : !required) ? 'breaking' : 'additive',
         subject: path,
@@ -136,20 +139,24 @@ export function comparePolicies(
       });
     if (!old && !next) continue;
     if (!old || !next) {
-      const breaking = !next || (direction === 'input' && (required || before.extra !== false));
+      const breaking =
+        !next ||
+        (direction === 'input' && (required || (!context.model && before.extra !== false)));
       changes.push({
         severity: breaking ? 'breaking' : 'additive',
         subject: path,
         message: next
-          ? `${required ? 'Required' : 'Optional'} ${direction} field added.${direction === 'input' && required ? ' Supply this field in every affected call.' : direction === 'input' && before.extra !== false ? ' This name previously accepted arbitrary additional values; update existing values to its declared type.' : ''}`
+          ? `${required ? 'Required' : 'Optional'} ${direction} field added.${direction === 'input' && required ? ' Supply this field in every affected call.' : direction === 'input' && !context.model && before.extra !== false ? ' This name previously accepted arbitrary additional values; update existing values to its declared type.' : ''}`
           : `${direction} field removed. ${direction === 'input' ? 'Stop sending this field; confirm the replacement operation or field with the provider.' : 'Remove reliance on this field or migrate to its documented replacement.'}`,
       });
       continue;
     }
-    changes.push(...comparePolicies(old, next, path, direction));
+    changes.push(...comparePolicies(old, next, path, direction, context));
   }
   if (before.element && after.element)
-    changes.push(...comparePolicies(before.element, after.element, `${subject}[]`, direction));
+    changes.push(
+      ...comparePolicies(before.element, after.element, `${subject}[]`, direction, context),
+    );
   // Dictionary rules only affect values that can be objects in both versions.
   // Type changes already account for introducing or removing objects entirely.
   if (
@@ -164,6 +171,7 @@ export function comparePolicies(
           typeof after.extra === 'object' ? after.extra : UNCONSTRAINED_POLICY,
           `${subject}.*`,
           direction,
+          context,
         ),
       );
     else
@@ -201,7 +209,13 @@ export function comparePolicies(
           );
         else
           changes.push(
-            ...comparePolicies(branch, replacement, `${subject}[${key.trim()}]`, direction),
+            ...comparePolicies(
+              branch,
+              replacement,
+              `${subject}[${key.trim()}]`,
+              direction,
+              context,
+            ),
           );
       }
       for (const key of next.keys())
@@ -226,4 +240,13 @@ export function comparePolicies(
   if (!changes.length)
     add('review', 'Schema declarations or annotations changed; review documentation and examples.');
   return changes;
+}
+
+/** Stable identity for a shared schema change, independent of its use sites. */
+export function policyPair(
+  before: SchemaPolicy,
+  after: SchemaPolicy,
+  direction: 'input' | 'response',
+): string {
+  return stable([direction, before, after]);
 }

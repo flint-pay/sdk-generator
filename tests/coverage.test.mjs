@@ -14,6 +14,7 @@ import {
   generate,
   compare,
   prepareRelease,
+  setCompatibilityBaseline,
   publishSite,
   render,
 } from '../dist/index.js';
@@ -161,6 +162,7 @@ test('release policy and compatibility retain changes made before a version bump
   baseline.config.version = '1.0.0';
   const path = join(directory, 'draft-history');
   generate(baseline, path);
+  setCompatibilityBaseline(path, 'released');
   const draft = structuredClone(baseline);
   draft.operations.find((op) => op.id === 'getPayment').path = '/new/{id}';
   generate(draft, path);

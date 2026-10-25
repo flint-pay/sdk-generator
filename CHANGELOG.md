@@ -15,6 +15,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 - **CLI output.** Commands print readable summaries by default. Pass `--json` for machine-readable output; see the JSON diagnostics and previews changes above for channels and report shapes. `effective` still prints JSON. Library functions are unchanged.
 - **npm package names.** Configuration validation now rejects `npm.name` values over 214 characters, including the scope. Shorten any oversized names before generation.
 
+- **Compatibility baseline lifecycle.** New output is an unreleased draft until successful release preparation records its baseline. Release preparation now updates the private generation record; later generations compare against that prepared release. Existing records retain their historical comparisons. Use `setCompatibilityBaseline(output, 'draft' | 'released')` to reset an unpublished draft or adopt an externally released SDK. Reports group shared schemas, so finding counts and repeated subjects can change. See [saved baselines](docs/releases.md#saved-baselines).
+
 ### Breaking changes for regenerated SDKs
 
 - **Node SSE transport.** Default SSE connections use native HTTP/HTTPS for socket lifetime control. Pass an explicit `transport` to retain application-specific fetch/Undici behavior.
@@ -50,6 +52,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 - `diagnose` checks compiled plans and runnable inputs without rendering packages. Header declarations warn with spelling candidates; unsupported wire features include remedies. Init supports multiple security alternatives, `--force` for regular files, and executable next-step commands. Generation/validation/release warn about placeholder package vendors.
 - Generation locks precede loading/planning; dead owners recover with a warning. CLI SIGINT/SIGTERM cleans up its worker’s transaction under the same lease as stale recovery, requiring a supervisor-created transaction token before cleanup and verifying the retired lock’s inode before removal. PID reuse cannot claim another transaction. Private ownership records use compact JSON; missing records explain backup/fresh-generation recovery.
 
+- `preview --fail-on breaking|review|additive|none` selects a CI compatibility threshold while preserving the ordinary human or JSON report.
+
 - Node and PHP credential options accept providers resolved on every request attempt. Replay-safe requests invalidate provider credentials on HTTP 401 and retry once with the same idempotency key. PHP also accepts credential closures. Applications own token loading, caching and expiry handling.
 
 - Optional `errors.retry: { path, retryValues }` for body-driven retries, with configured status fallback when the path has no string. Optional `idempotency.autoKeyPrefix` prefixes generated UUID v4 keys. Keyed errors and response metadata expose `idempotencyKey`; errors expose a valid server wait as `retryAfterMs`. Both targets retain attempt/deadline bounds and never retry HTTP 412 or cancellation.
@@ -76,6 +80,7 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 ### Fixed
 
 - Runtime error messages identify caller authentication options; PHP invalid header values raise SDK validation errors. Malformed SSE events retain their event ID and one-based position. Unconsumed default Node SSE streams no longer keep the process alive and expire their idle budget before iteration. Node webhook verification accepts ArrayBuffer and Uint8Array bytes, and both targets explain millisecond-scale `nowSeconds` mistakes.
+- Optional response-model fields are additive even with open additional properties, permitting stable minor SDK releases. Draft iteration no longer creates fake first-release CHANGELOG/MIGRATION findings. Enum additions describe newly accepted inputs. Shared model comparisons and declaration reviews no longer repeat at every use site; historical compiled guarantees remain checked.
 
 - Webhook declarations and root exports use canonical event-name order, matching PHP class order. Freshly generated SDKs render identically after restoring their saved contract, so release preparation no longer incorrectly requires regeneration.
 - Full generation reuses compiled sample validators instead of recompiling one per candidate example, restoring generation time for large APIs (about 30% faster on the full Flint export).

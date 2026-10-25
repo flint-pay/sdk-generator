@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   loadContract,
-  generate,
+  generate as generateDraft,
   compare,
   preview,
   prepareRelease,
@@ -16,6 +16,18 @@ import { compileSdkContract } from '../dist/target-plan.js';
 import { compileResponsePlan } from '../dist/response-plan.js';
 import { addedResultFits } from '../dist/response-compatibility.js';
 import { restoreCompiledSnapshot, storeCompiledSnapshot } from '../dist/compiled-record.js';
+// Exercise records written before explicit draft/release baselines existed.
+function generate(contract, output) {
+  const path = join(output, '.sdk-generator.json');
+  const first = !existsSync(path);
+  const result = generateDraft(contract, output);
+  if (first) {
+    const record = JSON.parse(readFileSync(path));
+    delete record.baseline;
+    writeFileSync(path, JSON.stringify(record));
+  }
+  return result;
+}
 function readRecord(path) {
   const record = JSON.parse(readFileSync(path));
   for (const key of ['compiled', 'compiledComparisonBase'])
@@ -166,7 +178,8 @@ for (const policy of ['semver', 'review'])
         }
       }
     }
-    assert.equal(readFileSync(path, 'utf8'), original);
+    if (policy === 'semver') assert.equal(readFileSync(path, 'utf8'), original);
+    else assert.equal(JSON.parse(readFileSync(path)).baseline.kind, 'released');
   });
 
 test('generated calls in both languages execute with dynamic schema compilation disabled', () => {

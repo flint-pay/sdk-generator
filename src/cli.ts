@@ -71,7 +71,14 @@ const commands: Record<string, Command> = {
   },
   preview: {
     arguments: ['API_JSON', 'SDK_JSON', 'OUTPUT'],
-    flags: { '--diff': { description: 'Include modified-file diffs (also with --json).' } },
+    flags: {
+      '--diff': { description: 'Include modified-file diffs (also with --json).' },
+      '--fail-on': {
+        value: 'breaking|review|additive|none',
+        description:
+          'Exit 1 at or above this compatibility threshold (default: none; order: additive, review, breaking).',
+      },
+    },
     description:
       'Report proposed file changes, diffs and compatibility findings. No files are written.',
   },
@@ -328,6 +335,18 @@ try {
     const { positional, flags, help } = parseArguments(definition);
     const json = flags.has('--json');
     jsonErrors = json;
+    const failOn = flags.get('--fail-on') ?? 'none';
+    if (!['breaking', 'review', 'additive', 'none'].includes(String(failOn)))
+      throw new Diagnostic('arguments', '--fail-on must be breaking, review, additive or none');
+    const failOnCompatibility = (findings: { severity: 'breaking' | 'review' | 'additive' }[]) => {
+      const levels = { none: 4, breaking: 3, review: 2, additive: 1 };
+      if (
+        findings.some(
+          (finding) => levels[finding.severity] >= levels[failOn as keyof typeof levels],
+        )
+      )
+        process.exitCode = 1;
+    };
     if (help) {
       console.log(
         usage(command, definition) +
@@ -539,6 +558,7 @@ try {
       } else {
         const output = positional[2]!;
         const plan = preview(contract, output);
+        failOnCompatibility(plan.compatibility);
         if (json) {
           const diffs = flags.has('--diff') ? modifiedFileDiffs(plan, output) : undefined;
           console.log(

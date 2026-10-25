@@ -10,7 +10,13 @@ import { pathToFileURL } from 'node:url';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { gzipSync } from 'node:zlib';
-import { loadContract, generate, prepareRelease, validate } from '../dist/index.js';
+import {
+  loadContract,
+  generate,
+  prepareRelease,
+  validate,
+  setCompatibilityBaseline,
+} from '../dist/index.js';
 import { compareSchemas } from '../dist/compatibility.js';
 import { Runtime, serialize } from '../dist/runtime.js';
 
@@ -51,7 +57,13 @@ function save(f) {
 }
 function emit(f) {
   save(f);
-  return generate(loadContract(join(f.dir, 'api.json'), join(f.dir, 'config.json')), f.out);
+  const report = generate(loadContract(join(f.dir, 'api.json'), join(f.dir, 'config.json')), f.out);
+  // Compatibility cases exercise upgrades of an existing released SDK.
+  if (!f.released) {
+    setCompatibilityBaseline(f.out, 'released');
+    f.released = true;
+  }
+  return report;
 }
 function compile(f, source) {
   const file = join(f.dir, 'consumer.mts');

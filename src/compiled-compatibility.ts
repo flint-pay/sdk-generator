@@ -36,8 +36,22 @@ function recordedBody(
 export function compareCompiledContracts(
   previous: CompiledSdkContract,
   next: CompiledSdkContract,
+  declarationOwners: ReadonlyMap<string, string> = new Map(),
 ): Compatibility[] {
   const findings: Compatibility[] = [];
+  const declaration = (severity: Compatibility['severity'], subject: string, message: string) => {
+    const owner = declarationOwners.get(subject);
+    findings.push(
+      owner && severity === 'review'
+        ? {
+            severity,
+            subject: owner,
+            message:
+              'Compiled public declarations changed for this shared model; review factories, getters and unchanged consumers.',
+          }
+        : { severity, subject, message },
+    );
+  };
   const node = previous.targets.includes('node') && next.targets.includes('node');
   const php = previous.targets.includes('php') && next.targets.includes('php');
   if (!node && !php) return findings;
@@ -220,6 +234,7 @@ export function compareCompiledContracts(
       message:
         'Public payload/response helper declarations changed; review consumer types before upgrading.',
     });
+  const comparedResults = new Set<string>();
   const samePolicy = stable(previous.policy) === stable(next.policy);
   for (const [id, oldResponses] of Object.entries(previous.responses)) {
     const responses = next.responses[id];
@@ -247,12 +262,19 @@ export function compareCompiledContracts(
                     reason: 'Response body presence changed.',
                   }
                 : { result: 'compatible' as const };
-      if (comparison.result !== 'compatible')
+      const resultKey = stable([
+        old ? oldBody : oldResults,
+        body,
+        comparison.result,
+        comparison.result === 'compatible' ? '' : comparison.reason,
+      ]);
+      if (comparison.result !== 'compatible' && !comparedResults.has(resultKey))
         findings.push({
           severity: comparison.result === 'incompatible' ? 'breaking' : 'review',
           subject: comparison.path,
           message: comparison.reason,
         });
+      comparedResults.add(resultKey);
       if (php) {
         const before = previous.php.runtime.operations.find((op) => op.id === id)?.responses[
           status
@@ -308,12 +330,11 @@ export function compareCompiledContracts(
         previous.node.operations[id].inputRequired !== next.node.operations[id].inputRequired ||
         stable(previous.node.operations[id].known) !== stable(next.node.operations[id].known))
     )
-      findings.push({
-        severity: 'review',
-        subject: id,
-        message:
-          'Compiled public method declaration changed; review unchanged consumers alongside the shape findings.',
-      });
+      declaration(
+        'review',
+        id,
+        'Compiled public method declaration changed; review unchanged consumers alongside the shape findings.',
+      );
   }
   if (node)
     for (const [name, model] of Object.entries(previous.node.models)) {
@@ -324,12 +345,11 @@ export function compareCompiledContracts(
           model.output !== current.output ||
           model.objectFactory !== current.objectFactory)
       )
-        findings.push({
-          severity: 'review',
-          subject: 'models.' + name,
-          message:
-            'Compiled public model declaration changed; review factories and unchanged consumers.',
-        });
+        declaration(
+          'review',
+          'models.' + name,
+          'Compiled public model declaration changed; review factories and unchanged consumers.',
+        );
     }
   if (node) {
     if (
@@ -408,12 +428,11 @@ export function compareCompiledContracts(
         model.defaultObject !== current.defaultObject ||
         stable(model.getters) !== stable(current.getters)
       )
-        findings.push({
-          severity: 'review',
-          subject: 'models.' + model.name,
-          message:
-            'Compiled PHP constructor/getter declaration changed; review unchanged consumers.',
-        });
+        declaration(
+          'review',
+          'models.' + model.name,
+          'Compiled PHP constructor/getter declaration changed; review unchanged consumers.',
+        );
       if (stable(model.codec) !== stable(current.codec) && samePolicy)
         findings.push({
           severity: 'review',
@@ -424,12 +443,11 @@ export function compareCompiledContracts(
     }
     for (const [id, operation] of Object.entries(previous.php.operations))
       if (stable(operation) !== stable(next.php.operations[id]))
-        findings.push({
-          severity: next.php.operations[id] ? 'review' : 'breaking',
-          subject: id,
-          message:
-            'Compiled PHP method or iterator declaration changed; review unchanged consumers.',
-        });
+        declaration(
+          next.php.operations[id] ? 'review' : 'breaking',
+          id,
+          'Compiled PHP method or iterator declaration changed; review unchanged consumers.',
+        );
     for (const [event, name] of Object.entries(previous.php.eventModels))
       if (next.php.eventModels[event] !== name)
         findings.push({

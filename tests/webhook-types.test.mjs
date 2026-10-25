@@ -546,6 +546,8 @@ test('old compiled records review the declaration upgrade; recorded removal/rena
   generate(c, f.output);
   const recordPath = join(f.output, '.sdk-generator.json');
   const record = JSON.parse(readFileSync(recordPath));
+  // Simulate a record written before draft/release baseline tracking.
+  delete record.baseline;
   record.compiled = storeCompiledSnapshot({
     ...restoreCompiledSnapshot(record.compiled),
     plan: previous,
