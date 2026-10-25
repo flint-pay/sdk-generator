@@ -10,6 +10,7 @@ import {
   compare,
   preview,
   prepareRelease,
+  setCompatibilityBaseline,
   validateFixtures,
 } from '../dist/index.js';
 import { compileSdkContract } from '../dist/target-plan.js';
@@ -358,6 +359,84 @@ test('saved compiled guarantees detect an upgrade that identical source schemas 
   );
   assert.ok(updated.compatibility.some((c) => c.subject.endsWith('.historical')));
 });
+
+for (const target of ['node', 'php'])
+  for (const baseline of ['legacy', 'released'])
+    for (const scenario of [
+      { name: 'historical-parameter', historical: true, drift: 'parameter' },
+      { name: 'current-parameter', historical: false, drift: 'parameter' },
+      { name: 'historical-model', historical: true, drift: 'model' },
+      { name: 'metadata-only', historical: true },
+    ])
+      test(`${target}: ${baseline} ${scenario.name} records preserve codec-drift review`, () => {
+        const f = fixture(`codec-drift-${target}-${baseline}-${scenario.name}`, mixed, [target]);
+        const api = JSON.parse(readFileSync(f.source));
+        api.components = { schemas: { Value: mixed } };
+        api.paths['/value'].get.responses[200].content['application/json'].schema = {
+          $ref: '#/components/schemas/Value',
+        };
+        api.paths['/value'].get.parameters = [
+          { name: 'label', in: 'query', schema: { type: 'string' } },
+        ];
+        writeFileSync(f.source, JSON.stringify(api));
+        const contract = loadContract(f.source, f.profile);
+        generate(contract, f.output);
+        if (baseline === 'released') setCompatibilityBaseline(f.output, 'released');
+        const path = join(f.output, '.sdk-generator.json');
+        const record = JSON.parse(readFileSync(path));
+        const snapshot = structuredClone(restoreCompiledSnapshot(record.compiled));
+        // An older compiler accepted arbitrary parameter/model values despite
+        // identical declared policy. Keep its valid descriptors as historical facts.
+        let modelName;
+        if (scenario.drift === 'parameter') {
+          for (const runtime of [snapshot.plan.runtime, snapshot.plan.php.runtime])
+            runtime.operations[0].parameters[0].codec.value = { kind: 'dynamic' };
+        } else if (scenario.drift === 'model') {
+          const [name, model] =
+            target === 'node'
+              ? Object.entries(snapshot.plan.node.models)[0]
+              : [snapshot.plan.php.models[0].name, snapshot.plan.php.models[0]];
+          modelName = name;
+          model.codec.value = { kind: 'dynamic' };
+          delete model.codec.reference;
+          delete model.sharedCodec;
+        }
+        if (scenario.historical) {
+          delete snapshot.plan.policy.responseOnlyModels;
+          delete record.interface.schemaUsage;
+          if (record.baseline) delete record.baseline.interface.schemaUsage;
+        }
+        record.compiled = storeCompiledSnapshot(snapshot);
+        if (record.baseline) record.baseline.compiled = record.compiled;
+        writeFileSync(path, JSON.stringify(record));
+
+        const config = JSON.parse(readFileSync(f.profile));
+        config.version = '1.0.1';
+        writeFileSync(f.profile, JSON.stringify(config));
+        const next = loadContract(f.source, f.profile);
+        const expected = (finding) =>
+          finding.subject === 'compiled codecs' && finding.severity === 'review';
+        const report = preview(next, f.output);
+        if (scenario.drift)
+          assert(report.compatibility.some(expected), JSON.stringify(report.compatibility));
+        else assert.deepEqual(report.compatibility, []);
+        const generated = generate(next, f.output);
+        assert.deepEqual(generated.compatibility, report.compatibility);
+        if (modelName)
+          assert(
+            generated.compatibility.some(
+              (finding) =>
+                finding.subject === 'models.' + modelName && finding.severity === 'review',
+            ),
+          );
+        const destination = join(f.dir, 'release');
+        const release = prepareRelease(f.output, destination);
+        assert.equal(release.reviewRequired, Boolean(scenario.drift));
+        assert.deepEqual(release.compatibility, generated.compatibility);
+        if (scenario.drift)
+          for (const file of ['CHANGELOG.md', 'MIGRATION.md'])
+            assert.match(readFileSync(join(destination, file), 'utf8'), /compiled codecs/);
+      });
 
 test('runtime identity changes retain review even when compiled value guarantees are equal', () => {
   const f = fixture('runtime-identity', mixed, ['node']);

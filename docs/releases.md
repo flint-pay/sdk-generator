@@ -198,6 +198,7 @@ Repeated shared-schema changes are reported at the exported model instead of eve
 - Older records remain usable and keep explicit historical review findings; recompiling their schemas does not establish what an older runtime guaranteed. Older snapshots without non-JSON result guarantees remain readable; comparisons that depend on those guarantees require review and are not reinterpreted as empty results.
 - Malformed or unrecognized records fail with diagnostics.
 - Runtime implementation changes produce review findings even when compiled value guarantees are equal.
+- Codec changes without a semantic policy change require review, including when the old snapshot lacks response-only provenance. This comparison uses models, definitions and operations; adding derived provenance alone neither suppresses codec review nor creates a compatibility finding.
 
 ## Known compatibility limitations
 

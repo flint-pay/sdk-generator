@@ -235,7 +235,11 @@ export function compareCompiledContracts(
         'Public payload/response helper declarations changed; review consumer types before upgrading.',
     });
   const comparedResults = new Set<string>();
-  const samePolicy = stable(previous.policy) === stable(next.policy);
+  // Provenance may be absent in historical records. Only semantic policy
+  // facts determine whether unexplained codec changes require review.
+  const samePolicy = (['models', 'definitions', 'operations'] as const).every(
+    (key) => stable(previous.policy[key]) === stable(next.policy[key]),
+  );
   for (const [id, oldResponses] of Object.entries(previous.responses)) {
     const responses = next.responses[id];
     if (!responses) continue;

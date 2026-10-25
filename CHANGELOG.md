@@ -83,6 +83,7 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 - Runtime error messages identify caller authentication options; PHP invalid header values raise SDK validation errors. Malformed SSE events retain their event ID and one-based position. Unconsumed default Node SSE streams no longer keep the process alive and expire their idle budget before iteration. Node webhook verification accepts ArrayBuffer and Uint8Array bytes, and both targets explain millisecond-scale `nowSeconds` mistakes.
 - Optional response-model fields are additive even with open additional properties, permitting stable minor SDK releases. Draft iteration no longer creates fake first-release CHANGELOG/MIGRATION findings. Enum additions describe newly accepted inputs. Shared model comparisons and declaration reviews no longer repeat at every use site; historical compiled guarantees remain checked.
+- Historical Node and PHP snapshots without response-use provenance retain codec-drift review. Derived metadata no longer counts as a source-policy change that suppresses review of stricter execution or model codecs.
 
 - Webhook declarations and root exports use canonical event-name order, matching PHP class order. Freshly generated SDKs render identically after restoring their saved contract, so release preparation no longer incorrectly requires regeneration.
 - Full generation reuses compiled sample validators instead of recompiling one per candidate example, restoring generation time for large APIs (about 30% faster on the full Flint export).
