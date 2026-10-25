@@ -531,10 +531,10 @@ test('opaque custom transport exception text and codes remain private and unclas
       phpSetup +
         String.raw`
 $c=new Example\Payments\Client(new Example\Payments\ClientOptions('https://example.invalid',token:'test',maxAttempts:1,transport:fn($r)=>throw new RuntimeException('synthetic-secret-text',7)));
-try{$c->payments->retrieve(['id'=>'p-synthetic']);}catch(Example\Payments\SdkError $e){echo json_encode([$e->kind,$e->outcome,$e->details['curlCode'],str_contains(json_encode($e),'synthetic-secret-text')]);}
+try{$c->payments->retrieve(['id'=>'p-synthetic']);}catch(Example\Payments\SdkError $e){echo json_encode([$e->kind,$e->outcome,$e->details['curlCode'],str_contains(json_encode($e),'synthetic-secret-text'),$e->getPrevious()->getMessage()]);}
 `,
     ),
-    ['transport', 'unknown', null, false],
+    ['transport', 'unknown', null, false, 'synthetic-secret-text'],
   );
 });
 

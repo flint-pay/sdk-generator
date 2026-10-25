@@ -5346,8 +5346,7 @@ class Runtime
                         'curlError' =>
                             $curlCode > 0 && $curlCode < 100 ? curl_strerror($curlCode) : null,
                     ],
-                    // Native cURL messages and custom exceptions may include secret URLs.
-                    previous: new \RuntimeException($message, $curlCode),
+                    previous: $cause,
                 );
                 $error->retryAfterMs = $retryAfter;
             } finally {
