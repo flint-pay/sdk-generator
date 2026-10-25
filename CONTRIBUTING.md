@@ -17,7 +17,7 @@ All npm test scripts rebuild `dist/` before running: tests import the compiled J
 ```sh
 npm run test:fast
 npm run test:file -- tests/request-options.test.mjs
-npm run test:file -- --test-name-pattern="client request" tests/request-options.test.mjs
+npm run test:file -- --test-name-pattern="object targets with schema" tests/request-options.test.mjs
 npm run test:file -- --test-concurrency=2 tests/request-options.test.mjs tests/client-setup.test.mjs
 ```
 
