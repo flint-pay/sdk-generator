@@ -10,6 +10,8 @@ import {
   mkdirSync,
   existsSync,
   readdirSync,
+  closeSync,
+  statSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -23,7 +25,12 @@ import {
   prepareRelease,
   validateFixtures,
 } from '../dist/index.js';
-import { cleanupInterruptedGeneration } from '../dist/generation-cleanup.js';
+import {
+  cleanupInterruptedGeneration,
+  acquireGenerationLock,
+  withGenerationRecovery,
+  releaseGenerationLock,
+} from '../dist/generation-cleanup.js';
 const cli = resolve('dist/cli.js');
 const retry = { maxAttempts: 3, statuses: [503], transport: true, baseDelayMs: 0 };
 const idempotency = {
@@ -120,6 +127,44 @@ test('published config schema accepts defaults, overrides and profile fragments 
   const metadata = JSON.parse(readFileSync('package.json'));
   assert.ok(metadata.files.includes('sdk-config.schema.json'));
   assert.equal(metadata.exports['./sdk-config.schema.json'], './sdk-config.schema.json');
+});
+test('published schema and loader agree on profile metadata, request defaults and polling intervals', (t) => {
+  const validate = new Ajv({ strict: true }).compile(
+    JSON.parse(readFileSync('sdk-config.schema.json', 'utf8')),
+  );
+  const polling = { state: 'next', success: ['done'], failure: ['failed'], intervalMs: 1.5 };
+  for (const [name, settings, accepted] of [
+    ['partial npm metadata', { npm: { homepage: 'https://example.invalid' } }, true],
+    ['partial composer metadata', { composer: { namespace: 'Synthetic\\Widgets' } }, true],
+    ['empty request settings', { requests: {} }, true],
+    ['fractional polling interval', { operations: { listWidgets: { polling } } }, true],
+    [
+      'integer polling interval',
+      { operations: { listWidgets: { polling: { ...polling, intervalMs: 1 } } } },
+      true,
+    ],
+    ['unknown npm key', { npm: { hompage: 'https://example.invalid' } }, false],
+    ['invalid request style', { requests: { style: 'tuple' } }, false],
+    [
+      'polling interval below minimum',
+      { operations: { listWidgets: { polling: { ...polling, intervalMs: 0.5 } } } },
+      false,
+    ],
+    [
+      'string polling interval',
+      { operations: { listWidgets: { polling: { ...polling, intervalMs: '1.5' } } } },
+      false,
+    ],
+  ]) {
+    const f = fixture(t);
+    delete f.config.requests;
+    writeFileSync(join(f.dir, 'base.json'), JSON.stringify(f.config));
+    for (const key of Object.keys(f.config)) delete f.config[key];
+    Object.assign(f.config, { profiles: ['base.json'], ...settings });
+    assert.equal(validate(f.config), accepted, name + ': ' + JSON.stringify(validate.errors));
+    if (accepted) assert.doesNotThrow(() => f.load(), name);
+    else assert.throws(() => f.load(), undefined, name);
+  }
 });
 test('SDK defaults resolve independently in both targets and overrides preserve explicit contracts', async (t) => {
   const f = fixture(t);
@@ -425,6 +470,136 @@ test('interruption cleanup never removes another worker’s lock or arbitrary si
   cleanupInterruptedGeneration(f.output, process.pid);
   assert.ok(existsSync(f.dir));
   assert.equal(existsSync(lock), false);
+});
+
+test(
+  'supervisor cleanup serializes stale recovery while paused before removing a stage',
+  { timeout: 30000 },
+  async (t) => {
+    const f = fixture(t);
+    f.save();
+    const dead = spawnSync(process.execPath, ['-e', 'console.log(process.pid)'], {
+      encoding: 'utf8',
+    });
+    const pid = Number(dead.stdout.trim());
+    const lock = f.output + '.sdk-generator.lock';
+    const stage = f.output + '.stage-00000000-0000-4000-8000-000000000000';
+    const paused = join(f.dir, 'paused'),
+      resume = join(f.dir, 'resume');
+    mkdirSync(stage);
+    writeFileSync(lock, JSON.stringify({ pid, stage }));
+    const cleanupModule = pathToFileURL(resolve('dist/generation-cleanup.js')).href;
+    const supervisor = spawn(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        `
+    import fs from 'node:fs';
+    import { syncBuiltinESMExports } from 'node:module';
+    const [output, stage, paused, resume, pid] = process.argv.slice(1);
+    const remove = fs.rmSync;
+    fs.rmSync = (path, options) => {
+      if (path === stage) {
+        fs.writeFileSync(paused, 'ready');
+        const deadline = Date.now() + 15000;
+        while (!fs.existsSync(resume)) {
+          if (Date.now() > deadline) throw new Error('cleanup barrier timed out');
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+        }
+      }
+      return remove(path, options);
+    };
+    syncBuiltinESMExports();
+    const { cleanupInterruptedGeneration } = await import(${JSON.stringify(cleanupModule)});
+    cleanupInterruptedGeneration(output, Number(pid));
+  `,
+        f.output,
+        stage,
+        paused,
+        resume,
+        String(pid),
+      ],
+      { stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    t.after(() => supervisor.kill('SIGKILL'));
+    let errors = '';
+    supervisor.stderr.on('data', (chunk) => {
+      errors += chunk;
+    });
+    const exited = once(supervisor, 'exit');
+    const deadline = Date.now() + 10000;
+    while (!existsSync(paused)) {
+      assert.ok(Date.now() < deadline, 'supervisor did not reach cleanup barrier: ' + errors);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    const original = statSync(lock);
+    assert.equal(JSON.parse(readFileSync(lock + '.recovery')).pid, supervisor.pid);
+    const contender = f.run('generate', f.api, f.sdk, f.output, '--json');
+    assert.equal(contender.status, 1, contender.stdout + contender.stderr);
+    assert.match(contender.stderr, /another process is recovering/);
+    assert.equal(statSync(lock).ino, original.ino);
+    assert.ok(existsSync(stage));
+    writeFileSync(resume, 'continue');
+    assert.equal((await exited)[0], 0, errors);
+    assert.equal(existsSync(lock), false);
+    assert.equal(existsSync(lock + '.recovery'), false);
+    assert.equal(existsSync(stage), false);
+    // A subsequent live owner survives late cleanup, and excludes a third generator.
+    const fd = acquireGenerationLock(lock, { pid: process.pid });
+    try {
+      const owned = statSync(lock);
+      cleanupInterruptedGeneration(f.output, pid);
+      assert.equal(statSync(lock).ino, owned.ino);
+      const third = f.run('generate', f.api, f.sdk, f.output, '--json');
+      assert.equal(third.status, 1);
+      assert.match(third.stderr, /another generation is running/);
+      assert.equal(statSync(lock).ino, owned.ino);
+    } finally {
+      releaseGenerationLock(lock, fd);
+      closeSync(fd);
+    }
+  },
+);
+test('supervisor respects a recovery lease and retires only its dead worker’s lease', (t) => {
+  const f = fixture(t),
+    lock = f.output + '.sdk-generator.lock';
+  const dead = spawnSync(process.execPath, ['-e', 'console.log(process.pid)'], {
+    encoding: 'utf8',
+  });
+  const pid = Number(dead.stdout.trim());
+  writeFileSync(lock, JSON.stringify({ pid }));
+  withGenerationRecovery(f.output, (cleanup) => {
+    const lease = statSync(lock + '.recovery');
+    cleanupInterruptedGeneration(f.output, pid);
+    assert.ok(existsSync(lock));
+    assert.equal(statSync(lock + '.recovery').ino, lease.ino);
+    cleanup(pid);
+    assert.equal(existsSync(lock), false);
+  });
+  writeFileSync(lock, JSON.stringify({ pid }));
+  writeFileSync(lock + '.recovery', JSON.stringify({ pid }));
+  cleanupInterruptedGeneration(f.output, pid);
+  assert.equal(existsSync(lock), false);
+  assert.equal(existsSync(lock + '.recovery'), false);
+});
+test('lock release verifies the retired inode and preserves a replacement owner', (t) => {
+  const f = fixture(t),
+    lock = f.output + '.sdk-generator.lock';
+  const original = acquireGenerationLock(lock, { pid: process.pid });
+  rmSync(lock);
+  const replacement = acquireGenerationLock(lock, { pid: process.pid + 1 });
+  try {
+    const owned = statSync(lock);
+    assert.throws(() => releaseGenerationLock(lock, original), /ownership changed/);
+    assert.equal(statSync(lock).ino, owned.ino);
+    assert.deepEqual(JSON.parse(readFileSync(lock)), { pid: process.pid + 1 });
+    assert.ok(readdirSync(f.dir).every((name) => !name.includes('.release-')));
+  } finally {
+    releaseGenerationLock(lock, replacement);
+    closeSync(original);
+    closeSync(replacement);
+  }
 });
 
 test('unsupported wire features fail with a concrete remedy', (t) => {

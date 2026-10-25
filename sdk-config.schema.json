@@ -94,8 +94,7 @@
           "required": ["type", "url"]
         }
       },
-      "additionalProperties": false,
-      "required": ["name"]
+      "additionalProperties": false
     },
     "composer": {
       "type": "object",
@@ -109,8 +108,7 @@
           "pattern": "^[A-Z][A-Za-z0-9]*(\\\\[A-Z][A-Za-z0-9]*)*$"
         }
       },
-      "additionalProperties": false,
-      "required": ["name", "namespace"]
+      "additionalProperties": false
     },
     "operations": {
       "type": "object",
@@ -399,8 +397,7 @@
           "enum": ["object", "positional"]
         }
       },
-      "additionalProperties": false,
-      "required": ["style"]
+      "additionalProperties": false
     },
     "response": {
       "type": "object",
@@ -808,7 +805,7 @@
               }
             },
             "intervalMs": {
-              "type": "integer",
+              "type": "number",
               "minimum": 1
             }
           },

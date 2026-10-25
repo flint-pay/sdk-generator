@@ -48,7 +48,7 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 - Contributor test workflows require Node.js 22.16+ for SQLite examples, with `.nvmrc`, CI and a clear test-runner prerequisite check. The published generator retains its Node.js 22+ engine requirement.
 - Published SDK-config JSON Schema with `$schema` support and SDK-wide idempotency/retry/pagination defaults, field overrides, `false` opt-outs and `null` field clearing. The Flint full profile uses defaults without changing generated packages.
 - `diagnose` checks compiled plans and runnable inputs without rendering packages. Header declarations warn with spelling candidates; unsupported wire features include remedies. Init supports multiple security alternatives, `--force` for regular files, and executable next-step commands. Generation/validation/release warn about placeholder package vendors.
-- Generation locks precede loading/planning; dead owners recover with a warning. CLI SIGINT/SIGTERM cleans up its worker’s transaction. Private ownership records use compact JSON; missing records explain backup/fresh-generation recovery.
+- Generation locks precede loading/planning; dead owners recover with a warning. CLI SIGINT/SIGTERM cleans up its worker’s transaction under the same lease as stale recovery, verifying the retired lock’s inode before removal. Private ownership records use compact JSON; missing records explain backup/fresh-generation recovery.
 
 - Node and PHP credential options accept providers resolved on every request attempt. Replay-safe requests invalidate provider credentials on HTTP 401 and retry once with the same idempotency key. PHP also accepts credential closures. Applications own token loading, caching and expiry handling.
 
