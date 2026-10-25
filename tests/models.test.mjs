@@ -1,3 +1,4 @@
+import { before } from 'node:test';
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
@@ -50,8 +51,11 @@ const cfg = {
 writeFileSync(join(dir, 'api.json'), JSON.stringify(doc));
 writeFileSync(join(dir, 'sdk.json'), JSON.stringify(cfg));
 const out = join(dir, 'output');
-generate(loadContract(join(dir, 'api.json'), join(dir, 'sdk.json')), out);
-const sdk = await import(pathToFileURL(join(out, 'node/index.js')).href);
+let sdk;
+before(async () => {
+  generate(loadContract(join(dir, 'api.json'), join(dir, 'sdk.json')), out);
+  sdk = await import(pathToFileURL(join(out, 'node/index.js')).href);
+});
 test('scalar, array, nullable and nested model factories serialize through both public clients', async () => {
   const payload = sdk.makePayload({
     title: sdk.makeTitle('hello'),

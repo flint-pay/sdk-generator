@@ -1,0 +1,6 @@
+# Existing formatting debt in root test files; keep format:check useful without unrelated edits.
+tests/php-entities.test.mjs
+tests/response-drift.test.mjs
+tests/response-media.test.mjs
+tests/response-return.test.mjs
+tests/sdk-type-correctness.test.mjs

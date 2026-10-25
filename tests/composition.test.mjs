@@ -1,3 +1,4 @@
+import { before } from 'node:test';
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, mkdtempSync, rmSync, readdirSync } from 'node:fs';
@@ -136,7 +137,9 @@ const definitionPath = join(root, 'openapi.json'),
 writeFileSync(definitionPath, JSON.stringify(definition));
 writeFileSync(configPath, JSON.stringify(config));
 const contract = loadContract(definitionPath, configPath);
-generate(contract, output);
+before(() => {
+  generate(contract, output);
+});
 
 function accepted(name, operation, body, response = body, wire = JSON.stringify(body)) {
   return {

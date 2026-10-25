@@ -1,3 +1,4 @@
+import { before } from 'node:test';
 import { declarations } from './helpers/generated-source.mjs';
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -55,7 +56,9 @@ function load(settings = config) {
   return loadContract(join(dir, 'api.json'), join(dir, 'sdk.json'));
 }
 const out = join(dir, 'out');
-generate(load(), out);
+before(() => {
+  generate(load(), out);
+});
 test('named authentication modes send one complete credential alternative in both clients', async () => {
   const valid = (mode, credentials, operation, path, headers, absentHeaders) => ({
     name: mode + ' ' + operation,

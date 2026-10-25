@@ -1,3 +1,4 @@
+import { before } from 'node:test';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
@@ -12,8 +13,11 @@ after(() => rmSync(root, { recursive: true, force: true }));
 const fixture = resolve('tests/fixtures/pagination-deadlines.json');
 const cases = JSON.parse(readFileSync(fixture, 'utf8'));
 const out = join(root, 'sdk');
-generate(loadContract('tests/fixtures/payment-api.json', 'tests/fixtures/payment-sdk.json'), out);
-const { Client } = await import(pathToFileURL(join(out, 'node/index.js')).href);
+let Client;
+before(async () => {
+  generate(loadContract('tests/fixtures/payment-api.json', 'tests/fixtures/payment-sdk.json'), out);
+  ({ Client } = await import(pathToFileURL(join(out, 'node/index.js')).href));
+});
 
 // Advance monotonic clocks instead of waiting thirty seconds or relying on
 // scheduling. Both generated clients receive the same independently authored cases.

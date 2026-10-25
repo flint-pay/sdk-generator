@@ -1,3 +1,4 @@
+import { before } from 'node:test';
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
@@ -58,7 +59,9 @@ const api = join(dir, 'api.json'),
 writeFileSync(api, JSON.stringify(document));
 writeFileSync(settings, JSON.stringify(config));
 const contract = loadContract(api, settings);
-generate(contract, output);
+before(() => {
+  generate(contract, output);
+});
 const data = {
   id: 'a',
   amount: '9007199254740993',

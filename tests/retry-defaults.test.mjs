@@ -1,3 +1,4 @@
+import { before } from 'node:test';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
@@ -93,8 +94,11 @@ writeFileSync(join(root, 'api.json'), JSON.stringify(api));
 writeFileSync(join(root, 'sdk.json'), JSON.stringify(config));
 const contract = loadContract(join(root, 'api.json'), join(root, 'sdk.json'));
 const output = join(root, 'sdk');
-generate(contract, output);
-const sdk = await import(pathToFileURL(join(output, 'node/index.js')));
+let sdk;
+before(async () => {
+  generate(contract, output);
+  sdk = await import(pathToFileURL(join(output, 'node/index.js')));
+});
 const body = { body: { reference: 'synthetic-action' } };
 const cases = [
   ...[408, 429, 500, 502, 503, 504].map((status) => ({

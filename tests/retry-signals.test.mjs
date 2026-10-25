@@ -1,3 +1,4 @@
+import { before } from 'node:test';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
@@ -83,8 +84,11 @@ writeFileSync(join(root, 'api.json'), JSON.stringify(api));
 writeFileSync(join(root, 'config.json'), JSON.stringify(config));
 const contract = loadContract(join(root, 'api.json'), join(root, 'config.json'));
 const output = join(root, 'sdk');
-generate(contract, output);
-const sdk = await import(pathToFileURL(join(output, 'node/index.js')));
+let sdk;
+before(async () => {
+  generate(contract, output);
+  sdk = await import(pathToFileURL(join(output, 'node/index.js')));
+});
 const rows = [
   ...[409, 429, 500, 503].flatMap((status) =>
     [false, true].map((header) => ({

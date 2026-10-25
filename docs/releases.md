@@ -5,6 +5,10 @@
 - Preview versions use a SemVer prerelease suffix and npm's `next` tag in the release plan.
 - Commands below use the installed `sdk-generator` executable. From a source checkout, run `npm ci` and `npm run build`, then use `node dist/cli.js`. See the [CLI reference](cli.md) for arguments.
 
+## Contributor Node prerequisites
+
+The published generator continues to support Node.js 22+. Source-checkout contributor tests require Node.js 22.16+ for the SQLite examples, and the test runner reports a prerequisite error on earlier versions. Run `nvm use` before testing; `.nvmrc` and CI use the contributor minimum. No Node upgrade is required for existing generator installs. Generated SDK runtime requirements are unchanged. See the [support matrix](support-matrix.md) for consumer requirements.
+
 ## Prepare a release
 
 1. Keep the pinned inputs, referenced local files, SDK configuration and generator revision in the provider's private or public source repository.

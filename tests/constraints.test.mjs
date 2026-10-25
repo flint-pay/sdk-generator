@@ -1,3 +1,4 @@
+import { before } from 'node:test';
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
@@ -122,7 +123,9 @@ function load(document = doc, settings = config) {
 }
 const contract = load(),
   output = join(dir, 'output');
-generate(contract, output);
+before(() => {
+  generate(contract, output);
+});
 async function fixtures(name, cases) {
   const path = join(dir, name + '.json');
   writeFileSync(path, JSON.stringify(cases));

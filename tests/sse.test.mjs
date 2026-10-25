@@ -1,3 +1,4 @@
+import { before } from 'node:test';
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
@@ -139,7 +140,9 @@ writeFileSync(
   }),
 );
 const out = join(dir, 'out');
-generate(loadContract(join(dir, 'api.json'), join(dir, 'sdk.json')), out);
+before(() => {
+  generate(loadContract(join(dir, 'api.json'), join(dir, 'sdk.json')), out);
+});
 test('PHP parser matches independently specified event frames for split UTF-8 and lines', async () => {
   writeFileSync(
     join(dir, 'parser.php'),
@@ -164,59 +167,69 @@ foreach ([$wire, str_split($wire)] as $chunks) {
   const { stdout } = await exec('php', [join(dir, 'parser.php')]);
   for (const line of stdout.trim().split('\n')) assert.deepEqual(JSON.parse(line), expected);
 });
-test('both generated default transports yield before EOF and close the connection', async () => {
-  let requests = 0,
-    closed = 0;
-  const server = createServer((request, response) => {
-    requests++;
-    response.writeHead(200, { 'Content-Type': 'text/event-stream', 'x-request-id': 'req_00V8185E0Q3QQVSA6GHPBQP2VS' });
-    response.write('event: ready\ndata: {"sequence":9007199254740993}\n\n');
-    const timer = setTimeout(() => response.end('data: too late\n\n'), 5000);
-    response.on('close', () => {
-      clearTimeout(timer);
-      closed++;
+test(
+  'both generated default transports yield before EOF and close the connection',
+  { timeout: 30000 },
+  async () => {
+    const connections = [];
+    let requests = 0,
+      closed = 0;
+    const server = createServer((request, response) => {
+      requests++;
+      response.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'x-request-id': 'req_00V8185E0Q3QQVSA6GHPBQP2VS',
+      });
+      response.write('event: ready\ndata: {"sequence":9007199254740993}\n\n');
+      // Leave the response open: receiving a frame proves incremental delivery.
+      connections.push(
+        new Promise((resolve) =>
+          response.once('close', () => {
+            closed++;
+            resolve();
+          }),
+        ),
+      );
     });
-  });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const baseUrl = `http://127.0.0.1:${server.address().port}`;
-  try {
-    const { Client } = await import(join(out, 'node/index.js'));
-    const client = new Client({ baseUrl, allowInsecureHttp: true });
-    const start = performance.now();
-    const result = await client.events.watch({}, { timeoutMs: 1000 });
-    for await (const frame of result.data) {
-      assert.equal(frame.data.sequence, '9007199254740993');
-      break;
-    }
-    assert.ok(performance.now() - start < 2000, 'Node buffered until EOF');
-    assert.equal(result.meta.requestId, 'req_00V8185E0Q3QQVSA6GHPBQP2VS');
-    await client.close();
-    writeFileSync(
-      join(dir, 'transport.php'),
-      `<?php
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    try {
+      const { Client } = await import(join(out, 'node/index.js'));
+      const client = new Client({ baseUrl, allowInsecureHttp: true });
+      const result = await client.events.watch({}, { timeoutMs: 10000 });
+      for await (const frame of result.data) {
+        assert.equal(frame.data.sequence, '9007199254740993');
+        break;
+      }
+      assert.equal(result.meta.requestId, 'req_00V8185E0Q3QQVSA6GHPBQP2VS');
+      await client.close();
+      writeFileSync(
+        join(dir, 'transport.php'),
+        `<?php
 require ${JSON.stringify(join(out, 'php/src/Runtime.php'))};
 require ${JSON.stringify(join(out, 'php/src/Client.php'))};
 use Example\\Streams\\{Client,ClientOptions,RequestOptions};
 $client=new Client(new ClientOptions(baseUrl: $argv[1], allowInsecureHttp: true));
-$start=microtime(true);
-$result=$client->events->watch(options: new RequestOptions(timeoutMs: 1000));
+$result=$client->events->watch(options: new RequestOptions(timeoutMs: 10000));
 foreach ($result->data as $frame) { if ($frame->data->sequence !== '9007199254740993') throw new Exception('precision'); break; }
-if (microtime(true)-$start > 2) throw new Exception('PHP buffered until EOF');
 if ($result->meta['requestId'] !== 'req_00V8185E0Q3QQVSA6GHPBQP2VS') throw new Exception('metadata');
 $client->close();
 echo 'ok';
 `,
-    );
-    const { stdout } = await exec('php', [join(dir, 'transport.php'), baseUrl]);
-    assert.equal(stdout, 'ok');
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    assert.equal(requests, 2);
-    assert.equal(closed, 2);
-  } finally {
-    server.closeAllConnections();
-    await new Promise((resolve) => server.close(resolve));
-  }
-});
+      );
+      const { stdout } = await exec('php', [join(dir, 'transport.php'), baseUrl], {
+        timeout: 15000,
+      });
+      assert.equal(stdout, 'ok');
+      await Promise.all(connections);
+      assert.equal(requests, 2);
+      assert.equal(closed, 2);
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  },
+);
 
 test('injected streams retain unknown events, reject malformed known payloads and never replay events', async () => {
   const { Client } = await import(join(out, 'node/index.js'));

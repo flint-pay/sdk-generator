@@ -9,10 +9,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.12.0'
+          node-version: '22.16.0'
           cache: npm
       - run: npm ci
       - run: npm run build
+      # Generated SDK CommonJS interop still supports Node 22.12.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.12.0'
       - run: node --test tests/npm-metadata.test.mjs
   test:
     runs-on: ubuntu-latest
@@ -36,6 +40,7 @@ jobs:
           tools: composer:v2
           coverage: none
       - run: npm ci
+      - run: npm run format:check
       - run: npm run check
       - run: npm test
       - run: npm pack --dry-run

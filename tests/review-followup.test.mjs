@@ -1,3 +1,4 @@
+import { before } from 'node:test';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
@@ -79,8 +80,11 @@ const definition = join(dir, 'api.json'),
 writeFileSync(definition, JSON.stringify(api));
 writeFileSync(config, JSON.stringify(profile));
 const contract = loadContract(definition, config);
-generate(contract, out);
-const sdk = await import(pathToFileURL(join(out, 'node/index.js')));
+let sdk;
+before(async () => {
+  generate(contract, out);
+  sdk = await import(pathToFileURL(join(out, 'node/index.js')));
+});
 
 test('native SSE connection retries and empty headers agree in Node and PHP', async () => {
   let received = [];

@@ -1,3 +1,4 @@
+import { before } from 'node:test';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
@@ -65,8 +66,11 @@ const config = {
 writeFileSync(join(root, 'api.json'), JSON.stringify(doc));
 writeFileSync(join(root, 'sdk.json'), JSON.stringify(config));
 const output = join(root, 'generated');
-generate(loadContract(join(root, 'api.json'), join(root, 'sdk.json')), output);
-const sdk = await import(pathToFileURL(join(output, 'node/index.js')).href);
+let sdk;
+before(async () => {
+  generate(loadContract(join(root, 'api.json'), join(root, 'sdk.json')), output);
+  sdk = await import(pathToFileURL(join(output, 'node/index.js')).href);
+});
 const jwt = (claims, now) =>
   [
     Buffer.from('{}').toString('base64url'),
