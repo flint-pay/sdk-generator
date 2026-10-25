@@ -1,3 +1,4 @@
+import { before } from 'node:test';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
@@ -64,7 +65,9 @@ writeFileSync(
   }),
 );
 const out = join(dir, 'out');
-generate(loadContract(join(dir, 'api.json'), join(dir, 'sdk.json')), out);
+before(() => {
+  generate(loadContract(join(dir, 'api.json'), join(dir, 'sdk.json')), out);
+});
 
 test('PHP model exports isolate edits and retain exact numeric kinds when rebuilding inputs', async () => {
   const script = String.raw`

@@ -39,6 +39,26 @@ The contract's plain `exampleProtection` sidecar contains sorted source location
 
 The private generation record stores resolved source provenance and compiled snapshots, so compatibility compares saved previous decisions against new plans rather than reinterpreting old source schemas. It is excluded from SDK archives. Selected descriptors and public dynamic schema definitions are SDK source, so an SDK for a private API must be distributed privately.
 
+## Source module map
+
+This map covers every `src/` module. `tests/compiled-boundaries.test.mjs` defines and checks the effect-free semantic module set, forbidden implementation dependencies and cycles; it also checks PHP compiled-execution boundaries.
+
+| Responsibility                                                             | Modules                                                                                                                                            |
+| -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Public entry point and CLI                                                 | `src/index.ts`, `src/cli.ts`, `src/cli-output.ts`, `src/initial-config.ts`                                                                         |
+| Local input loading and reference resolution                               | `src/contract.ts`, `src/openapi-input.ts`, `src/source-json.ts`, `src/schema-sharing.ts`                                                           |
+| Canonical data, diagnostics and naming                                     | `src/canonical.ts`, `src/diagnostic.ts`, `src/naming.ts`, `src/public-symbols.ts`                                                                  |
+| Schema policy, intersections and annotation protection                     | `src/schema-policy.ts`, `src/schema-intersections.ts`, `src/schema-annotations.ts`, `src/example-protection.ts`, `src/parameter-example-policy.ts` |
+| Compiled value codecs and sharing                                          | `src/codec-plan.ts`, `src/codec-sharing.ts`, `src/value-guarantee.ts`                                                                              |
+| Public target types and PHP representations                                | `src/target-types.ts`, `src/php-types.ts`, `src/php-representation.ts`, `src/php-value-plan.ts`                                                    |
+| Operation request/response decisions                                       | `src/request-style.ts`, `src/request-options.ts`, `src/response-plan.ts`, `src/response-return.ts`, `src/runtime-plan.ts`                          |
+| Target compilation and packaging layout                                    | `src/target-plan.ts`, `src/package-plan.ts`                                                                                                        |
+| File rendering, checked template substitutions and generation transactions | `src/generate.ts`, `src/package-render.ts`, `src/template.ts`                                                                                      |
+| Generated documentation                                                    | `src/schema-documentation.ts`, `src/sdk-documentation.ts`                                                                                          |
+| Runtime execution and descriptor loading                                   | `src/runtime.ts`, `src/descriptor-source.ts`                                                                                                       |
+| Saved records, compatibility and release policy                            | `src/compiled-record.ts`, `src/compatibility.ts`, `src/compiled-compatibility.ts`, `src/response-compatibility.ts`, `src/version.ts`               |
+| Fixture execution, external tools and distribution                         | `src/fixtures.ts`, `src/tool-checks.ts`, `src/distribution.ts`                                                                                     |
+
 ## Regeneration transaction
 
 Preview renders all artifacts in memory, checks prior owned file hashes, refuses unowned-file conflicts and symlinks, and reports created/modified/removed files without writing anything. Generation acquires an exclusive sibling lock, rechecks the plan, stages a complete replacement tree with handwritten neighbors preserved, then swaps the directory. A failure before commit leaves old output intact; a failed rename restores the backup. Existing generated files edited by hand are a conflict, not silently overwritten. Move intentional helpers to `custom/`. Removing a target preserves its handwritten neighbors; validation and release preparation use the selected targets in the private record, not leftover directories.

@@ -1,3 +1,4 @@
+import { before } from 'node:test';
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
@@ -79,14 +80,21 @@ function load(spec = api, settings = config) {
 }
 const contract = load();
 const output = join(dir, 'mapped');
-generate(contract, output);
-const { Client } = await import(pathToFileURL(join(output, 'node/index.js')).href);
+let Client;
+before(async () => {
+  generate(contract, output);
+  ({ Client } = await import(pathToFileURL(join(output, 'node/index.js')).href));
+});
 const unmappedConfig = structuredClone(config);
 delete unmappedConfig.auth.shortcuts.token;
 const unmapped = join(dir, 'unmapped');
-generate(load(api, unmappedConfig), unmapped);
+before(() => {
+  generate(load(api, unmappedConfig), unmapped);
+});
 const noDefault = join(dir, 'no-default');
-generate(load({ ...api, servers: [] }), noDefault);
+before(() => {
+  generate(load({ ...api, servers: [] }), noDefault);
+});
 
 // These exact wire expectations are independent of the generated descriptors.
 const cases = [

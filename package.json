@@ -5,7 +5,7 @@
   "type": "module",
   "license": "Apache-2.0",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.16.0"
   },
   "bin": {
     "sdk-generator": "dist/cli.js"
@@ -39,7 +39,11 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node tests/run.mjs",
     "prepack": "npm run build",
-    "format": "prettier --write src templates tests examples README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md docs .github tsconfig.json package.json"
+    "format": "prettier --write src templates tests examples README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md docs .github tsconfig.json package.json",
+    "test:fast": "npm run build && node tests/run.mjs --fast",
+    "test:file": "npm run build && node tests/run.mjs",
+    "baselines:update": "npm run build && node tests/update-baselines.mjs",
+    "format:check": "prettier --check --ignore-path .prettierignore --ignore-path .prettier-check-ignore src templates tests examples README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md docs .github tsconfig.json package.json"
   },
   "dependencies": {
     "@types/node": "22.20.1",

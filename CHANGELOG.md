@@ -10,6 +10,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ### Breaking changes for generator automation
 
+- **Generator Node minimum.** The generator package now requires Node.js 22.16+, matching the supported contributor/SQLite test minimum. Upgrade Node before installing or running the generator; generated SDK runtime engine requirements are unchanged.
+
 - **CLI output.** Commands print readable summaries by default. Pass `--json` to keep the previous JSON on stdout and JSON errors and warnings on stderr; JSON shapes are unchanged. `effective` still prints JSON. Library functions are unchanged.
 - **npm package names.** Configuration validation now rejects `npm.name` values over 214 characters, including the scope. Shorten any oversized names before generation.
 

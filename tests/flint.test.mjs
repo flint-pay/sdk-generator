@@ -1,3 +1,4 @@
+import { before } from 'node:test';
 import { npmPackResult } from '../dist/distribution.js';
 import { localExampleSource } from './local-example.mjs';
 import { test, after } from 'node:test';
@@ -25,7 +26,9 @@ after(() => rmSync(dir, { recursive: true, force: true }));
 const root = resolve('tests/providers/flint');
 const contract = loadContract(join(root, 'openapi.json'), join(root, 'sdk.json'));
 const output = join(dir, 'sdk');
-generate(contract, output);
+before(() => {
+  generate(contract, output);
+});
 const cases = JSON.parse(readFileSync(join(root, 'http-cases.json')));
 test('provider regression inputs match their pinned fixture manifest', () => {
   const manifest = JSON.parse(readFileSync(join(root, 'fixture-manifest.json')));

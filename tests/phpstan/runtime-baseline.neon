@@ -1,0 +1,73 @@
+parameters:
+	ignoreErrors:
+		-
+			message: '#^Offset ''aud'' on array\{\} on left side of \?\? does not exist\.$#'
+			identifier: nullCoalesce.offset
+			count: 1
+			path: "*/php/src/classes/AmbientCredentialProvider.php"
+
+		-
+			message: '#^Offset ''iss'' on array\{\} on left side of \?\? does not exist\.$#'
+			identifier: nullCoalesce.offset
+			count: 1
+			path: "*/php/src/classes/AmbientCredentialProvider.php"
+
+		-
+			message: '#^Offset ''sub'' on array\{\} on left side of \?\? does not exist\.$#'
+			identifier: nullCoalesce.offset
+			count: 1
+			path: "*/php/src/classes/AmbientCredentialProvider.php"
+
+		-
+			message: '#^Default value of the parameter \#1 \$values \(array\{\}\) of method Example\\Library\\BooksRetrieveInput\:\:__construct\(\) is incompatible with type array\{id\: string\}\|object\.$#'
+			identifier: parameter.defaultValue
+			count: 1
+			path: "*/php/src/classes/BooksRetrieveInput.php"
+
+		-
+			message: '#^Default value of the parameter \#1 \$values \(array\{\}\) of method Example\\Library\\BooksRetrieveResponse200\:\:__construct\(\) is incompatible with type array\{title\: string, \.\.\.\}\|object\.$#'
+			identifier: parameter.defaultValue
+			count: 1
+			path: "*/php/src/classes/BooksRetrieveResponse200.php"
+
+		-
+			message: '#^Empty array passed to foreach\.$#'
+			identifier: foreach.emptyArray
+			count: 2
+			path: "*/php/src/classes/Codec.php"
+
+		-
+			message: '#^If condition is always false\.$#'
+			identifier: if.alwaysFalse
+			count: 1
+			path: "*/php/src/classes/Codec.php"
+
+		-
+			message: '#^Variable \$branchResult might not be defined\.$#'
+			identifier: variable.undefined
+			count: 1
+			path: "*/php/src/classes/Codec.php"
+
+		-
+			message: '#^Negated boolean expression is always true\.$#'
+			identifier: booleanNot.alwaysTrue
+			count: 1
+			path: "*/php/src/classes/EventStream.php"
+
+		-
+			message: '#^Unreachable statement \- code above always terminates\.$#'
+			identifier: deadCode.unreachable
+			count: 1
+			path: "*/php/src/classes/Runtime.php"
+
+		-
+			message: '#^Using nullsafe property access "\?\-\>headers" on left side of \?\? is unnecessary\. Use \-\> instead\.$#'
+			identifier: nullsafe.neverNull
+			count: 1
+			path: "*/php/src/classes/Runtime.php"
+
+		-
+			message: '#^Using nullsafe property access "\?\-\>maxItems" on left side of \?\? is unnecessary\. Use \-\> instead\.$#'
+			identifier: nullsafe.neverNull
+			count: 1
+			path: "*/php/src/classes/Runtime.php"

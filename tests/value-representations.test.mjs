@@ -1,3 +1,4 @@
+import { before } from 'node:test';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
@@ -87,8 +88,11 @@ writeFileSync(
 );
 const contract = loadContract(join(dir, 'api.json'), join(dir, 'sdk.json'));
 const out = join(dir, 'out');
-generate(contract, out);
-const sdk = await import(pathToFileURL(join(out, 'node/index.js')).href);
+let sdk;
+before(async () => {
+  generate(contract, out);
+  sdk = await import(pathToFileURL(join(out, 'node/index.js')).href);
+});
 const stamp = '2026-09-28T16:34:56.789Z';
 const wire =
   '{"latitude":42.125,"float_number":0.5,"change_percent":-0.25,"decimal":1.00000000000000000001,"large":9007199254740993,"unsigned":18446744073709551615,"nullable_number":0.125,"nullable_decimal":1.00000000000000000001,"at":"2026-09-28T16:34:56.789Z","dates":["2026-09-28T16:34:56.789Z"],"times":{"sent":"2026-09-28T16:34:56.789Z"},"choice":"2026-09-28T16:34:56.789Z","numeric_choice":0.125}';

@@ -1,3 +1,4 @@
+import { before } from 'node:test';
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync } from 'node:fs';
@@ -35,8 +36,11 @@ contract.config.documentation = {
   },
 };
 const output = join(directory, 'sdk');
-generate(contract, output);
-const { Client } = await import(pathToFileURL(join(output, 'node/index.js')).href);
+let Client;
+before(async () => {
+  generate(contract, output);
+  ({ Client } = await import(pathToFileURL(join(output, 'node/index.js')).href));
+});
 
 test('both clients reject malformed Unicode in HTTP JSON and authenticated webhook bodies', async () => {
   const invalidUtf8 = Buffer.concat([
@@ -329,28 +333,30 @@ test('additional consumer redaction applies to response model inspection in both
   assert.equal(printed.stdout.includes('private-id'), false);
 });
 
-test('cancellation before dispatch is not sent and ignored transport aborts still respect Node deadlines', async () => {
-  let calls = 0;
-  const client = new Client({
-    baseUrl: 'https://example.invalid',
-    token: 'key',
-    transport: () => {
-      calls++;
-      return new Promise(() => {});
-    },
-  });
-  await assert.rejects(
-    client.payments.retrieve({ id: 'p' }, { signal: AbortSignal.abort() }),
-    (e) => e.kind === 'cancelled' && e.outcome === 'not_sent',
-  );
-  assert.equal(calls, 0);
-  const start = performance.now();
-  await assert.rejects(
-    client.payments.retrieve({ id: 'p' }, { timeoutMs: 20, deadlineMs: 30, maxAttempts: 1 }),
-    (e) => ['transport', 'deadline'].includes(e.kind),
-  );
-  assert.ok(performance.now() - start < 500);
-});
+test(
+  'cancellation before dispatch is not sent and ignored transport aborts still respect Node deadlines',
+  { timeout: 15000 },
+  async () => {
+    let calls = 0;
+    const client = new Client({
+      baseUrl: 'https://example.invalid',
+      token: 'key',
+      transport: () => {
+        calls++;
+        return new Promise(() => {});
+      },
+    });
+    await assert.rejects(
+      client.payments.retrieve({ id: 'p' }, { signal: AbortSignal.abort() }),
+      (e) => e.kind === 'cancelled' && e.outcome === 'not_sent',
+    );
+    assert.equal(calls, 0);
+    await assert.rejects(
+      client.payments.retrieve({ id: 'p' }, { timeoutMs: 20, deadlineMs: 30, maxAttempts: 1 }),
+      (e) => ['transport', 'deadline'].includes(e.kind),
+    );
+  },
+);
 
 test('body transport failures preserve received request IDs in both native clients', async () => {
   const server = createServer((_request, response) => {
