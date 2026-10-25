@@ -3,13 +3,13 @@ declare(strict_types=1);
 namespace SdkNamespace;
 require_once __DIR__ . '/SchemaAdapter.php';
 
-class SdkError extends \RuntimeException
+class SdkError extends \RuntimeException implements \JsonSerializable
 {
     public readonly ?int $status;
     public ?string $idempotencyKey = null;
     public int|float|null $retryAfterMs = null;
 
-    /** @param array{status?: int, requestId?: string|null, attempts?: int, durationMs?: float, ...}|null $meta */
+    /** @param array{status?: int|null, requestId?: string|null, attempts?: int, durationMs?: float, ...}|null $meta */
     public function __construct(
         public readonly string $kind,
         string $message,
@@ -25,7 +25,7 @@ class SdkError extends \RuntimeException
         $this->status = $meta['status'] ?? null;
         $this->idempotencyKey = $meta['idempotencyKey'] ?? null;
     }
-    /** @param array{status?: int, requestId?: string|null, attempts?: int, durationMs?: float, ...}|null $meta */
+    /** @param array{status?: int|null, requestId?: string|null, attempts?: int, durationMs?: float, ...}|null $meta */
     public static function create(
         string $kind,
         string $message,
@@ -39,6 +39,7 @@ class SdkError extends \RuntimeException
     ): self {
         $class = match ($kind) {
             'transport' => Errors\ConnectionError::class,
+            'timeout' => Errors\TimeoutError::class,
             'authentication' => Errors\AuthenticationError::class,
             'validation' => Errors\ValidationError::class,
             'rate_limit' => Errors\RateLimitError::class,
@@ -72,6 +73,33 @@ class SdkError extends \RuntimeException
         $error->file = $caller['file'] ?? $error->file;
         $error->line = $caller['line'] ?? $error->line;
         return $error;
+    }
+    public function jsonSerialize(): array
+    {
+        return $this->__debugInfo();
+    }
+    public function __toString(): string
+    {
+        // Exception rendering otherwise includes previous exceptions and trace arguments.
+        $frames = array_map(
+            fn($frame) => ($frame['file'] ?? '[internal]') .
+                ':' .
+                ($frame['line'] ?? 0) .
+                ' ' .
+                ($frame['class'] ?? '') .
+                ($frame['type'] ?? '') .
+                ($frame['function'] ?? ''),
+            $this->getTrace(),
+        );
+        return static::class .
+            ': ' .
+            $this->message .
+            ' in ' .
+            $this->getFile() .
+            ':' .
+            $this->getLine() .
+            "\nStack trace:\n" .
+            implode("\n", $frames);
     }
     public function __debugInfo(): array
     {
@@ -774,9 +802,18 @@ final class CurlByteStream implements ByteStream
         if ($this->failure !== null && $this->failure !== CURLE_OK) {
             if (!$this->streaming) {
                 // Before delivery, Runtime owns retry classification.
-                throw new \RuntimeException('Streaming connection failed');
+                throw new \RuntimeException(curl_strerror($this->failure), $this->failure);
             }
-            throw SdkError::create('transport', 'Streaming transport failed', 'unknown');
+            throw SdkError::create(
+                $this->failure === CURLE_OPERATION_TIMEDOUT ? 'timeout' : 'transport',
+                'Streaming transport failed: ' . curl_strerror($this->failure),
+                'response',
+                false,
+                details: [
+                    'curlCode' => $this->failure,
+                    'curlError' => curl_strerror($this->failure),
+                ],
+            );
         }
     }
     private function checkRequestTimeout(): void
@@ -784,7 +821,10 @@ final class CurlByteStream implements ByteStream
         if (!$this->streaming && self::now() - $this->started >= $this->request['timeoutMs']) {
             // Let Runtime classify the exhausted overall/per-attempt budget and
             // retain its normal transport retry policy for buffered responses.
-            throw new \RuntimeException('Response exceeded the request timeout');
+            throw new \RuntimeException(
+                curl_strerror(CURLE_OPERATION_TIMEDOUT),
+                CURLE_OPERATION_TIMEDOUT,
+            );
         }
     }
     /** Transfer connection ownership only after Runtime accepts an SSE response. */
@@ -960,6 +1000,7 @@ final class EventStream implements \IteratorAggregate
         $skipLF = false;
         $bytes = 0;
         $first = true;
+        $position = 0;
         try {
             while (!$this->closed) {
                 if (($this->settings['cancellation'] ?? null)?->isCancelled()) {
@@ -1080,10 +1121,30 @@ final class EventStream implements \IteratorAggregate
                     if ($line === '') {
                         if ($data !== '') {
                             $raw = substr($data, 0, -1);
+                            $position++;
+                            try {
+                                $decoded = ($this->decode)(
+                                    $event === '' ? 'message' : $event,
+                                    $raw,
+                                );
+                            } catch (\Throwable $cause) {
+                                throw SdkError::create(
+                                    'protocol',
+                                    'Invalid SSE event payload at event ' .
+                                        $position .
+                                        '; inspect details.eventId and details.position',
+                                    'response',
+                                    false,
+                                    $this->meta,
+                                    'sse_invalid_event',
+                                    ['eventId' => $id, 'position' => $position],
+                                    previous: $cause,
+                                );
+                            }
                             yield new ServerSentEvent(
                                 $event === '' ? 'message' : $event,
                                 $id,
-                                ($this->decode)($event === '' ? 'message' : $event, $raw),
+                                $decoded,
                                 $raw,
                                 $retry,
                             );
@@ -1377,6 +1438,13 @@ class Model implements \JsonSerializable
     public function __get(string $field): mixed
     {
         return $this->get($field);
+    }
+    public function __set(string $field, mixed $value): void
+    {
+        throw SdkError::create(
+            'validation',
+            'Model properties are read-only; construct a new model with the updated values',
+        );
     }
     public function __isset(string $field): bool
     {
@@ -4325,8 +4393,10 @@ class Runtime
                 'application/json',
             'user-agent' => $this->contract['userAgent'] ?? 'PublicSDK (PHP)',
         ];
-        $set = function (string $name, string $value) use (&$headers, $op): void {
+        $set = function (mixed $name, mixed $value) use (&$headers, $op): void {
             if (
+                !is_string($name) ||
+                !is_string($value) ||
                 !preg_match('/^[!#$%&\x27*+.^_`|~0-9A-Za-z-]+$/', $name) ||
                 preg_match('/[\r\n]/', $value)
             ) {
@@ -4345,6 +4415,20 @@ class Runtime
             }
             $headers[strtolower($name)] = $value;
         };
+        foreach ($o->headers as $name => $value) {
+            $set($name, $value);
+        }
+        $basePath = rtrim(parse_url($this->baseUrl, PHP_URL_PATH) ?? '', '/');
+        if (
+            $continuation === null &&
+            $basePath !== '' &&
+            ($op['path'] === $basePath || str_starts_with($op['path'], $basePath . '/'))
+        ) {
+            Codec::fail(
+                'baseUrl',
+                'already includes the operation base path; remove that path from baseUrl',
+            );
+        }
         $path = $op['path'];
         $query = [];
         foreach ($op['parameters'] as $p) {
@@ -4593,6 +4677,33 @@ class Runtime
                     }
                     return $supplied[0] ?? null;
                 };
+                $authHint = function (array $modes, ?string $scheme = null): string {
+                    $shortcuts = [];
+                    foreach ($this->contract['authShortcuts'] ?? [] as $name => $value) {
+                        if (
+                            in_array($value['mode'], $modes, true) &&
+                            ($scheme === null || $value['scheme'] === $scheme)
+                        ) {
+                            $shortcuts[] = $name;
+                        }
+                    }
+                    return $shortcuts
+                        ? 'pass ' .
+                                implode(' or ', $shortcuts) .
+                                ' in ClientOptions or RequestOptions'
+                        : ($scheme !== null
+                            ? 'pass credentials[' .
+                                $modes[0] .
+                                '][' .
+                                $scheme .
+                                '] in ClientOptions or credentials[' .
+                                $scheme .
+                                '] in RequestOptions, with authMode ' .
+                                $modes[0]
+                            : 'pass authMode (' .
+                                implode(', ', $modes) .
+                                ') and credentials in ClientOptions or RequestOptions');
+                };
                 $clientShortcut = $shortcutAuth($this->options);
                 $requestShortcut = $shortcutAuth($o);
                 $defaultMode =
@@ -4610,10 +4721,7 @@ class Runtime
                 if ($modeName === null && $op['authenticated']) {
                     throw SdkError::create(
                         'authentication',
-                        'Select an explicit authentication mode for ' .
-                            $op['id'] .
-                            '; permitted modes: ' .
-                            implode(', ', $permitted),
+                        'Authentication is required; ' . $authHint($permitted),
                     );
                 }
                 $selected =
@@ -4626,10 +4734,7 @@ class Runtime
                 ) {
                     throw SdkError::create(
                         'authentication',
-                        'Authentication mode is not permitted for ' .
-                            $op['id'] .
-                            '; permitted modes: ' .
-                            implode(', ', $permitted),
+                        'Authentication mode is not permitted; ' . $authHint($permitted),
                     );
                 }
                 $expected = [];
@@ -4650,10 +4755,8 @@ class Runtime
                                 : null);
                         $credential = $resolveCredential(
                             $source,
-                            'Missing or invalid credential ' .
-                                $scheme['name'] .
-                                ' for authentication mode ' .
-                                $modeName,
+                            'Missing or invalid credentials; ' .
+                                $authHint([$modeName], $scheme['name']),
                         );
                         $expected[strtolower($scheme['header'])] =
                             $scheme['type'] === 'bearer' ? 'Bearer ' . $credential : $credential;
@@ -4772,6 +4875,7 @@ class Runtime
             }
         }
         $credentialRetries = 0;
+        $mayHaveBeenSent = false;
         for ($attempt = 1; $attempt <= $attempts; $attempt++) {
             self::checkCancel($o->cancellation, $attempt === 1 ? 'not_sent' : 'unknown');
             $remaining = $deadline - self::now();
@@ -4784,6 +4888,7 @@ class Runtime
             }
             $retryAfter = null;
             $meta = null;
+            $response = null;
             $diagnosticError = null;
             try {
                 $authenticate();
@@ -4814,6 +4919,9 @@ class Runtime
                     ? ($this->options->transport)($request)
                     : $this->send($request);
                 $status = $response['status'];
+                if ($status > 0) {
+                    $mayHaveBeenSent = true;
+                }
                 $rh = array_change_key_case($response['headers'], CASE_LOWER);
                 $raw = $response['body'] ?? '';
                 $declaredResponse =
@@ -4843,16 +4951,7 @@ class Runtime
                     $meta['requestId'] = $rh[$requestIdHeader];
                 }
                 if (isset($rh['retry-after'])) {
-                    $instruction = $rh['retry-after'];
-                    $date = strtotime($instruction);
-                    $milliseconds = preg_match('/^\d+(\.\d+)?$/D', $instruction)
-                        ? (float) $instruction * 1000
-                        : ($date !== false
-                            ? max(0, $date * 1000 - microtime(true) * 1000)
-                            : null);
-                    if ($milliseconds !== null && is_finite((float) $milliseconds)) {
-                        $retryAfter = max(0, $milliseconds);
-                    }
+                    $retryAfter = self::parseRetryAfter($rh['retry-after']);
                 }
                 if ($status === 401 && $safe && $credentialRetries === 0 && $providers) {
                     $diagnosticError = 'authentication';
@@ -4882,7 +4981,8 @@ class Runtime
                 }
                 if (isset($response['failureCode'])) {
                     throw new \RuntimeException(
-                        'HTTP transport failed with code ' . $response['failureCode'],
+                        curl_strerror($response['failureCode']),
+                        $response['failureCode'],
                     );
                 }
                 if (
@@ -5168,21 +5268,86 @@ class Runtime
                         $meta,
                     );
                 }
+                $curlCode = isset($response['failureCode'])
+                    ? (int) $response['failureCode']
+                    : ($this->options->transport === null &&
+                    $cause instanceof \RuntimeException &&
+                    is_int($cause->getCode())
+                        ? $cause->getCode()
+                        : 0);
+                $expired = self::now() >= $deadline;
+                $timedOut = $curlCode === CURLE_OPERATION_TIMEDOUT;
+                $notSent =
+                    !$mayHaveBeenSent &&
+                    !($meta['status'] ?? null) &&
+                    in_array(
+                        $curlCode,
+                        [
+                            CURLE_COULDNT_CONNECT,
+                            CURLE_COULDNT_RESOLVE_HOST,
+                            CURLE_COULDNT_RESOLVE_PROXY,
+                        ],
+                        true,
+                    );
+                $mayHaveBeenSent = $mayHaveBeenSent || !$notSent;
                 $diagnosticError = $o->cancellation?->isCancelled()
                     ? 'cancelled'
-                    : (self::now() >= $deadline
+                    : ($expired
                         ? 'deadline'
-                        : 'transport');
+                        : ($timedOut
+                            ? 'timeout'
+                            : 'transport'));
+                $meta ??= [
+                    'status' => null,
+                    'headers' => [],
+                    'attempts' => $attempt,
+                    'durationMs' => self::now() - $start,
+                ];
+                if (($meta['status'] ?? 0) === 0) {
+                    $meta['status'] = null;
+                }
+                $message = match ($diagnosticError) {
+                    'cancelled' => 'Request cancelled; remote outcome is unknown',
+                    'deadline' => 'Overall request deadline exceeded; remote outcome is unknown',
+                    'timeout' => 'Request attempt timed out; remote outcome is unknown',
+                    default => $notSent && $curlCode === CURLE_COULDNT_CONNECT
+                        ? 'Connection refused or unavailable; request was not sent'
+                        : ($notSent &&
+                        in_array(
+                            $curlCode,
+                            [CURLE_COULDNT_RESOLVE_HOST, CURLE_COULDNT_RESOLVE_PROXY],
+                            true,
+                        )
+                            ? 'DNS lookup failed; request was not sent'
+                            : 'Transport failed before a usable response; remote outcome is unknown'),
+                };
+                $code = match ($diagnosticError) {
+                    'deadline' => 'deadline_exceeded',
+                    'timeout' => 'request_timeout',
+                    default => match ($curlCode) {
+                        CURLE_COULDNT_CONNECT => 'ECONNREFUSED',
+                        CURLE_COULDNT_RESOLVE_HOST => 'ENOTFOUND',
+                        CURLE_COULDNT_RESOLVE_PROXY => 'ENOTFOUND',
+                        default => 'transport_failure',
+                    },
+                };
                 $error = SdkError::create(
                     $diagnosticError,
-                    'Request did not produce a usable response; remote outcome is unknown',
-                    'unknown',
-                    $diagnosticError === 'transport' &&
+                    $message,
+                    $notSent ? 'not_sent' : 'unknown',
+                    in_array($diagnosticError, ['transport', 'timeout'], true) &&
                         $safe &&
                         ($meta['status'] ?? null) !== 412 &&
                         $policy['transport'],
                     $meta,
-                    previous: $cause,
+                    $code,
+                    [
+                        'curlCode' => $curlCode ?: null,
+                        'curlError' =>
+                            $curlCode > 0 && $curlCode < 100 ? curl_strerror($curlCode) : null,
+                    ],
+                    // Native cURL messages and custom exceptions may include secret URLs.
+                    previous: new \RuntimeException($message, $curlCode),
                 );
                 $error->retryAfterMs = $retryAfter;
             } finally {
@@ -5219,6 +5384,30 @@ class Runtime
             self::pause((int) ceil($wait), $o->cancellation);
         }
         throw new \LogicException('Unreachable retry state');
+    }
+    private static function parseRetryAfter(string $instruction): ?float
+    {
+        $value = trim($instruction, " \t");
+        if (preg_match('/^\d+(?:\.\d+)?$/D', $value)) {
+            $ms = (float) $value * 1000;
+            return is_finite($ms) ? $ms : null;
+        }
+        if (
+            !preg_match(
+                '/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [1-9]\d{3} \d{2}:\d{2}:\d{2} GMT$/D',
+                $value,
+            )
+        ) {
+            return null;
+        }
+        $date = \DateTimeImmutable::createFromFormat(
+            '!D, d M Y H:i:s \G\M\T',
+            $value,
+            new \DateTimeZone('UTC'),
+        );
+        return $date !== false && $date->format('D, d M Y H:i:s \G\M\T') === $value
+            ? max(0, $date->getTimestamp() * 1000 - microtime(true) * 1000)
+            : null;
     }
     private function send(array $r): array
     {
@@ -5349,7 +5538,9 @@ class Runtime
             Codec::fail('pagination', 'capability is not declared');
         }
         $next = null;
-        $limit = $o->maxPages ?? PHP_INT_MAX;
+        $limit = $o->maxPages ?? 1000;
+        $seen = [];
+        $emptyPages = 0;
         if ($limit < 1) {
             Codec::fail('maxPages', 'must be positive');
         }
@@ -5358,13 +5549,28 @@ class Runtime
             // Each page owns its request deadline; time spent consuming yields is unbounded.
             $result = $this->request($id, $input, $o, $p['kind'] === 'link' ? $next : null);
             yield $result;
-            $previous = $p['kind'] === 'link' ? $next : $input[$p['parameter']] ?? null;
+            $previous =
+                $p['kind'] === 'link'
+                    ? $next ?? $result->meta['url']
+                    : $input[$p['parameter']] ?? null;
             if ($previous instanceof ParsedNumber) {
                 $previous = $previous->value;
             }
             $next = self::field($result->data, $p['next']);
             if ($next === null || $next === '') {
                 return;
+            }
+            $values = self::field($result->data, $p['items']);
+            $emptyPages = is_array($values) && count($values) === 0 ? $emptyPages + 1 : 0;
+            if ($emptyPages >= 2) {
+                throw SdkError::create(
+                    'protocol',
+                    'Pagination returned consecutive empty pages with continuations',
+                    'response',
+                    false,
+                    $result->meta,
+                    'pagination_empty_pages',
+                );
             }
             if ($p['kind'] === 'link' && !is_string($next)) {
                 throw SdkError::create('protocol', 'Expected a pagination URL', 'response');
@@ -5373,6 +5579,7 @@ class Runtime
                 $next = self::resolveLink($next, $result->meta['url']);
             }
             if (
+                isset($seen[(string) $next]) ||
                 $next === $previous ||
                 ($p['kind'] === 'offset' &&
                     $previous !== null &&
@@ -5381,10 +5588,14 @@ class Runtime
             ) {
                 throw SdkError::create(
                     'protocol',
-                    'Pagination returned a non-advancing continuation',
+                    'Pagination returned a repeated continuation (cursor cycle)',
                     'response',
                 );
             }
+            if ($previous !== null) {
+                $seen[(string) $previous] = true;
+            }
+            $seen[(string) $next] = true;
             if ($p['kind'] !== 'link') {
                 $input[$p['parameter']] = $next;
             }
@@ -5570,6 +5781,13 @@ class Runtime
                 'validation',
                 'invalid_input',
                 'Webhook headers must be a header map',
+            );
+        }
+        if ((is_int($nowSeconds) || is_float($nowSeconds)) && abs($nowSeconds) >= 100000000000) {
+            return self::webhookError(
+                'validation',
+                'invalid_input',
+                'Webhook nowSeconds appears to be milliseconds; divide by 1000 to pass Unix seconds',
             );
         }
         if ($nowSeconds !== null && !is_int($nowSeconds)) {

@@ -15,6 +15,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ### Breaking changes for regenerated SDKs
 
+- **Runtime safety.** Pagination defaults to 1,000 pages; set `maxPages` explicitly for larger traversals. Cursor cycles and two consecutive empty pages with continuations raise protocol errors. Per-attempt timeouts now use `timeout` / `TimeoutError`; update error-kind switches. Refused connections and DNS failures report `not_sent`, with stable error codes and safe transport detail. PHP transport failures without an HTTP response use `null` instead of `0` for status and metadata status. Both targets parse `Retry-After` using decimal seconds or canonical GMT HTTP dates; permissive signed/exponent/relative-date spellings are ignored. Error JSON exports omit raw bodies, headers, URLs and unsanitized causes; use explicit access for recovery. JavaScript rejects unknown client options, both targets reject base URLs repeating operation path prefixes, and PHP model assignment raises a validation error instead of creating a dynamic property. See [runtime safety migration](docs/releases.md#runtime-safety).
+
 - **Retry contract (`budgets-2`).** Required idempotency headers with `auto` disabled require TypeScript options containing `idempotencyKey`. PHP still rejects missing keys before dispatch. Both targets use half-to-full backoff jitter, optional `retry.maxDelayMs`, and preserve the last error when a retry wait exceeds the deadline. PHP automatic keys now use UUID v4. Older compiled records remain readable for compatibility comparison; regenerate descriptors together with runtimes. See [retry migration](docs/releases.md#retry-defaults).
 
 - Event names that share a type name or have no ASCII letters or digits fail diagnosis for every target.
@@ -62,6 +64,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 - `documentation.authShortcut` selects the authentication shortcut shown in README and operation examples.
 
 ### Fixed
+
+- Runtime error messages identify caller authentication options; PHP invalid header values raise SDK validation errors. Malformed SSE events retain their event ID and one-based position. Unconsumed default Node SSE streams no longer keep the process alive and expire their idle budget before iteration. Node webhook verification accepts ArrayBuffer and Uint8Array bytes, and both targets explain millisecond-scale `nowSeconds` mistakes.
 
 - Webhook declarations and root exports use canonical event-name order, matching PHP class order. Freshly generated SDKs render identically after restoring their saved contract, so release preparation no longer incorrectly requires regeneration.
 - Full generation reuses compiled sample validators instead of recompiling one per candidate example, restoring generation time for large APIs (about 30% faster on the full Flint export).

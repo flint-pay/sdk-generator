@@ -1,0 +1,66 @@
+{
+  "retryAfter": [
+    { "value": "5", "milliseconds": 5000 },
+    { "value": "0.25", "milliseconds": 250 },
+    { "value": " 5", "milliseconds": 5000 },
+    { "value": "5 ", "milliseconds": 5000 },
+    { "value": "+5", "milliseconds": null },
+    { "value": "1e3", "milliseconds": null },
+    { "value": "-1", "milliseconds": null },
+    { "value": "tomorrow", "milliseconds": null },
+    { "value": "garbage", "milliseconds": null },
+    { "value": "Tue, 14 Nov 2023 22:13:25 GMT", "milliseconds": 5000 },
+    { "value": "Tue, 14 Nov 2023 22:13:15 GMT", "milliseconds": 0 },
+    { "value": "Wed, 14 Nov 2023 22:13:25 GMT", "milliseconds": null },
+    { "value": "Fri, 31 Feb 2023 22:13:25 GMT", "milliseconds": null },
+    { "value": "2023-11-14", "milliseconds": null }
+  ],
+  "pagination": [
+    {
+      "name": "three cursor cycle",
+      "next": ["A", "B", "C", "A"],
+      "empty": [],
+      "error": "protocol",
+      "calls": 4
+    },
+    {
+      "name": "initial cursor cycle",
+      "initial": "A",
+      "next": ["B", "A"],
+      "empty": [],
+      "error": "protocol",
+      "calls": 2
+    },
+    {
+      "name": "immediate cursor repeat",
+      "next": ["A", "A"],
+      "empty": [],
+      "error": "protocol",
+      "calls": 2
+    },
+    {
+      "name": "consecutive empty pages",
+      "next": ["A", "B", "C"],
+      "empty": [1, 2],
+      "error": "protocol",
+      "calls": 2
+    },
+    {
+      "name": "isolated empty page",
+      "next": ["A", "B", null],
+      "empty": [1],
+      "error": null,
+      "calls": 3
+    },
+    { "name": "final empty page", "next": ["A", null], "empty": [2], "error": null, "calls": 2 },
+    {
+      "name": "explicit page cap",
+      "next": ["A", "B", "C"],
+      "empty": [],
+      "maxPages": 2,
+      "error": null,
+      "calls": 2
+    },
+    { "name": "default page cap", "empty": [], "error": null, "calls": 1000 }
+  ]
+}

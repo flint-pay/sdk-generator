@@ -1392,7 +1392,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     if (c.config.webhook) {
       code += '  verifyWebhook(...args) { return this.#runtime.verifyWebhook(...args); }\n';
       declarations +=
-        '  verifyWebhook(rawBody: Uint8Array, headers: _SdkWebhookHeaders, secrets: string | readonly string[], nowSeconds?: number): VerifiedWebhook;\n';
+        '  verifyWebhook(rawBody: Uint8Array | ArrayBuffer, headers: _SdkWebhookHeaders, secrets: string | readonly string[], nowSeconds?: number): VerifiedWebhook;\n';
     }
     if (c.config.money) {
       code += '  money(...args) { return this.#runtime.money(...args); }\n';
@@ -1405,7 +1405,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       code +=
         'export function verifyWebhook(rawBody, headers, secrets, nowSeconds) { return verifyWebhookFromPlan(_sdkDescriptors, rawBody, headers, secrets, nowSeconds); }\n';
       declarations +=
-        'export declare function verifyWebhook(rawBody: Uint8Array, headers: _SdkWebhookHeaders, secrets: string | readonly string[], nowSeconds?: number): VerifiedWebhook;\n';
+        'export declare function verifyWebhook(rawBody: Uint8Array | ArrayBuffer, headers: _SdkWebhookHeaders, secrets: string | readonly string[], nowSeconds?: number): VerifiedWebhook;\n';
     }
     for (const op of c.operations) {
       const known = targetPlan.node.operations[op.id]!.known;
@@ -1744,6 +1744,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     }
     for (const name of [
       'ConnectionError',
+      'TimeoutError',
       'AuthenticationError',
       'ValidationError',
       'RateLimitError',
@@ -2976,7 +2977,7 @@ function webhookGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: bo
       : standaloneWebhook
         ? `Use ${c.config.composer.namespace}\\Webhooks::verify($rawBody, $headers, $secrets, $nowSeconds = null) to verify without client options, a base URL or API credentials. Client::verifyWebhook delegates to the same verifier. The static method keeps mixed arguments so invalid inputs produce SDK error subclasses. `
         : 'The Webhooks name belongs to an API model; use Client::verifyWebhook for verification. Its mixed arguments keep invalid inputs within the SDK error guards. ';
-  const requirements = `${verifier}Call verifyWebhook(rawBody, headers, secrets, nowSeconds?) with original request bytes and ${headers}. This package uses ${w.format ?? 'hex'} HMAC-SHA256 signing and a ${w.toleranceSeconds}-second timestamp tolerance. ${w.format === 'standard-webhooks' ? 'Secrets must use the whsec_ prefix and canonical base64 encoding of exactly 32 key bytes.' : 'Use the signing secret supplied by the provider.'} Pass one secret string or an array of active secrets during rotation. nowSeconds is an optional Unix time override for deterministic tests; normally omit it.\n\n`;
+  const requirements = `${verifier}Call verifyWebhook(rawBody, headers, secrets, nowSeconds?) with original request bytes and ${headers}. This package uses ${w.format ?? 'hex'} HMAC-SHA256 signing and a ${w.toleranceSeconds}-second timestamp tolerance. ${w.format === 'standard-webhooks' ? 'Secrets must use the whsec_ prefix and canonical base64 encoding of exactly 32 key bytes.' : 'Use the signing secret supplied by the provider.'} Pass one secret string or an array of active secrets during rotation. nowSeconds is an optional Unix time override in seconds for deterministic tests; normally omit it. Millisecond-scale values raise an input error explaining the conversion. ${target === 'node' ? 'Node accepts original Buffer, Uint8Array or ArrayBuffer bytes. ' : ''}\n\n`;
   const examples =
     target === 'node'
       ? `### Fetch\n\nThe request body must not have been consumed. Pass the SDK client and your configured signing secret to this helper:\n\n\`\`\`js
@@ -3097,6 +3098,11 @@ function runtimeGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: bo
     `# ${c.title} runtime guide\n\nPackage ${c.config.version}; API ${c.apiVersion}.\n\n[Back to the quickstart](README.md) · [API reference](REFERENCE.md)\n\n` +
     `## Client and request options\n\n${c.defaultBaseUrl !== undefined ? `The default baseUrl is \`${c.defaultBaseUrl}\`; pass baseUrl to select another environment.` : 'Pass baseUrl: this SDK has no default server.'} Pass per-request options as the last method argument: a plain object in Node, or RequestOptions in PHP.\n\n${requestOptions}${c.operations.some((op) => op.parameters.some((p) => p['x-flint-request-option'] === 'client_request_id')) ? `Pass ${node ? 'clientRequestId' : 'client_request_id'} for caller correlation on operations declaring that option. The value must contain 1 to 128 visible ASCII characters (0x21 to 0x7E), without spaces. Invalid values and conflicting request headers raise a validation error before sending, even with schema validation disabled. Unset values send no header. Keep secrets and personal data out of correlation values. The response request ID in meta.requestId is the server ID, independent of this value.\n\n` : ''}` +
     bullets([
+      ...(node
+        ? [
+            'Unknown client option keys fail validation; use maxAttempts for the total attempt budget, including the first attempt.',
+          ]
+        : []),
       'Defaults are timeoutMs: 10000 per attempt and deadlineMs: 30000 for the overall duration (not an absolute timestamp). Request values override client defaults.',
       'maxAttempts is a positive safe integer budget, capped at the operation limit. Request budgets override client budgets. Set maxAttempts: 1 to opt out of ordinary retries; provider invalidation can still add one HTTP 401 retry.',
       'Without an explicit policy, GET/HEAD/OPTIONS allow three total attempts; other methods allow one. Mutations without an optional key send once.',
@@ -3125,6 +3131,7 @@ function runtimeGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: bo
     bullets([
       'SdkError exposes the server message (message in Node, getMessage() in PHP), status, kind, outcome, retryAllowed and optional metadata; provider codes use code in Node and errorCode in PHP. Every error after key resolution exposes idempotencyKey, including not_sent failures; results expose meta.idempotencyKey. retryAfterMs records a valid server Retry-After in milliseconds.',
       'outcome is not_sent, response or unknown. Reconcile an unknown mutation outcome with the provider and the original persisted idempotency key before resubmitting.',
+      'Per-attempt timeouts use kind timeout (TimeoutError); overall deadlines use deadline (DeadlineError) with retryAllowed false. Connection refusal and DNS lookup failures use transport (ConnectionError), outcome not_sent and machine-readable codes. Node details.transportCode and PHP details[curlCode]/details[curlError] identify the underlying transport failure without including request URLs.',
       'HTTP 404 uses kind not_found; HTTP 500–599 uses server. Status is undefined in Node or null in PHP when no response is available. Provider-specific details remain unknown in TypeScript.',
       'The configured errors.messagePath selects the message (default message); missing, blank or non-string values fall back to API returned HTTP followed by the status code. Error paths traverse JSON objects and array indices; scalar values have no child fields.',
       'Server messages and provider codes require original JSON strings; JSON numeric tokens never match string retry codes. Parsed details retain their usual exact numeric representation.',
@@ -3132,7 +3139,7 @@ function runtimeGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: bo
     `\n### Undeclared and invalid responses\n\n${responseRecoveryGuide(target)}\n\n` +
     `## Retries and idempotency\n\n` +
     bullets([
-      'Retries count total attempts and never exceed the effective policy. Backoff waits uniformly between half and all of baseDelayMs * 2^(attempt - 1), capped by optional maxDelayMs. Retry-After is a minimum wait. If the next wait would exceed the deadline, the last error is returned unchanged; an attempt cut off by the overall deadline still uses kind deadline.',
+      'Retries count total attempts and never exceed the effective policy. Backoff waits uniformly between half and all of baseDelayMs * 2^(attempt - 1), capped by optional maxDelayMs. Retry-After is a minimum wait. Both targets accept nonnegative decimal seconds (with optional surrounding spaces/tabs) or a canonical GMT HTTP date, for example Wed, 21 Oct 2015 07:28:00 GMT. Exponents, signed numbers, relative dates and malformed dates are ignored. If the next wait would exceed the deadline, the last error is returned unchanged; an attempt cut off by the overall deadline still uses kind deadline.',
       'Without a declared retry policy, GET/HEAD/OPTIONS retry transport failures and HTTP 408, 429, 500, 502, 503 and 504, with three total attempts and a 100 ms exponential jitter base. Explicit policies replace these defaults.',
       ...(c.config.errors?.retry
         ? [
@@ -3147,7 +3154,7 @@ function runtimeGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: bo
     ]) +
     `\n## Pagination and polling\n\n${pagination}` +
     bullets([
-      'Pagination is lazy, supports maxPages/maxItems, and does not guarantee a stable snapshot or durable continuation.',
+      'Pagination is lazy, defaults to at most 1000 pages, and supports explicit maxPages/maxItems limits. The iterator ends when the page cap is reached. Repeated continuations (including longer cursor cycles) and two consecutive empty pages that still advertise continuations raise protocol errors. An isolated empty page or a terminal empty page is valid. Pagination does not guarantee a stable snapshot or durable continuation.',
       'Each pagination page gets a fresh deadline, including decoding; time spent processing yielded values does not consume it. Pagination has no overall iterator deadline; use cancellation or maxPages/maxItems to bound iteration.',
       'Polling shares an overall deadline.',
       'Generation rejects incompatible continuation/query representations, including an int64/uint64 continuation with an ordinary integer query parameter.',
@@ -3156,6 +3163,12 @@ function runtimeGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: bo
     bullets([
       'Timeout is per attempt, including buffered body consumption. Deadline covers attempts and retry waits for each request.',
       'For SSE, timeout/deadline bound connection setup; streamIdleTimeoutMs controls idle reads and streamLifetimeMs optionally bounds stream lifetime.',
+      ...(node
+        ? [
+            'An unconsumed default SSE connection and its timers do not keep Node alive. Start iteration within streamIdleTimeoutMs or the stream closes; iteration retains the connection until close. Injected transports own their socket lifecycle.',
+          ]
+        : []),
+      'Malformed known SSE payloads fail with code sse_invalid_event and details containing eventId and the one-based event position; no payload bytes are included in the message.',
       'Close the returned stream (Result.data in result mode) or the client to release a stream; breaking iteration also closes it. Unknown event names retain raw strings. Reconnect and persist resume cursors explicitly; no yielded event is retried automatically.',
       'Cancellation stops local work, not the remote operation. Node uses AbortSignal. PHP uses a Cancellation token checked during cURL progress and between waits; synchronous calls need an external signal handler to cancel while blocked.',
     ]) +
@@ -3163,6 +3176,7 @@ function runtimeGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: bo
     downloadGuide(c, target) +
     `## Destinations and API versions\n\n` +
     bullets([
+      'baseUrl must omit a path already present at the start of an operation path; duplicated paths are rejected before sending. For an operation at /v1/payments, use an origin baseUrl rather than appending /v1.',
       'Explicit allowedOrigins govern all destinations, including pagination. HTTP/HTTPS scheme and host capitalization are ignored, and default ports are normalized; other ports remain distinct origins. Supply explicit allowedOrigins as canonical origin strings with default ports omitted.',
       'HTTPS is required, including on anonymous APIs, unless allowInsecureHttp is set for deliberate local tests. HTTP rejection names that option; a rejected origin names allowedOrigins.',
       'Declared 302/307 responses return Location metadata without following redirects; undeclared redirects are rejected. Authentication is attached only after destination validation.',
@@ -3171,8 +3185,13 @@ function runtimeGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: bo
     `\n## Client lifecycle and transports\n\n` +
     bullets([
       'Clients perform no network I/O at import/construction. No SDK telemetry is sent.',
-      "Node clients reuse the runtime's fetch connection pool; injected transports remain caller-owned and must honor AbortSignal and disable redirects/retries. Node requests keep headers/context local and support concurrent calls.",
+      'Node clients use fetch for buffered operations and native HTTP/HTTPS for SSE connections; injected transports remain caller-owned and must honor AbortSignal and disable redirects/retries. Node requests keep headers/context local and support concurrent calls.',
       'PHP owns a reusable cURL handle, released by close()/destruction; a client supports sequential calls within one PHP execution context. Do not concurrently share a PHP client across threads/fibers.',
+      ...(!node
+        ? [
+            'Model properties are read-only; assignment raises a validation error. Construct a new model with updated values. Request header names and values must be strings; invalid headers raise a validation error before sending.',
+          ]
+        : []),
       'Requests use the media type selected by the provider profile. Schema validation counts encoded object properties, including explicit nulls, after optional-field omission.',
       'Requests identify the selected package name/version and runtime through an overridable User-Agent header.',
     ]) +
@@ -3180,7 +3199,7 @@ function runtimeGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: bo
     bullets([
       'Diagnostics run once per attempted HTTP request, including transport failures, with operation, request ID, status, timing, attempt count and error kind only; hook failures are ignored. Bodies and credentials are excluded.',
       'Error inspection includes the message, status, provider code, redacted details and stack frames; PHP debug traces omit arguments. Message extraction, provider codes and details honor schema and redactFields redaction.',
-      'Raw response text and headers require explicit access. Binary/stream result inspection omits raw headers and URLs; event inspection omits payloads.',
+      'Error JSON serialization and native exception rendering omit raw bodies, response headers, URLs and unsanitized causes. Raw response text and headers require explicit access. Binary/stream result inspection omits raw headers and URLs; event inspection omits payloads.',
       'Model debug printing redacts declared sensitive fields and additional field names supplied in ClientOptions.redactFields; printing arbitrary raw values is application responsibility. Injected transports are privileged and see credentials/bodies.',
     ]) +
     `\n## Custom helpers\n\nCustom helpers belong in custom/; they survive regeneration. Multi-call helpers are not atomic and must expose partial completion. See [reference](REFERENCE.md).\n\n` +
