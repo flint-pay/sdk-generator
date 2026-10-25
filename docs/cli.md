@@ -9,8 +9,8 @@ From a source checkout, run `npm ci` and `npm run build`, then invoke `node dist
 | `node dist/cli.js --help`                                                                     | Print plain-text usage for all commands.                                                                                                                                                                                                    |
 | `node dist/cli.js COMMAND --help`                                                             | Print plain-text usage, arguments, options and side effects for one command without executing it.                                                                                                                                           |
 | `node dist/cli.js --version`                                                                  | Print the generator package version as plain text.                                                                                                                                                                                          |
-| `node dist/cli.js init API_JSON SDK_JSON [--targets node\|php\|node,php] [--json]`            | Write a minimal configuration to a new `SDK_JSON`, then diagnose the pair. Defaults to both targets; no other files are written. The configuration is kept if diagnosis fails.                                                              |
-| `node dist/cli.js diagnose API_JSON SDK_JSON [--json]`                                        | Load and render-check the selected contract; print validity, operation count, contract hash and targets. No output files are written.                                                                                                       |
+| `node dist/cli.js init API_JSON SDK_JSON [--targets node\|php\|node,php] [--force] [--json]`  | Write a minimal configuration to a new `SDK_JSON`, then diagnose the pair. Defaults to both targets; no other files are written. The configuration is kept if diagnosis fails.                                                              |
+| `node dist/cli.js diagnose API_JSON SDK_JSON [--json]`                                        | Load and compile-check the selected contract; print validity, operation count, contract hash and targets. No output files are written.                                                                                                      |
 | `node dist/cli.js effective API_JSON SDK_JSON [--json]`                                       | Print the resolved contract, selected operations, configuration and source hashes. This output can contain private API details. No output files are written.                                                                                |
 | `node dist/cli.js preview API_JSON SDK_JSON OUTPUT [--diff] [--json]`                         | Report proposed file changes and compatibility findings without writing; `--diff` also prints modified-file diffs. Existing output is checked for ownership conflicts.                                                                      |
 | `node dist/cli.js generate API_JSON SDK_JSON OUTPUT [--json]`                                 | Create or safely regenerate the selected packages and private ownership record; report changes and compatibility findings.                                                                                                                  |
@@ -26,30 +26,30 @@ Arguments are positional; named options may appear before or after them. Require
 
 `init` derives package names from `info.title` using ASCII kebab-case words and a matching PascalCase PHP namespace. Empty names fall back to `sdk` / `Sdk`. A namespace segment beginning with a digit gets an `Sdk` prefix: `123 Widgets` becomes `Example\Sdk123Widgets`. The shared package slug is shortened at a word boundary so the full scoped npm name is at most 214 characters, without a trailing hyphen; a first word longer than the available space is cut to fit. It writes version `0.1.0`, the selected targets and only their package metadata, using `@example` / `example` placeholder vendors.
 
-It refuses an existing destination, including symlinks; there is no `--force`. Invalid JSON and unsupported OpenAPI versions fail before writing. After writing, unsupported constructs exit with status 1 and the same findings as `diagnose`. Fix the specification or edit the configuration, including `include` / `hidden` operation selection, then rerun `diagnose`.
+It refuses an existing destination. Use `--force` to replace a regular configuration file; directories and symlinks are always refused. With multiple security schemes, it writes named modes for the complete declared alternatives and asks you to review `auth`. Invalid JSON and unsupported OpenAPI versions fail before writing. After writing, unsupported constructs exit with status 1 and the same findings as `diagnose`. Fix the specification or edit the configuration, including `include` / `hidden` operation selection, then rerun `diagnose`.
 
 ```text
 Wrote sdk.json (targets: node, php)
 Valid: 12 operations; targets: node, php; contract hash: <hash>
-Next: replace the @example/example package names, then run
-  sdk-generator generate openapi.json sdk.json OUTPUT
+Next: replace @example/library and example/library, then run
+  node dist/cli.js generate openapi.json sdk.json OUTPUT
 ```
 
-The suggested command uses POSIX single quotes for paths containing spaces or shell metacharacters, escaping embedded single quotes.
+The suggested command uses the running Node executable and CLI path for a checkout, or `npx --package @public-sdk/generator sdk-generator` for an installed package. It uses POSIX single quotes for paths containing spaces or shell metacharacters, escaping embedded single quotes.
 
 With `--json`, `init` prints `{ "written": "<path>", "config": {...}, "diagnose": {...} }`, where `diagnose` is the same report as `diagnose --json`. Success goes to stdout; if diagnosis fails after writing, the envelope containing the failure report goes to stderr. Errors before writing use the ordinary JSON error format.
 
 Commands print readable, plain ASCII summaries by default, with no color or TTY detection. `validate` streams one line per finished check group. Results go to stdout; errors and warnings go to stderr. Success exits with status 0, including compatibility findings; any failure exits with status 1.
 
-Every command accepts `--json` to print the previous machine-readable JSON on stdout and JSON errors and warnings on stderr. JSON shapes and library functions are unchanged. **Automation that parses output must pass `--json`.** `effective` always prints JSON, with or without `--json`.
+Every command accepts `--json` for machine-readable output. Successful reports go to stdout and warnings go to stderr. JSON errors include a stable `code` and `diagnostics` with codes, locations and messages; input findings also identify their `source` file. Paths to local files are relative to the current working directory. `diagnose --json` writes failures to stdout with `valid: false`; other commands write failures to stderr. Warnings on a failed JSON command are included in its `warnings` array. **Automation that parses output must pass `--json`.** `effective` always prints JSON, with or without `--json`.
 
-`preview --diff` prints the library diff for each modified file after the summary. Created and removed files are listed on regeneration and never dumped as diffs. Without `--diff`, preview computes no diffs. `--diff --json` fails because JSON already includes every diff; other commands reject `--diff`.
+`preview --diff` prints the library diff for each modified file after the summary. Created and removed files are listed on regeneration and never dumped as diffs. Without `--diff`, preview computes no diffs. `preview --json` omits diffs by default; use `preview --json --diff` to add a `diffs` array for modified files. Created/removed files remain summaries, so a first JSON preview never embeds every generated file. Other commands reject `--diff`.
 
 First generation reports target file counts without path lists or a compatibility comparison. Regeneration lists sorted created, modified and removed paths and all compatibility findings, ordered breaking, review, then additive. User paths retain their spelling; output file paths are relative to `OUTPUT` with `/` separators. For example, a first preview of the bundled library:
 
 ```text
 Preview of .generated/library (no files written)
-Files: 87 created (node 44, php 43); no previous generation
+Files: 103 created (node 46, php 57); no previous generation
 Compatibility: not compared; no previous generation
 ```
 
@@ -61,7 +61,7 @@ Validating .generated/library
   passed  node  npm package contents
   passed  node  module and descriptor loading
   passed  node  TypeScript examples (1 file)
-  passed  php   PHP syntax (28 files)
+  passed  php   PHP syntax (42 files)
   passed  php   Composer metadata
   passed  php   descriptor validation
 Validation passed: 7 checks (node, php)
@@ -77,21 +77,27 @@ The release plan's `approved` field records review acknowledgment. It defaults t
 
 ## Diagnostic findings
 
-`diagnose` collects independent configuration errors and unknown operation IDs, then validates models and operations in separate stages. Unknown settings list valid keys once per settings object and suggest close spellings. If the SDK input looks like an OpenAPI document, the error suggests checking whether `API_JSON` and `SDK_JSON` are swapped. Unknown operation IDs suggest nearby IDs from the contract, including local path-item references.
+`diagnose` collects independent configuration errors and unknown operation IDs, then validates models and operations in separate stages. Unknown settings list current keys, including `profiles`, once per settings object and suggest close spellings. Deprecated keys remain accepted and produce warnings. Undeclared idempotency, conditional, API-version and response request-ID and webhook signing header names warn with declared candidates; check the spelling or correct the provider export. Inferred `api.<operationId>` names warn with their reason and the configuration fields to set. `generate`, `validate` and `release` warn about `@example/` and `example/` package names before publication. If the SDK input looks like an OpenAPI document, the error suggests checking whether `API_JSON` and `SDK_JSON` are swapped. Unknown operation IDs suggest nearby IDs from the contract, including local path-item references.
 
-On failure, it exits with status 1 and lists each `location: message` on stderr. With `--json`, it writes the unchanged JSON diagnostic report:
+On failure, it exits with status 1 and lists each `location: message` on stderr. With `--json`, it writes a diagnostic report to stdout:
 
 ```json
 {
+  "code": "INVALID_CONFIG",
   "valid": false,
   "error": "config/version: expected a semantic package version",
   "diagnostics": [
-    { "location": "config/version", "message": "expected a semantic package version" }
+    {
+      "code": "INVALID_CONFIG",
+      "source": "sdk.json",
+      "location": "config/version",
+      "message": "expected a semantic package version"
+    }
   ]
 }
 ```
 
-The `error` string includes the reported findings; each `diagnostics` entry has a location and a message without the repeated location prefix. No files are written.
+The `error` string includes the reported findings; each `diagnostics` entry has a code, location and message without the repeated location prefix. `config/...` locations address the SDK JSON or profile named by `source`; `/...` locations address the API input. When a required field is missing, the location points at the nearest existing parent and the message names the setting to add. No files are written.
 
 Diagnostic pointer segments escape `/` as `~1` and `~` as `~0` using JSON Pointer rules: `/todos` becomes `/paths/~1todos/get`, and a nested property named `a/b~c` becomes `a~1b~0c`. This applies to unknown keys and configuration locations too. Invalid JSON reports a one-based line and column without quoting input contents. The YAML hint appears only for `.yaml`/`.yml` files or content that does not start with a JSON object or array.
 
@@ -122,7 +128,7 @@ OUTPUT/
     guides/             Optional provider narrative guides
 ```
 
-Only selected targets are emitted. Webhook inbox/outbox examples appear when verification is configured. The private root record is excluded from package archives; preserve it to detect hand edits, remove obsolete owned files and compare future versions. Generated packages contain their selected operation descriptors, codecs and public types. Source schema definitions are retained where required by public schema-taking helpers.
+Only selected targets are emitted. Webhook inbox/outbox examples appear when verification is configured. The private root record uses compact JSON and is excluded from package archives; preserve it to detect hand edits, remove obsolete owned files and compare future versions. Generated packages contain their selected operation descriptors, codecs and public types. Source schema definitions are retained where required by public schema-taking helpers.
 
 `effective` omits unselected targets' package metadata. The resolved library contract and private record retain compatibility placeholders; see [overrides and effective configuration](configuration.md#overrides). Release plans contain publication settings and instructions only for selected targets; unselected entries in `packages` are `null`.
 
@@ -148,15 +154,15 @@ An installed generator exposes these exports from `@public-sdk/generator`. `rend
 
 ## Troubleshooting
 
-| Symptom                                                | Action                                                                                                                                                                                                            |
-| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `dist/cli.js` cannot be found                          | Run `npm ci` and `npm run build` from the repository root.                                                                                                                                                        |
-| Unsupported schema, reference, format or encoding      | Follow the diagnostic's source pointer and [support matrix](support-matrix.md). Vendor remote references locally or select supported operations; do not discard required wire semantics to silence a diagnostic.  |
-| Generated example fails validation                     | Supply a valid input under `operations.<operationId>.example` in the [configuration](configuration.md).                                                                                                           |
-| Generated file was edited or an unowned file conflicts | All edited owned files are listed in the error. Move intentional helper code to the appropriate `custom/` directory, or generate into a fresh output directory and reconcile changes.                             |
-| A sibling generation lock remains after a crash        | Verify no generation is running, then inspect the lock, staging directory and backup before recovery. See [regeneration transactions](architecture.md#regeneration-transaction).                                  |
-| A required validation tool cannot be found             | The error names the tool and selected target. Install it on `PATH`, or set `targets` in the SDK configuration to omit that target and regenerate. Node validation needs Node and npm; PHP needs PHP and Composer. |
-| Release destination already exists                     | Choose a new release directory; prepared releases are not overwritten.                                                                                                                                            |
-| Release asks you to regenerate                         | Use the matching generator and pinned inputs to regenerate, then rerun validation and review the new preview.                                                                                                     |
+| Symptom                                                | Action                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dist/cli.js` cannot be found                          | Run `npm ci` and `npm run build` from the repository root.                                                                                                                                                                                                                                                                                                              |
+| Unsupported schema, reference, format or encoding      | Follow the diagnostic's source pointer and [support matrix](support-matrix.md). Vendor remote references locally or select supported operations; do not discard required wire semantics to silence a diagnostic.                                                                                                                                                        |
+| Generated example fails validation                     | Supply a valid input under `operations.<operationId>.example` in the [configuration](configuration.md).                                                                                                                                                                                                                                                                 |
+| Generated file was edited or an unowned file conflicts | All edited owned files are listed in the error. Move intentional helper code to the appropriate `custom/` directory, or generate into a fresh output directory and reconcile changes. Delete an edited generated file to let regeneration restore it. If the private record was lost, restore it from a backup or regenerate into a fresh directory from pinned inputs. |
+| A sibling generation lock remains after a crash        | Dead-pid locks recover automatically with a warning. Unknown owners require inspection; CLI SIGINT/SIGTERM removes the interrupted worker’s lock and stage and restores any pending backup. See [regeneration transactions](architecture.md#regeneration-transaction).                                                                                                  |
+| A required validation tool cannot be found             | The error names the tool and selected target. Install it on `PATH`, or set `targets` in the SDK configuration to omit that target and regenerate. Node validation needs Node and npm; PHP needs PHP and Composer.                                                                                                                                                       |
+| Release destination already exists                     | Choose a new release directory; prepared releases are not overwritten.                                                                                                                                                                                                                                                                                                  |
+| Release asks you to regenerate                         | Use the matching generator and pinned inputs to regenerate, then rerun validation and review the new preview.                                                                                                                                                                                                                                                           |
 
 For a reproducible bug report, follow [contributing](../CONTRIBUTING.md). Keep private contracts and credentials out of public diagnostics and reports.

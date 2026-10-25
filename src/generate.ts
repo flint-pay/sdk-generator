@@ -1,4 +1,5 @@
 import { substituteTemplate } from './template.js';
+import { cleanupInterruptedGeneration, acquireGenerationLock } from './generation-cleanup.js';
 import { removesPublishedExamples } from './example-protection.js';
 import { reservePublicSymbols } from './public-symbols.js';
 import {
@@ -20,7 +21,6 @@ import {
   renameSync,
   rmSync,
   cpSync,
-  openSync,
   closeSync,
 } from 'node:fs';
 import { basename, dirname, resolve, join, relative, isAbsolute } from 'node:path';
@@ -132,6 +132,14 @@ const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
 const packageMetadata = JSON.parse(readFileSync(join(here, '../package.json'), 'utf8'));
 const version = packageMetadata.version as string;
+/** Private records need deterministic keys, without indentation expanding shared graphs. */
+const compactRecord = (value: unknown): string =>
+  JSON.stringify(value, (_key, child: unknown) =>
+    child && typeof child === 'object' && !Array.isArray(child)
+      ? Object.fromEntries(Object.entries(child).sort(([a], [b]) => a.localeCompare(b, 'en')))
+      : child,
+  ) + '\n';
+
 const recordName = '.sdk-generator.json';
 function comparisonBase(before: RecordFile, next: Contract): Contract {
   return before.interface.config.version === next.config.version ||
@@ -1132,7 +1140,7 @@ function recoveryReference(c: Contract, target: 'node' | 'php'): string {
 export function render(c: Contract): Map<string, string> {
   return renderCompiled(compileSdkContract(c));
 }
-function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map<string, string> {
+function checkCompilation(compilation: ReturnType<typeof compileSdkContract>): void {
   const c = compilation.source;
   if (c.exampleProtection === undefined)
     throw new Diagnostic(
@@ -1173,6 +1181,24 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       );
     }
   }
+  reservePublicSymbols(
+    c,
+    Object.keys(targetPlan.node.models),
+    new Set(
+      c.operations.filter((op) => targetPlan.documentation[op.id]!.reserveKnown).map((op) => op.id),
+    ),
+  );
+}
+
+/** Diagnose compilation and runnable inputs without allocating rendered package files. */
+export function diagnoseContract(contract: Contract): void {
+  checkCompilation(compileSdkContract(contract));
+}
+
+function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map<string, string> {
+  checkCompilation(compilation);
+  const c = compilation.source;
+  const targetPlan = compilation.plan;
   const files = new Map<string, string>();
   const targets = c.config.targets ?? ['node', 'php'];
   const groups = [...new Set(c.operations.map((o) => o.resource))].sort();
@@ -1844,7 +1870,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     );
     files.set(
       `${target}/REFERENCE.md`,
-      `# ${c.title} API reference\n\nPackage ${c.config.version}; API ${c.apiVersion}.\n\n[Models and field descriptions](MODELS.md) · [Runtime guide](RUNTIME.md)\n\nResult.data is the full decoded API response body; Result.meta contains HTTP metadata. Provider data envelopes remain inside Result.data. PHP accepts input arrays or generated input classes.\n\n${c.config.webhook ? webhookReference(target) : ''}## Resources\n\n${groups.map((group) => `- [${group}](#resource-${group.toLowerCase()})`).join('\n')}\n\n` +
+      `# ${/\bAPI$/i.test(c.title.trim()) ? c.title + ' reference' : c.title + ' API reference'}\n\nPackage ${c.config.version}; API ${c.apiVersion}.\n\n[Models and field descriptions](MODELS.md) · [Runtime guide](RUNTIME.md)\n\nResult.data is the full decoded API response body; Result.meta contains HTTP metadata. Provider data envelopes remain inside Result.data. PHP accepts input arrays or generated input classes.\n\n${c.config.webhook ? webhookReference(target) : ''}## Resources\n\n${groups.map((group) => `- [${group}](#resource-${group.toLowerCase()})`).join('\n')}\n\n` +
         [...c.operations]
           .sort((a, b) => a.resource.localeCompare(b.resource) || a.method.localeCompare(b.method))
           .map(
@@ -2274,7 +2300,7 @@ function previewOutput(
   safeTree(output);
   const recordPath = join(output, recordName);
   const before: RecordFile | undefined = existsSync(recordPath)
-    ? JSON.parse(readFileSync(recordPath, 'utf8'))
+    ? readGenerationRecord(recordPath)
     : undefined;
   if (before && (![1, 2].includes(before.recordVersion ?? 1) || !before.files || !before.interface))
     throw new Diagnostic(
@@ -2345,14 +2371,21 @@ function previewOutput(
       // A case-only rename aliases the owned file on case-insensitive filesystems.
       // A distinct directory entry (including a hardlink) is still unowned.
       if (readdirSync(dirname(destination)).includes(basename(destination)))
-        throw new Diagnostic(destination, 'unowned file conflicts with generated output');
+        throw new Diagnostic(
+          destination,
+          'unowned file conflicts with generated output; restore the private .sdk-generator.json record if it was lost, or generate into a fresh directory',
+        );
       const actual = lstatSync(destination);
       const alias = Object.keys(before?.files ?? {}).find((previous) => {
         if (previous.toLowerCase() !== path.toLowerCase() || files.has(previous)) return false;
         const prior = lstatSync(join(output, previous));
         return prior.dev === actual.dev && prior.ino === actual.ino;
       });
-      if (!alias) throw new Diagnostic(destination, 'unowned file conflicts with generated output');
+      if (!alias)
+        throw new Diagnostic(
+          destination,
+          'unowned file conflicts with generated output; restore the private .sdk-generator.json record if it was lost, or generate into a fresh directory',
+        );
       changes.push({
         path,
         kind: 'created',
@@ -2418,30 +2451,33 @@ function previewOutput(
   };
 }
 export function generate(contract: Contract, output: string, dryRun = false) {
+  if (!dryRun) return generationTransaction(contract, output).report;
   const plan = preview(contract, output);
-  if (dryRun)
-    return {
-      changes: plan.changes.map((change) => ({
-        ...change,
-        diff: unifiedDiff(
-          change.path,
-          change.kind === 'created' ? '' : readFileSync(join(output, change.path), 'utf8'),
-          plan.files.get(change.path) ?? '',
-        ),
-      })),
-      compatibility: plan.compatibility,
-    };
-  return writeGeneration(contract, output, plan);
+  return {
+    changes: plan.changes.map((change) => ({
+      ...change,
+      diff: unifiedDiff(
+        change.path,
+        change.kind === 'created' ? '' : readFileSync(join(output, change.path), 'utf8'),
+        plan.files.get(change.path) ?? '',
+      ),
+    })),
+    compatibility: plan.compatibility,
+  };
 }
 
 // CLI-only metadata; keep the library's serializable report unchanged.
 export function generateWithSummary(contract: Contract, output: string) {
-  const plan = preview(contract, output);
-  return {
-    report: writeGeneration(contract, output, plan),
-    files: [...plan.files.keys()],
-    firstGeneration: !plan.before,
-  };
+  return generationTransaction(contract, output);
+}
+
+/** CLI input loading belongs inside the same lock as compilation and writing. */
+export function generateFromInputs(
+  load: () => Contract,
+  output: string,
+  onWarning?: (warning: { code: string; warning: string }) => void,
+) {
+  return generationTransaction(load, output, onWarning);
 }
 
 export function modifiedFileDiffs(plan: ReturnType<typeof preview>, output: string): string[] {
@@ -2457,26 +2493,107 @@ export function modifiedFileDiffs(plan: ReturnType<typeof preview>, output: stri
     );
 }
 
-function writeGeneration(contract: Contract, output: string, plan: ReturnType<typeof preview>) {
+function generationTransaction(
+  input: Contract | (() => Contract),
+  output: string,
+  onWarning: (warning: { code: string; warning: string }) => void = (warning) =>
+    console.error(JSON.stringify(warning)),
+) {
   output = resolve(output);
   if (output === dirname(output))
     throw new Diagnostic(output, 'cannot generate into filesystem root');
   mkdirSync(dirname(output), { recursive: true });
   const lock = output + '.sdk-generator.lock';
-  let fd: number;
-  try {
-    fd = openSync(lock, 'wx');
-  } catch {
-    throw new Diagnostic(
-      lock,
-      'another generation is running; remove a stale lock only after checking the owning process',
-    );
-  }
   const stage = output + '.stage-' + randomUUID();
   const backup = output + '.backup-' + randomUUID();
+  let fd: number;
+  const openLock = () =>
+    acquireGenerationLock(lock, { pid: process.pid, generator: version, stage, backup });
+  try {
+    fd = openLock();
+  } catch (error) {
+    if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'EEXIST')
+      throw error;
+    const recovery = lock + '.recovery';
+    let recoveryFd: number;
+    try {
+      recoveryFd = acquireGenerationLock(recovery, { pid: process.pid });
+    } catch {
+      throw new Diagnostic(
+        lock,
+        'another process is recovering the generation lock; retry after it finishes. If it crashed, inspect the sibling .recovery file and owning pid before removing it',
+      );
+    }
+    try {
+      let owner: unknown;
+      try {
+        owner = JSON.parse(readFileSync(lock, 'utf8'));
+      } catch {
+        /* Unknown locks require manual inspection. */
+      }
+      if (
+        !owner ||
+        typeof owner !== 'object' ||
+        !('pid' in owner) ||
+        typeof owner.pid !== 'number' ||
+        !Number.isSafeInteger(owner.pid) ||
+        owner.pid <= 0
+      )
+        throw new Diagnostic(
+          lock,
+          'generation lock has no valid owner; inspect it and remove it only after checking no generation is running',
+        );
+      let alive = true;
+      try {
+        process.kill(owner.pid, 0);
+      } catch (probe) {
+        if (probe && typeof probe === 'object' && 'code' in probe && probe.code === 'ESRCH')
+          alive = false;
+      }
+      if (alive)
+        throw new Diagnostic(
+          lock,
+          `another generation is running (pid ${owner.pid}); wait for that process to finish`,
+        );
+      cleanupInterruptedGeneration(output, owner.pid);
+      onWarning({
+        code: 'STALE_GENERATION_LOCK',
+        warning: `Recovered stale generation lock for dead pid ${owner.pid}: ${relative(process.cwd(), lock)}`,
+      });
+      fd = openLock();
+    } finally {
+      closeSync(recoveryFd);
+      rmSync(recovery, { force: true });
+    }
+  }
+  const cleanup = () => {
+    if (existsSync(backup) && !existsSync(output)) renameSync(backup, output);
+    rmSync(stage, { recursive: true, force: true });
+    closeSync(fd);
+    rmSync(lock, { force: true });
+  };
+  try {
+    const contract = typeof input === 'function' ? input() : input;
+    const plan = preview(contract, output);
+    return {
+      report: writeGeneration(contract, output, plan, stage, backup),
+      files: [...plan.files.keys()],
+      firstGeneration: !plan.before,
+    };
+  } finally {
+    cleanup();
+  }
+}
+
+function writeGeneration(
+  contract: Contract,
+  output: string,
+  plan: ReturnType<typeof preview>,
+  stage: string,
+  backup: string,
+) {
   let moved = false;
   try {
-    writeFileSync(fd, stable({ pid: process.pid, generator: version }));
     // This synchronous call owns the prepared output. Recheck all filesystem
     // state under the lock without recompiling and rendering the same package.
     const current = previewOutput(contract, output, plan);
@@ -2513,7 +2630,7 @@ function writeGeneration(contract: Contract, output: string, plan: ReturnType<ty
     };
     writeFileSync(
       join(stage, recordName),
-      stable({
+      compactRecord({
         ...record,
         compiled: storeCompiledSnapshot(current.compiled),
         ...(record.compiledComparisonBase
@@ -2533,15 +2650,24 @@ function writeGeneration(contract: Contract, output: string, plan: ReturnType<ty
     throw error;
   } finally {
     rmSync(stage, { recursive: true, force: true });
-    closeSync(fd);
-    rmSync(lock, { force: true });
   }
   return { changes: plan.changes, compatibility: plan.compatibility };
 }
+function readGenerationRecord(path: string): RecordFile {
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    throw new Diagnostic(
+      path,
+      'cannot read the private generation record; restore it from a backup, or regenerate from pinned inputs into a fresh directory',
+    );
+  }
+}
+
 function selectedTargets(output: string): ('node' | 'php')[] {
   const recordPath = join(output, recordName);
   if (existsSync(recordPath)) {
-    const record: RecordFile = JSON.parse(readFileSync(recordPath, 'utf8'));
+    const record: RecordFile = readGenerationRecord(recordPath);
     return record.interface.config.targets ?? ['node', 'php'];
   }
   // Validation also supports packages copied without the private generation record.
@@ -2737,7 +2863,13 @@ export function validateWithProgress(
 export function prepareRelease(output: string, destination: string, acknowledgeReview = false) {
   output = resolve(output);
   destination = resolve(destination);
-  const record: RecordFile = JSON.parse(readFileSync(join(output, recordName), 'utf8'));
+  const recordPath = join(output, recordName);
+  if (!existsSync(recordPath))
+    throw new Diagnostic(
+      recordPath,
+      'private generation record is missing; restore it from the original output backup, or regenerate from pinned API/config inputs into a fresh directory before release',
+    );
+  const record: RecordFile = readGenerationRecord(recordPath);
   // Older normalized records cannot prove which source ancestors or reference
   // uses protected a value. Reload the original inputs before packaging them.
   if (record.interface.exampleProtection === undefined)

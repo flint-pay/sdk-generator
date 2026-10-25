@@ -468,10 +468,10 @@ test('configuration and serialized runtime boundaries reject malformed retry dec
       { path: 'error.retry', retryValues: [] },
       { path: 'error.retry', retryValues: [1] },
     ].map((retry) => ({ errors: { ...config.errors, retry } })),
-    ...[-1, '5', null].map((maxDelayMs) => ({
+    ...[-1, '5'].map((maxDelayMs) => ({
       operations: { ...policies, read: { retry: { ...retry, maxDelayMs } } },
     })),
-    ...['\r\nInjected: value', ' leading', 5, null].map((autoKeyPrefix) => ({
+    ...['\r\nInjected: value', ' leading', 5].map((autoKeyPrefix) => ({
       operations: {
         ...policies,
         auto: { ...policies.auto, idempotency: { ...policies.auto.idempotency, autoKeyPrefix } },
@@ -482,15 +482,40 @@ test('configuration and serialized runtime boundaries reject malformed retry dec
     writeFileSync(join(root, 'bad-config.json'), JSON.stringify({ ...config, ...patch }));
     assert.throws(() => loadContract(join(root, 'api.json'), join(root, 'bad-config.json')));
   }
+  writeFileSync(
+    join(root, 'clear-config.json'),
+    JSON.stringify({
+      ...config,
+      operations: {
+        ...policies,
+        read: { retry: { ...retry, maxDelayMs: null } },
+        auto: {
+          ...policies.auto,
+          idempotency: { ...policies.auto.idempotency, autoKeyPrefix: null },
+        },
+      },
+    }),
+  );
+  const cleared = loadContract(join(root, 'api.json'), join(root, 'clear-config.json'));
+  assert.equal(cleared.operations.find((op) => op.id === 'read').retry.maxDelayMs, undefined);
+  assert.equal(
+    cleared.operations.find((op) => op.id === 'auto').idempotency.autoKeyPrefix,
+    undefined,
+  );
   const plan = compileSdkContract(contract).plan.runtime;
   const invalid = [
     { ...plan, errors: { retry: config.errors.retry } },
     { ...plan, errors: { ...config.errors, retry: null } },
     { ...plan, errors: { ...config.errors, retry: { path: '', retryValues: [] } } },
     { ...plan, operations: [{ ...plan.operations[0], retry: { ...retry, maxDelayMs: -1 } }] },
+    { ...plan, operations: [{ ...plan.operations[0], retry: { ...retry, maxDelayMs: null } }] },
     {
       ...plan,
       operations: [{ ...plan.operations[0], idempotency: { ...idempotency, autoKeyPrefix: '\n' } }],
+    },
+    {
+      ...plan,
+      operations: [{ ...plan.operations[0], idempotency: { ...idempotency, autoKeyPrefix: null } }],
     },
   ];
   for (const row of invalid) assert.throws(() => assertRuntimePlan(row));

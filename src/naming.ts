@@ -9,7 +9,8 @@ export function isPublicName(value: unknown, method = false): value is string {
   return (
     typeof value === 'string' &&
     identifier.test(value) &&
-    (!reserved.has(value.toLowerCase()) || (method && value.toLowerCase() === 'list'))
+    (!reserved.has(value.toLowerCase()) ||
+      (method && ['list', 'delete'].includes(value.toLowerCase())))
   );
 }
 
@@ -46,27 +47,55 @@ function singular(value: string): string {
 }
 
 /** Only shorten a method when exactly one tag matches its resource words. */
-export function operationNames(id: string, tags: unknown): { resource: string; method: string } {
+function inferOperationNames(
+  id: string,
+  tags: unknown,
+): {
+  names: { resource: string; method: string };
+  reason?: string;
+} {
   const parts = words(id);
   const candidates = new Map<string, { resource: string; method: string }>();
-  if (Array.isArray(tags))
-    for (const tag of tags) {
-      if (typeof tag !== 'string') continue;
-      const resourceWords = words(tag);
-      if (!resourceWords.length || !/^[a-z]/.test(resourceWords[0]!)) continue;
-      for (let start = 1; start + resourceWords.length <= parts.length; start++) {
-        if (!resourceWords.every((word, i) => singular(word) === singular(parts[start + i]!)))
-          continue;
-        const resource = camel(resourceWords);
-        const method = camel([
-          ...parts.slice(0, start),
-          ...parts.slice(start + resourceWords.length),
-        ]);
-        if (isPublicName(resource) && isPublicName(method, true))
-          candidates.set(resource + '.' + method, { resource, method });
-      }
+  const rejected = new Set<string>();
+  const declared = Array.isArray(tags)
+    ? tags.filter((tag): tag is string => typeof tag === 'string')
+    : [];
+  for (const tag of declared) {
+    const resourceWords = words(tag);
+    if (!resourceWords.length || !/^[a-z]/.test(resourceWords[0]!)) continue;
+    for (let start = 1; start + resourceWords.length <= parts.length; start++) {
+      if (!resourceWords.every((word, i) => singular(word) === singular(parts[start + i]!)))
+        continue;
+      const resource = camel(resourceWords);
+      const method = camel([
+        ...parts.slice(0, start),
+        ...parts.slice(start + resourceWords.length),
+      ]);
+      if (isPublicName(resource) && isPublicName(method, true))
+        candidates.set(resource + '.' + method, { resource, method });
+      else rejected.add(resource + '.' + method);
     }
-  return candidates.size === 1 ? [...candidates.values()][0]! : { resource: 'api', method: id };
+  }
+  if (candidates.size === 1) return { names: [...candidates.values()][0]! };
+  const reason =
+    candidates.size > 1
+      ? `multiple tags select different names: ${[...candidates.keys()].sort().join(', ')}`
+      : rejected.size
+        ? `tag-derived names use reserved words or SDK runtime members: ${[...rejected].sort().join(', ')}`
+        : !declared.length
+          ? 'no resource tags are declared'
+          : `${id.includes('_') ? 'the operation ID uses snake_case; ' : ''}no tag matches the operation ID resource words (tags: ${declared.join(', ')})`;
+  return { names: { resource: 'api', method: id }, reason };
+}
+
+/** Only shorten a method when exactly one tag matches its resource words. */
+export function operationNames(id: string, tags: unknown): { resource: string; method: string } {
+  return inferOperationNames(id, tags).names;
+}
+
+/** Explain conservative naming without changing fallback operation IDs. */
+export function operationNamingReason(id: string, tags: unknown): string {
+  return inferOperationNames(id, tags).reason ?? 'an explicit public name is required';
 }
 
 /** Reserve explicit names first; generated Input helpers must not shadow source models. */

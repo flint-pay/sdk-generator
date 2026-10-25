@@ -1,0 +1,839 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unpkg.com/@public-sdk/generator@0.1.0/sdk-config.schema.json",
+  "title": "SDK generator configuration",
+  "description": "SDK configuration and profile fragments. Run diagnose to validate resolved defaults, profiles and API-dependent capabilities.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "profiles": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$"
+    },
+    "targets": {
+      "type": "array",
+      "items": {
+        "enum": ["node", "php"]
+      },
+      "uniqueItems": true,
+      "minItems": 1
+    },
+    "requests": {
+      "$ref": "#/$defs/request"
+    },
+    "responses": {
+      "$ref": "#/$defs/response"
+    },
+    "defaults": {
+      "type": "object",
+      "properties": {
+        "idempotency": {
+          "$ref": "#/$defs/idempotency"
+        },
+        "retry": {
+          "$ref": "#/$defs/retry"
+        },
+        "pagination": {
+          "$ref": "#/$defs/pagination"
+        }
+      },
+      "additionalProperties": false
+    },
+    "validation": {
+      "enum": ["encoding", "schema"]
+    },
+    "numericUnions": {
+      "enum": ["explicit"],
+      "deprecated": true,
+      "description": "Automatic; omit this setting."
+    },
+    "schemaSharing": {
+      "enum": ["named"],
+      "deprecated": true,
+      "description": "Automatic; omit this setting."
+    },
+    "npm": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 214,
+          "pattern": "^(@[a-z0-9._-]+/)?[a-z0-9][a-z0-9._-]*$"
+        },
+        "registry": {
+          "type": "string"
+        },
+        "access": {
+          "enum": ["public", "restricted"]
+        },
+        "homepage": {
+          "type": "string"
+        },
+        "repository": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "git"
+            },
+            "url": {
+              "type": "string"
+            },
+            "directory": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": ["type", "url"]
+        }
+      },
+      "additionalProperties": false,
+      "required": ["name"]
+    },
+    "composer": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9_.-]+/[a-z0-9_.-]+$"
+        },
+        "namespace": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Za-z0-9]*(\\\\[A-Z][A-Za-z0-9]*)*$"
+        }
+      },
+      "additionalProperties": false,
+      "required": ["name", "namespace"]
+    },
+    "operations": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/operation"
+      }
+    },
+    "models": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "phpFieldClasses": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        }
+      }
+    },
+    "include": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "audiences": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "overrides": {
+      "type": "object"
+    },
+    "auth": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "scheme": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": ["scheme"]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "modes": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "schemes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "minItems": 1
+                  },
+                  "operations": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "additionalProperties": false,
+                "required": ["schemes"]
+              }
+            },
+            "shortcuts": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string"
+                  },
+                  "scheme": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false,
+                "required": ["mode", "scheme"]
+              }
+            },
+            "defaultCredentials": {
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "type": "string"
+                },
+                "scheme": {
+                  "type": "string"
+                },
+                "environment": {
+                  "type": "object",
+                  "properties": {
+                    "apiKey": {
+                      "type": "string"
+                    },
+                    "token": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": ["apiKey", "token"]
+                },
+                "workloadIdentity": {
+                  "type": "object",
+                  "properties": {
+                    "tokenPath": {
+                      "type": "string"
+                    },
+                    "credentialParameter": {
+                      "type": "string"
+                    },
+                    "envPrefix": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": ["tokenPath", "credentialParameter", "envPrefix"]
+                }
+              },
+              "additionalProperties": false,
+              "required": ["mode", "scheme", "environment", "workloadIdentity"]
+            }
+          },
+          "additionalProperties": false,
+          "required": ["modes"]
+        }
+      ]
+    },
+    "webhook": {
+      "type": "object",
+      "properties": {
+        "algorithm": {
+          "const": "hmac-sha256"
+        },
+        "format": {
+          "enum": ["hex", "standard-webhooks", "timestamped-hex"]
+        },
+        "idHeader": {
+          "type": "string"
+        },
+        "header": {
+          "type": "string"
+        },
+        "timestampHeader": {
+          "type": "string"
+        },
+        "separator": {
+          "type": "string"
+        },
+        "toleranceSeconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "events": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object"
+          }
+        },
+        "typeField": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": ["algorithm", "header", "separator", "toleranceSeconds", "events", "typeField"]
+    },
+    "money": {
+      "type": "object",
+      "properties": {
+        "currencies": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 12
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": ["currencies"]
+    },
+    "apiVersion": {
+      "type": "object",
+      "properties": {
+        "header": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": ["header", "value"]
+    },
+    "license": {
+      "type": "string"
+    },
+    "errors": {
+      "type": "object",
+      "properties": {
+        "codePath": {
+          "type": "string"
+        },
+        "retry": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "retryValues": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": ["path", "retryValues"]
+        },
+        "messagePath": {
+          "type": "string"
+        },
+        "detailsPath": {
+          "type": "string"
+        },
+        "requestIdHeader": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "documentation": {
+      "type": "object",
+      "properties": {
+        "overview": {
+          "type": "string"
+        },
+        "guides": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "examples": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "authShortcut": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "release": {
+      "type": "object",
+      "properties": {
+        "baseUrl": {
+          "type": "string"
+        },
+        "policy": {
+          "enum": ["review", "semver"]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "request": {
+      "type": "object",
+      "properties": {
+        "style": {
+          "enum": ["object", "positional"]
+        }
+      },
+      "additionalProperties": false,
+      "required": ["style"]
+    },
+    "response": {
+      "type": "object",
+      "properties": {
+        "return": {
+          "enum": ["result", "payload"]
+        },
+        "payloadPath": {
+          "type": ["string", "null"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "idempotency": {
+      "type": "object",
+      "properties": {
+        "header": {
+          "type": "string"
+        },
+        "retention": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "auto": {
+          "type": "boolean"
+        },
+        "autoKeyPrefix": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "retry": {
+      "type": "object",
+      "properties": {
+        "maxAttempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "statuses": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 400,
+            "maximum": 599,
+            "not": {
+              "enum": [409, 412]
+            }
+          }
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "integer",
+                "minimum": 400,
+                "maximum": 599,
+                "not": {
+                  "const": 412
+                }
+              },
+              "codes": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1
+              }
+            },
+            "additionalProperties": false,
+            "required": ["status", "codes"]
+          }
+        },
+        "transport": {
+          "type": "boolean"
+        },
+        "baseDelayMs": {
+          "type": "number",
+          "minimum": 0
+        },
+        "maxDelayMs": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "pagination": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": ["cursor", "offset", "link"]
+        },
+        "items": {
+          "type": "string"
+        },
+        "next": {
+          "type": "string"
+        },
+        "parameter": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "operation": {
+      "type": "object",
+      "properties": {
+        "request": {
+          "$ref": "#/$defs/request"
+        },
+        "response": {
+          "$ref": "#/$defs/response"
+        },
+        "stream": {
+          "type": "object",
+          "properties": {
+            "events": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "idleTimeoutMs": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "maxEventBytes": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "requestMediaType": {
+          "type": "string"
+        },
+        "resource": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string"
+        },
+        "audiences": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "hidden": {
+          "type": "boolean"
+        },
+        "aliases": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "retry": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "maxAttempts": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 10
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "statuses": {
+                  "anyOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "integer",
+                        "minimum": 400,
+                        "maximum": 599,
+                        "not": {
+                          "enum": [409, 412]
+                        }
+                      }
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "errors": {
+                  "anyOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "status": {
+                            "type": "integer",
+                            "minimum": 400,
+                            "maximum": 599,
+                            "not": {
+                              "const": 412
+                            }
+                          },
+                          "codes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "minItems": 1
+                          }
+                        },
+                        "additionalProperties": false,
+                        "required": ["status", "codes"]
+                      }
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "transport": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "baseDelayMs": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "maxDelayMs": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "const": false
+            }
+          ]
+        },
+        "idempotency": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "header": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "retention": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "scope": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "auto": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "autoKeyPrefix": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "const": false
+            }
+          ]
+        },
+        "pagination": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": ["cursor", "offset", "link"]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "next": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "parameter": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "const": false
+            }
+          ]
+        },
+        "polling": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string"
+            },
+            "success": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "failure": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "intervalMs": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false,
+          "required": ["state", "success", "failure", "intervalMs"]
+        },
+        "conditional": {
+          "type": "object",
+          "properties": {
+            "header": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": ["header"]
+        },
+        "example": {
+          "type": "object"
+        },
+        "deprecated": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

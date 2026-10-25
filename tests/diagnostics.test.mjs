@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { resolve, join } from 'node:path';
+import { resolve, join, relative } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { loadContract } from '../dist/contract.js';
 import { DiagnosticCollector } from '../dist/diagnostic.js';
@@ -33,8 +33,8 @@ function fixture(t, change = () => {}) {
 function findings(run) {
   const result = run();
   assert.equal(result.status, 1, result.stdout + result.stderr);
-  assert.equal(result.stdout, '');
-  const output = JSON.parse(result.stderr);
+  assert.equal(result.stderr, '');
+  const output = JSON.parse(result.stdout);
   assert.equal(output.valid, false);
   assert.ok(output.error);
   return output.diagnostics;
@@ -113,7 +113,7 @@ test('missing package settings explain default and explicit targets', (t) => {
     });
     const items = findings(f.run);
     assert.equal(items.length, 1);
-    assert.equal(items[0].location, 'config/' + key);
+    assert.equal(items[0].location, 'config');
     assert.ok(items[0].message.includes('targets defaults to ["node", "php"]'));
     assert.ok(items[0].message.includes(`targets to ["${alternative}"]`));
     const single = fixture(t, (c) => {
@@ -183,8 +183,8 @@ test('diagnose collects independent operation errors', (t) => {
   });
   const items = findings(f.run);
   assert.equal(items.length, 2);
-  assert.ok(items.some((d) => d.location.startsWith('/paths/~1books~1{id}/')));
-  assert.ok(items.some((d) => d.location.startsWith('/paths/~1another-book~1{id}/')));
+  assert.ok(items.some((d) => d.location === 'config/operations/findBook/method'));
+  assert.ok(items.some((d) => d.location === 'config/operations/anotherBook/method'));
 });
 
 test('diagnostic collector never swallows programming errors', () => {
@@ -277,7 +277,8 @@ test('invalid JSON reports line and column without quoting input or blaming YAML
     const items = findings(f.run);
     assert.deepEqual(items, [
       {
-        location: f.configuration,
+        code: 'INVALID_INPUT',
+        location: relative(process.cwd(), f.configuration),
         message: `expected valid JSON at line ${line}, column ${column}`,
       },
     ]);
@@ -303,7 +304,7 @@ test('YAML hints depend on the input extension or content', (t) => {
         },
       ),
     );
-    assert.equal(items[0].location, path);
+    assert.equal(items[0].location, relative(process.cwd(), path));
     assert.match(items[0].message, /line \d+, column \d+; YAML is not supported/);
   }
 });
@@ -314,7 +315,7 @@ test('path diagnostic pointers escape slashes and tildes in both CLI and library
     delete spec.paths['/books/{id}'];
     c.operations.findBook.method = 'class';
   });
-  const location = '/paths/~1shelves~0archive~1{id}/get/method';
+  const location = 'config/operations/findBook/method';
   const items = findings(f.run);
   assert.equal(items[0].location, location);
   assert.throws(
@@ -335,7 +336,9 @@ test('nested schema property and unknown-key locations escape every segment', (t
         properties: { 'a/b~c': child },
       };
     });
-    const location = '/paths/~1books~1{id}/get/responses/200/properties/a~1b~0c/' + suffix;
+    const location =
+      '/paths/~1books~1{id}/get/responses/200/content/application~1json/schema/properties/a~1b~0c/' +
+      suffix;
     assert.throws(
       () => loadContract(f.definition, f.configuration),
       (error) => error.location === location,
@@ -406,7 +409,7 @@ test('diagnostic builders escape arbitrary configuration, model and schema keys'
       },
     ],
     [
-      '/paths/~1books~1{id}/get/responses/200/dependentRequired/a~1b~0c',
+      '/paths/~1books~1{id}/get/responses/200/content/application~1json/schema/dependentRequired/a~1b~0c',
       (c, spec, response) => {
         response.schema = { type: 'object', dependentRequired: { 'a/b~c': 42 } };
       },
@@ -427,7 +430,7 @@ test('diagnostic builders escape arbitrary configuration, model and schema keys'
       },
     ],
     [
-      '/paths/~1books~1{id}/get/parameters/a~1b~0c/type',
+      '/paths/~1books~1{id}/get/parameters/1/schema/type',
       (c, spec) => {
         spec.paths['/books/{id}'].get.parameters.push({
           name: 'a/b~c',
@@ -472,7 +475,7 @@ test('unknown settings list valid keys once per object and keep every spelling s
     c.operatons = {};
     c.targtes = [];
   });
-  const output = JSON.parse(f.run().stderr);
+  const output = JSON.parse(f.run().stdout);
   assert.equal(output.diagnostics.length, 2);
   assert.equal((output.error.match(/Valid settings:/g) ?? []).length, 1);
   assert.equal(output.diagnostics.filter((d) => d.message.includes('Valid settings:')).length, 1);
@@ -490,8 +493,8 @@ test('swapped API and SDK paths produce one valid-settings list and a swap hint'
       { encoding: 'utf8' },
     );
     assert.equal(result.status, 1, result.stdout + result.stderr);
-    assert.equal(result.stdout, '');
-    const output = JSON.parse(result.stderr);
+    assert.equal(command === 'diagnose' ? result.stderr : result.stdout, '');
+    const output = JSON.parse(command === 'diagnose' ? result.stdout : result.stderr);
     assert.match(
       output.error,
       /SDK_JSON looks like an OpenAPI document.*API_JSON and SDK_JSON arguments are swapped/,

@@ -556,7 +556,7 @@ test('stale pin owners and absent or writeOnly fields fail after response entiti
   );
   assert.equal(diagnosed.status, 1);
   assert.equal(
-    JSON.parse(diagnosed.stderr).diagnostics[0].location,
+    JSON.parse(diagnosed.stdout).diagnostics[0].location,
     'config/phpFieldClasses/Venue/missing',
   );
   const hidden = fixture(

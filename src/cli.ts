@@ -2,13 +2,11 @@
 import { validateFixtures, validateFixturesWithProgress } from './fixtures.js';
 import {
   loadContract,
-  generate,
   validate,
   prepareRelease,
   publishRelease,
-  render,
   preview,
-  generateWithSummary,
+  generateFromInputs,
   modifiedFileDiffs,
   validateWithProgress,
 } from './generate.js';
@@ -19,17 +17,27 @@ import {
   messageText,
   errorMessage,
 } from './cli-output.js';
+import { locateDiagnostic } from './input-diagnostics.js';
+import { diagnoseContract } from './generate.js';
 import { DiagnosticGroup, suggestion } from './diagnostic.js';
 import { Diagnostic, stable } from './contract.js';
 import { publishSite } from './distribution.js';
 import { initialConfig } from './initial-config.js';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, lstatSync } from 'node:fs';
+import { resolve, relative } from 'node:path';
+import { fork } from 'node:child_process';
+import { cleanupInterruptedGeneration } from './generation-cleanup.js';
 const args = process.argv.slice(2);
 // Select the error format before parsing, including unknown commands/flags;
 // parsed flags take over once arguments are accepted.
 const separator = args.indexOf('--');
 let jsonErrors = args.slice(0, separator < 0 ? args.length : separator).includes('--json');
 const command = args.shift();
+const pendingWarnings: { code?: string; warning: string }[] = [];
+function printWarnings(json: boolean) {
+  for (const warning of pendingWarnings)
+    console.error(json ? stable(warning) : messageText('warning', warning.warning));
+}
 let initialized: { written: string; config: ReturnType<typeof initialConfig> } | undefined;
 interface Command {
   arguments: string[];
@@ -40,18 +48,19 @@ const commands: Record<string, Command> = {
   init: {
     arguments: ['API_JSON', 'SDK_JSON'],
     flags: {
+      '--force': { description: 'Replace an existing regular configuration file.' },
       '--targets': {
         value: 'node|php|node,php',
         description: 'Select SDK targets (default: node,php).',
       },
     },
     description:
-      'Write a minimal SDK configuration, refuse an existing SDK_JSON, then diagnose the pair. The file is kept if diagnosis fails. Replace the placeholder package names before generating.',
+      'Write a minimal SDK configuration, then diagnose the pair. Existing regular files require --force. The file is kept if diagnosis fails. Replace the placeholder package names before generating.',
   },
   diagnose: {
     arguments: ['API_JSON', 'SDK_JSON'],
     flags: {},
-    description: 'Load and render-check the contract; report diagnostics. No files are written.',
+    description: 'Load and compile-check the contract; report diagnostics. No files are written.',
   },
   effective: {
     arguments: ['API_JSON', 'SDK_JSON'],
@@ -61,7 +70,7 @@ const commands: Record<string, Command> = {
   },
   preview: {
     arguments: ['API_JSON', 'SDK_JSON', 'OUTPUT'],
-    flags: { '--diff': { description: 'Print diffs for modified files.' } },
+    flags: { '--diff': { description: 'Include modified-file diffs (also with --json).' } },
     description:
       'Report proposed file changes, diffs and compatibility findings. No files are written.',
   },
@@ -120,7 +129,8 @@ const commands: Record<string, Command> = {
 };
 for (const definition of Object.values(commands))
   definition.flags['--json'] = {
-    description: 'Print machine-readable JSON (stdout) and JSON errors (stderr).',
+    description:
+      'Print machine-readable JSON; diagnose failures use stdout, other errors use stderr.',
   };
 const argumentDescriptions: Record<string, string> = {
   API_JSON: 'OpenAPI 3.0/3.1 JSON file.',
@@ -168,11 +178,6 @@ function parseArguments(definition: Command) {
       } else flags.set(arg, true);
     } else positional.push(arg);
   }
-  if (flags.has('--diff') && flags.has('--json'))
-    throw new Diagnostic(
-      'arguments',
-      '--diff applies to human output; --json already includes every diff',
-    );
   if (positional.length > definition.arguments.length)
     throw new Diagnostic(
       'arguments',
@@ -189,6 +194,106 @@ function parseArguments(definition: Command) {
         );
   }
   return { positional, flags, help };
+}
+function cliInvocation(): string {
+  const executable = process.argv[1] ?? 'dist/cli.js';
+  if (executable.includes('node_modules') || !executable.endsWith('dist/cli.js'))
+    return 'npx --package @public-sdk/generator sdk-generator';
+  return `${shellQuote(process.execPath)} ${shellQuote(executable)}`;
+}
+function portableLocation(location: string): string {
+  return location.startsWith('/') &&
+    !location.startsWith('/paths/') &&
+    !location.startsWith('/components/') &&
+    !location.startsWith('/servers') &&
+    !location.startsWith('/webhooks/') &&
+    !['/paths', '/openapi', '/components', '/info', '/security'].includes(location)
+    ? relative(process.cwd(), location).replaceAll('\\', '/')
+    : location;
+}
+function portableMessage(message: string): string {
+  return message.replaceAll(process.cwd() + '/', '');
+}
+function configDiagnostic(finding: Diagnostic): Diagnostic {
+  if (
+    finding.source ||
+    !finding.location.startsWith('config') ||
+    !['init', 'diagnose', 'effective', 'generate', 'preview'].includes(command ?? '')
+  )
+    return finding;
+  // Positional arguments have already been parsed on this path. Flags can occur anywhere.
+  const definition = command ? commands[command] : undefined;
+  if (!definition) return finding;
+  let configPath: string | undefined;
+  try {
+    configPath = parseArguments(definition).positional[1];
+  } catch {
+    return finding;
+  }
+  if (!configPath) return finding;
+  const documents = new Map<string, unknown>();
+  const load = (file: string) => {
+    file = resolve(file);
+    if (documents.has(file)) return;
+    let value: unknown;
+    try {
+      value = JSON.parse(readFileSync(file, 'utf8'));
+    } catch {
+      return;
+    }
+    documents.set(file, value);
+    if (value && typeof value === 'object' && 'profiles' in value && Array.isArray(value.profiles))
+      for (const profile of value.profiles)
+        if (typeof profile === 'string') load(resolve(file, '..', profile));
+  };
+  load(configPath);
+  return locateDiagnostic(
+    finding,
+    [...documents].map(([file, value]) => ({
+      source: relative(process.cwd(), file).replaceAll('\\', '/'),
+      value,
+    })),
+    'config',
+  );
+}
+function diagnosticCode(finding: Diagnostic): string {
+  if (finding.location === 'arguments') return 'INVALID_ARGUMENTS';
+  if (finding.location.endsWith('.sdk-generator.lock')) return 'GENERATION_LOCKED';
+  if (finding.location.startsWith('config')) return 'INVALID_CONFIG';
+  if (finding.detail.includes('record is missing')) return 'GENERATION_RECORD_MISSING';
+  if (/edited|unowned file conflicts/.test(finding.detail)) return 'OUTPUT_CONFLICT';
+  return 'INVALID_INPUT';
+}
+function warnPlaceholderNames(config: {
+  npm?: { name: string };
+  composer?: { name: string };
+  targets?: ('node' | 'php')[];
+}) {
+  for (const [target, name] of [
+    ['npm', config.npm?.name],
+    ['composer', config.composer?.name],
+  ])
+    if (
+      (!config.targets || config.targets.includes(target === 'npm' ? 'node' : 'php')) &&
+      name?.startsWith(target === 'npm' ? '@example/' : 'example/')
+    ) {
+      const warning = `config/${target}/name: placeholder package name; replace the example vendor before publishing`;
+      pendingWarnings.push({ code: 'PLACEHOLDER_PACKAGE', warning });
+    }
+}
+function warnOutputPlaceholders(output: string) {
+  for (const [target, file] of [
+    ['node', 'package.json'],
+    ['php', 'composer.json'],
+  ] as const) {
+    const path = resolve(output, target, file);
+    if (!existsSync(path)) continue;
+    const value: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    if (value && typeof value === 'object' && 'name' in value && typeof value.name === 'string')
+      warnPlaceholderNames(
+        target === 'node' ? { npm: { name: value.name } } : { composer: { name: value.name } },
+      );
+  }
 }
 try {
   if (!command || command === '--help' || command === '-h') {
@@ -238,8 +343,54 @@ try {
             .join('') +
           '  --help, -h  Print this help.',
       );
+    } else if (command === 'generate' && !process.send) {
+      // A responsive supervisor can stop synchronous compilation/rendering and
+      // recover its transaction even while the worker's JavaScript is busy.
+      const child = fork(new URL('./cli.js', import.meta.url), process.argv.slice(2), {
+        stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
+      });
+      let interrupted: NodeJS.Signals | undefined;
+      const stop = (signal: NodeJS.Signals) => {
+        interrupted = signal;
+        child.kill('SIGKILL');
+      };
+      const onInt = () => stop('SIGINT'),
+        onTerm = () => stop('SIGTERM');
+      process.once('SIGINT', onInt);
+      process.once('SIGTERM', onTerm);
+      try {
+        const status = await new Promise<number>((resolve, reject) => {
+          child.once('error', reject);
+          child.once('exit', (code) => resolve(code ?? 1));
+        });
+        if (interrupted && child.pid) cleanupInterruptedGeneration(positional[2]!, child.pid);
+        process.exitCode =
+          interrupted === 'SIGINT' ? 130 : interrupted === 'SIGTERM' ? 143 : status;
+      } finally {
+        process.removeListener('SIGINT', onInt);
+        process.removeListener('SIGTERM', onTerm);
+      }
+    } else if (command === 'generate') {
+      const output = positional[2]!;
+      const result = generateFromInputs(
+        () => {
+          const contract = loadContract(positional[0]!, positional[1]!, {
+            onWarning: (warning) => pendingWarnings.push({ warning: warning.message }),
+          });
+          warnPlaceholderNames(contract.config);
+          return contract;
+        },
+        output,
+        (warning) => pendingWarnings.push(warning),
+      );
+      console.log(
+        json
+          ? stable(result.report)
+          : generationText('generate', output, result.report, result.files, result.firstGeneration),
+      );
     } else if (command === 'validate') {
       const output = positional[0]!;
+      warnOutputPlaceholders(output);
       const fixtures = flags.get('--fixtures');
       if (json) {
         const checks = validate(output);
@@ -273,6 +424,7 @@ try {
         console.log(`Validation passed: ${checks} checks (${[...targets].join(', ')})`);
       }
     } else if (command === 'release') {
+      warnOutputPlaceholders(positional[0]!);
       const plan = prepareRelease(
         positional[0]!,
         positional[1]!,
@@ -317,25 +469,43 @@ try {
         });
         const written = positional[1]!;
         try {
-          writeFileSync(written, JSON.stringify(config, null, 2) + '\n', { flag: 'wx' });
+          if (
+            flags.has('--force') &&
+            lstatSync(written, { throwIfNoEntry: false }) &&
+            !lstatSync(written).isFile()
+          )
+            throw new Diagnostic(
+              written,
+              '--force only replaces regular files; choose a configuration file path',
+            );
+          writeFileSync(written, JSON.stringify(config, null, 2) + '\n', {
+            flag: flags.has('--force') ? 'w' : 'wx',
+          });
         } catch (error) {
           if (error && typeof error === 'object' && 'code' in error && error.code === 'EEXIST')
-            throw new Diagnostic(written, 'already exists; refusing to overwrite');
+            throw new Diagnostic(
+              written,
+              'already exists; use --force to replace this configuration file',
+            );
           throw error;
         }
         initialized = { written, config };
-        if (!json) console.log(`Wrote ${written} (targets: ${config.targets.join(', ')})`);
+        if (!json) {
+          console.log(`Wrote ${written} (targets: ${config.targets.join(', ')})`);
+          if (config.auth && 'modes' in config.auth)
+            console.log(
+              'Configured named authentication modes for declared security alternatives; review config/auth before generating.',
+            );
+        }
       }
       const diagnosing = command === 'diagnose' || command === 'init';
       const contract = loadContract(positional[0]!, positional[1]!, {
         collectDiagnostics: diagnosing,
-        onWarning: (warning) =>
-          console.error(
-            json ? stable({ warning: warning.message }) : messageText('warning', warning.message),
-          ),
+        onWarning: (warning) => pendingWarnings.push({ warning: warning.message }),
       });
+      if (!diagnosing && command !== 'effective') warnPlaceholderNames(contract.config);
       // generate/preview already compile and render while inspecting the output.
-      if (diagnosing || command === 'effective') render(contract);
+      if (diagnosing || command === 'effective') diagnoseContract(contract);
       if (diagnosing) {
         const result = {
           valid: true,
@@ -350,8 +520,8 @@ try {
         );
         if (initialized && !json)
           console.log(
-            'Next: replace the @example/example package names, then run\n' +
-              `  sdk-generator generate ${shellQuote(positional[0]!)} ${shellQuote(initialized.written)} OUTPUT`,
+            `Next: replace ${[initialized.config.npm?.name, initialized.config.composer?.name].filter(Boolean).join(' and ')}, then run\n` +
+              `  ${cliInvocation()} generate ${shellQuote(positional[0]!)} ${shellQuote(initialized.written)} OUTPUT`,
           );
       } else if (command === 'effective') {
         const targets = contract.config.targets ?? ['node', 'php'];
@@ -363,9 +533,17 @@ try {
         console.log(stable({ ...effective, config }));
       } else {
         const output = positional[2]!;
-        if (json) console.log(stable(generate(contract, output, command === 'preview')));
-        else if (command === 'preview') {
-          const plan = preview(contract, output);
+        const plan = preview(contract, output);
+        if (json) {
+          const diffs = flags.has('--diff') ? modifiedFileDiffs(plan, output) : undefined;
+          console.log(
+            stable({
+              changes: plan.changes,
+              compatibility: plan.compatibility,
+              ...(diffs ? { diffs } : {}),
+            }),
+          );
+        } else
           console.log(
             generationText(
               'preview',
@@ -376,20 +554,31 @@ try {
               flags.has('--diff') ? modifiedFileDiffs(plan, output) : undefined,
             ),
           );
-        } else {
-          const { report, files, firstGeneration } = generateWithSummary(contract, output);
-          console.log(generationText('generate', output, report, files, firstGeneration));
-        }
       }
     }
   }
+  printWarnings(jsonErrors);
 } catch (error) {
   const diagnostics = (
     error instanceof DiagnosticGroup ? error.findings : error instanceof Diagnostic ? [error] : []
-  ).map((finding) => ({ location: finding.location, message: finding.detail }));
+  )
+    .map(configDiagnostic)
+    .map((finding) => ({
+      code: diagnosticCode(finding),
+      location: finding.source ? finding.location : portableLocation(finding.location),
+      ...(finding.source ? { source: finding.source } : {}),
+      message: portableMessage(finding.detail),
+    }));
   if (jsonErrors) {
     const report = {
-      error: error instanceof Error ? error.message : String(error),
+      code: error instanceof Diagnostic ? diagnosticCode(error) : 'GENERATOR_ERROR',
+      error: diagnostics.length
+        ? diagnostics
+            .map((finding) => `${finding.location || '(document root)'}: ${finding.message}`)
+            .join('\n')
+        : portableMessage(error instanceof Error ? error.message : String(error)),
+      diagnostics,
+      ...(pendingWarnings.length ? { warnings: pendingWarnings } : {}),
       ...(command === 'diagnose' || initialized
         ? {
             valid: false,
@@ -397,7 +586,8 @@ try {
           }
         : {}),
     };
-    console.error(stable(initialized ? { ...initialized, diagnose: report } : report));
+    const print = command === 'diagnose' ? console.log : console.error;
+    print(stable(initialized ? { ...initialized, diagnose: report } : report));
   } else if (
     (command === 'diagnose' || initialized) &&
     diagnostics.length &&
@@ -407,7 +597,8 @@ try {
       [
         `Invalid: ${diagnostics.length} ${diagnostics.length === 1 ? 'finding' : 'findings'}`,
         ...diagnostics.map(
-          (finding) => `  ${finding.location}: ${finding.message.replace(/\r?\n/g, '\n  ')}`,
+          (finding) =>
+            `  ${finding.location || '(document root)'}: ${finding.message.replace(/\r?\n/g, '\n  ')}`,
         ),
       ].join('\n'),
     );

@@ -10,7 +10,9 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ### Breaking changes for generator automation
 
-- **CLI output.** Commands print readable summaries by default. Pass `--json` to keep the previous JSON on stdout and JSON errors and warnings on stderr; JSON shapes are unchanged. `effective` still prints JSON. Library functions are unchanged.
+- **JSON diagnostics and previews.** `diagnose --json` failures now use stdout. JSON errors carry stable codes and relative file paths; diagnostic pointers identify existing input nodes and their source file. `preview --json` omits diffs unless `--diff` is supplied; its optional `diffs` array contains only modified-file diffs. Update scripts parsing the previous channels, absolute locations or per-change diffs. Library `generate(..., true)` retains its existing diff report.
+
+- **CLI output.** Commands print readable summaries by default. Pass `--json` for machine-readable output; see the JSON diagnostics and previews changes above for channels and report shapes. `effective` still prints JSON. Library functions are unchanged.
 - **npm package names.** Configuration validation now rejects `npm.name` values over 214 characters, including the scope. Shorten any oversized names before generation.
 
 ### Breaking changes for regenerated SDKs
@@ -18,6 +20,7 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 - **Node SSE transport.** Default SSE connections use native HTTP/HTTPS for socket lifetime control. Pass an explicit `transport` to retain application-specific fetch/Undici behavior.
 
 - **Runtime safety.** Pagination defaults to 1,000 pages; set `maxPages` explicitly for larger traversals. Cursor cycles and two consecutive empty pages with continuations raise protocol errors. Per-attempt timeouts now use `timeout` / `TimeoutError`; update error-kind switches. Refused connections and DNS failures report `not_sent`, with stable error codes and safe transport detail. PHP transport failures without an HTTP response use `null` instead of `0` for status and metadata status. Both targets parse `Retry-After` using decimal seconds or canonical GMT HTTP dates; permissive signed/exponent/relative-date spellings are ignored. Error JSON exports omit raw bodies, headers, URLs and unsanitized causes; use explicit access for recovery. JavaScript rejects unknown client options, both targets reject base URLs repeating operation path prefixes, and PHP model assignment raises a validation error instead of creating a dynamic property. See [runtime safety migration](docs/releases.md#runtime-safety).
+- **Inferred delete methods.** `deleteWidget` tagged `widgets` now infers `widgets.delete` in both targets instead of `api.deleteWidget`. Pin explicit resource/method names to preserve an existing SDK interface. Other conservative naming fallbacks now warn with a configuration remedy.
 
 - **Retry contract (`budgets-2`).** Required idempotency headers with `auto` disabled require TypeScript options containing `idempotencyKey`. PHP still rejects missing keys before dispatch. Both targets use half-to-full backoff jitter, optional `retry.maxDelayMs`, and preserve the last error when a retry wait exceeds the deadline. PHP automatic keys now use UUID v4. Older compiled records remain readable for compatibility comparison; regenerate descriptors together with runtimes. See [retry migration](docs/releases.md#retry-defaults).
 
@@ -43,6 +46,9 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 ### Added
 
 - Contributor test workflows require Node.js 22.16+ for SQLite examples, with `.nvmrc`, CI and a clear test-runner prerequisite check. The published generator retains its Node.js 22+ engine requirement.
+- Published SDK-config JSON Schema with `$schema` support and SDK-wide idempotency/retry/pagination defaults, field overrides, `false` opt-outs and `null` field clearing. The Flint full profile uses defaults without changing generated packages.
+- `diagnose` checks compiled plans and runnable inputs without rendering packages. Header declarations warn with spelling candidates; unsupported wire features include remedies. Init supports multiple security alternatives, `--force` for regular files, and executable next-step commands. Generation/validation/release warn about placeholder package vendors.
+- Generation locks precede loading/planning; dead owners recover with a warning. CLI SIGINT/SIGTERM cleans up its worker’s transaction. Private ownership records use compact JSON; missing records explain backup/fresh-generation recovery.
 
 - Node and PHP credential options accept providers resolved on every request attempt. Replay-safe requests invalidate provider credentials on HTTP 401 and retry once with the same idempotency key. PHP also accepts credential closures. Applications own token loading, caching and expiry handling.
 
