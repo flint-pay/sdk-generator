@@ -1,4 +1,4 @@
-import test, { after } from 'node:test';
+import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -15,16 +15,19 @@ after(() => rmSync(root, { recursive: true, force: true }));
 const output = join(root, 'sdk');
 const casesPath = resolve('tests/fixtures/runtime-safety.json');
 const cases = JSON.parse(readFileSync(casesPath));
-const api = JSON.parse(readFileSync('tests/fixtures/payment-api.json'));
-api.paths = Object.fromEntries(
-  Object.entries(api.paths).map(([path, item]) => ['/v1' + path, item]),
-);
-const apiPath = join(root, 'api.json');
-writeFileSync(apiPath, JSON.stringify(api));
-generate(loadContract(apiPath, 'tests/fixtures/payment-sdk.json'), output);
 const sdkPath = join(output, 'node/index.js');
-const { Client, SdkError, errors, verifyWebhook } = await import(pathToFileURL(sdkPath));
-const { EventStream } = await import(pathToFileURL(join(output, 'node/runtime.js')));
+let Client, SdkError, errors, verifyWebhook, EventStream;
+before(async () => {
+  const api = JSON.parse(readFileSync('tests/fixtures/payment-api.json'));
+  api.paths = Object.fromEntries(
+    Object.entries(api.paths).map(([path, item]) => ['/v1' + path, item]),
+  );
+  const apiPath = join(root, 'api.json');
+  writeFileSync(apiPath, JSON.stringify(api));
+  generate(loadContract(apiPath, 'tests/fixtures/payment-sdk.json'), output);
+  ({ Client, SdkError, errors, verifyWebhook } = await import(pathToFileURL(sdkPath)));
+  ({ EventStream } = await import(pathToFileURL(join(output, 'node/runtime.js'))));
+});
 const defaults = { baseUrl: 'https://example.invalid', token: 'test', maxAttempts: 1 };
 const payment = { id: 'p-synthetic', amount: 1, status: 'pending' };
 function php(source, args = []) {
