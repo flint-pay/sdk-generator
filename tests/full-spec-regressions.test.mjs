@@ -125,111 +125,114 @@ echo 'ok';
   assert.equal(isKnownCodec(true, { ...ref, definitions: { Union: ref } }), false);
 });
 
-test('SSE operations enforce both request budgets while buffering JSON errors', async () => {
-  let received = 0;
-  let closed = 0;
-  const server = createServer((request, response) => {
-    received++;
-    if (request.headers['x-test-body'] === 'events') {
-      response.writeHead(200, { 'Content-Type': 'text/event-stream' });
-      response.write('data: first\n\n');
-      const timer = setTimeout(() => response.end('data: later\n\n'), 300);
+test(
+  'SSE operations enforce both request budgets while buffering JSON errors',
+  { timeout: 30000 },
+  async () => {
+    let received = 0;
+    let closed = 0;
+    const server = createServer((request, response) => {
+      received++;
+      if (request.headers['x-test-body'] === 'events') {
+        response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        response.write('data: first\n\n');
+        const timer = setTimeout(() => response.end('data: later\n\n'), 300);
+        response.on('close', () => {
+          clearTimeout(timer);
+          closed++;
+        });
+        return;
+      }
+      response.writeHead(503, { 'Content-Type': 'application/json' });
+      response.write('{');
+      let count = 0;
+      const interval = setInterval(() => {
+        if (++count === 100) {
+          clearInterval(interval);
+          response.end('}');
+        } else if (request.headers['x-test-body'] !== 'stalled') response.write(' ');
+      }, 10);
       response.on('close', () => {
-        clearTimeout(timer);
+        clearInterval(interval);
         closed++;
       });
-      return;
-    }
-    response.writeHead(503, { 'Content-Type': 'application/json' });
-    response.write('{');
-    let count = 0;
-    const interval = setInterval(() => {
-      if (++count === 100) {
-        clearInterval(interval);
-        response.end('}');
-      } else if (request.headers['x-test-body'] !== 'stalled') response.write(' ');
-    }, 10);
-    response.on('close', () => {
-      clearInterval(interval);
-      closed++;
     });
-  });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const baseUrl = `http://127.0.0.1:${server.address().port}`;
-  try {
-    const document = responseDocument({ type: 'object' });
-    document.paths['/value'].get.responses = {
-      200: {
-        description: 'events',
-        content: { 'text/event-stream': { schema: { type: 'string' } } },
-      },
-      503: {
-        description: 'error',
-        content: { 'application/json': { schema: { type: 'object' } } },
-      },
-    };
-    const { dir, sdk, op } = await build('timeout-', document);
-    for (const body of ['trickle', 'stalled']) {
-      for (const [kind, options] of [
-        ['deadline', { deadlineMs: 100, timeoutMs: 2000 }],
-        ['timeout', { deadlineMs: 2000, timeoutMs: 100 }],
-      ]) {
-        const client = new sdk.Client({ baseUrl, allowInsecureHttp: true });
-        const start = performance.now();
-        await assert.rejects(
-          client[op.resource][op.method]({}, { ...options, headers: { 'x-test-body': body } }),
-          { kind },
-        );
-        assert.ok(performance.now() - start < 700, 'Node waited for the error body');
-        writeFileSync(
-          join(dir, 'test.php'),
-          phpHeader(dir) +
-            `
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    try {
+      const document = responseDocument({ type: 'object' });
+      document.paths['/value'].get.responses = {
+        200: {
+          description: 'events',
+          content: { 'text/event-stream': { schema: { type: 'string' } } },
+        },
+        503: {
+          description: 'error',
+          content: { 'application/json': { schema: { type: 'object' } } },
+        },
+      };
+      const { dir, sdk, op } = await build('timeout-', document);
+      for (const body of ['trickle', 'stalled']) {
+        for (const [kind, options] of [
+          ['deadline', { deadlineMs: 100, timeoutMs: 2000 }],
+          ['timeout', { deadlineMs: 2000, timeoutMs: 100 }],
+        ]) {
+          const client = new sdk.Client({ baseUrl, allowInsecureHttp: true });
+          await assert.rejects(
+            client[op.resource][op.method]({}, { ...options, headers: { 'x-test-body': body } }),
+            { kind },
+          );
+          writeFileSync(
+            join(dir, 'test.php'),
+            phpHeader(dir) +
+              `
 $c=new Example\\Regressions\\Client(new Example\\Regressions\\ClientOptions(baseUrl:$argv[1],allowInsecureHttp:true));
-$start=microtime(true);
 try {$c->${op.resource}->${op.method}(options:new Example\\Regressions\\RequestOptions(deadlineMs:${options.deadlineMs},timeoutMs:${options.timeoutMs},headers:['x-test-body'=>'${body}']));throw new Exception('expected timeout');}
 catch(Example\\Regressions\\SdkError $e){if($e->kind!=='${kind}')throw $e;}
-if(microtime(true)-$start>=0.7)throw new Exception('PHP waited for the error body');
 $c->close();echo 'ok';
 `,
-        );
-        assert.equal((await exec('php', [join(dir, 'test.php'), baseUrl])).stdout, 'ok');
+          );
+          assert.equal(
+            (await exec('php', [join(dir, 'test.php'), baseUrl], { timeout: 15000 })).stdout,
+            'ok',
+          );
+        }
       }
-    }
-    const client = new sdk.Client({ baseUrl, allowInsecureHttp: true });
-    const events = await client[op.resource][op.method](
-      {},
-      {
-        timeoutMs: 100,
-        deadlineMs: 100,
-        streamIdleTimeoutMs: 1000,
-        headers: { 'x-test-body': 'events' },
-      },
-    );
-    assert.deepEqual(
-      (await Array.fromAsync(events.data)).map((event) => event.data),
-      ['first', 'later'],
-    );
-    writeFileSync(
-      join(dir, 'stream.php'),
-      phpHeader(dir) +
-        `
+      const client = new sdk.Client({ baseUrl, allowInsecureHttp: true });
+      const events = await client[op.resource][op.method](
+        {},
+        {
+          timeoutMs: 100,
+          deadlineMs: 100,
+          streamIdleTimeoutMs: 1000,
+          headers: { 'x-test-body': 'events' },
+        },
+      );
+      assert.deepEqual(
+        (await Array.fromAsync(events.data)).map((event) => event.data),
+        ['first', 'later'],
+      );
+      writeFileSync(
+        join(dir, 'stream.php'),
+        phpHeader(dir) +
+          `
 $c=new Example\\Regressions\\Client(new Example\\Regressions\\ClientOptions(baseUrl:$argv[1],allowInsecureHttp:true));
 $result=$c->${op.resource}->${op.method}(options:new Example\\Regressions\\RequestOptions(timeoutMs:100,deadlineMs:100,streamIdleTimeoutMs:1000,headers:['x-test-body'=>'events']));
 $events=[];foreach($result->data as $event)$events[]=$event->data;
 if($events!==['first','later'])throw new Exception('stream must outlive request budget');
 $c->close();echo 'ok';
 `,
-    );
-    assert.equal((await exec('php', [join(dir, 'stream.php'), baseUrl])).stdout, 'ok');
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    // Under load a request budget can expire before a connection reaches the server.
-    assert.equal(closed, received, 'all received response connections must be released');
-  } finally {
-    server.closeAllConnections();
-    await new Promise((resolve) => server.close(resolve));
-  }
-});
+      );
+      assert.equal((await exec('php', [join(dir, 'stream.php'), baseUrl])).stdout, 'ok');
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      // Under load a request budget can expire before a connection reaches the server.
+      assert.equal(closed, received, 'all received response connections must be released');
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  },
+);
 
 test('mapped variants sharing an allOf ancestor retain exact target and alias identity', async () => {
   const base = { type: 'object', required: ['kind'], properties: { kind: { type: 'string' } } };

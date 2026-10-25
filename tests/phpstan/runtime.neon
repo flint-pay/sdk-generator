@@ -1,0 +1,6 @@
+includes:
+    - runtime-baseline.neon
+parameters:
+    level: 5
+    phpVersion: 80200
+    reportUnmatchedIgnoredErrors: true

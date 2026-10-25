@@ -1,3 +1,4 @@
+import { before } from 'node:test';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync, rmSync, readdirSync, mkdirSync } from 'node:fs';
@@ -27,7 +28,9 @@ config.operations = {
 writeFileSync(join(root, 'api.json'), JSON.stringify(api));
 writeFileSync(join(root, 'sdk.json'), JSON.stringify(config));
 const output = join(root, 'sdk');
-generate(loadContract(join(root, 'api.json'), join(root, 'sdk.json')), output);
+before(() => {
+  generate(loadContract(join(root, 'api.json'), join(root, 'sdk.json')), output);
+});
 const run = (command, args) => {
   const result = spawnSync(command, args, { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stdout + result.stderr);

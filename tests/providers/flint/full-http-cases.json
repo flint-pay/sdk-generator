@@ -1158,6 +1158,7 @@
   {
     "name": "FulfillmentTransitionRequest unknown action",
     "operation": "transitionFulfillment",
+    "baseUrl": "https://api.example.invalid",
     "input": {
       "fulfillment_id": "test",
       "body": {
@@ -1475,6 +1476,7 @@
   {
     "name": "PackageTransitionRequest unknown action",
     "operation": "transitionPackage",
+    "baseUrl": "https://api.example.invalid",
     "input": {
       "package_id": "test",
       "body": {
@@ -1653,6 +1655,7 @@
   {
     "name": "PayOrderRequest unknown action",
     "operation": "payOrder",
+    "baseUrl": "https://api.example.invalid",
     "input": {
       "order_id": "test",
       "body": {
@@ -1674,6 +1677,7 @@
   {
     "name": "missing CheckoutSessionIDHeader",
     "operation": "getCheckoutSessionCurrentDeliverySelection",
+    "baseUrl": "https://api.example.invalid",
     "input": {
       "checkout_session_id": "cs_test"
     },
@@ -1692,6 +1696,7 @@
   {
     "name": "missing CheckoutSessionSecretHeader",
     "operation": "getCheckoutSessionCurrentDeliverySelection",
+    "baseUrl": "https://api.example.invalid",
     "input": {
       "checkout_session_id": "cs_test"
     },
@@ -1710,6 +1715,7 @@
   {
     "name": "ACH required purpose",
     "operation": "createPaymentIntent",
+    "baseUrl": "https://api.example.invalid",
     "input": {
       "body": {
         "amount_money": {
@@ -1777,6 +1783,7 @@
   {
     "name": "Affirm required URL",
     "operation": "createPaymentIntent",
+    "baseUrl": "https://api.example.invalid",
     "input": {
       "body": {
         "amount_money": {
@@ -1885,6 +1892,7 @@
   {
     "name": "non-ACH rejects purpose",
     "operation": "createPaymentIntent",
+    "baseUrl": "https://api.example.invalid",
     "input": {
       "body": {
         "amount_money": {

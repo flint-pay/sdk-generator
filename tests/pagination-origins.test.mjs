@@ -1,3 +1,4 @@
+import { before } from 'node:test';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
@@ -49,8 +50,11 @@ const config = {
 writeFileSync(join(root, 'api.json'), JSON.stringify(api));
 writeFileSync(join(root, 'sdk.json'), JSON.stringify(config));
 const out = join(root, 'generated');
-generate(loadContract(join(root, 'api.json'), join(root, 'sdk.json')), out);
-const { Client } = await import(pathToFileURL(join(out, 'node/index.js')).href);
+let Client;
+before(async () => {
+  generate(loadContract(join(root, 'api.json'), join(root, 'sdk.json')), out);
+  ({ Client } = await import(pathToFileURL(join(out, 'node/index.js')).href));
+});
 
 // These permissions are independently authored: URL scheme/host case and default
 // ports do not change an origin, while different nondefault ports still do.

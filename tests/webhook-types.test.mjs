@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { OutputBaselines, runtimeEntries } from './helpers/output-baselines.mjs';
 import ts from 'typescript';
 import { loadContract, render, generate, preview } from '../dist/index.js';
 import { compileSdkContract } from '../dist/target-plan.js';
@@ -562,36 +562,20 @@ test('old compiled records review the declaration upgrade; recorded removal/rena
 
 test('JavaScript, descriptors, complete PHP output and existing root exports retain reviewed bytes/names', () => {
   const baseline = JSON.parse(readFileSync('tests/fixtures/webhook-output-baseline.json'));
-  const hash = (entries) =>
-    createHash('sha256')
-      .update(
-        entries
-          .sort(([a], [b]) => a.localeCompare(b, 'en'))
-          .map(([p, c]) => p + '\n' + c)
-          .join('\n'),
-      )
-      .digest('hex');
+  const checked = new OutputBaselines();
   for (const fixture of baseline.fixtures) {
     const c = loadContract(fixture.api, fixture.config);
     const files = render(c);
-    assert.equal(
-      hash([...files].filter(([p]) => p.startsWith('node/') && p.endsWith('.js'))),
+    checked.check(
+      fixture.name + '/nodeRuntime',
+      runtimeEntries(files, 'node'),
       fixture.nodeRuntimeSha256,
-      fixture.name + ' Node runtime/descriptors',
     );
-    assert.equal(
-      hash([...files].filter(([p]) => p.startsWith('php/'))),
-      fixture.phpSha256,
-      fixture.name + ' PHP',
-    );
-    assert.equal(
-      hash(
-        [...files].filter(
-          ([p]) => p.startsWith('php/') && !p.endsWith('.md') && !p.includes('/examples/'),
-        ),
-      ),
+    checked.check(fixture.name + '/php', runtimeEntries(files, 'php'), fixture.phpSha256);
+    checked.check(
+      fixture.name + '/phpRuntime',
+      runtimeEntries(files, 'php', true),
       fixture.phpRuntimeSha256,
-      fixture.name + ' PHP runtime/descriptors match the reviewed additive baseline',
     );
     const root = ts.createSourceFile(
       'index.d.ts',
@@ -615,16 +599,10 @@ test('JavaScript, descriptors, complete PHP output and existing root exports ret
       const selected = structuredClone(c);
       selected.config.targets = [target];
       const single = render(selected);
-      assert.equal(
-        hash(
-          [...single].filter(([path]) =>
-            target === 'php'
-              ? path.startsWith('php/')
-              : path.startsWith('node/') && path.endsWith('.js'),
-          ),
-        ),
+      checked.check(
+        fixture.name + '/' + target + 'Only',
+        runtimeEntries(single, target),
         fixture.singleTarget[target],
-        fixture.name + ' ' + target + '-only executable output',
       );
       for (const [path, content] of files)
         if (
@@ -634,4 +612,5 @@ test('JavaScript, descriptors, complete PHP output and existing root exports ret
           assert.equal(single.get(path), content, path);
     }
   }
+  checked.finish();
 });

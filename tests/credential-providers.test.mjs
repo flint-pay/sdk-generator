@@ -1,4 +1,4 @@
-import test, { after } from 'node:test';
+import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -56,24 +56,26 @@ const config = {
   ),
 };
 const outputs = {};
-for (const mode of ['legacy', 'named']) {
-  writeFileSync(join(root, 'api.json'), JSON.stringify(doc));
-  writeFileSync(
-    join(root, 'sdk.json'),
-    JSON.stringify({
-      ...config,
-      auth:
-        mode === 'legacy'
-          ? { scheme: 'Bearer' }
-          : {
-              modes: { service: { schemes: ['Bearer'] } },
-              shortcuts: { apiKey: { mode: 'service', scheme: 'Bearer' } },
-            },
-    }),
-  );
-  outputs[mode] = join(root, mode);
-  generate(loadContract(join(root, 'api.json'), join(root, 'sdk.json')), outputs[mode]);
-}
+before(() => {
+  for (const mode of ['legacy', 'named']) {
+    writeFileSync(join(root, 'api.json'), JSON.stringify(doc));
+    writeFileSync(
+      join(root, 'sdk.json'),
+      JSON.stringify({
+        ...config,
+        auth:
+          mode === 'legacy'
+            ? { scheme: 'Bearer' }
+            : {
+                modes: { service: { schemes: ['Bearer'] } },
+                shortcuts: { apiKey: { mode: 'service', scheme: 'Bearer' } },
+              },
+      }),
+    );
+    outputs[mode] = join(root, mode);
+    generate(loadContract(join(root, 'api.json'), join(root, 'sdk.json')), outputs[mode]);
+  }
+});
 const surfaces = ['token', 'clientShortcut', 'requestShortcut', 'clientMap', 'requestMap'];
 
 for (const surface of surfaces)

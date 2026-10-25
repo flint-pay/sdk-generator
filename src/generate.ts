@@ -1,3 +1,4 @@
+import { substituteTemplate } from './template.js';
 import { removesPublishedExamples } from './example-protection.js';
 import { reservePublicSymbols } from './public-symbols.js';
 import {
@@ -1540,69 +1541,80 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     put('custom/.gitkeep', '');
     put(
       'src/SchemaAdapter.php',
-      readFileSync(join(here, '../templates/SchemaAdapter.php'), 'utf8')
-        .replaceAll('SdkNamespace', ns)
-        .replace("/* RETRY_DEFAULTS */ '{}'", php(JSON.stringify(RETRY_DEFAULTS)))
-        .replace(
-          "/* REQUEST_OPTION_PLANS */ '{}'",
-          php(JSON.stringify(targetPlan.requestOptionPlans ?? {})),
+      substituteTemplate(
+        readFileSync(join(here, '../templates/SchemaAdapter.php'), 'utf8').replaceAll(
+          'SdkNamespace',
+          ns,
         ),
+        'src/SchemaAdapter.php',
+        [
+          ["/* RETRY_DEFAULTS */ '{}'", php(JSON.stringify(RETRY_DEFAULTS))],
+          [
+            "/* REQUEST_OPTION_PLANS */ '{}'",
+            php(JSON.stringify(targetPlan.requestOptionPlans ?? {})),
+          ],
+        ],
+      ),
     );
     put(
       'src/Runtime.php',
-      readFileSync(join(here, '../templates/Runtime.php'), 'utf8')
-        .replaceAll('SdkNamespace', ns)
-        .replace(
-          "/* REQUEST_OPTION_PLANS */ '{}'",
-          php(JSON.stringify(targetPlan.requestOptionPlans ?? {})),
-        )
-        .replace(
-          '/* REQUEST_OPTION_FORWARD */',
-          Object.values(targetPlan.requestOptionPlans ?? {})
-            .map((option) => `$this->${option.php},`)
-            .join('\n            '),
-        )
-        .replace(
-          '        public readonly bool $ambientCredentials = true,\n        public readonly ?object $credentialCache = null,\n',
-          '',
-        )
-        .replaceAll(
-          '    ) {\n        /* AUTH_SHORTCUT_REQUEST_PARAMETERS */\n    }',
-          Object.keys(c.authShortcuts ?? {})
-            .sort()
-            .map(
-              (key) =>
-                `        public readonly string|CredentialProvider|\\Closure|null $${key} = null,\n`,
-            )
-            .join('') +
+      substituteTemplate(
+        readFileSync(join(here, '../templates/Runtime.php'), 'utf8').replaceAll('SdkNamespace', ns),
+        'src/Runtime.php',
+        [
+          [
+            "/* REQUEST_OPTION_PLANS */ '{}'",
+            php(JSON.stringify(targetPlan.requestOptionPlans ?? {})),
+          ],
+          [
+            '/* REQUEST_OPTION_FORWARD */',
             Object.values(targetPlan.requestOptionPlans ?? {})
-              .map((option) => `        public readonly ?string $${option.php} = null,\n`)
+              .map((option) => `$this->${option.php},`)
+              .join('\n            '),
+          ],
+          [
+            '        public readonly bool $ambientCredentials = true,\n        public readonly ?object $credentialCache = null,\n',
+            '',
+          ],
+          [
+            '    ) {\n        /* AUTH_SHORTCUT_REQUEST_PARAMETERS */\n    }',
+            Object.keys(c.authShortcuts ?? {})
+              .sort()
+              .map(
+                (key) =>
+                  `        public readonly string|CredentialProvider|\\Closure|null $${key} = null,\n`,
+              )
               .join('') +
-            '    ) {}',
-        )
-        .replaceAll(
-          '    ) {\n        /* AUTH_SHORTCUT_CLIENT_PARAMETERS */\n    }',
-          Object.keys(c.authShortcuts ?? {})
-            .filter((key) => key !== 'token')
-            .sort()
-            .map(
-              (key) =>
-                `        public readonly string|CredentialProvider|\\Closure|null $${key} = null,\n`,
-            )
-            .join('') +
-            '        public readonly bool $ambientCredentials = true,\n        public readonly ?object $credentialCache = null,\n    ) {}',
-        )
-        .replace(
-          '/* AUTH_SHORTCUT_RESERVED */ []',
-          `[${[...AUTH_SHORTCUT_RESERVED].map(php).join(', ')}]`,
-        )
-        .replaceAll(
-          '/* AUTH_SHORTCUT_FORWARD */',
-          Object.keys(c.authShortcuts ?? {})
-            .sort()
-            .map((key) => `$this->${key},`)
-            .join('\n            '),
-        ),
+              Object.values(targetPlan.requestOptionPlans ?? {})
+                .map((option) => `        public readonly ?string $${option.php} = null,\n`)
+                .join('') +
+              '    ) {}',
+          ],
+          [
+            '    ) {\n        /* AUTH_SHORTCUT_CLIENT_PARAMETERS */\n    }',
+            Object.keys(c.authShortcuts ?? {})
+              .filter((key) => key !== 'token')
+              .sort()
+              .map(
+                (key) =>
+                  `        public readonly string|CredentialProvider|\\Closure|null $${key} = null,\n`,
+              )
+              .join('') +
+              '        public readonly bool $ambientCredentials = true,\n        public readonly ?object $credentialCache = null,\n    ) {}',
+          ],
+          [
+            '/* AUTH_SHORTCUT_RESERVED */ []',
+            `[${[...AUTH_SHORTCUT_RESERVED].map(php).join(', ')}]`,
+          ],
+          [
+            '/* AUTH_SHORTCUT_FORWARD */',
+            Object.keys(c.authShortcuts ?? {})
+              .sort()
+              .map((key) => `$this->${key},`)
+              .join('\n            '),
+          ],
+        ],
+      ),
     );
     if (hasPayloadReturns)
       put(
@@ -1634,7 +1646,9 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         const inputDefault = inputSchema(op, c.config.apiVersion, c).required!.length
           ? ''
           : ' = []';
-        const normalizeInput = `$input instanceof ${inputName} ? $input->toInputArray() : (new ${inputName}($input))->toInputArray()`;
+        const normalizeInput = positional(op)
+          ? `(new ${inputName}($input))->toInputArray()`
+          : `$input instanceof ${inputName} ? $input->toInputArray() : (new ${inputName}($input))->toInputArray()`;
         const responseType = targetPlan.php.operations[op.id]!.output;
         const payload = payloadReturns[op.id];
         const call = callPlan(op, targetPlan, 'RequestOptions');

@@ -88,7 +88,7 @@ class SdkError extends \RuntimeException implements \JsonSerializable
                 ' ' .
                 ($frame['class'] ?? '') .
                 ($frame['type'] ?? '') .
-                ($frame['function'] ?? ''),
+                $frame['function'],
             $this->getTrace(),
         );
         return static::class .

@@ -1,3 +1,4 @@
+import { before } from 'node:test';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
@@ -82,8 +83,11 @@ writeFileSync(
 );
 const contract = loadContract(join(dir, 'api.json'), join(dir, 'sdk.json'));
 const out = join(dir, 'out');
-generate(contract, out);
-const sdk = await import(pathToFileURL(join(out, 'node/index.js')).href);
+let sdk;
+before(async () => {
+  generate(contract, out);
+  sdk = await import(pathToFileURL(join(out, 'node/index.js')).href);
+});
 const valid = {
   risk: { level: 'future', additional: true },
   reversed: { level: 'low' },

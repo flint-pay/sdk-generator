@@ -1,6 +1,6 @@
 # Contributing
 
-Use Node.js 22+, PHP 8.2+ with curl/json/pdo_sqlite/zip/pcntl (pcntl is used only by cancellation tests), and Composer 2. The SQLite Node example tests require Node.js 22.16+.
+Run commands from the repository root. Use Node.js 22.16+ (`nvm use` reads `.nvmrc`), PHP 8.2+ with curl/json/pdo_sqlite/zip/pcntl (pcntl is used only by cancellation tests), and Composer 2. The test runner checks the Node.js 22.16 minimum required by the contributor suite, including the SQLite examples. The published generator supports Node.js 22+; generated SDK runtime requirements are listed separately in the support matrix.
 
 ```sh
 npm ci
@@ -10,9 +10,22 @@ npm test
 
 Start with the [architecture](docs/architecture.md) and [support matrix](docs/support-matrix.md). The [CLI reference](docs/cli.md) describes source-checkout commands and library exports. `npm run build` produces the ignored `dist/` directory; `npm test` builds automatically. Generated package runtimes do not depend on a globally installed generator or TypeScript.
 
-The test runner executes the full-public-package generation budget separately from the other tests so concurrent test processes do not distort its time and memory limits.
+## Test workflows
 
-The test runner installs the locked development-only PHPStan dependency from `tests/phpstan/` into ignored `.generated/phpstan-vendor/`. It is not a dependency of generated SDKs.
+All npm test scripts rebuild `dist/` before running: tests import the compiled JavaScript, not `src/`. After changing source, rebuild before invoking `node --test` directly. Test fixtures and PHPStan paths are relative to the repository root.
+
+```sh
+npm run test:fast
+npm run test:file -- tests/request-options.test.mjs
+npm run test:file -- --test-name-pattern="object targets with schema" tests/request-options.test.mjs
+npm run test:file -- --test-concurrency=2 tests/request-options.test.mjs tests/client-setup.test.mjs
+```
+
+`test:fast` omits `full-public-packages.test.mjs` (complete Flint generation, installation and budgets) and `full-public-spec.test.mjs` (complete export inventory and referenced graph generation). It retains the smaller Flint fixtures and both target runtimes. It is a development feedback path; run the full `npm test` before submitting code. Ordinary files run with concurrency four by default; override it with `--test-concurrency=N`. The full-public-package generation budget runs separately so concurrent test processes do not distort its time and memory limits. Shared generated packages are prepared in `before` hooks, so name-filtered runs do not generate packages for files with no matching tests.
+
+The test runner installs the locked development-only PHPStan dependency from `tests/phpstan/` into ignored `.generated/phpstan-vendor/`. It is not a dependency of generated SDKs. `test:fast` and `test:file` perform the same setup. For direct `node --test` runs after a clean checkout, first run `composer install --working-dir=tests/phpstan --no-interaction --no-progress`.
+
+`tests/php-runtime-analysis.test.mjs` also analyses the generated library package's entire `php/src/` tree, with synthetic authentication declarations to include the optional ambient-credential implementation, at PHPStan level 5 (PHP 8.2), alongside the existing level-max consumer tests. Its exact-count baseline in `tests/phpstan/runtime-baseline.neon` records 13 existing constructor/default typing and closure/control-flow inference diagnostics. Level 6 currently adds extensive missing collection/generic annotations; those require a separate typing effort. New errors and obsolete baseline entries fail the test. Do not refresh this baseline to hide a regression.
 
 Tests generate packages in temporary directories, typecheck PHP and JS/TS consumer examples, install npm/Composer packages, exercise shared provider-style fixtures, verify signatures and durable duplicate handling, and call both default transports against a local HTTP server. They do not call a live payments provider. PHP and Composer are required; a missing target runtime is a test failure, not a skipped parity check.
 
@@ -56,7 +69,7 @@ Apply these rules to new and substantially changed code. Existing violations are
 
 ## Enforcement and evidence
 
-CI runs `npm run check`, `npm test`, and `npm pack --dry-run` across the Node/PHP matrix. TypeScript already enables `strict`, `noUncheckedIndexedAccess`, and `exactOptionalPropertyTypes`. These checks do not automatically enforce semantic ownership, exhaustive switches, import boundaries, or the absence of explicit `any`. Formatting checks remain part of the documented local workflow.
+CI runs `npm run check`, `npm test`, and `npm pack --dry-run` across the Node/PHP matrix. TypeScript already enables `strict`, `noUncheckedIndexedAccess`, and `exactOptionalPropertyTypes`. These checks do not automatically enforce semantic ownership, exhaustive switches, import boundaries, or the absence of explicit `any`. CI also runs `npm run format:check`. Five pre-existing root test files are explicitly excluded in `.prettier-check-ignore`; source, templates, documentation and the remaining tests are checked. Remove an exclusion when deliberately formatting that file.
 
 A compiler or codec change needs automated checks for the boundary it adds: exhaustive handling of closed variants plus runtime rejection of malformed serialized ones, an import check that blocks forbidden edges and cycles, behavioral proof that compiled operations do not invoke the schema adapters, generated-consumer compilation against the public API, independently expected cases through both runtimes, and repeated compilation without input mutation. Semantic ownership, abstraction value, and fixture independence also require review; a passing dependency check cannot establish them.
 
@@ -67,13 +80,56 @@ For a semantic PR, explain the changed guarantee, its owner, public/configuratio
 Update the [configuration guide](docs/configuration.md), [consumer guide](docs/using-sdks.md) and support matrix whenever public behavior changes. Reference docs describe current behavior; record what changed in [CHANGELOG.md](CHANGELOG.md) and upgrade steps in [releases](docs/releases.md#upgrade-an-existing-sdk). Package README/reference text is emitted from `src/generate.ts`; update that text too when the change affects generated consumers. Keep working notes, provider acceptance logs and local investigation artifacts out of public documentation and package contents.
 
 ```sh
-npx prettier --check README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md docs tests/providers/flint/README.md
+npm run format:check
 npm pack --dry-run
 ```
 
 Use `npm run format` to format repository source and documentation, or target only the changed paths with Prettier. `npm pack --dry-run` builds and reports the generator's distribution contents. Its explicit allowlist includes runtime files, user documentation and generic examples; provider regression fixtures and local working directories are excluded.
 
 Provider regression inputs live under `tests/providers/` in a source checkout. The Flint fixtures retain source provenance, explicit schema corrections, synthetic signing vectors and a manifest of schema/profile/HTTP-case hashes. Follow `tests/providers/flint/README.md` when updating them: independently verify expected behavior before refreshing hashes. Normal `npm test` uses bundled inputs and does not require Go, provider credentials or a provider checkout. These fixtures exercise shared behavior; provider-specific declarations stay in test profiles.
+
+## Baselines and fixture refreshes
+
+Whole-output SHA-256 checks remain in `webhook-output-baseline.json` and `dx-public-baseline.json`. Failures collect every changed hash group and report added/removed/modified paths, byte changes and line ranges. `output-file-baseline.json` deduplicates per-file hashes and short line fingerprints for diagnostics; hunk previews show current text, with old lines represented by fingerprints. Use a previous checkout for a complete old/new text diff. The aggregate and per-file hashes both remain authoritative.
+
+After independently reviewing the intended behavior and generated output, run:
+
+```sh
+npm run baselines:update
+npm run test:file -- tests/webhook-types.test.mjs tests/compiled-preservation.test.mjs
+```
+
+The update rebuilds `dist/`, refreshes both current output baselines and the diagnostic inventory, and preserves reviewed root-export lists. Explain any hash changes in the PR. It does not update historical compatibility records (`compiled-public-baseline.json` and saved publication records), PHPStan debt, source provenance or provider manifests.
+
+`tests/providers/flint/full-inventory.json` is a deterministic schema-location inventory of the pinned `full-openapi.json`, produced by `publicInventory` in `tests/helpers/public-inventory.mjs`. After following the [provider fixture review procedure](tests/providers/flint/README.md) and independently verifying the changed contract, refresh it from the repository root:
+
+```sh
+node --input-type=module <<'JS'
+import { readFileSync, writeFileSync } from 'node:fs';
+import { publicInventory } from './tests/helpers/public-inventory.mjs';
+const root = 'tests/providers/flint/';
+const source = JSON.parse(readFileSync(root + 'full-openapi.json', 'utf8'));
+writeFileSync(root + 'full-inventory.json', JSON.stringify(publicInventory(source), null, 2) + '\n');
+JS
+```
+
+Review operation/webhook counts and schema locations, update the inventory's SHA-256 entry in `fixture-manifest.json`, and update source provenance only when the pinned upstream source changes. Run `tests/full-public-spec.test.mjs`, `tests/flint.test.mjs` and `tests/full-public-packages.test.mjs`; refreshing hashes is not evidence that provider behavior is correct.
+
+## Checks for the affected area
+
+Every code PR runs `npm run check`, `npm test` and `npm run format:check`. The commands below describe additional focused evidence to run while developing and include in review; a fast or targeted run does not replace the full suite.
+
+| Area                                                | Focused checks and review evidence                                                                                                                                                                                  |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Contract loading, schema policy, target/codec plans | `compiled-boundaries`, `compiled-contract`, `compiled-codec`, `compiled-regressions` and the feature's fixture tests; check both runtime outcomes against independent wire values and malformed-input expectations. |
+| Node/PHP runtime or templates                       | Feature tests in both targets, `generator`, `coverage`, `php-runtime-analysis`, and `sdk-type-correctness`; for HTTP, retry or streaming changes include the relevant local default-transport tests.                |
+| Declarations, public names or PHP representation    | `sdk-type-correctness`, `php-entities`, `response-return`, `compiled-preservation`, `webhook-types`; inspect consumer errors and output changes before refreshing baselines.                                        |
+| Rendering, package layout or publication            | `package-loading`, `selective-generation`, `npm-metadata`, `npm-pack`, `readme-regressions`, `generated-docs`, plus `npm pack --dry-run`; inspect the distribution allowlist and both generated packages.           |
+| Provider fixture/profile changes                    | Follow the provider README, run `flint`, `full-public-spec`, `full-public-packages`, and review fixture manifests/provenance and independently expected HTTP cases.                                                 |
+| CLI or test infrastructure                          | `cli`, `test-infrastructure`, the affected targeted runner command, and the full suite; exercise prerequisite/invalid-input failures.                                                                               |
+| Documentation only                                  | Prettier on changed files and verify relative links/anchors. Run rendering tests when changing emitted documentation.                                                                                               |
+
+Names in the table refer to `tests/NAME.test.mjs`; use `npm run test:file -- tests/NAME.test.mjs` (multiple files are accepted). Select the feature tests by the behavior changed, not only by the source file edited.
 
 ## Minimum-runtime container checks
 

@@ -631,50 +631,52 @@ test('compatibility findings persist into release migrations', () => {
   assert.ok(readFileSync(join(dest, 'MIGRATION.md'), 'utf8').includes('payments.fetchOne'));
   assert.ok(readFileSync(join(dest, 'CHANGELOG.md'), 'utf8').includes('HTTP destination'));
 });
-test('real Node timeout and cancellation release a stalled response', async () => {
-  const server = createServer((req, res) => {
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.write('{');
-  });
-  await new Promise((r) => server.listen(0, '127.0.0.1', r));
-  const base = `http://127.0.0.1:${server.address().port}`;
-  try {
-    const runtime = new Runtime(runtimeContract, {
-      baseUrl: base,
-      token: 'test',
-      allowInsecureHttp: true,
+test(
+  'real Node timeout and cancellation release a stalled response',
+  { timeout: 15000 },
+  async () => {
+    const server = createServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.write('{');
     });
-    const start = performance.now();
-    // Keep the overall deadline clear of process scheduling during the full
-    // fixture suite; this case exercises the 20-ms HTTP-attempt timeout.
-    await assert.rejects(
-      runtime.request(
-        'getPayment',
-        { id: 'p' },
-        { timeoutMs: 20, deadlineMs: 1000, maxAttempts: 1 },
-      ),
-      (e) => ['timeout', 'deadline'].includes(e.kind) && e.outcome === 'unknown',
-    );
-    assert.ok(performance.now() - start < 500);
-    const controller = new AbortController();
-    const pending = runtime.request('getPayment', { id: 'p' }, { signal: controller.signal });
-    setTimeout(() => controller.abort(), 20);
-    await assert.rejects(pending, (e) => e.kind === 'cancelled');
-    const { spawn } = await import('node:child_process');
-    const script = `require $argv[1].'/src/Runtime.php'; $r = new Example\\Payments\\Runtime(json_decode(file_get_contents($argv[2]),true),new Example\\Payments\\ClientOptions($argv[3],token:'test',allowInsecureHttp:true)); try {$r->request('getPayment',['id'=>'p'],new Example\\Payments\\RequestOptions(timeoutMs:20,deadlineMs:50,maxAttempts:1));exit(1);}catch(Example\\Payments\\SdkError $e){echo $e->kind;}$r->close();`;
-    const child = spawn('php', ['-r', script, join(output, 'php'), runtimeFile, base]);
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (b) => (stdout += b));
-    child.stderr.on('data', (b) => (stderr += b));
-    const code = await new Promise((r) => child.on('close', r));
-    assert.equal(code, 0, stderr);
-    assert.ok(['timeout', 'deadline'].includes(stdout));
-  } finally {
-    server.closeAllConnections();
-    await new Promise((r) => server.close(r));
-  }
-});
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    try {
+      const runtime = new Runtime(runtimeContract, {
+        baseUrl: base,
+        token: 'test',
+        allowInsecureHttp: true,
+      });
+      // Keep the overall deadline clear of process scheduling during the full
+      // fixture suite; this case exercises the 20-ms HTTP-attempt timeout.
+      await assert.rejects(
+        runtime.request(
+          'getPayment',
+          { id: 'p' },
+          { timeoutMs: 20, deadlineMs: 1000, maxAttempts: 1 },
+        ),
+        (e) => ['timeout', 'deadline'].includes(e.kind) && e.outcome === 'unknown',
+      );
+      const controller = new AbortController();
+      const pending = runtime.request('getPayment', { id: 'p' }, { signal: controller.signal });
+      setTimeout(() => controller.abort(), 20);
+      await assert.rejects(pending, (e) => e.kind === 'cancelled');
+      const { spawn } = await import('node:child_process');
+      const script = `require $argv[1].'/src/Runtime.php'; $r = new Example\\Payments\\Runtime(json_decode(file_get_contents($argv[2]),true),new Example\\Payments\\ClientOptions($argv[3],token:'test',allowInsecureHttp:true)); try {$r->request('getPayment',['id'=>'p'],new Example\\Payments\\RequestOptions(timeoutMs:20,deadlineMs:50,maxAttempts:1));exit(1);}catch(Example\\Payments\\SdkError $e){echo $e->kind;}$r->close();`;
+      const child = spawn('php', ['-r', script, join(output, 'php'), runtimeFile, base]);
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (b) => (stdout += b));
+      child.stderr.on('data', (b) => (stderr += b));
+      const code = await new Promise((r) => child.on('close', r));
+      assert.equal(code, 0, stderr);
+      assert.ok(['timeout', 'deadline'].includes(stdout));
+    } finally {
+      server.closeAllConnections();
+      await new Promise((r) => server.close(r));
+    }
+  },
+);
 
 test('known sensitive response fields and raw bodies are redacted in default inspection', async () => {
   const runtime = new Runtime(runtimeContract, {

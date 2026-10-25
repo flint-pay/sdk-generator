@@ -1,3 +1,4 @@
+import { before } from 'node:test';
 import { declarations } from './helpers/generated-source.mjs';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -35,8 +36,11 @@ writeFileSync(join(dir, 'api.json'), JSON.stringify(api));
 writeFileSync(join(dir, 'sdk.json'), JSON.stringify(config));
 const contract = loadContract(join(dir, 'api.json'), join(dir, 'sdk.json'));
 const output = join(dir, 'output');
-generate(contract, output);
-const sdk = await import(pathToFileURL(join(output, 'node/index.js')));
+let sdk;
+before(async () => {
+  generate(contract, output);
+  sdk = await import(pathToFileURL(join(output, 'node/index.js')));
+});
 const read = (path) => readFileSync(join(output, path), 'utf8');
 
 test('authentication options reject misspelled modes, credentials and operation-incompatible modes at compile time', () => {
