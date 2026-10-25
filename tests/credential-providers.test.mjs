@@ -170,7 +170,7 @@ for (const surface of surfaces)
           error.message,
           surface === 'token'
             ? /Explicit API credentials/
-            : /Missing or invalid credential Bearer for authentication mode service/,
+            : /Missing or invalid credentials; pass apiKey in client options or request options/,
         );
       assert.deepEqual(seen, c.headers, c.name);
       assert.equal(calls, c.calls, c.name);

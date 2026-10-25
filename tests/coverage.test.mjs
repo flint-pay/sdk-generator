@@ -347,7 +347,7 @@ test('cancellation before dispatch is not sent and ignored transport aborts stil
   const start = performance.now();
   await assert.rejects(
     client.payments.retrieve({ id: 'p' }, { timeoutMs: 20, deadlineMs: 30, maxAttempts: 1 }),
-    (e) => ['transport', 'deadline'].includes(e.kind),
+    (e) => ['timeout', 'deadline'].includes(e.kind),
   );
   assert.ok(performance.now() - start < 500);
 });

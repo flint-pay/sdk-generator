@@ -172,7 +172,7 @@ test('SSE operations enforce both request budgets while buffering JSON errors', 
     for (const body of ['trickle', 'stalled']) {
       for (const [kind, options] of [
         ['deadline', { deadlineMs: 100, timeoutMs: 2000 }],
-        ['transport', { deadlineMs: 2000, timeoutMs: 100 }],
+        ['timeout', { deadlineMs: 2000, timeoutMs: 100 }],
       ]) {
         const client = new sdk.Client({ baseUrl, allowInsecureHttp: true });
         const start = performance.now();

@@ -66,19 +66,18 @@ export class SdkError extends Error {
     public raw?: string,
   ) {
     super(message);
-    // Native uncaught-error formatting bypasses inspect.custom and prints own causes.
-    // Keep explicit recovery access without exposing transport URLs or response bodies.
+    // Native error formatting bypasses inspect.custom. An own accessor keeps recovery
+    // access without evaluating the private cause during rendering, including Node 22.
     if (options && 'cause' in options) errorCauses.set(this, options.cause);
+    Object.defineProperty(this, 'cause', {
+      configurable: true,
+      get: () => errorCauses.get(this),
+      set: (value: unknown) => errorCauses.set(this, value),
+    });
     Object.defineProperty(this, 'meta', { enumerable: false });
     Object.defineProperty(this, 'raw', { enumerable: false });
     this.name = errorNames.get(new.target) ?? new.target.name;
     if (meta?.idempotencyKey !== undefined) this.idempotencyKey = meta.idempotencyKey;
-  }
-  override get cause(): unknown {
-    return errorCauses.get(this);
-  }
-  override set cause(value: unknown) {
-    errorCauses.set(this, value);
   }
   get status(): number | undefined {
     return this.meta?.status;

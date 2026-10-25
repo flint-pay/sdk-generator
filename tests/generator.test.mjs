@@ -501,7 +501,10 @@ test('default Node and PHP transports perform real local HTTP requests', async (
     let body = '';
     for await (const chunk of req) body += chunk;
     requests.push({ url: req.url, body, auth: req.headers.authorization });
-    res.writeHead(200, { 'content-type': 'application/json', 'x-request-id': 'req_009F6TJWNX0RPXAJBYGBXR1N38' });
+    res.writeHead(200, {
+      'content-type': 'application/json',
+      'x-request-id': 'req_009F6TJWNX0RPXAJBYGBXR1N38',
+    });
     res.end('{"id":"p","amount":9007199254740993,"status":"pending"}');
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -650,7 +653,7 @@ test('real Node timeout and cancellation release a stalled response', async () =
         { id: 'p' },
         { timeoutMs: 20, deadlineMs: 1000, maxAttempts: 1 },
       ),
-      (e) => ['transport', 'deadline'].includes(e.kind) && e.outcome === 'unknown',
+      (e) => ['timeout', 'deadline'].includes(e.kind) && e.outcome === 'unknown',
     );
     assert.ok(performance.now() - start < 500);
     const controller = new AbortController();
@@ -666,7 +669,7 @@ test('real Node timeout and cancellation release a stalled response', async () =
     child.stderr.on('data', (b) => (stderr += b));
     const code = await new Promise((r) => child.on('close', r));
     assert.equal(code, 0, stderr);
-    assert.ok(['transport', 'deadline'].includes(stdout));
+    assert.ok(['timeout', 'deadline'].includes(stdout));
   } finally {
     server.closeAllConnections();
     await new Promise((r) => server.close(r));
