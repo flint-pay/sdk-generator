@@ -1,6 +1,6 @@
 # Contributing
 
-Run commands from the repository root. Use Node.js 22.16+ (`nvm use` reads `.nvmrc`), PHP 8.2+ with curl/json/pdo_sqlite/zip/pcntl (pcntl is used only by cancellation tests), and Composer 2. Node.js 22.16 is the supported minimum for the contributor suite, including the SQLite examples; generated SDK runtime requirements are listed separately in the support matrix.
+Run commands from the repository root. Use Node.js 22.16+ (`nvm use` reads `.nvmrc`), PHP 8.2+ with curl/json/pdo_sqlite/zip/pcntl (pcntl is used only by cancellation tests), and Composer 2. The test runner checks the Node.js 22.16 minimum required by the contributor suite, including the SQLite examples. The published generator supports Node.js 22+; generated SDK runtime requirements are listed separately in the support matrix.
 
 ```sh
 npm ci

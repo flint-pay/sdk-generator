@@ -6,7 +6,7 @@ Generate Node.js/TypeScript and PHP SDKs from an OpenAPI 3.0/3.1 JSON document a
 
 Requirements:
 
-- Node.js 22.16+ and npm for the generator. Generated SDK requirements are listed below.
+- Node.js 22+ and npm for the generator. Contributor tests require Node.js 22.16+ (see [CONTRIBUTING.md](CONTRIBUTING.md)). Generated SDK requirements are listed below.
 - To generate and validate PHP output: PHP 8.2+ and Composer 2. Release archives also need PHP's ZIP support.
 
 ```sh

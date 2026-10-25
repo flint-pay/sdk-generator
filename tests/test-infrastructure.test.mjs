@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import ts from 'typescript';
-import { testBatches, runRequired } from './helpers/test-runner.mjs';
+import { requireTestNode, testBatches, runRequired } from './helpers/test-runner.mjs';
 import { OutputBaselines, hashEntries, recordFiles } from './helpers/output-baselines.mjs';
 import { substituteTemplate } from '../dist/template.js';
 
@@ -38,6 +38,23 @@ test('fast and targeted runs select files before import and preserve the isolate
     () => testBatches(available, ['--fast', 'tests/full-public-packages.test.mjs']),
     /No test files/,
   );
+});
+
+test('contributor Node minimum does not raise the published generator engine', () => {
+  for (const version of ['20.19.0', '21.7.3', '22.0.0', '22.12.0', '22.15.1'])
+    assert.throws(
+      () => requireTestNode(version),
+      new RegExp(
+        `Contributor tests require Node\\.js 22\\.16\\+ \\(current: ${version.replaceAll('.', '\\.')}\\).*nvm use.*published generator supports Node\\.js 22\\+`,
+      ),
+    );
+  for (const version of ['22.16.0', '22.16.1', '22.20.0', '23.0.0', '24.0.0'])
+    assert.doesNotThrow(() => requireTestNode(version));
+  const metadata = JSON.parse(readFileSync('package.json', 'utf8'));
+  const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'));
+  assert.equal(metadata.engines.node, '>=22');
+  assert.equal(lock.packages[''].engines.node, metadata.engines.node);
+  assert.equal(readFileSync('.nvmrc', 'utf8').trim(), '22.16.0');
 });
 
 test('missing PHP and Composer explain the prerequisite without an ENOENT stack', () => {

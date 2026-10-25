@@ -3,6 +3,14 @@ import { spawnSync } from 'node:child_process';
 export const budgetTest = 'full-public-packages.test.mjs';
 export const slowTests = new Set([budgetTest, 'full-public-spec.test.mjs']);
 
+export function requireTestNode(version = process.versions.node) {
+  const [major, minor] = version.split('.').map(Number);
+  if (major < 22 || (major === 22 && minor < 16))
+    throw new Error(
+      `Contributor tests require Node.js 22.16+ (current: ${version}) for the SQLite examples. Run nvm use or install the version in .nvmrc (see CONTRIBUTING.md). The published generator supports Node.js 22+.`,
+    );
+}
+
 export function testBatches(available, args) {
   const fast = args.includes('--fast');
   const requested = args.filter((arg) => !arg.startsWith('-') && arg.endsWith('.test.mjs'));

@@ -1,11 +1,12 @@
 import { readdirSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { runRequired, testBatches } from './helpers/test-runner.mjs';
+import { requireTestNode, runRequired, testBatches } from './helpers/test-runner.mjs';
 
 try {
   const directory = new URL('./', import.meta.url);
   if (realpathSync(process.cwd()) !== realpathSync(new URL('../', import.meta.url)))
     throw new Error('Run tests from the repository root (see CONTRIBUTING.md).');
+  requireTestNode();
   const { flags, batches } = testBatches(
     readdirSync(directory).filter((name) => name.endsWith('.test.mjs')),
     process.argv.slice(2),

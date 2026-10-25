@@ -10,8 +10,6 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ### Breaking changes for generator automation
 
-- **Generator Node minimum.** The generator package now requires Node.js 22.16+, matching the supported contributor/SQLite test minimum. Upgrade Node before installing or running the generator; generated SDK runtime engine requirements are unchanged.
-
 - **CLI output.** Commands print readable summaries by default. Pass `--json` to keep the previous JSON on stdout and JSON errors and warnings on stderr; JSON shapes are unchanged. `effective` still prints JSON. Library functions are unchanged.
 - **npm package names.** Configuration validation now rejects `npm.name` values over 214 characters, including the scope. Shorten any oversized names before generation.
 
@@ -39,6 +37,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 - **Managed header inputs.** Headers supplied by an operation's permitted authentication modes and the configured API-version header are removed from method inputs and PHP input getters. Anonymous operations and operations whose modes never supply a declared header retain that input field. Pass credentials through authentication options; their wire values are validated against declared header schemas. Compatibility comparison reports the removed fields as breaking. Declared idempotency, conditional and request-ID headers retain input fields and their declared requiredness is enforced before dispatch; idempotency and conditional values may be supplied through request options or automatic idempotency keys.
 
 ### Added
+
+- Contributor test workflows require Node.js 22.16+ for SQLite examples, with `.nvmrc`, CI and a clear test-runner prerequisite check. The published generator retains its Node.js 22+ engine requirement.
 
 - Node and PHP credential options accept providers resolved on every request attempt. Replay-safe requests invalidate provider credentials on HTTP 401 and retry once with the same idempotency key. PHP also accepts credential closures. Applications own token loading, caching and expiry handling.
 
