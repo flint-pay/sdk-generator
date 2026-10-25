@@ -10,6 +10,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { loadContract, generate, validateFixtures } from '../dist/index.js';
 import { EventStream } from '../dist/runtime.js';
+import { gzipSync, deflateSync, brotliCompressSync } from 'node:zlib';
 const exec = promisify(execFile);
 const dir = mkdtempSync(join(tmpdir(), 'sdk-sse-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
@@ -463,3 +464,91 @@ $c->close();echo json_encode($results);
     }
   });
 }
+
+test('an unconsumed default Node stream does not keep a child process alive', async (t) => {
+  const server = createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.flushHeaders();
+    const send = setTimeout(() => res.write('event: ready\ndata: {"sequence":1}\n\n'), 150);
+    res.on('close', () => clearTimeout(send));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+  for (const consume of [false, true]) {
+    const script = join(dir, `lifecycle-${consume}.mjs`);
+    writeFileSync(
+      script,
+      `import {Client} from ${JSON.stringify(join(out, 'node/index.js'))};
+const client = new Client({baseUrl:'http://127.0.0.1:${server.address().port}',allowInsecureHttp:true});
+const result = await client.events.watch({}, {streamIdleTimeoutMs:30000,streamLifetimeMs:60000});
+${consume ? 'for await (const event of result.data) { console.log(event.event); break; }' : "console.log('unconsumed');"}
+`,
+    );
+    const { stdout } = await exec(process.execPath, [script], { timeout: 5000 });
+    assert.equal(stdout.trim(), consume ? 'ready' : 'unconsumed');
+  }
+});
+
+test('a never-consumed Node stream expires its idle budget and reports that on iteration', async () => {
+  let cancelled = false;
+  const stream = new EventStream(
+    new ReadableStream({
+      cancel() {
+        cancelled = true;
+      },
+    }).getReader(),
+    meta,
+    { idleTimeoutMs: 10, maxEventBytes: 1000 },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(cancelled, true);
+  await assert.rejects(() => Array.fromAsync(stream), /Unconsumed stream idle timeout/);
+});
+
+test('the default Node SSE transport preserves compressed event and HTTP-error decoding', async (t) => {
+  const encoders = { gzip: gzipSync, deflate: deflateSync, br: brotliCompressSync };
+  const server = createServer((req, res) => {
+    const encoding = req.headers['x-encoding'];
+    const failure = req.headers['x-scenario'] === 'error';
+    res.writeHead(failure ? 503 : 200, {
+      'Content-Type': failure ? 'application/json' : 'text/event-stream',
+      'Content-Encoding': encoding,
+    });
+    res.end(
+      encoders[encoding](
+        failure
+          ? '{"message":"Synthetic server failure"}'
+          : 'event: ready\ndata: {"sequence":7}\n\n',
+      ),
+    );
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+  const { Client } = await import(join(out, 'node/index.js'));
+  const client = new Client({
+    baseUrl: `http://127.0.0.1:${server.address().port}`,
+    allowInsecureHttp: true,
+  });
+  for (const encoding of Object.keys(encoders)) {
+    const result = await client.events.watch(
+      {},
+      { maxAttempts: 1, headers: { 'x-encoding': encoding } },
+    );
+    const events = await Array.fromAsync(result.data);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].data.sequence, '7');
+    await assert.rejects(
+      client.events.watch(
+        {},
+        { maxAttempts: 1, headers: { 'x-encoding': encoding, 'x-scenario': 'error' } },
+      ),
+      { kind: 'server', message: 'Synthetic server failure', status: 503 },
+    );
+  }
+});

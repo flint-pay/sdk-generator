@@ -603,3 +603,33 @@ test('an API with no authentication supports defaults and still requires HTTP op
     file,
   ]);
 });
+
+test('authentication errors name caller option keys instead of operation and scheme identifiers', async () => {
+  for (const options of [{}, { authMode: 'merchantKey' }]) {
+    const client = new Client(options);
+    await assert.rejects(client.api.merchant(), (error) => {
+      assert.equal(error.kind, 'authentication');
+      assert.match(error.message, /apiKey.*(?:client options|request options)/);
+      assert.ok(!error.message.includes('permitted modes'));
+      assert.ok(!error.message.includes('credential Key'));
+      assert.ok(!error.message.includes('for merchant'));
+      return true;
+    });
+  }
+  const script = join(dir, 'auth-guidance.php');
+  writeFileSync(
+    script,
+    String.raw`<?php
+require $argv[1].'/src/Runtime.php'; require $argv[1].'/src/Client.php';
+foreach ([null,'merchantKey'] as $mode) {
+  $c=new Example\Setup\Client(new Example\Setup\ClientOptions(authMode:$mode));
+  try { $c->api->merchant(); throw new Exception('accepted missing credentials'); }
+  catch(Example\Setup\SdkError $e) {
+    if (!str_contains($e->getMessage(),'apiKey') || !str_contains($e->getMessage(),'ClientOptions') || str_contains($e->getMessage(),'credential Key')) throw $e;
+  }
+}
+echo 'ok';
+`,
+  );
+  assert.equal(execFileSync('php', [script, join(output, 'php')], { encoding: 'utf8' }), 'ok');
+});

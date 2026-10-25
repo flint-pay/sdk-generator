@@ -205,7 +205,7 @@ test('both clients stop resumed cursor and offset self-loops before yielding dup
         for await (const item of client.api.fetchValuesItems({ cursor: initial }))
           yielded.push(item);
       },
-      (e) => e.kind === 'protocol' && /non-advancing/.test(e.message),
+      (e) => e.kind === 'protocol' && /repeated continuation/.test(e.message),
     );
     assert.equal(calls, 1);
     assert.deepEqual(yielded, ['one']);

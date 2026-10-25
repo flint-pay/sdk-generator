@@ -207,6 +207,18 @@ PHP response models expose declared nested objects as generated entities, lists 
 - `toArray()` and `jsonSerialize()` return raw normalized values, not hydrated entities. `toInputArray()` and `toInputValue()` also preserve exact numeric kinds for reuse in requests. JSON dictionaries stay objects in raw exports, including empty ones. Explicit null and omitted fields stay distinct.
 - Changed representations, field classes, and removed methods and classes are reported as compatibility findings. Use them to find fields that need [`phpFieldClasses`](configuration.md#php-response-entity-names) pins.
 
+### Runtime safety
+
+Regenerate each package as a unit and update these consumers:
+
+- Pagination now ends at 1,000 pages by default. Pass an explicit larger `maxPages` when needed. Catch protocol errors for continuation cycles and two consecutive empty pages with continuations; fix the provider continuation rather than restarting a loop.
+- Add `timeout` / `TimeoutError` to error handling for per-attempt timeouts. `deadline` remains non-retryable in both targets. Refused connections and DNS failures now report `not_sent`. PHP transport status and metadata status are `null` without an HTTP response; replace comparisons to `0`.
+- Error JSON serialization and native crash rendering omit raw bodies, headers, URLs and unsanitized causes. Explicit recovery access remains available; use `raw`, `meta`, Node `cause` or PHP `getPrevious()` deliberately and protect their contents when logging.
+- `Retry-After` now accepts nonnegative decimal seconds with optional surrounding spaces/tabs or canonical GMT HTTP dates in both targets. Exponents, signed numbers, relative dates and malformed dates are ignored. Send a canonical header from providers and test transports.
+- Replace unknown JavaScript client options such as `maxRetries` with `maxAttempts` (total attempts). Remove operation path prefixes duplicated in `baseUrl`. PHP model properties are read-only; construct a new model with updated values instead of assigning dynamic properties. PHP headers require string names and values and now fail with `ValidationError`.
+- Default Node SSE connections now use native HTTP/HTTPS. Supply `ClientOptions.transport` for application-specific fetch/Undici customization; injected transports own their socket lifecycle. Consume a Node SSE result within `streamIdleTimeoutMs` or it closes. Unconsumed default SSE sockets and timers do not retain the Node process; an active iterator does. Injected transports remain responsible for their sockets. Malformed known events fail with `sse_invalid_event` and `details.eventId` / `details.position` for recovery.
+- Pass webhook `nowSeconds` in seconds. Millisecond-scale values now fail input validation with a conversion hint. Node also accepts original `ArrayBuffer` bytes alongside Buffer and Uint8Array.
+
 ### Retry defaults
 
 Retry semantics are now `budgets-2`. Saved `budgets-1` compiled records remain readable for comparison, but new runtimes require newly generated descriptors. Comparisons flag retry semantics and configured body-signal changes for review; old snapshots retain their recorded policy. Regenerate each package as a complete unit.

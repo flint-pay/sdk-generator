@@ -4,6 +4,10 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto
 import { readFile } from 'node:fs/promises';
 import type { DefaultCredentials } from './contract.js';
 import { inspect } from 'node:util';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
+import { Readable, pipeline, type Transform } from 'node:stream';
+import { createGunzip, createInflate, createBrotliDecompress } from 'node:zlib';
 import type { Schema } from './contract.js';
 import {
   compileRuntimePlan,
@@ -19,6 +23,7 @@ export { directionalSchema } from './codec-plan.js';
 
 export type ErrorKind =
   | 'transport'
+  | 'timeout'
   | 'authentication'
   | 'validation'
   | 'rate_limit'
@@ -44,6 +49,8 @@ export interface Result<T> {
   meta: Metadata;
   raw: T extends Uint8Array ? Uint8Array : string;
 }
+const errorCauses = new WeakMap<SdkError, unknown>();
+
 export class SdkError extends Error {
   idempotencyKey?: string;
   retryAfterMs?: number;
@@ -58,14 +65,24 @@ export class SdkError extends Error {
     options?: ErrorOptions,
     public raw?: string,
   ) {
-    super(message, options);
+    super(message);
+    // Native error formatting bypasses inspect.custom. An own accessor keeps recovery
+    // access without evaluating the private cause during rendering, including Node 22.
+    if (options && 'cause' in options) errorCauses.set(this, options.cause);
+    Object.defineProperty(this, 'cause', {
+      configurable: true,
+      get: () => errorCauses.get(this),
+      set: (value: unknown) => errorCauses.set(this, value),
+    });
+    Object.defineProperty(this, 'meta', { enumerable: false });
+    Object.defineProperty(this, 'raw', { enumerable: false });
     this.name = errorNames.get(new.target) ?? new.target.name;
     if (meta?.idempotencyKey !== undefined) this.idempotencyKey = meta.idempotencyKey;
   }
   get status(): number | undefined {
     return this.meta?.status;
   }
-  [inspect.custom]() {
+  toJSON() {
     return {
       name: this.name,
       kind: this.kind,
@@ -78,8 +95,23 @@ export class SdkError extends Error {
       details: this.details,
       idempotencyKey: this.idempotencyKey,
       retryAfterMs: this.retryAfterMs,
+      cause:
+        this.cause instanceof Error
+          ? {
+              name:
+                this.cause instanceof TypeError
+                  ? 'TypeError'
+                  : this.cause instanceof SyntaxError
+                    ? 'SyntaxError'
+                    : 'Error',
+              code: transportCode(this.cause),
+            }
+          : undefined,
       stack: this.stack,
     };
+  }
+  [inspect.custom]() {
+    return this.toJSON();
   }
 }
 // Preserve the root class identity while providing both namespace values and types.
@@ -89,6 +121,7 @@ export namespace errors {
   export const SdkError = BaseSdkError;
   export type SdkError = BaseSdkError;
   export class ConnectionError extends BaseSdkError {}
+  export class TimeoutError extends BaseSdkError {}
   export class AuthenticationError extends BaseSdkError {}
   export class ValidationError extends BaseSdkError {}
   export class RateLimitError extends BaseSdkError {}
@@ -105,6 +138,7 @@ export namespace errors {
 const errorNames = new Map<typeof SdkError, string>([
   [SdkError, 'SdkError'],
   [errors.ConnectionError, 'ConnectionError'],
+  [errors.TimeoutError, 'TimeoutError'],
   [errors.AuthenticationError, 'AuthenticationError'],
   [errors.ValidationError, 'ValidationError'],
   [errors.RateLimitError, 'RateLimitError'],
@@ -119,6 +153,7 @@ const errorNames = new Map<typeof SdkError, string>([
 ]);
 const errorClasses = {
   transport: errors.ConnectionError,
+  timeout: errors.TimeoutError,
   authentication: errors.AuthenticationError,
   validation: errors.ValidationError,
   rate_limit: errors.RateLimitError,
@@ -608,15 +643,19 @@ type ScheduledTimer = { cancel(): void };
 
 // Node truncates delays above 2^31-1 to one millisecond. Keep the actual
 // monotonic deadline and schedule bounded chunks, including for retry waits.
-function schedule(callback: () => void, duration: number): ScheduledTimer {
+function schedule(callback: () => void, duration: number, unref = false): ScheduledTimer {
   const deadline = performance.now() + duration;
   let timer: ReturnType<typeof setTimeout>;
   const tick = () => {
     const remaining = deadline - performance.now();
     if (remaining <= 0) callback();
-    else timer = setTimeout(tick, Math.min(2147483647, Math.ceil(remaining)));
+    else {
+      timer = setTimeout(tick, Math.min(2147483647, Math.ceil(remaining)));
+      if (unref) timer.unref();
+    }
   };
   timer = setTimeout(tick, Math.min(2147483647, Math.max(0, Math.ceil(duration))));
+  if (unref) timer.unref();
   return { cancel: () => clearTimeout(timer) };
 }
 
@@ -630,12 +669,84 @@ function inspectedMetadata(meta: Metadata) {
   };
 }
 
+const streamConnections = new WeakMap<Response, () => void>();
+
+/** Leave an unconsumed default SSE socket unreferenced; iteration retains it. */
+async function streamFetch(
+  url: URL,
+  init: {
+    method: string;
+    headers: Record<string, string>;
+    body?: string;
+    signal: AbortSignal;
+    redirect: 'manual';
+  },
+): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    const request = (url.protocol === 'https:' ? httpsRequest : httpRequest)(
+      url,
+      { method: init.method, headers: init.headers, signal: init.signal },
+      (incoming) => {
+        incoming.socket.unref();
+        const headers = new Headers();
+        for (const [name, value] of Object.entries(incoming.headers))
+          for (const entry of Array.isArray(value) ? value : value === undefined ? [] : [value])
+            headers.append(name, entry);
+        const status = incoming.statusCode;
+        if (status === undefined || status < 200 || status > 599) {
+          incoming.destroy();
+          reject(new Error('Invalid HTTP response status'));
+          return;
+        }
+        // Match fetch decompression while retaining direct ownership of the SSE socket.
+        const decoders: Transform[] = [];
+        for (const encoding of (headers.get('content-encoding') ?? '').split(',').reverse()) {
+          switch (encoding.trim().toLowerCase()) {
+            case '':
+            case 'identity':
+              break;
+            case 'gzip':
+            case 'x-gzip':
+              decoders.push(createGunzip());
+              break;
+            case 'deflate':
+              decoders.push(createInflate());
+              break;
+            case 'br':
+              decoders.push(createBrotliDecompress());
+              break;
+            default:
+              incoming.destroy();
+              reject(new Error('Unsupported response content encoding'));
+              return;
+          }
+        }
+        const body = decoders.at(-1) ?? incoming;
+        if (decoders.length) pipeline([incoming, ...decoders], () => {});
+        const response = new Response(
+          [204, 205, 304].includes(status)
+            ? null
+            : (Readable.toWeb(body, {
+                strategy: { highWaterMark: 1, size: (chunk: Uint8Array) => chunk.byteLength },
+              }) as ReadableStream<Uint8Array>),
+          { status, headers },
+        );
+        streamConnections.set(response, () => incoming.socket?.ref());
+        resolve(response);
+      },
+    );
+    request.on('error', reject);
+    request.end(init.body);
+  });
+}
+
 /** A single-consumer stream. Breaking iteration releases the response connection. */
 export class EventStream implements AsyncIterable<ServerSentEvent> {
   private closed = false;
   private started = false;
   private failure: SdkError | undefined;
   private lifetime: ScheduledTimer | undefined;
+  private unconsumed: ScheduledTimer | undefined;
   private readonly abort = () => {
     this.failure = createSdkError('cancelled', 'Stream cancelled', 'response', false, this.meta);
     void this.close();
@@ -648,28 +759,48 @@ export class EventStream implements AsyncIterable<ServerSentEvent> {
       maxEventBytes: number;
       lifetimeMs?: number;
       signal?: AbortSignal;
+      retainConnection?: () => void;
     },
     private readonly decodeEvent: (event: string, data: string) => unknown = (_event, data) => data,
     private readonly released: () => void = () => {},
   ) {
-    settings.signal?.addEventListener('abort', this.abort, { once: true });
-    if (settings.signal?.aborted) this.abort();
-    if (settings.lifetimeMs)
-      this.lifetime = schedule(() => {
+    this.unconsumed = schedule(
+      () => {
         this.failure = createSdkError(
           'deadline',
-          'Stream lifetime exceeded',
+          'Unconsumed stream idle timeout exceeded',
           'response',
           false,
           this.meta,
         );
         void this.close();
-      }, settings.lifetimeMs);
+      },
+      settings.idleTimeoutMs,
+      true,
+    );
+    settings.signal?.addEventListener('abort', this.abort, { once: true });
+    if (settings.signal?.aborted) this.abort();
+    if (settings.lifetimeMs)
+      this.lifetime = schedule(
+        () => {
+          this.failure = createSdkError(
+            'deadline',
+            'Stream lifetime exceeded',
+            'response',
+            false,
+            this.meta,
+          );
+          void this.close();
+        },
+        settings.lifetimeMs,
+        true,
+      );
   }
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
     this.lifetime?.cancel();
+    this.unconsumed?.cancel();
     this.settings.signal?.removeEventListener('abort', this.abort);
     this.released();
     await this.reader.cancel().catch(() => {});
@@ -680,6 +811,8 @@ export class EventStream implements AsyncIterable<ServerSentEvent> {
   async *[Symbol.asyncIterator](): AsyncGenerator<ServerSentEvent> {
     if (this.started) throw createSdkError('validation', 'A stream can only be consumed once');
     this.started = true;
+    this.unconsumed?.cancel();
+    this.settings.retainConnection?.();
     const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
     let firstCharacter = true;
     let line = '',
@@ -689,8 +822,27 @@ export class EventStream implements AsyncIterable<ServerSentEvent> {
       skipLF = false,
       bytes = 0;
     let retry: number | undefined;
+    let position = 0;
     const consumeLine = (): ServerSentEvent | undefined => {
       if (line === '') {
+        let decoded: unknown;
+        if (data !== '') {
+          position++;
+          try {
+            decoded = this.decodeEvent(event || 'message', data.slice(0, -1));
+          } catch (cause) {
+            throw createSdkError(
+              'protocol',
+              `Invalid SSE event payload at event ${position}; inspect details.eventId and details.position`,
+              'response',
+              false,
+              this.meta,
+              'sse_invalid_event',
+              { eventId: id, position },
+              { cause },
+            );
+          }
+        }
         const frame =
           data === ''
             ? undefined
@@ -698,7 +850,7 @@ export class EventStream implements AsyncIterable<ServerSentEvent> {
                 event: event || 'message',
                 id,
                 rawData: data.slice(0, -1),
-                data: this.decodeEvent(event || 'message', data.slice(0, -1)),
+                data: decoded,
                 ...(retry !== undefined ? { retry } : {}),
               };
         if (frame)
@@ -2381,6 +2533,57 @@ async function delay(ms: number, signal?: AbortSignal) {
     signal?.addEventListener('abort', cancel, { once: true });
   });
 }
+const safeTransportCodes = new Set([
+  'ECONNREFUSED',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'ECONNRESET',
+  'EPIPE',
+  'ETIMEDOUT',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'EADDRNOTAVAIL',
+  'ABORT_ERR',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT',
+  'UND_ERR_SOCKET',
+  'ERR_TLS_CERT_ALTNAME_INVALID',
+  'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'SELF_SIGNED_CERT_IN_CHAIN',
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  'CERT_HAS_EXPIRED',
+  'CERT_NOT_YET_VALID',
+]);
+function transportCode(cause: unknown): string | undefined {
+  const seen = new Set<unknown>();
+  while (cause instanceof Error && !seen.has(cause)) {
+    seen.add(cause);
+    if ('code' in cause && typeof cause.code === 'string' && safeTransportCodes.has(cause.code))
+      return cause.code;
+    cause = cause.cause;
+  }
+  return undefined;
+}
+
+function parseRetryAfter(instruction: string): number | undefined {
+  const value = instruction.replace(/^[ \t]+|[ \t]+$/g, '');
+  if (/^\d+(?:\.\d+)?$/.test(value)) {
+    const ms = Number(value) * 1000;
+    return Number.isFinite(ms) ? ms : undefined;
+  }
+  if (
+    !/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [1-9]\d{3} \d{2}:\d{2}:\d{2} GMT$/.test(
+      value,
+    )
+  )
+    return undefined;
+  const date = Date.parse(value);
+  return Number.isFinite(date) && new Date(date).toUTCString() === value
+    ? Math.max(0, date - Date.now())
+    : undefined;
+}
+
 function clientBaseUrl(baseUrl: unknown): URL {
   if (baseUrl === undefined)
     return bad('baseUrl', 'required: pass baseUrl because this SDK has no default server');
@@ -2412,7 +2615,7 @@ export type WebhookVerification =
 /** Verify compiled webhook descriptors without constructing an HTTP runtime. */
 export function verifyWebhookFromPlan(
   source: DescriptorSource | CompiledRuntimePlan,
-  rawBody: Uint8Array,
+  rawBody: Uint8Array | ArrayBuffer,
   headers: WebhookHeaders,
   secrets: string | readonly string[],
   nowSeconds = Date.now() / 1000,
@@ -2426,17 +2629,24 @@ export function verifyWebhookFromPlan(
     });
   const w = source instanceof DescriptorSource ? source.webhook() : source.webhook;
   if (!w) return bad('webhook', 'capability is not declared');
+  if (rawBody instanceof ArrayBuffer) rawBody = new Uint8Array(rawBody);
   if (!(rawBody instanceof Uint8Array))
     return webhookError(
       'validation',
       'invalid_input',
-      'Webhook body must be original Buffer or Uint8Array bytes; capture it before JSON parsing',
+      'Webhook body must be original Buffer, Uint8Array or ArrayBuffer bytes; capture it before JSON parsing',
     );
   if (typeof nowSeconds !== 'number' || !Number.isFinite(nowSeconds))
     return webhookError(
       'validation',
       'invalid_input',
       'Webhook nowSeconds must be a finite Unix timestamp in seconds',
+    );
+  if (Math.abs(nowSeconds) >= 100_000_000_000)
+    return webhookError(
+      'validation',
+      'invalid_input',
+      'Webhook nowSeconds appears to be milliseconds; divide by 1000 to pass Unix seconds',
     );
   const supplied: unknown[] =
     typeof secrets === 'string' ? [secrets] : Array.isArray(secrets) ? Array.from(secrets) : [];
@@ -2638,6 +2848,28 @@ class CompiledRuntime {
     if (!this.descriptors) assertRuntimePlan(this.compiledContract);
     if (!options || typeof options !== 'object' || Array.isArray(options))
       bad('options', 'expected a client options object');
+    const allowedOptions = new Set([
+      'ambientCredentials',
+      'baseUrl',
+      'token',
+      'authMode',
+      'credentials',
+      'allowedOrigins',
+      'allowInsecureHttp',
+      'timeoutMs',
+      'deadlineMs',
+      'maxAttempts',
+      'transport',
+      'diagnostics',
+      'redactFields',
+      ...Object.keys(this.compiledContract.authShortcuts ?? {}),
+    ]);
+    for (const key of Object.keys(options))
+      if (!allowedOptions.has(key))
+        bad(
+          `options.${key}`,
+          `unknown client option${key === 'maxRetries' ? '; use maxAttempts (total attempts, including the first)' : '; see ClientOptions for supported keys'}`,
+        );
     this.options = { ...options };
     this.base = clientBaseUrl(
       options.baseUrl === undefined ? this.compiledContract.defaultBaseUrl : options.baseUrl,
@@ -2791,6 +3023,9 @@ class CompiledRuntime {
         );
       headers[name.toLowerCase()] = value;
     };
+    const basePath = this.base.pathname.replace(/\/$/, '');
+    if (!continuation && basePath && (op.path === basePath || op.path.startsWith(basePath + '/')))
+      bad('baseUrl', 'already includes the operation base path; remove that path from baseUrl');
     let path = op.path;
     const query: string[] = [];
     for (const p of op.parameters) {
@@ -2921,6 +3156,19 @@ class CompiledRuntime {
               }
             : undefined;
         };
+        const authHint = (modes: string[], scheme?: string) => {
+          const shortcuts = Object.entries(this.contract.authShortcuts ?? {})
+            .filter(
+              ([, value]) =>
+                modes.includes(value.mode) && (scheme === undefined || value.scheme === scheme),
+            )
+            .map(([key]) => key);
+          return shortcuts.length
+            ? `pass ${shortcuts.join(' or ')} in client options or request options`
+            : scheme !== undefined
+              ? `pass credentials.${modes[0]}.${scheme} in client options or credentials.${scheme} in request options, with authMode '${modes[0]}'`
+              : `pass authMode (${modes.join(', ')}) and credentials in client options or request options`;
+        };
         const clientShortcut = shortcutAuth(this.options);
         const requestShortcut = shortcutAuth(options);
         const defaultMode =
@@ -2936,14 +3184,14 @@ class CompiledRuntime {
         if (modeName === undefined && op.authenticated)
           throw createSdkError(
             'authentication',
-            `Select an explicit authentication mode for ${op.id}; permitted modes: ${permitted.join(', ')}`,
+            `Authentication is required; ${authHint(permitted)}`,
           );
         const selected =
           modeName === undefined ? undefined : this.contract.authentication[modeName];
         if (modeName !== undefined && (!selected || !permitted.includes(modeName)))
           throw createSdkError(
             'authentication',
-            `Authentication mode is not permitted for ${op.id}; permitted modes: ${permitted.join(', ')}`,
+            `Authentication mode is not permitted; ${authHint(permitted)}`,
           );
         const expected: Record<string, string> = Object.create(null);
         if (selected && modeName !== undefined) {
@@ -2963,7 +3211,7 @@ class CompiledRuntime {
                 : undefined);
             const credential = await resolveCredential(
               source,
-              `Missing or invalid credential ${scheme.name} for authentication mode ${modeName}`,
+              `Missing or invalid credentials; ${authHint([modeName], scheme.name)}`,
               true,
               credentialContext,
               providers,
@@ -3044,8 +3292,11 @@ class CompiledRuntime {
     for (const key of Object.keys(input))
       if (key !== 'body' && !op.parameters.some((p) => p.name === key))
         bad(key, 'unknown input parameter');
-    const transport = this.options.transport ?? fetch;
+    const transport =
+      this.options.transport ??
+      (Object.values(op.responses).some((r) => r.bodyKind === 'sse') ? streamFetch : fetch);
     let credentialRetries = 0;
+    let mayHaveBeenSent = false;
     for (let attempt = 1; attempt <= attempts; attempt++) {
       stopped(options.signal, attempt === 1 ? 'not_sent' : 'unknown');
       const remaining = deadline - performance.now();
@@ -3077,6 +3328,7 @@ class CompiledRuntime {
           }),
           controller.signal,
         );
+        mayHaveBeenSent = true;
         const responseHeaders = Object.fromEntries(response.headers.entries());
         const meta: Metadata = {
           ...(key !== undefined ? { idempotencyKey: key } : {}),
@@ -3095,14 +3347,7 @@ class CompiledRuntime {
         };
         diagnosticMeta = meta;
         const instruction = response.headers.get('retry-after');
-        if (instruction) {
-          const seconds = /^\d+(\.\d+)?$/.test(instruction)
-            ? Number(instruction) * 1000
-            : Date.parse(instruction) - Date.now();
-          if (Number.isFinite(seconds)) {
-            retryAfter = Math.max(0, seconds);
-          }
-        }
+        if (instruction) retryAfter = parseRetryAfter(instruction);
         if (response.status === 401 && safe && credentialRetries === 0 && providers.size > 0) {
           diagnosticError = 'authentication';
           try {
@@ -3150,12 +3395,14 @@ class CompiledRuntime {
           positive(idleTimeoutMs, 'streamIdleTimeoutMs');
           if (options.streamLifetimeMs !== undefined)
             positive(options.streamLifetimeMs, 'streamLifetimeMs');
+          const retainConnection = streamConnections.get(response);
           const stream = new EventStream(
             response.body.getReader(),
             meta,
             {
               idleTimeoutMs,
               maxEventBytes: op.stream?.maxEventBytes ?? 1048576,
+              ...(retainConnection ? { retainConnection } : {}),
               ...(options.streamLifetimeMs !== undefined
                 ? { lifetimeMs: options.streamLifetimeMs }
                 : {}),
@@ -3397,23 +3644,44 @@ class CompiledRuntime {
             diagnosticMeta,
           );
         }
-        diagnosticError = options.signal?.aborted
-          ? 'cancelled'
-          : performance.now() >= deadline
-            ? 'deadline'
-            : 'transport';
+        if (options.signal?.aborted) diagnosticError = 'cancelled';
         stopped(options.signal);
+        const code = transportCode(cause);
+        const expired = performance.now() >= deadline;
+        const timedOut =
+          controller.signal.aborted ||
+          [
+            'ETIMEDOUT',
+            'UND_ERR_CONNECT_TIMEOUT',
+            'UND_ERR_HEADERS_TIMEOUT',
+            'UND_ERR_BODY_TIMEOUT',
+          ].includes(code ?? '');
+        const notSent: boolean =
+          !mayHaveBeenSent &&
+          diagnosticMeta === undefined &&
+          ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN'].includes(code ?? '');
+        mayHaveBeenSent ||= !notSent;
+        diagnosticError = expired ? 'deadline' : timedOut ? 'timeout' : 'transport';
         error = createSdkError(
-          performance.now() >= deadline ? 'deadline' : 'transport',
-          'Request did not produce a usable response; remote outcome is unknown',
-          'unknown',
-          performance.now() < deadline &&
-            safe &&
-            diagnosticMeta?.status !== 412 &&
-            policy.transport,
+          diagnosticError,
+          expired
+            ? 'Overall request deadline exceeded; remote outcome is unknown'
+            : timedOut
+              ? 'Request attempt timed out; remote outcome is unknown'
+              : notSent && code === 'ECONNREFUSED'
+                ? 'Connection refused; request was not sent'
+                : notSent && (code === 'ENOTFOUND' || code === 'EAI_AGAIN')
+                  ? 'DNS lookup failed; request was not sent'
+                  : 'Transport failed before a usable response; remote outcome is unknown',
+          notSent ? 'not_sent' : 'unknown',
+          !expired && safe && diagnosticMeta?.status !== 412 && policy.transport,
           diagnosticMeta,
-          undefined,
-          undefined,
+          expired
+            ? 'deadline_exceeded'
+            : timedOut
+              ? 'request_timeout'
+              : (code ?? 'transport_failure'),
+          { transportCode: code ?? null },
           { cause },
         );
         if (retryAfter !== undefined) error.retryAfterMs = retryAfter;
@@ -3458,7 +3726,9 @@ class CompiledRuntime {
     const p = op.pagination;
     let next: unknown;
     const request = { ...input };
-    const limit = options.maxPages ?? Number.MAX_SAFE_INTEGER;
+    const limit = options.maxPages ?? 1000;
+    const seen = new Set<string>();
+    let emptyPages = 0;
     if (!Number.isSafeInteger(limit) || limit < 1)
       bad('maxPages', 'must be a positive safe integer');
     for (let page = 0; page < limit; page++) {
@@ -3471,24 +3741,38 @@ class CompiledRuntime {
         p.kind === 'link' && typeof next === 'string' ? next : undefined,
       );
       yield result;
-      const sent = p.kind === 'link' ? next : request[p.parameter!];
+      const sent = p.kind === 'link' ? (next ?? result.meta.url) : request[p.parameter!];
       const previous = sent instanceof CompiledModel ? sent.toJSON() : sent;
       next = field(result.data, p.next);
       if (next === undefined || next === null || next === '') return;
+      const values = field(result.data, p.items);
+      emptyPages = Array.isArray(values) && values.length === 0 ? emptyPages + 1 : 0;
+      if (emptyPages >= 2)
+        throw createSdkError(
+          'protocol',
+          'Pagination returned consecutive empty pages with continuations',
+          'response',
+          false,
+          result.meta,
+          'pagination_empty_pages',
+        );
       if (p.kind === 'link' && typeof next !== 'string')
         throw createSdkError('protocol', 'Expected a pagination URL', 'response');
       if (p.kind === 'link')
         next = destinationUrl(next as string, result.meta.url ?? this.base).href;
       if (
+        seen.has(String(next)) ||
         next === previous ||
         (p.kind === 'offset' && previous !== undefined && String(next) === String(previous)) ||
         (p.kind === 'link' && next === result.meta.url)
       )
         throw createSdkError(
           'protocol',
-          'Pagination returned a non-advancing continuation',
+          'Pagination returned a repeated continuation (cursor cycle)',
           'response',
         );
+      if (previous !== undefined) seen.add(String(previous));
+      seen.add(String(next));
       if (p.kind !== 'link') request[p.parameter!] = next;
     }
   }
@@ -3549,7 +3833,7 @@ class CompiledRuntime {
     }
   }
   verifyWebhook(
-    rawBody: Uint8Array,
+    rawBody: Uint8Array | ArrayBuffer,
     headers: WebhookHeaders,
     secrets: string | readonly string[],
     nowSeconds?: number,

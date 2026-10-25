@@ -353,7 +353,7 @@ test(
     assert.equal(calls, 0);
     await assert.rejects(
       client.payments.retrieve({ id: 'p' }, { timeoutMs: 20, deadlineMs: 30, maxAttempts: 1 }),
-      (e) => ['transport', 'deadline'].includes(e.kind),
+      (e) => ['timeout', 'deadline'].includes(e.kind),
     );
   },
 );

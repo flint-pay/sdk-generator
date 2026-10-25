@@ -294,6 +294,7 @@ try {
 | Kind             | Class                 |
 | ---------------- | --------------------- |
 | `transport`      | `ConnectionError`     |
+| `timeout`        | `TimeoutError`        |
 | `authentication` | `AuthenticationError` |
 | `validation`     | `ValidationError`     |
 | `rate_limit`     | `RateLimitError`      |
@@ -321,6 +322,8 @@ Messages and codes:
 | `response` | A response was received. Inspect status and provider code; a response alone does not establish a successful business effect.                              |
 | `unknown`  | The remote effect is uncertain. Reconcile with the provider, or recover using the same persisted idempotency key within its declared retention and scope. |
 
+Per-attempt timeouts use `timeout`; overall deadlines use `deadline` and never allow retries. Refused connections and DNS failures use `transport` with `outcome: "not_sent"`. Node exposes the native code in `details.transportCode`; PHP exposes a cURL number and safe description in `details['curlCode']` and `details['curlError']`. PHP transport failures without an HTTP response use `null` for both `status` and `meta['status']`.
+
 Retries:
 
 - Without an operation policy, GET/HEAD/OPTIONS make up to three attempts for transport failures and HTTP 408, 429, 500, 502, 503 and 504, with exponential jitter from a 100 ms base and `Retry-After` support. Other methods send once.
@@ -329,12 +332,13 @@ Retries:
 - TypeScript exposes `idempotencyKey` only on supported operations. PHP's shared `RequestOptions` rejects unsupported keys at runtime.
 - Conflicting keys across operation headers, request headers and `idempotencyKey` fail before dispatch.
 - Automatic idempotency keys last for one SDK call. Persist a caller key for application resubmission. After a lost response, never send a fresh mutation with a different key.
+- `Retry-After` accepts nonnegative decimal seconds with optional surrounding spaces/tabs, or a canonical GMT HTTP date such as `Wed, 21 Oct 2015 07:28:00 GMT`. Signed numbers, exponent notation, relative dates and malformed dates are ignored in both targets.
 - `retryAllowed` reports retry eligibility. It does not authorize a new business operation or exceed the provider policy.
 
 Sensitive data:
 
 - Error inspection shows the message, status, provider code, redacted details and stack frames. Messages, codes and details apply schema and `redactFields` redaction.
-- PHP debug traces omit call arguments.
+- Error JSON serialization and native crash rendering omit raw bodies, headers, URLs and unsanitized causes. Explicit `raw`, `meta` and cause access remain available. PHP debug and exception traces omit call arguments.
 - Diagnostics callbacks get status and kind, without messages, details or stack traces.
 - `raw`, response headers, arbitrary `data` logging and injected transports need application-level handling of sensitive information.
 
@@ -352,7 +356,8 @@ Only declared capabilities generate these helpers. For a paginated operation nam
 
 Use `for await ... of` in Node and `foreach` in PHP. For a list payload containing `data`, read `page.data`; the response form reads `page.body.data` (PHP `$page->body->data`).
 
-- Iteration is lazy. Bound it with `maxPages`, `maxItems` or cancellation.
+- Iteration is lazy and defaults to at most 1,000 pages. Set `maxPages` to change that cap; reaching it ends iteration. `maxItems` and cancellation provide additional bounds.
+- Repeated continuations, including longer cursor cycles, raise a protocol error. Two consecutive empty pages with continuations also raise a protocol error; isolated and terminal empty pages remain valid.
 - Each page request gets a fresh `deadlineMs` budget for its retries and decoding. Time spent processing yielded values doesn't count, and there is no overall iterator deadline.
 - Pagination does not promise a stable snapshot.
 
@@ -365,6 +370,8 @@ For a polling operation named `get`, `getWait(input, options)` returns the same 
 Conditional calls send the declared precondition header and surface conflicts without retrying an unconditional write.
 
 ## Webhook verification
+
+Node verification accepts original `Buffer`, `Uint8Array` and `ArrayBuffer` bytes. Pass `nowSeconds` in seconds; millisecond-scale values raise an input error explaining the conversion.
 
 Packages with webhook verification declared also expose a standalone verifier. It requires no client options, base URL or API credentials; the client method delegates to the same verification implementation.
 
@@ -495,7 +502,9 @@ Verification does not deduplicate delivery. Commit a unique event ID and durable
 
 ## Client and request options
 
-Pass client defaults to `new Client({...})` in Node or `new Client(new ClientOptions(...))` in PHP. Pass request overrides as the last method argument.
+Unknown JavaScript client option keys raise a validation error. For example, replace `maxRetries` with `maxAttempts`, which counts the first attempt. A `baseUrl` that repeats an operation path prefix is rejected before sending: use `https://example.invalid` for operation paths starting with `/v1`, rather than appending `/v1`.
+
+Pass client defaults to `new Client({...})` in Node or `new Client(new ClientOptions(...))` in PHP. Pass request overrides as the last method argument. PHP request header names and values must be strings; invalid values raise `ValidationError` before dispatch.
 
 | Option                                  | Where             | Default and behavior                                                                                                                                                |
 | --------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -506,7 +515,7 @@ Pass client defaults to `new Client({...})` in Node or `new Client(new ClientOpt
 | `timeoutMs`                             | Client or request | `10000`; positive duration per attempt, including response body consumption.                                                                                        |
 | `deadlineMs`                            | Client or request | `30000`; positive overall duration, not an absolute timestamp. Includes retry waits. Iterator and polling scope: [pagination and polling](#pagination-and-polling). |
 | `maxAttempts`                           | Client or request | A positive safe integer budget capped at the operation limit. Defaults follow [retries](#errors-and-retries).                                                       |
-| `transport`                             | Client            | Native fetch in Node, reusable cURL in PHP. Injected transports are caller-owned.                                                                                   |
+| `transport`                             | Client            | Fetch for buffered Node calls, native HTTP/HTTPS for Node SSE, reusable cURL in PHP. Injected transports are caller-owned.                                          |
 | `diagnostics`                           | Client            | Optional callback receiving operation, attempt, status, request ID, timing and error kind, without bodies or credentials.                                           |
 | `redactFields`                          | Client            | Additional field names to redact in model inspection, error messages and parsed error details. Does not change response data.                                       |
 | `headers`                               | Request           | Request-local header map; includes tenant context and optional User-Agent override. A configured API-version pin takes precedence.                                  |
@@ -514,7 +523,7 @@ Pass client defaults to `new Client({...})` in Node or `new Client(new ClientOpt
 | `clientRequestId` / `client_request_id` | Request           | Node / PHP caller correlation value for a header marked `x-flint-request-option: client_request_id`. Omitted when unset.                                            |
 | `ifMatch`                               | Request           | Value for the declared conditional header, including when that header is `If-None-Match`.                                                                           |
 | `signal` / `cancellation`               | Request           | Node `AbortSignal` / PHP `Cancellation` token. Stops local work, not a remote mutation.                                                                             |
-| `maxPages`, `maxItems`                  | Request           | Optional positive limits for generated iterators.                                                                                                                   |
+| `maxPages`, `maxItems`                  | Request           | Positive iterator limits; maxPages defaults to 1000 and maxItems has no practical default cap.                                                                      |
 
 For operations declaring the client request ID option, pass `{ clientRequestId: 'order-123' }`
 in Node or `new RequestOptions(client_request_id: 'order-123')` in PHP. Values must
@@ -590,6 +599,8 @@ $client->close();
 - The parser handles comments, multiline data, split UTF-8 and CR/LF/CRLF. Incomplete final events are discarded.
 - Invalid UTF-8, malformed configured JSON payloads and oversized events close the stream with a `protocol` error.
 - Breaking out of iteration closes the connection. Explicit `close()` also handles streams that were never iterated. Closing the client releases owned streams.
+- Malformed known SSE payloads raise `sse_invalid_event` with `details.eventId` and the one-based `details.position`, without including payload bytes in the message.
+- Unconsumed default Node streams and their timers do not keep the process alive. Start iteration within `streamIdleTimeoutMs` or the stream closes; iteration retains the connection. Injected transports own their socket lifecycle.
 - Iteration provides backpressure. PHP's default cURL multi transport queues at most one write chunk and pauses until it is consumed.
 - Node cancels with `AbortSignal`, including during an idle read. PHP cancellation and lifetime checks are cooperative while reading; synchronous injected transports must honor cancellation while blocked.
 - A PHP injected transport returns a `ByteStream` in `response['stream']`: `read(): ?string` returns bounded chunks or null at EOF, and `close(): void` releases resources. The injected request includes stream limits and cancellation.
@@ -631,6 +642,8 @@ Response types keep the component name their source schema references, even when
 - A nullable wrapper with one explicitly typed non-null branch and one plain `type: "null"` branch exposes the known value or null. Unknown fields and enum members are preserved; malformed known values fail decoding. Genuinely polymorphic alternatives keep their unknown-variant fallback.
 
 ### PHP models
+
+Model properties are read-only. Assignment raises a `ValidationError`; construct a new model for updated values.
 
 Response getters return generated entities for declared nested objects, lists of entities, and PHP arrays for dictionaries.
 

@@ -655,7 +655,7 @@ test(
           { id: 'p' },
           { timeoutMs: 20, deadlineMs: 1000, maxAttempts: 1 },
         ),
-        (e) => ['transport', 'deadline'].includes(e.kind) && e.outcome === 'unknown',
+        (e) => ['timeout', 'deadline'].includes(e.kind) && e.outcome === 'unknown',
       );
       const controller = new AbortController();
       const pending = runtime.request('getPayment', { id: 'p' }, { signal: controller.signal });
@@ -670,7 +670,7 @@ test(
       child.stderr.on('data', (b) => (stderr += b));
       const code = await new Promise((r) => child.on('close', r));
       assert.equal(code, 0, stderr);
-      assert.ok(['transport', 'deadline'].includes(stdout));
+      assert.ok(['timeout', 'deadline'].includes(stdout));
     } finally {
       server.closeAllConnections();
       await new Promise((r) => server.close(r));
