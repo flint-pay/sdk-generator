@@ -51,9 +51,11 @@ const size = (path) =>
     0,
   );
 
+// Repeated generation and all-profile diagnosis need an aggregate allowance;
+// the individual 180-second / 4-GiB generation budgets remain enforced below.
 test(
   'unmodified full export generates, regenerates, validates and installs complete Node/PHP packages',
-  { timeout: 600000 },
+  { timeout: 1200000 },
   async () => {
     const dir = mkdtempSync(join(tmpdir(), 'sdk-full-public-'));
     const output = join(dir, 'output');
@@ -537,7 +539,7 @@ $streaming->close();
 
 test(
   'every full SDK profile diagnoses its complete permitted operation selection',
-  { timeout: 600000 },
+  { timeout: 1200000 },
   () => {
     const combined = JSON.parse(readFileSync(config));
     const union = new Set();
