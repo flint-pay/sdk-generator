@@ -50,6 +50,7 @@ test('provider regression inputs match their pinned fixture manifest', () => {
     'full-sdk.json',
     'http-cases.json',
     'openapi.json',
+    'response-example-failures.json',
     'risk-http-cases.json',
     'risk-openapi.json',
     'risk-sdk.json',
@@ -74,8 +75,7 @@ test('Flint reference pins local source, all seven selected operations and recur
   const evidence = JSON.parse(readFileSync(join(root, 'signing-vector.json')));
   const provenance = JSON.parse(readFileSync(join(root, 'provenance.json')));
   assert.equal(provenance.behaviorRevision, evidence.source.revision);
-  assert.equal(provenance.previousSpec.revision, evidence.source.revision);
-  assert.equal(provenance.previousSpec.sourceSha256, evidence.source.files[provenance.source]);
+  assert.equal(provenance.sourceSha256, evidence.source.files[provenance.source]);
   assert.equal(
     provenance.sliceSha256,
     createHash('sha256')
@@ -83,7 +83,7 @@ test('Flint reference pins local source, all seven selected operations and recur
       .digest('hex'),
   );
   assert.equal(contract.operations.length, 7);
-  assert.equal(Object.keys(contract.models).length, 91);
+  assert.equal(Object.keys(contract.models).length, 101);
   assert.ok(contract.models.PaymentCollection);
   assert.ok(Object.keys(contract.definitions).length > 0);
   const bytes = (path) =>
@@ -92,8 +92,9 @@ test('Flint reference pins local source, all seven selected operations and recur
         s = statSync(file);
       return size + (s.isDirectory() ? bytes(file) : s.size);
     }, 0);
+  // Published merchant/platform envelopes add five models; measured output is 4.16 MB.
   assert.ok(
-    bytes(join(output, 'node')) + bytes(join(output, 'php')) < 4_000_000,
+    bytes(join(output, 'node')) + bytes(join(output, 'php')) < 4_500_000,
     'named shapes must be shared rather than repeatedly expanded',
   );
 });
@@ -268,9 +269,9 @@ test('README snippets run in both targets with per-action keys and actionable er
       mode = 'success';
       const offset = seen.length;
       const result = await exec(command, [file], { env });
-      assert.match(result.stdout, /pi_fixture/);
+      assert.match(result.stdout, /req_00P5GR7C25QNQYKSNCJF346W0E/);
       assert.match(result.stdout, /ref_fixture/);
-      assert.match(result.stdout, /requires_capture/);
+      assert.match(result.stdout, /pending/);
       assert.deepEqual(
         seen.slice(offset).map((r) => [r.method, r.path]),
         [
@@ -337,40 +338,50 @@ test('README snippets run in both targets with per-action keys and actionable er
   }
 });
 
-test('local Flint schema passes the same fifteen source-informed HTTP cases in both public clients', async () => {
+test('local Flint schema passes the same seventeen source-informed HTTP cases in both public clients', async () => {
   assert.deepEqual(await validateFixtures(output, join(root, 'http-cases.json')), [
-    { target: 'node', scenarios: 15 },
-    { target: 'php', scenarios: 15 },
+    { target: 'node', scenarios: 17 },
+    { target: 'php', scenarios: 17 },
   ]);
 });
-test('Flint read overrides correct nullability while preserving the source export', () => {
+test('Flint read nullability is correct in the unmodified source without profile overrides', () => {
   const raw = JSON.parse(readFileSync(join(root, 'openapi.json')));
+  assert.equal(contract.config.overrides, undefined);
   for (const field of ['last_payment_error', 'risk']) {
-    assert.equal(
-      raw.components.schemas.GetPaymentIntentResult.properties[field].nullable,
-      undefined,
-    );
     assert.ok(
-      contract.models.GetPaymentIntentResult.properties[field].anyOf.some((s) => s.type === 'null'),
+      raw.components.schemas.PaymentIntent.properties[field].anyOf.some((s) => s.type === 'null'),
     );
+    assert.ok(contract.models.PaymentIntent.properties[field].anyOf.some((s) => s.type === 'null'));
   }
+  assert.ok(!raw.components.schemas.PaymentIntent.required.includes('risk'));
+  assert.ok(raw.components.schemas.PaymentIntent.required.includes('last_payment_error'));
 });
 test('Flint reference verifies its declared payment event envelope in both public clients', async () => {
   const { Client } = await import(pathToFileURL(join(output, 'node/index.js')).href);
-  const event = {
-    webhook_event_id: 'whev_fixture',
-    event_type: 'payment_intent.succeeded',
-    api_version: '2026-02-01',
-    mode: 'test',
-    merchant_id: 'mer_fixture',
-    data: {
-      payment_intent: {
-        payment_intent_id: 'pi_fixture',
-        status: 'succeeded',
-        amount_money: { amount: '9007199254740993', currency: 'USD' },
-      },
-    },
-  };
+  const source = JSON.parse(readFileSync(join(root, 'full-openapi.json')));
+  const slice = JSON.parse(readFileSync(join(root, 'openapi.json')));
+  assert.deepEqual(
+    slice.webhooks['payment_intent.succeeded'],
+    source.webhooks['payment_intent.succeeded'],
+  );
+  for (const name of [
+    'MerchantWebhookEnvelope',
+    'PartnerWebhookEnvelope',
+    'Webhook_payment_intent_succeeded_merchant',
+    'Webhook_payment_intent_succeeded_installed_merchants',
+  ]) {
+    assert.ok(source.components.schemas[name]);
+    assert.deepEqual(slice.components.schemas[name], source.components.schemas[name]);
+  }
+  assert.equal(contract.config.webhook.events['payment_intent.succeeded'] !== undefined, true);
+  const event = structuredClone(
+    source.webhooks['payment_intent.succeeded'].post.requestBody.content['application/json']
+      .examples.merchant.value,
+  );
+  event.webhook_event_id = 'whev_fixture';
+  event.merchant_id = 'mer_fixture';
+  event.data.object.payment_intent_id = 'pi_fixture';
+  event.data.object.amount_money.amount = '9007199254740993';
   const raw = JSON.stringify(event).replace('"9007199254740993"', '9007199254740993');
   const key = Buffer.alloc(32, 7),
     secret = 'whsec_' + key.toString('base64');
@@ -450,11 +461,13 @@ test('Flint quickstarts typecheck and both packages install with usable public i
   assert.equal(result.items[0].amount_money.amount, '9007199254740993');
 });
 
-test('risk-list source correction preserves raw provenance and enforces all four field choices', async () => {
+test('risk-list current contract accepts only values and preserves all four field-choice regressions', async () => {
   const raw = JSON.parse(readFileSync(join(root, 'risk-openapi.json')));
   assert.deepEqual(raw.components.schemas.AddRiskListItemsRequest.required, ['values']);
   const corrected = loadContract(join(root, 'risk-openapi.json'), join(root, 'risk-sdk.json'));
-  assert.deepEqual(corrected.operations[0].body.required, []);
+  assert.deepEqual(corrected.operations[0].body.required, ['values']);
+  assert.equal(corrected.config.overrides, undefined);
+  assert.equal(raw.components.schemas.AddRiskListItemsRequest.properties.value, undefined);
   const riskOutput = join(dir, 'risk');
   generate(corrected, riskOutput);
   assert.deepEqual(await validateFixtures(riskOutput, join(root, 'risk-http-cases.json')), [

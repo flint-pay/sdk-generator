@@ -2,16 +2,20 @@
   "profiles": ["full-common-sdk.json"],
   "include": [
     "applyOrderDiscount",
+    "applyOrderGiftCard",
+    "authorizePartnerInstall",
     "cancelOrderPayment",
     "cancelOrderPaymentAttempt",
+    "cancelPaymentIntent",
     "confirmCheckoutSessionCustomerVerification",
     "createCheckoutSessionCustomerVerification",
     "createCheckoutSessionDeliveryQuote",
     "createCheckoutSessionDeliverySelection",
+    "createDeliveryPreview",
     "createDemoSession",
+    "createDiscountPreview",
     "createOrderPaymentIntent",
     "deleteCheckoutSessionCurrentDeliverySelection",
-    "exchangePartnerInstallToken",
     "getCheckoutSession",
     "getCheckoutSessionCurrentDeliverySelection",
     "getCheckoutSessionDeliveryQuote",
@@ -21,18 +25,18 @@
     "getPaymentIntent",
     "getPaymentLinkPublic",
     "getPaymentMethod",
+    "getSubscription",
     "listOrderPaymentAttempts",
     "listPaymentMethods",
     "payOrder",
-    "previewOrderDiscounts",
     "previewPartnerInstallAuthorization",
-    "queryCheckoutSessionPickupAvailability",
     "refreshCustomerSession",
     "removeOrderDiscounts",
+    "removeOrderGiftCard",
     "repriceOrderDiscounts",
-    "resendOrderReceipt",
     "resetDemoSession",
     "resolvePaymentLink",
+    "sendOrderReceipt",
     "startOnboarding",
     "updateCheckoutSession",
     "updateOrder",
@@ -42,15 +46,19 @@
   "auth": {
     "modes": {
       "checkout": {
-        "schemes": ["CheckoutSessionIDHeader", "CheckoutSessionSecretHeader"],
+        "schemes": ["CheckoutSessionBearer"],
         "operations": [
           "applyOrderDiscount",
+          "applyOrderGiftCard",
           "cancelOrderPayment",
           "cancelOrderPaymentAttempt",
+          "cancelPaymentIntent",
           "confirmCheckoutSessionCustomerVerification",
           "createCheckoutSessionCustomerVerification",
           "createCheckoutSessionDeliveryQuote",
           "createCheckoutSessionDeliverySelection",
+          "createDeliveryPreview",
+          "createDiscountPreview",
           "createOrderPaymentIntent",
           "deleteCheckoutSessionCurrentDeliverySelection",
           "getCheckoutSession",
@@ -60,24 +68,25 @@
           "getOrderPaymentAttempt",
           "getPaymentIntent",
           "getPaymentMethod",
+          "getSubscription",
           "listOrderPaymentAttempts",
           "listPaymentMethods",
           "payOrder",
-          "previewOrderDiscounts",
-          "queryCheckoutSessionPickupAvailability",
           "removeOrderDiscounts",
+          "removeOrderGiftCard",
           "repriceOrderDiscounts",
-          "resendOrderReceipt",
+          "sendOrderReceipt",
           "updateCheckoutSession",
           "updateOrder",
           "updateOrderLineItem"
         ]
       }
-    }
-  },
-  "operations": {
-    "exchangePartnerInstallToken": {
-      "requestMediaType": "application/json"
+    },
+    "shortcuts": {
+      "checkoutToken": {
+        "mode": "checkout",
+        "scheme": "CheckoutSessionBearer"
+      }
     }
   }
 }

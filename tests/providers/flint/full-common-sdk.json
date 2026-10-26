@@ -39,7 +39,6 @@
     "InventoryRoutingSourceInput": "InventoryRoutingSourceRequest",
     "InventorySourceSystemInput": "InventorySourceSystemRequest",
     "InventoryTransferLineInput": "InventoryTransferLineRequest",
-    "LocationInventoryInput": "LocationInventoryRequest",
     "ModifierInput": "ModifierRequest",
     "ModifierSetGroupInput": "ModifierSetGroupRequest",
     "OnboardingProfileInput": "OnboardingProfileRequest",
@@ -62,7 +61,131 @@
     "ReturnResolutionLineItemInput": "ReturnResolutionLineItemRequest",
     "SubscriptionPlanLineItemInput": "SubscriptionPlanLineItemRequest",
     "SubscriptionServiceLocationInput": "SubscriptionServiceLocationRequest",
-    "TextModifierConfigInput": "TextModifierConfigRequest"
+    "TextModifierConfigInput": "TextModifierConfigRequest",
+    "AddressInput": "AddressRequest",
+    "BrandingSettingsInput": "BrandingSettingsRequest",
+    "BuyerReturnReplacementLineItemInput": "BuyerReturnReplacementLineItemRequest",
+    "CheckoutBuyerContactInput": "CheckoutBuyerContactRequest",
+    "CheckoutLegalConfigInput": "CheckoutLegalConfigRequest",
+    "CheckoutPaymentConfigInput": "CheckoutPaymentConfigRequest",
+    "CheckoutPrefillInput": "CheckoutPrefillRequest",
+    "CheckoutQuickPayItemInput": "CheckoutQuickPayItemRequest",
+    "CheckoutRedirectsInput": "CheckoutRedirectsRequest",
+    "CheckoutSubscriptionTermsInput": "CheckoutSubscriptionTermsRequest",
+    "CreateBundleComponentInput": "CreateBundleComponentRequest",
+    "CreateInlineModifierGroupInput": "CreateInlineModifierGroupRequest",
+    "CreateModifierInput": "CreateModifierRequest",
+    "CreateModifierSetGroupInput": "CreateModifierSetGroupRequest",
+    "CreateOrderLineItemInput": "CreateOrderLineItemRequest",
+    "CreateProductOptionInput": "CreateProductOptionRequest",
+    "CreateProductOptionValueInput": "CreateProductOptionValueRequest",
+    "CreditNoteLineItemInput": "CreditNoteLineItemRequest",
+    "CreditNoteRefundInput": "CreditNoteRefundRequest",
+    "DeliveryAddressInput": "DeliveryAddressRequest",
+    "DeliveryBuyerLocationInput": "DeliveryBuyerLocationRequest",
+    "DeliveryCallbackPricingStrategyInput": "DeliveryCallbackPricingStrategyRequest",
+    "DeliveryCallerSuppliedPricingStrategyInput": "DeliveryCallerSuppliedPricingStrategyRequest",
+    "DeliveryCoordinateInput": "DeliveryCoordinateRequest",
+    "DeliveryMethodConfigurationCreateInput": "DeliveryMethodConfigurationCreateRequest",
+    "DeliveryMethodConfigurationPatchInput": "DeliveryMethodConfigurationPatchRequest",
+    "DeliveryPricingRateCreateInput": "DeliveryPricingRateCreateRequest",
+    "DeliveryPricingStrategyCreateInput": "DeliveryPricingStrategyCreateRequest",
+    "DeliveryRateCallbackConfigurationPatchInput": "DeliveryRateCallbackConfigurationPatchRequest",
+    "DeliveryRateTablePricingStrategyCreateInput": "DeliveryRateTablePricingStrategyCreateRequest",
+    "DeliverySelectionInstructionsInput": "DeliverySelectionInstructionsRequest",
+    "FulfillmentPackagingInput": "FulfillmentPackagingRequest",
+    "FulfillmentRecipientInput": "FulfillmentRecipientRequest",
+    "GiftCardPurchaseInput": "GiftCardPurchaseRequest",
+    "GiftCardPurchaseRecipientInput": "GiftCardPurchaseRecipientRequest",
+    "GiftCardPurchaseRecipientPatchInput": "GiftCardPurchaseRecipientPatchRequest",
+    "GiftCardPurchaseRequestInput": "GiftCardPurchaseDetailsRequest",
+    "ImageReferenceInput": "ImageReferenceRequest",
+    "InlineModifierGroupInput": "InlineModifierGroupRequest",
+    "InventoryAdjustmentConditionChangeLineInput": "InventoryAdjustmentConditionChangeLineRequest",
+    "InventoryAdjustmentQuantityLineInput": "InventoryAdjustmentQuantityLineRequest",
+    "InventoryAdjustmentSetLineInput": "InventoryAdjustmentSetLineRequest",
+    "InventoryCountObservationInput": "InventoryCountObservationRequest",
+    "InventoryItemCreateInput": "InventoryItemCreateRequest",
+    "InventoryProvenanceInput": "InventoryProvenanceRequest",
+    "InventoryReservationOwnerInput": "InventoryReservationOwnerRequest",
+    "InvoiceCollectionInput": "InvoiceCollectionRequest",
+    "InvoicePaymentDueInput": "InvoicePaymentDueRequest",
+    "LegalSettingsInput": "LegalSettingsRequest",
+    "LineItemFulfillmentInput": "LineItemFulfillmentRequest",
+    "LineItemFulfillmentOriginInput": "LineItemFulfillmentOriginRequest",
+    "LocationAddressInput": "LocationAddressRequest",
+    "ManualDiscountInput": "ManualDiscountRequest",
+    "OrderDraftLineItemInventoryDemandInput": "OrderDraftLineItemInventoryDemandRequest",
+    "OrderDraftLineItemTaxCalculationInput": "OrderDraftLineItemTaxCalculationRequest",
+    "OrderDraftLineItemTaxInput": "OrderDraftLineItemTaxRequest",
+    "OrderDraftTaxComponentInput": "OrderDraftTaxComponentRequest",
+    "OrderDraftTaxJurisdictionInput": "OrderDraftTaxJurisdictionRequest",
+    "OrderInventoryRoutingSourceInput": "OrderInventoryRoutingSourceRequest",
+    "OrderTaxCalculationInput": "OrderTaxCalculationRequest",
+    "OrderTaxComponentInput": "OrderTaxComponentRequest",
+    "OrderTaxJurisdictionInput": "OrderTaxJurisdictionRequest",
+    "OrderTaxLocationFullAddressInput": "OrderTaxLocationFullAddressRequest",
+    "OrderTaxLocationPostalAddressInput": "OrderTaxLocationPostalAddressRequest",
+    "OrderTaxUpdateInput": "OrderTaxUpdateRequest",
+    "PackageCreateInput": "PackageCreateRequest",
+    "PaymentLinkCustomFieldPatchInput": "PaymentLinkCustomFieldPatchRequest",
+    "PaymentLinkCustomTextPatchInput": "PaymentLinkCustomTextPatchRequest",
+    "PaymentLinkEventConfigInput": "PaymentLinkEventConfigRequest",
+    "PaymentLinkEventConfigPatchInput": "PaymentLinkEventConfigPatchRequest",
+    "PaymentLinkLegalPatchInput": "PaymentLinkLegalPatchRequest",
+    "PaymentLinkLineItemPatchInput": "PaymentLinkLineItemPatchRequest",
+    "PaymentLinkPaymentPatchInput": "PaymentLinkPaymentPatchRequest",
+    "PaymentLinkRedirectsPatchInput": "PaymentLinkRedirectsPatchRequest",
+    "PaymentLinkThemePatchInput": "PaymentLinkThemePatchRequest",
+    "ProcessExistingReturnLineItemInput": "ProcessExistingReturnLineItemRequest",
+    "ProductVariantSelectedOptionInput": "ProductVariantSelectedOptionRequest",
+    "PromotionAmountOffMethodInput": "PromotionAmountOffMethodRequest",
+    "PromotionApplicationMethodInput": "PromotionApplicationMethodRequest",
+    "PromotionBuyXGetYMethodInput": "PromotionBuyXGetYMethodRequest",
+    "PromotionCombinesWithInput": "PromotionCombinesWithRequest",
+    "PromotionExclusivityInput": "PromotionExclusivityRequest",
+    "PromotionPercentOffMethodInput": "PromotionPercentOffMethodRequest",
+    "PromotionRefInput": "PromotionRefRequest",
+    "PromotionRuleGroupInput": "PromotionRuleGroupRequest",
+    "PromotionRuleInput": "PromotionRuleRequest",
+    "PromotionRuleValueInput": "PromotionRuleValueRequest",
+    "ReceiptSettingsInput": "ReceiptSettingsRequest",
+    "RefundAdjustmentReasonInput": "RefundAdjustmentReasonRequest",
+    "RefundTenderAllocationInput": "RefundTenderAllocationRequest",
+    "ResolvePaymentLinkLineItemModifierInput": "ResolvePaymentLinkLineItemModifierRequest",
+    "ResolvePaymentLinkTextModifierInput": "ResolvePaymentLinkTextModifierRequest",
+    "ReturnEligibilityLineItemInput": "ReturnEligibilityLineItemRequest",
+    "ReturnProcessDispositionInput": "ReturnProcessDispositionRequest",
+    "ReturnProcessInspectionInput": "ReturnProcessInspectionRequest",
+    "ReturnProcessReceiptInput": "ReturnProcessReceiptRequest",
+    "ReturnProcessResolutionInput": "ReturnProcessResolutionRequest",
+    "SinglePackageCreateInput": "SinglePackageCreateRequest",
+    "SubscribedLineInput": "SubscribedLineRequest",
+    "SubscriptionBillingScheduleInput": "SubscriptionBillingScheduleRequest",
+    "SubscriptionBillingScheduleUpdateInput": "SubscriptionBillingScheduleUpdateRequest",
+    "SubscriptionBillingStartInput": "SubscriptionBillingStartRequest",
+    "SubscriptionDeliveryDestinationInput": "SubscriptionDeliveryDestinationRequest",
+    "SubscriptionDeliveryInput": "SubscriptionDeliveryRequest",
+    "SubscriptionOfferLineItemInput": "SubscriptionOfferLineItemRequest",
+    "SubscriptionOfferTermsInput": "SubscriptionOfferTermsRequest",
+    "SubscriptionPlanTermsInput": "SubscriptionPlanTermsRequest",
+    "SubscriptionTermsInput": "SubscriptionTermsRequest",
+    "TaxCalculationInput": "TaxCalculationRequest",
+    "TaxComponentInput": "TaxComponentRequest",
+    "TaxIdentityInput": "TaxIdentityRequest",
+    "TaxSettingsInput": "TaxSettingsRequest",
+    "TextModifierConfigPatchInput": "TextModifierConfigPatchRequest",
+    "TextModifierInput": "TextModifierRequest",
+    "ThemeConfigInput": "ThemeConfigRequest",
+    "UpdateBundleComponentInput": "UpdateBundleComponentRequest",
+    "UpdateProductOptionInput": "UpdateProductOptionRequest",
+    "UpdateProductOptionValueInput": "UpdateProductOptionValueRequest",
+    "UpdateReturnReplacementLineItemInput": "UpdateReturnReplacementLineItemRequest",
+    "UpdateReturnResolutionAdjustmentInput": "UpdateReturnResolutionAdjustmentRequest",
+    "UpdateReturnResolutionLineItemInput": "UpdateReturnResolutionLineItemRequest",
+    "UpdateSubscriptionPlanLineItemInput": "UpdateSubscriptionPlanLineItemRequest",
+    "WorkloadIdentityClaimConditionInput": "WorkloadIdentityClaimConditionRequest",
+    "InventoryAllocationPolicyConfiguration": "InventoryAllocationConfigurationValue"
   },
   "errors": {
     "codePath": "error.code",
@@ -90,892 +213,32 @@
     "examples": ["createPaymentIntent", "getPaymentIntent", "createRefund"]
   },
   "operations": {
-    "addOrderCharge": {
-      "resource": "orders",
-      "method": "addCharge",
-      "pagination": false
-    },
-    "addOrderLineItems": {
-      "resource": "orders",
-      "method": "addLineItems",
-      "pagination": false
-    },
-    "addReturnLineItem": {
-      "resource": "returns",
-      "method": "addLineItem",
-      "pagination": false
-    },
-    "addRiskListItems": {
-      "resource": "riskLists",
-      "method": "addItems",
-      "pagination": false
-    },
-    "advanceOnboarding": {
-      "resource": "onboarding",
-      "method": "advance",
-      "pagination": false
-    },
-    "applyInventoryCount": {
-      "resource": "inventoryCounts",
-      "method": "apply",
-      "idempotency": {
-        "retention": "Retained for at least as long as the inventory command effects; reuse only for exact retries."
-      },
-      "pagination": false
-    },
-    "applyOrderDiscount": {
-      "resource": "orders",
-      "method": "applyDiscount",
-      "pagination": false
-    },
-    "approveReview": {
-      "resource": "reviews",
-      "method": "approve",
-      "pagination": false
-    },
-    "assessInvoiceLateFee": {
-      "resource": "invoices",
-      "method": "assessLateFee",
-      "pagination": false
-    },
-    "assignToUnconfiguredDeliveryProfile": {
-      "resource": "deliveryProfiles",
-      "method": "assignToUnconfigured",
-      "pagination": false
-    },
     "authorizeCLIDevice": {
       "hidden": true,
       "idempotency": false,
       "retry": false,
       "pagination": false
     },
-    "authorizePartnerInstall": {
-      "resource": "oauth",
-      "method": "authorizePartnerInstall",
-      "response": {
-        "return": "result"
-      },
+    "exchangeOAuthToken": {
+      "hidden": true,
       "idempotency": false,
       "retry": false,
       "pagination": false
     },
-    "cancelInventoryCount": {
-      "resource": "inventoryCounts",
-      "method": "cancel",
-      "idempotency": {
-        "retention": "Retained for at least as long as the inventory command effects; reuse only for exact retries."
-      },
-      "pagination": false
-    },
-    "cancelInvoicePaymentAttempt": {
-      "resource": "invoices",
-      "method": "cancelPaymentAttempt",
-      "pagination": false
-    },
-    "cancelMeReturn": {
-      "resource": "me",
-      "method": "cancelReturn",
-      "pagination": false
-    },
-    "cancelMeSubscription": {
-      "resource": "me",
-      "method": "cancelSubscription",
-      "pagination": false
-    },
-    "cancelOrderPayment": {
-      "resource": "orders",
-      "method": "cancelPayment",
-      "pagination": false
-    },
-    "cancelOrderPaymentAttempt": {
-      "resource": "orders",
-      "method": "cancelPaymentAttempt",
-      "pagination": false
-    },
-    "cancelPaymentIntent": {
-      "resource": "paymentIntents",
-      "method": "cancel",
-      "pagination": false
-    },
-    "cancelPayout": {
-      "resource": "payouts",
-      "method": "cancel",
-      "pagination": false
-    },
-    "cancelReturn": {
-      "resource": "returns",
-      "method": "cancel",
-      "pagination": false
-    },
-    "cancelReturnDisposition": {
-      "resource": "returnDispositions",
-      "method": "cancel",
-      "pagination": false
-    },
-    "cancelReturnLineItem": {
-      "resource": "returns",
-      "method": "cancelLineItem",
-      "pagination": false
-    },
-    "cancelReturnResolution": {
-      "resource": "returnResolutions",
-      "method": "cancel",
-      "pagination": false
-    },
-    "cancelSubscription": {
-      "resource": "subscriptions",
-      "method": "cancel",
-      "pagination": false
-    },
-    "captureOrderPayment": {
-      "resource": "orders",
-      "method": "capturePayment",
-      "pagination": false
-    },
-    "capturePaymentIntent": {
-      "resource": "paymentIntents",
-      "method": "capture",
-      "pagination": false
-    },
-    "changeMeSubscriptionPaymentMethod": {
-      "resource": "me",
-      "method": "changeSubscriptionPaymentMethod",
-      "pagination": false
-    },
-    "changeSubscriptionPaymentMethod": {
-      "resource": "subscriptions",
-      "method": "changePaymentMethod",
-      "pagination": false
-    },
-    "checkDeliveryRateCallbackConnection": {
-      "resource": "deliveryRateCallbacks",
-      "method": "checkConnection",
-      "pagination": false
-    },
-    "closeCheckoutSession": {
-      "resource": "checkoutSessions",
-      "method": "closeSession",
-      "pagination": false
-    },
-    "closeOrder": {
-      "resource": "orders",
-      "method": "closeSession",
-      "pagination": false
-    },
-    "collectInvoice": {
-      "resource": "invoices",
-      "method": "collect",
-      "pagination": false
-    },
-    "commitInventoryReservation": {
-      "resource": "inventoryReservations",
-      "method": "commit",
-      "idempotency": {
-        "retention": "Retained for at least as long as the inventory command effects; reuse only for exact retries."
-      },
-      "pagination": false
-    },
-    "completeReturn": {
-      "resource": "returns",
-      "method": "complete",
-      "pagination": false
-    },
-    "confirmCheckoutSessionCustomerVerification": {
-      "resource": "checkoutSessions",
-      "method": "confirmCustomerVerification",
-      "example": {
-        "checkout_session_id": "cs_example",
-        "customer_verification_id": "cver_example",
-        "X-Checkout-Session-ID": "cs_example",
-        "X-Checkout-Session-Secret": "checkout_secret_example",
-        "body": {
-          "code": "123456"
-        }
-      },
-      "pagination": false
-    },
-    "confirmMeEmailChangeRequest": {
-      "resource": "me",
-      "method": "confirmEmailChangeRequest",
-      "pagination": false
-    },
-    "confirmPaymentIntent": {
-      "resource": "paymentIntents",
-      "method": "confirm",
-      "pagination": false
-    },
-    "confirmReturnResolution": {
-      "resource": "returnResolutions",
-      "method": "confirm",
-      "pagination": false
-    },
-    "consumeInventoryReservation": {
-      "resource": "inventoryReservations",
-      "method": "consume",
-      "idempotency": {
-        "retention": "Retained for at least as long as the inventory command effects; reuse only for exact retries."
-      },
-      "pagination": false
-    },
-    "createAPIKey": {
-      "resource": "apiKeys",
-      "method": "create",
-      "pagination": false
-    },
-    "createBundle": {
-      "resource": "bundles",
-      "method": "create",
-      "pagination": false
-    },
-    "createCategory": {
-      "resource": "categories",
-      "method": "create",
-      "pagination": false
-    },
-    "createCheckoutSession": {
-      "resource": "checkoutSessions",
-      "method": "create",
-      "pagination": false
-    },
-    "createCheckoutSessionCustomerVerification": {
-      "resource": "checkoutSessions",
-      "method": "createCustomerVerification",
-      "pagination": false
-    },
-    "createCheckoutSessionDeliveryQuote": {
-      "resource": "checkoutSessions",
-      "method": "createDeliveryQuote",
-      "pagination": false
-    },
-    "createCheckoutSessionDeliverySelection": {
-      "resource": "checkoutSessions",
-      "method": "createDeliverySelection",
-      "pagination": false
-    },
-    "createCreditNote": {
-      "resource": "creditNotes",
-      "method": "create",
-      "pagination": false
-    },
-    "createCreditNoteAllocation": {
-      "resource": "creditNotes",
-      "method": "createAllocation",
-      "pagination": false
-    },
-    "createCreditNoteRefund": {
-      "resource": "creditNotes",
-      "method": "createRefund",
-      "idempotency": {
-        "retention": "Retained for the lifetime of the refund command; reuse only for exact retries."
-      },
-      "pagination": false
-    },
-    "createCustomer": {
-      "resource": "customers",
-      "method": "create",
-      "pagination": false
-    },
-    "createCustomerAddress": {
-      "resource": "customers",
-      "method": "createAddress",
-      "pagination": false
-    },
-    "createCustomerDeletionRequest": {
-      "resource": "customers",
-      "method": "createDeletionRequest",
-      "pagination": false
-    },
-    "createCustomerSession": {
-      "resource": "customerSessions",
-      "method": "create",
-      "pagination": false
-    },
-    "createDeliveryLocationSet": {
-      "resource": "deliveryLocationSets",
-      "method": "create",
-      "pagination": false
-    },
-    "createDeliveryMethod": {
-      "resource": "deliveryMethods",
-      "method": "create",
-      "pagination": false
-    },
-    "createDeliveryPreview": {
-      "resource": "deliveryPreviews",
-      "method": "create",
+    "listCLIContexts": {
+      "hidden": true,
       "idempotency": false,
       "retry": false,
       "pagination": false
     },
-    "createDeliveryProfile": {
-      "resource": "deliveryProfiles",
-      "method": "create",
-      "pagination": false
-    },
-    "createDeliveryRateCallback": {
-      "resource": "deliveryRateCallbacks",
-      "method": "create",
-      "pagination": false
-    },
-    "createDeliveryRateCallbackTestDelivery": {
-      "resource": "deliveryRateCallbacks",
-      "method": "createTestDelivery",
-      "pagination": false
-    },
-    "createDeliveryZone": {
-      "resource": "deliveryZones",
-      "method": "create",
-      "pagination": false
-    },
-    "createDemoSession": {
-      "resource": "demoSessions",
-      "method": "create",
-      "pagination": false
-    },
-    "createDeveloperPartnerApp": {
-      "resource": "developer",
-      "method": "createPartnerApp",
-      "pagination": false
-    },
-    "createDeveloperSandbox": {
-      "resource": "developer",
-      "method": "createSandbox",
-      "pagination": false
-    },
-    "createDevice": {
-      "resource": "devices",
-      "method": "create",
-      "pagination": false
-    },
-    "createFeedbackReport": {
-      "resource": "feedbackReports",
-      "method": "create",
-      "pagination": false
-    },
-    "createFulfillment": {
-      "resource": "orders",
-      "method": "createFulfillment",
-      "pagination": false
-    },
-    "createFulfillmentEvent": {
-      "resource": "fulfillments",
-      "method": "createEvent",
-      "pagination": false
-    },
-    "createInventoryAdjustment": {
-      "resource": "inventoryAdjustments",
-      "method": "create",
-      "idempotency": {
-        "retention": "Retained for at least as long as the inventory command effects; reuse only for exact retries."
-      },
-      "pagination": false
-    },
-    "createInventoryAllocationPolicy": {
-      "resource": "inventoryAllocationPolicies",
-      "method": "create",
-      "pagination": false
-    },
-    "createInventoryCount": {
-      "resource": "inventoryCounts",
-      "method": "create",
-      "idempotency": {
-        "retention": "Retained for at least as long as the inventory command effects; reuse only for exact retries."
-      },
-      "pagination": false
-    },
-    "createInventoryItem": {
-      "resource": "inventoryItems",
-      "method": "create",
-      "pagination": false
-    },
-    "createInventoryReceipt": {
-      "resource": "inventoryReceipts",
-      "method": "create",
-      "idempotency": {
-        "retention": "Retained for at least as long as the inventory command effects; reuse only for exact retries."
-      },
-      "pagination": false
-    },
-    "createInventoryReservation": {
-      "resource": "inventoryReservations",
-      "method": "create",
-      "idempotency": {
-        "retention": "Retained for at least as long as the inventory command effects; reuse only for exact retries."
-      },
-      "pagination": false
-    },
-    "createInventoryTransfer": {
-      "resource": "inventoryTransfers",
-      "method": "create",
-      "idempotency": {
-        "retention": "Retained for at least as long as the inventory command effects; reuse only for exact retries."
-      },
-      "pagination": false
-    },
-    "createInvoice": {
-      "resource": "invoices",
-      "method": "create",
-      "pagination": false
-    },
-    "createInvoicePaymentTerm": {
-      "resource": "invoicePaymentTerms",
-      "method": "create",
-      "pagination": false
-    },
-    "createLocation": {
-      "resource": "locations",
-      "method": "create",
-      "pagination": false
-    },
-    "createMeAddress": {
-      "resource": "me",
-      "method": "createAddress",
-      "pagination": false
-    },
-    "createMeDeletionRequest": {
-      "resource": "me",
-      "method": "createDeletionRequest",
-      "pagination": false
-    },
-    "createMeEmailChangeRequest": {
-      "resource": "me",
-      "method": "createEmailChangeRequest",
-      "pagination": false
-    },
-    "createMeInvoiceCheckoutSession": {
-      "resource": "me",
-      "method": "createInvoiceCheckoutSession",
-      "pagination": false
-    },
-    "createMeReturn": {
-      "resource": "me",
-      "method": "createReturn",
-      "pagination": false
-    },
-    "createMeReturnPreview": {
-      "resource": "me",
-      "method": "createReturnPreview",
+    "reauthorizeCLIDevice": {
+      "hidden": true,
       "idempotency": false,
       "retry": false,
       "pagination": false
     },
-    "createMeReturnResolutionCheckoutSession": {
-      "resource": "me",
-      "method": "createReturnResolutionCheckoutSession",
-      "pagination": false
-    },
-    "createMerchantAccountSession": {
-      "resource": "merchantAccountSessions",
-      "method": "create",
-      "retry": {
-        "errors": null,
-        "maxAttempts": 1,
-        "statuses": [],
-        "transport": false
-      },
-      "pagination": false
-    },
-    "createModifierGroup": {
-      "resource": "modifierGroups",
-      "method": "create",
-      "pagination": false
-    },
-    "createModifierSet": {
-      "resource": "modifierSets",
-      "method": "create",
-      "pagination": false
-    },
-    "createOnboardingAPIKey": {
-      "resource": "onboarding",
-      "method": "createAPIKey",
-      "pagination": false
-    },
-    "createOrder": {
-      "resource": "orders",
-      "method": "create",
-      "pagination": false
-    },
-    "createOrderPaymentIntent": {
-      "resource": "orders",
-      "method": "createPaymentIntent",
-      "pagination": false
-    },
-    "createOrganization": {
-      "resource": "organizations",
-      "method": "create",
-      "pagination": false
-    },
-    "createPackage": {
-      "resource": "shipments",
-      "method": "createPackage",
-      "pagination": false
-    },
-    "createPackageItem": {
-      "resource": "packages",
-      "method": "createItem",
-      "pagination": false
-    },
-    "createPaymentIntent": {
-      "resource": "paymentIntents",
-      "method": "create",
-      "example": {
-        "body": {
-          "amount_money": {
-            "amount": "5000",
-            "currency": "USD"
-          },
-          "payment_options": ["card"]
-        },
-        "Idempotency-Key": "00000000-0000-4000-8000-000000000001"
-      },
-      "pagination": false
-    },
-    "createPaymentLink": {
-      "resource": "paymentLinks",
-      "method": "create",
-      "pagination": false
-    },
-    "createPaymentMethodDomain": {
-      "resource": "paymentMethodDomains",
-      "method": "create",
-      "pagination": false
-    },
-    "createPayout": {
-      "resource": "payouts",
-      "method": "create",
-      "pagination": false
-    },
-    "createProduct": {
-      "resource": "products",
-      "method": "create",
-      "pagination": false
-    },
-    "createProductVariant": {
-      "resource": "products",
-      "method": "createVariant",
-      "pagination": false
-    },
-    "createPromotion": {
-      "resource": "promotions",
-      "method": "create",
-      "pagination": false
-    },
-    "createPromotionCode": {
-      "resource": "promotions",
-      "method": "createCode",
-      "pagination": false
-    },
-    "createRefund": {
-      "resource": "refunds",
-      "method": "create",
-      "pagination": false
-    },
-    "createReport": {
-      "resource": "reports",
-      "method": "create",
-      "example": {
-        "body": {
-          "currency": "USD",
-          "interval_start_at": "2026-01-01T00:00:00Z",
-          "interval_end_at": "2026-01-02T00:00:00Z",
-          "report_type": "orders_itemized_v1"
-        },
-        "Idempotency-Key": "00000000-0000-4000-8000-000000000002"
-      },
-      "pagination": false
-    },
-    "createReturn": {
-      "resource": "returns",
-      "method": "create",
-      "pagination": false
-    },
-    "createReturnDisposition": {
-      "resource": "returns",
-      "method": "createDisposition",
-      "pagination": false
-    },
-    "createReturnInspection": {
-      "resource": "returns",
-      "method": "createInspection",
-      "pagination": false
-    },
-    "createReturnPolicy": {
-      "resource": "returnPolicies",
-      "method": "create",
-      "pagination": false
-    },
-    "createReturnPreview": {
-      "resource": "returnPreviews",
-      "method": "create",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "createReturnReason": {
-      "resource": "returnReasons",
-      "method": "create",
-      "pagination": false
-    },
-    "createReturnReceipt": {
-      "resource": "returns",
-      "method": "createReceipt",
-      "pagination": false
-    },
-    "createReturnResolution": {
-      "resource": "returns",
-      "method": "createResolution",
-      "pagination": false
-    },
-    "createRiskList": {
-      "resource": "riskLists",
-      "method": "create",
-      "pagination": false
-    },
-    "createRiskPreview": {
-      "resource": "riskPreviews",
-      "method": "create",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "createRiskRule": {
-      "resource": "riskRules",
-      "method": "create",
-      "pagination": false
-    },
-    "createShipment": {
-      "resource": "fulfillments",
-      "method": "createShipment",
-      "pagination": false
-    },
-    "createSubscription": {
-      "resource": "subscriptions",
-      "method": "create",
-      "pagination": false
-    },
-    "createSubscriptionPaymentRetry": {
-      "resource": "subscriptions",
-      "method": "createPaymentRetry",
-      "pagination": false
-    },
-    "createSubscriptionPlan": {
-      "resource": "subscriptionPlans",
-      "method": "create",
-      "pagination": false
-    },
-    "createWebhookEndpoint": {
-      "resource": "webhookEndpoints",
-      "method": "create",
-      "pagination": false
-    },
-    "createWebhookTestEvent": {
-      "resource": "webhookEndpoints",
-      "method": "createWebhookTestEvent",
-      "pagination": false
-    },
-    "decideReturn": {
-      "resource": "returns",
-      "method": "decide",
-      "pagination": false
-    },
-    "decideReturnInspectionLineItem": {
-      "resource": "returnInspections",
-      "method": "decideLineItem",
-      "pagination": false
-    },
-    "declineReview": {
-      "resource": "reviews",
-      "method": "decline",
-      "pagination": false
-    },
-    "deleteBundle": {
-      "resource": "bundles",
-      "method": "remove",
-      "pagination": false
-    },
-    "deleteCategory": {
-      "resource": "categories",
-      "method": "remove",
-      "pagination": false
-    },
-    "deleteCheckoutSessionCurrentDeliverySelection": {
-      "resource": "checkoutSessions",
-      "method": "deleteCurrentDeliverySelection",
-      "pagination": false
-    },
-    "deleteCustomerAddress": {
-      "resource": "customers",
-      "method": "deleteAddress",
-      "pagination": false
-    },
-    "deleteDeliveryLocationSet": {
-      "resource": "deliveryLocationSets",
-      "method": "remove",
-      "pagination": false
-    },
-    "deleteDeliveryMethod": {
-      "resource": "deliveryMethods",
-      "method": "remove",
-      "pagination": false
-    },
-    "deleteDeliveryProfile": {
-      "resource": "deliveryProfiles",
-      "method": "remove",
-      "pagination": false
-    },
-    "deleteDeliveryRateCallback": {
-      "resource": "deliveryRateCallbacks",
-      "method": "remove",
-      "pagination": false
-    },
-    "deleteDeliveryZone": {
-      "resource": "deliveryZones",
-      "method": "remove",
-      "pagination": false
-    },
-    "deleteDeveloperSandbox": {
-      "resource": "developer",
-      "method": "deleteSandbox",
-      "pagination": false
-    },
-    "deleteDevice": {
-      "resource": "devices",
-      "method": "remove",
-      "pagination": false
-    },
-    "deleteInventoryAllocationPolicy": {
-      "resource": "inventoryAllocationPolicies",
-      "method": "remove",
-      "pagination": false
-    },
-    "deleteInventoryItem": {
-      "resource": "inventoryItems",
-      "method": "remove",
-      "pagination": false
-    },
-    "deleteInvoicePaymentTerm": {
-      "resource": "invoicePaymentTerms",
-      "method": "remove",
-      "pagination": false
-    },
-    "deleteLocation": {
-      "resource": "locations",
-      "method": "remove",
-      "pagination": false
-    },
-    "deleteMeAddress": {
-      "resource": "me",
-      "method": "deleteAddress",
-      "pagination": false
-    },
-    "deleteModifierGroup": {
-      "resource": "modifierGroups",
-      "method": "remove",
-      "pagination": false
-    },
-    "deleteModifierSet": {
-      "resource": "modifierSets",
-      "method": "remove",
-      "pagination": false
-    },
-    "deleteOrderCharge": {
-      "resource": "orders",
-      "method": "deleteCharge",
-      "pagination": false
-    },
-    "deleteOrderLineItem": {
-      "resource": "orders",
-      "method": "deleteLineItem",
-      "pagination": false
-    },
-    "deleteOrganization": {
-      "resource": "organizations",
-      "method": "remove",
-      "pagination": false
-    },
-    "deletePackageItem": {
-      "resource": "packages",
-      "method": "deleteItem",
-      "pagination": false
-    },
-    "deletePayoutDestination": {
-      "resource": "payoutSettings",
-      "method": "deletePayoutDestination",
-      "pagination": false
-    },
-    "deleteProduct": {
-      "resource": "products",
-      "method": "remove",
-      "pagination": false
-    },
-    "deleteProductVariant": {
-      "resource": "products",
-      "method": "deleteVariant",
-      "pagination": false
-    },
-    "deletePromotion": {
-      "resource": "promotions",
-      "method": "remove",
-      "pagination": false
-    },
-    "deletePromotionCode": {
-      "resource": "promotions",
-      "method": "deleteCode",
-      "pagination": false
-    },
-    "deleteReturnLineItem": {
-      "resource": "returns",
-      "method": "deleteLineItem",
-      "pagination": false
-    },
-    "deleteReturnPolicy": {
-      "resource": "returnPolicies",
-      "method": "remove",
-      "pagination": false
-    },
-    "deleteReturnReason": {
-      "resource": "returnReasons",
-      "method": "remove",
-      "pagination": false
-    },
-    "deleteRiskList": {
-      "resource": "riskLists",
-      "method": "remove",
-      "pagination": false
-    },
-    "deleteRiskListItem": {
-      "resource": "riskLists",
-      "method": "deleteItem",
-      "pagination": false
-    },
-    "deleteRiskRule": {
-      "resource": "riskRules",
-      "method": "remove",
-      "pagination": false
-    },
-    "deleteSubscriptionPlan": {
-      "resource": "subscriptionPlans",
-      "method": "remove",
-      "pagination": false
-    },
-    "deleteWebhookEndpoint": {
-      "resource": "webhookEndpoints",
-      "method": "remove",
-      "pagination": false
-    },
-    "exchangePartnerInstallToken": {
-      "resource": "oauth",
-      "method": "exchangePartnerInstallToken",
-      "response": {
-        "return": "result"
-      },
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getAPIKey": {
-      "resource": "apiKeys",
-      "method": "get",
+    "revokeOAuthToken": {
+      "hidden": true,
       "idempotency": false,
       "retry": false,
       "pagination": false
@@ -987,11 +250,103 @@
       "retry": false,
       "pagination": false
     },
+    "getPaymentVolumeTimeseries": {
+      "resource": "analytics",
+      "method": "getPaymentVolumeTimeseries",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "getSubscriptionAnalytics": {
+      "resource": "analytics",
+      "method": "getSubscription",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "listAPIKeys": {
+      "resource": "apiKeys",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createAPIKey": {
+      "resource": "apiKeys",
+      "method": "create",
+      "pagination": false
+    },
+    "getAPIKey": {
+      "resource": "apiKeys",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updateAPIKey": {
+      "resource": "apiKeys",
+      "method": "update",
+      "pagination": false
+    },
+    "revokeAPIKey": {
+      "resource": "apiKeys",
+      "method": "revoke",
+      "pagination": false
+    },
+    "listBalanceTransactions": {
+      "resource": "balanceTransactions",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
     "getBalanceTransaction": {
       "resource": "balanceTransactions",
       "method": "get",
       "idempotency": false,
       "retry": false,
+      "pagination": false
+    },
+    "listBalances": {
+      "resource": "balances",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "listBundles": {
+      "resource": "bundles",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createBundle": {
+      "resource": "bundles",
+      "method": "create",
+      "pagination": false,
+      "example": {
+        "body": {
+          "name": "example",
+          "unit_price_money": {
+            "amount": "100",
+            "currency": "USD"
+          }
+        }
+      }
+    },
+    "deleteBundle": {
+      "resource": "bundles",
+      "method": "remove",
       "pagination": false
     },
     "getBundle": {
@@ -1001,11 +356,63 @@
       "retry": false,
       "pagination": false
     },
+    "updateBundle": {
+      "resource": "bundles",
+      "method": "update",
+      "pagination": false
+    },
+    "listBundleComponents": {
+      "resource": "bundles",
+      "method": "listComponents",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "listCategories": {
+      "resource": "categories",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createCategory": {
+      "resource": "categories",
+      "method": "create",
+      "pagination": false
+    },
+    "deleteCategory": {
+      "resource": "categories",
+      "method": "remove",
+      "pagination": false
+    },
     "getCategory": {
       "resource": "categories",
       "method": "get",
       "idempotency": false,
       "retry": false,
+      "pagination": false
+    },
+    "updateCategory": {
+      "resource": "categories",
+      "method": "update",
+      "pagination": false
+    },
+    "listCheckoutSessions": {
+      "resource": "checkoutSessions",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createCheckoutSession": {
+      "resource": "checkoutSessions",
+      "method": "create",
       "pagination": false
     },
     "getCheckoutSession": {
@@ -1015,16 +422,58 @@
       "retry": false,
       "pagination": false
     },
-    "getCheckoutSessionCurrentDeliverySelection": {
+    "updateCheckoutSession": {
       "resource": "checkoutSessions",
-      "method": "getCurrentDeliverySelection",
-      "idempotency": false,
-      "retry": false,
+      "method": "update",
+      "pagination": false
+    },
+    "closeCheckoutSession": {
+      "resource": "checkoutSessions",
+      "method": "closeSession",
+      "pagination": false
+    },
+    "createCheckoutSessionCustomerVerification": {
+      "resource": "checkoutSessions",
+      "method": "createCustomerVerification",
+      "pagination": false
+    },
+    "confirmCheckoutSessionCustomerVerification": {
+      "resource": "checkoutSessions",
+      "method": "confirmCustomerVerification",
+      "example": {
+        "checkout_session_id": "cs_example",
+        "checkout_session_customer_verification_id": "cver_example",
+        "body": {
+          "code": "123456"
+        }
+      },
+      "pagination": false
+    },
+    "createCheckoutSessionDeliveryQuote": {
+      "resource": "checkoutSessions",
+      "method": "createDeliveryQuote",
       "pagination": false
     },
     "getCheckoutSessionDeliveryQuote": {
       "resource": "checkoutSessions",
       "method": "getDeliveryQuote",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "createCheckoutSessionDeliverySelection": {
+      "resource": "checkoutSessions",
+      "method": "createDeliverySelection",
+      "pagination": false
+    },
+    "deleteCheckoutSessionCurrentDeliverySelection": {
+      "resource": "checkoutSessions",
+      "method": "deleteCurrentDeliverySelection",
+      "pagination": false
+    },
+    "getCheckoutSessionCurrentDeliverySelection": {
+      "resource": "checkoutSessions",
+      "method": "getCurrentDeliverySelection",
       "idempotency": false,
       "retry": false,
       "pagination": false
@@ -1036,6 +485,20 @@
       "retry": false,
       "pagination": false
     },
+    "listCreditNotes": {
+      "resource": "creditNotes",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createCreditNote": {
+      "resource": "creditNotes",
+      "method": "create",
+      "pagination": false
+    },
     "getCreditNote": {
       "resource": "creditNotes",
       "method": "get",
@@ -1043,11 +506,49 @@
       "retry": false,
       "pagination": false
     },
+    "updateCreditNote": {
+      "resource": "creditNotes",
+      "method": "update",
+      "pagination": false
+    },
+    "listCreditNoteAllocations": {
+      "resource": "creditNotes",
+      "method": "listAllocations",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createCreditNoteAllocation": {
+      "resource": "creditNotes",
+      "method": "createAllocation",
+      "pagination": false,
+      "example": {
+        "credit_note_id": "example",
+        "body": {
+          "amount_money": {
+            "amount": "100",
+            "currency": "USD"
+          }
+        }
+      }
+    },
     "getCreditNoteAllocation": {
       "resource": "creditNotes",
       "method": "getAllocation",
       "idempotency": false,
       "retry": false,
+      "pagination": false
+    },
+    "reverseCreditNoteAllocation": {
+      "resource": "creditNotes",
+      "method": "reverseAllocation",
+      "pagination": false
+    },
+    "issueCreditNote": {
+      "resource": "creditNotes",
+      "method": "issue",
       "pagination": false
     },
     "getCreditNotePDF": {
@@ -1060,25 +561,68 @@
       "retry": false,
       "pagination": false
     },
-    "getCurrentAPIKeyRequestLog": {
-      "resource": "developer",
-      "method": "getCurrentAPIKeyRequestLog",
+    "listCreditNoteRefunds": {
+      "resource": "creditNotes",
+      "method": "listRefunds",
+      "response": {
+        "payloadPath": null
+      },
       "idempotency": false,
-      "retry": false,
+      "retry": false
+    },
+    "createCreditNoteRefund": {
+      "resource": "creditNotes",
+      "method": "createRefund",
       "pagination": false
     },
-    "getCustomer": {
-      "resource": "customers",
+    "voidCreditNote": {
+      "resource": "creditNotes",
+      "method": "voidResource",
+      "pagination": false
+    },
+    "listCustomDomains": {
+      "resource": "customDomains",
+      "method": "list",
+      "idempotency": false,
+      "retry": false,
+      "response": {
+        "payloadPath": null
+      }
+    },
+    "createCustomDomain": {
+      "resource": "customDomains",
+      "method": "create",
+      "pagination": false
+    },
+    "deleteCustomDomain": {
+      "resource": "customDomains",
+      "method": "remove",
+      "pagination": false
+    },
+    "getCustomDomain": {
+      "resource": "customDomains",
       "method": "get",
       "idempotency": false,
       "retry": false,
       "pagination": false
     },
-    "getCustomerAddress": {
-      "resource": "customers",
-      "method": "getAddress",
+    "validateCustomDomain": {
+      "resource": "customDomains",
+      "method": "validate",
+      "pagination": false
+    },
+    "listCustomerDeletionRequests": {
+      "resource": "customerDeletionRequests",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
       "idempotency": false,
-      "retry": false,
+      "retry": false
+    },
+    "createCustomerDeletionRequest": {
+      "resource": "customers",
+      "method": "createDeletionRequest",
       "pagination": false
     },
     "getCustomerDeletionRequest": {
@@ -1088,11 +632,184 @@
       "retry": false,
       "pagination": false
     },
+    "resolveCustomerDeletionRequest": {
+      "resource": "customerDeletionRequests",
+      "method": "resolve",
+      "pagination": false
+    },
+    "createCustomerSession": {
+      "resource": "customerSessions",
+      "method": "create",
+      "pagination": false
+    },
+    "refreshCustomerSession": {
+      "resource": "customerSessions",
+      "method": "refresh",
+      "pagination": false
+    },
+    "revokeCustomerSession": {
+      "resource": "customerSessions",
+      "method": "revoke",
+      "pagination": false
+    },
+    "createCustomerVerification": {
+      "resource": "customerVerifications",
+      "method": "create",
+      "pagination": false
+    },
+    "confirmCustomerVerification": {
+      "resource": "customerVerifications",
+      "method": "confirm",
+      "pagination": false,
+      "example": {
+        "customer_verification_id": "example",
+        "body": {
+          "code": "123456"
+        }
+      }
+    },
+    "listCustomers": {
+      "resource": "customers",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createCustomer": {
+      "resource": "customers",
+      "method": "create",
+      "pagination": false
+    },
+    "getCustomer": {
+      "resource": "customers",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updateCustomer": {
+      "resource": "customers",
+      "method": "update",
+      "pagination": false
+    },
+    "createCustomerAccessLink": {
+      "resource": "customers",
+      "method": "createAccessLink",
+      "pagination": false
+    },
+    "listCustomerAddresses": {
+      "resource": "customers",
+      "method": "listAddresses",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createCustomerAddress": {
+      "resource": "customers",
+      "method": "createAddress",
+      "pagination": false
+    },
+    "deleteCustomerAddress": {
+      "resource": "customers",
+      "method": "deleteAddress",
+      "pagination": false
+    },
+    "getCustomerAddress": {
+      "resource": "customers",
+      "method": "getAddress",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updateCustomerAddress": {
+      "resource": "customers",
+      "method": "updateAddress",
+      "pagination": false
+    },
+    "setDefaultCustomerAddress": {
+      "resource": "customers",
+      "method": "setDefaultAddress",
+      "pagination": false
+    },
+    "linkCustomerGuestPurchases": {
+      "resource": "customers",
+      "method": "linkGuestPurchases",
+      "pagination": false
+    },
+    "revokeCustomerSessions": {
+      "resource": "customers",
+      "method": "revokeSessions",
+      "pagination": false
+    },
+    "listDeliveryLocationSets": {
+      "resource": "deliveryLocationSets",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createDeliveryLocationSet": {
+      "resource": "deliveryLocationSets",
+      "method": "create",
+      "pagination": false
+    },
+    "deleteDeliveryLocationSet": {
+      "resource": "deliveryLocationSets",
+      "method": "remove",
+      "pagination": false
+    },
     "getDeliveryLocationSet": {
       "resource": "deliveryLocationSets",
       "method": "get",
       "idempotency": false,
       "retry": false,
+      "pagination": false
+    },
+    "updateDeliveryLocationSet": {
+      "resource": "deliveryLocationSets",
+      "method": "update",
+      "pagination": false
+    },
+    "listDeliveryMethods": {
+      "resource": "deliveryMethods",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createDeliveryMethod": {
+      "resource": "deliveryMethods",
+      "method": "create",
+      "pagination": false,
+      "example": {
+        "body": {
+          "configuration": {
+            "origin": {
+              "location_id": "loc_01K1P6G4M7H2N8Q9R3S5T6V7WX",
+              "type": "fixed_location"
+            },
+            "pricing": {
+              "calculated": {},
+              "type": "calculated"
+            },
+            "minimum_option_lifetime_seconds": "120"
+          },
+          "type": "shipment",
+          "name": "Standard shipping"
+        }
+      }
+    },
+    "deleteDeliveryMethod": {
+      "resource": "deliveryMethods",
+      "method": "remove",
       "pagination": false
     },
     "getDeliveryMethod": {
@@ -1102,11 +819,93 @@
       "retry": false,
       "pagination": false
     },
+    "updateDeliveryMethod": {
+      "resource": "deliveryMethods",
+      "method": "update",
+      "pagination": false,
+      "example": {
+        "delivery_method_id": "example",
+        "body": {
+          "status": "active"
+        }
+      }
+    },
+    "createDeliveryPreview": {
+      "resource": "deliveryPreviews",
+      "method": "create",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "listDeliveryProfiles": {
+      "resource": "deliveryProfiles",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createDeliveryProfile": {
+      "resource": "deliveryProfiles",
+      "method": "create",
+      "pagination": false
+    },
+    "deleteDeliveryProfile": {
+      "resource": "deliveryProfiles",
+      "method": "remove",
+      "pagination": false
+    },
     "getDeliveryProfile": {
       "resource": "deliveryProfiles",
       "method": "get",
       "idempotency": false,
       "retry": false,
+      "pagination": false
+    },
+    "updateDeliveryProfile": {
+      "resource": "deliveryProfiles",
+      "method": "update",
+      "pagination": false
+    },
+    "assignToUnconfiguredDeliveryProfile": {
+      "resource": "deliveryProfiles",
+      "method": "assignToUnconfigured",
+      "pagination": false
+    },
+    "listDeliveryQuotes": {
+      "resource": "deliveryQuotes",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "getDeliveryQuote": {
+      "resource": "deliveryQuotes",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "listDeliveryRateCallbacks": {
+      "resource": "deliveryRateCallbacks",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createDeliveryRateCallback": {
+      "resource": "deliveryRateCallbacks",
+      "method": "create",
+      "pagination": false
+    },
+    "deleteDeliveryRateCallback": {
+      "resource": "deliveryRateCallbacks",
+      "method": "remove",
       "pagination": false
     },
     "getDeliveryRateCallback": {
@@ -1116,11 +915,65 @@
       "retry": false,
       "pagination": false
     },
+    "updateDeliveryRateCallback": {
+      "resource": "deliveryRateCallbacks",
+      "method": "update",
+      "pagination": false
+    },
+    "checkDeliveryRateCallbackConnection": {
+      "resource": "deliveryRateCallbacks",
+      "method": "checkConnection",
+      "pagination": false
+    },
+    "rotateDeliveryRateCallbackSigningKey": {
+      "resource": "deliveryRateCallbacks",
+      "method": "rotateSigningKey",
+      "pagination": false
+    },
+    "createDeliveryRateCallbackTestDelivery": {
+      "resource": "deliveryRateCallbacks",
+      "method": "createTestDelivery",
+      "pagination": false
+    },
+    "revokeDeliveryDependency": {
+      "resource": "deliveryRevocations",
+      "method": "revokeDeliveryDependency",
+      "pagination": false
+    },
     "getDeliveryRevocation": {
       "resource": "deliveryRevocations",
       "method": "get",
       "idempotency": false,
       "retry": false,
+      "pagination": false
+    },
+    "listDeliveryZones": {
+      "resource": "deliveryZones",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createDeliveryZone": {
+      "resource": "deliveryZones",
+      "method": "create",
+      "pagination": false,
+      "example": {
+        "body": {
+          "configuration": {
+            "country": {
+              "values": ["example"]
+            }
+          },
+          "name": "Standard delivery"
+        }
+      }
+    },
+    "deleteDeliveryZone": {
+      "resource": "deliveryZones",
+      "method": "remove",
       "pagination": false
     },
     "getDeliveryZone": {
@@ -1130,11 +983,45 @@
       "retry": false,
       "pagination": false
     },
+    "updateDeliveryZone": {
+      "resource": "deliveryZones",
+      "method": "update",
+      "pagination": false
+    },
+    "createDemoSession": {
+      "resource": "demoSessions",
+      "method": "create",
+      "pagination": false
+    },
+    "resetDemoSession": {
+      "resource": "demoSessions",
+      "method": "reset",
+      "pagination": false
+    },
     "getDeveloperAuthContext": {
       "resource": "developer",
       "method": "getAuthContext",
       "idempotency": false,
       "retry": false,
+      "pagination": false
+    },
+    "listDeveloperPartnerApps": {
+      "resource": "developer",
+      "method": "listPartnerApps",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createDeveloperPartnerApp": {
+      "resource": "developer",
+      "method": "createPartnerApp",
+      "pagination": false
+    },
+    "deleteDeveloperPartnerApp": {
+      "resource": "developer",
+      "method": "deletePartnerApp",
       "pagination": false
     },
     "getDeveloperPartnerApp": {
@@ -1144,6 +1031,20 @@
       "retry": false,
       "pagination": false
     },
+    "updateDeveloperPartnerApp": {
+      "resource": "developer",
+      "method": "updatePartnerApp",
+      "pagination": false
+    },
+    "listDeveloperPartnerAppInstalls": {
+      "resource": "developer",
+      "method": "listPartnerAppInstalls",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
     "getDeveloperPartnerAppInstall": {
       "resource": "developer",
       "method": "getPartnerAppInstall",
@@ -1151,9 +1052,106 @@
       "retry": false,
       "pagination": false
     },
+    "revokeDeveloperPartnerEnvironmentGrant": {
+      "resource": "developer",
+      "method": "revokePartnerEnvironmentGrant",
+      "pagination": false
+    },
+    "revokeDeveloperPartnerAppInstall": {
+      "resource": "developer",
+      "method": "revokePartnerAppInstall",
+      "pagination": false
+    },
+    "rotateDeveloperPartnerAppSecret": {
+      "resource": "developer",
+      "method": "rotatePartnerAppSecret",
+      "pagination": false
+    },
+    "listDeveloperPartnerInstalls": {
+      "resource": "developer",
+      "method": "listPartnerInstalls",
+      "idempotency": false,
+      "retry": false,
+      "response": {
+        "payloadPath": null
+      }
+    },
+    "listAPIRequestLogs": {
+      "resource": "developer",
+      "method": "listAPIRequestLogs",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "getAPIRequestLog": {
+      "resource": "developer",
+      "method": "getAPIRequestLog",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "getResourceTimeline": {
+      "resource": "developer",
+      "method": "getResourceTimeline",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "listDeveloperSandboxes": {
+      "resource": "developer",
+      "method": "listSandboxes",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createDeveloperSandbox": {
+      "resource": "developer",
+      "method": "createSandbox",
+      "pagination": false
+    },
+    "deleteDeveloperSandbox": {
+      "resource": "developer",
+      "method": "deleteSandbox",
+      "pagination": false
+    },
     "getDeveloperSandbox": {
       "resource": "developer",
       "method": "getSandbox",
+      "pagination": false,
+      "idempotency": false,
+      "retry": false
+    },
+    "resetDeveloperSandbox": {
+      "resource": "developer",
+      "method": "resetSandbox",
+      "pagination": false
+    },
+    "issueDeveloperSandboxTestKey": {
+      "resource": "developer",
+      "method": "issueSandboxTestKey",
+      "pagination": false
+    },
+    "listDevices": {
+      "resource": "devices",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createDevice": {
+      "resource": "devices",
+      "method": "create",
+      "pagination": false
+    },
+    "deleteDevice": {
+      "resource": "devices",
+      "method": "remove",
       "pagination": false
     },
     "getDevice": {
@@ -1163,6 +1161,27 @@
       "retry": false,
       "pagination": false
     },
+    "updateDevice": {
+      "resource": "devices",
+      "method": "update",
+      "pagination": false
+    },
+    "createDiscountPreview": {
+      "resource": "discountPreviews",
+      "method": "create",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "listDisputes": {
+      "resource": "disputes",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
     "getDispute": {
       "resource": "disputes",
       "method": "get",
@@ -1170,11 +1189,35 @@
       "retry": false,
       "pagination": false
     },
-    "getEffectiveSettings": {
-      "resource": "settings",
-      "method": "getEffective",
+    "createDisputeResponseSession": {
+      "resource": "disputes",
+      "method": "createResponseSession",
+      "pagination": false
+    },
+    "lookupEmailPreferenceLink": {
+      "resource": "emailPreferenceLinks",
+      "method": "lookup",
       "idempotency": false,
       "retry": false,
+      "pagination": false
+    },
+    "unsubscribeEmailPreferenceLink": {
+      "resource": "emailPreferenceLinks",
+      "method": "unsubscribe",
+      "pagination": false
+    },
+    "listFeedbackReports": {
+      "resource": "feedbackReports",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createFeedbackReport": {
+      "resource": "feedbackReports",
+      "method": "create",
       "pagination": false
     },
     "getFeedbackReport": {
@@ -1184,6 +1227,32 @@
       "retry": false,
       "pagination": false
     },
+    "createFile": {
+      "resource": "files",
+      "method": "create",
+      "pagination": false
+    },
+    "getFile": {
+      "resource": "files",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "completeFile": {
+      "resource": "files",
+      "method": "complete",
+      "pagination": false
+    },
+    "listFraudWarnings": {
+      "resource": "fraudWarnings",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
     "getFraudWarning": {
       "resource": "fraudWarnings",
       "method": "get",
@@ -1191,12 +1260,14 @@
       "retry": false,
       "pagination": false
     },
-    "getFulfillment": {
-      "resource": "fulfillments",
-      "method": "get",
+    "listFulfillmentEvents": {
+      "resource": "fulfillmentEvents",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
       "idempotency": false,
-      "retry": false,
-      "pagination": false
+      "retry": false
     },
     "getFulfillmentEvent": {
       "resource": "fulfillmentEvents",
@@ -1205,6 +1276,15 @@
       "retry": false,
       "pagination": false
     },
+    "listFulfillmentNotifications": {
+      "resource": "fulfillmentNotifications",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
     "getFulfillmentNotification": {
       "resource": "fulfillmentNotifications",
       "method": "get",
@@ -1212,11 +1292,687 @@
       "retry": false,
       "pagination": false
     },
+    "listFulfillments": {
+      "resource": "fulfillments",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "getFulfillment": {
+      "resource": "fulfillments",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updateFulfillment": {
+      "resource": "fulfillments",
+      "method": "update",
+      "pagination": false
+    },
+    "createFulfillmentEvent": {
+      "resource": "fulfillments",
+      "method": "createEvent",
+      "pagination": false
+    },
+    "createShipment": {
+      "resource": "fulfillments",
+      "method": "createShipment",
+      "pagination": false
+    },
+    "transitionFulfillment": {
+      "resource": "fulfillments",
+      "method": "transition",
+      "pagination": false
+    },
+    "listGiftCardFundingDispositions": {
+      "resource": "giftCardFundingDispositions",
+      "method": "list",
+      "idempotency": false,
+      "retry": false,
+      "response": {
+        "payloadPath": null
+      }
+    },
+    "createGiftCardFundingDisposition": {
+      "resource": "giftCardFundingDispositions",
+      "method": "create",
+      "pagination": false,
+      "example": {
+        "body": {
+          "dispute_id": "du_00000000000000000000000000",
+          "reason_message": "example"
+        }
+      }
+    },
+    "getGiftCardFundingDisposition": {
+      "resource": "giftCardFundingDispositions",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "listGiftCardLoads": {
+      "resource": "giftCardLoads",
+      "method": "list",
+      "idempotency": false,
+      "retry": false,
+      "response": {
+        "payloadPath": null
+      }
+    },
+    "getGiftCardLoad": {
+      "resource": "giftCardLoads",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "listGiftCardNotifications": {
+      "resource": "giftCardNotifications",
+      "method": "list",
+      "idempotency": false,
+      "retry": false,
+      "response": {
+        "payloadPath": null
+      }
+    },
+    "createGiftCardNotification": {
+      "resource": "giftCardNotifications",
+      "method": "create",
+      "pagination": false
+    },
+    "getGiftCardNotification": {
+      "resource": "giftCardNotifications",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "cancelGiftCardNotification": {
+      "resource": "giftCardNotifications",
+      "method": "cancel",
+      "pagination": false
+    },
+    "listGiftCardRedemptions": {
+      "resource": "giftCardRedemptions",
+      "method": "list",
+      "idempotency": false,
+      "retry": false,
+      "response": {
+        "payloadPath": null
+      }
+    },
+    "createGiftCardRedemption": {
+      "resource": "giftCardRedemptions",
+      "method": "create",
+      "pagination": false,
+      "example": {
+        "body": {
+          "amount_money": {
+            "amount": "100",
+            "currency": "USD"
+          },
+          "capture_mode": "automatic",
+          "gift_card_id": "example",
+          "sale_reference": "example"
+        }
+      }
+    },
+    "getGiftCardRedemption": {
+      "resource": "giftCardRedemptions",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "cancelGiftCardRedemption": {
+      "resource": "giftCardRedemptions",
+      "method": "cancel",
+      "pagination": false
+    },
+    "captureGiftCardRedemption": {
+      "resource": "giftCardRedemptions",
+      "method": "capture",
+      "pagination": false
+    },
+    "listGiftCardTransactions": {
+      "resource": "giftCardTransactions",
+      "method": "list",
+      "idempotency": false,
+      "retry": false,
+      "response": {
+        "payloadPath": null
+      }
+    },
+    "listGiftCards": {
+      "resource": "giftCards",
+      "method": "list",
+      "idempotency": false,
+      "retry": false,
+      "response": {
+        "payloadPath": null
+      }
+    },
+    "createGiftCard": {
+      "resource": "giftCards",
+      "method": "create",
+      "pagination": false
+    },
+    "lookupGiftCard": {
+      "resource": "giftCards",
+      "method": "lookup",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "getGiftCard": {
+      "resource": "giftCards",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updateGiftCard": {
+      "resource": "giftCards",
+      "method": "update",
+      "pagination": false
+    },
+    "adjustGiftCardBalance": {
+      "resource": "giftCards",
+      "method": "adjustBalance",
+      "pagination": false,
+      "example": {
+        "gift_card_id": "example",
+        "body": {
+          "amount_money": {
+            "amount": "100",
+            "currency": "USD"
+          },
+          "reason": "complimentary"
+        }
+      }
+    },
+    "cashOutGiftCard": {
+      "resource": "giftCards",
+      "method": "cashOut",
+      "pagination": false,
+      "example": {
+        "gift_card_id": "example",
+        "body": {
+          "amount_money": {
+            "amount": "100",
+            "currency": "USD"
+          },
+          "cash_out_reference": "example"
+        }
+      }
+    },
+    "createGiftCardLoad": {
+      "resource": "giftCards",
+      "method": "createLoad",
+      "pagination": false,
+      "example": {
+        "gift_card_id": "example",
+        "body": {
+          "source": {
+            "external_reference_id": "example",
+            "funding_source_type": "external_payment",
+            "customer_id": "example"
+          },
+          "value_money": {
+            "amount": "100",
+            "currency": "USD"
+          },
+          "consideration_money": {
+            "amount": "100",
+            "currency": "USD"
+          }
+        }
+      }
+    },
+    "rotateGiftCardCode": {
+      "resource": "giftCards",
+      "method": "rotateCode",
+      "pagination": false
+    },
+    "transitionGiftCard": {
+      "resource": "giftCards",
+      "method": "transition",
+      "pagination": false
+    },
+    "listInventoryAdjustments": {
+      "resource": "inventoryAdjustments",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createInventoryAdjustment": {
+      "resource": "inventoryAdjustments",
+      "method": "create",
+      "pagination": false
+    },
+    "getInventoryAdjustment": {
+      "resource": "inventoryAdjustments",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "listInventoryAllocationPolicies": {
+      "resource": "inventoryAllocationPolicies",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createInventoryAllocationPolicy": {
+      "resource": "inventoryAllocationPolicies",
+      "method": "create",
+      "pagination": false
+    },
+    "deleteInventoryAllocationPolicy": {
+      "resource": "inventoryAllocationPolicies",
+      "method": "remove",
+      "pagination": false
+    },
+    "getInventoryAllocationPolicy": {
+      "resource": "inventoryAllocationPolicies",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updateInventoryAllocationPolicy": {
+      "resource": "inventoryAllocationPolicies",
+      "method": "update",
+      "pagination": false
+    },
+    "listInventoryAllocationPolicyRevisions": {
+      "resource": "inventoryAllocationPolicies",
+      "method": "listRevisions",
+      "idempotency": false,
+      "retry": false,
+      "response": {
+        "payloadPath": null
+      }
+    },
+    "getInventoryAllocationPolicyRevision": {
+      "resource": "inventoryAllocationPolicies",
+      "method": "getRevision",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "listInventoryCounts": {
+      "resource": "inventoryCounts",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createInventoryCount": {
+      "resource": "inventoryCounts",
+      "method": "create",
+      "pagination": false
+    },
+    "getInventoryCount": {
+      "resource": "inventoryCounts",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updateInventoryCount": {
+      "resource": "inventoryCounts",
+      "method": "update",
+      "pagination": false,
+      "example": {
+        "body": {
+          "expected_version": "2",
+          "observations": [
+            {
+              "counted_damaged_quantity": "0",
+              "counted_on_hand_quantity": "12",
+              "counted_quality_control_quantity": "0",
+              "counted_quarantined_quantity": "0",
+              "inventory_item_id": "invi_01K0P7W6A4N9F3J2T8Q5R1C6XM",
+              "expected_physical_version": "0"
+            }
+          ],
+          "source_system": {
+            "type": "manual"
+          }
+        },
+        "Idempotency-Key": "example",
+        "inventory_count_id": "example"
+      }
+    },
+    "transitionInventoryCount": {
+      "resource": "inventoryCounts",
+      "method": "transition",
+      "pagination": false
+    },
+    "listInventoryItems": {
+      "resource": "inventoryItems",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createInventoryItem": {
+      "resource": "inventoryItems",
+      "method": "create",
+      "pagination": false
+    },
+    "deleteInventoryItem": {
+      "resource": "inventoryItems",
+      "method": "remove",
+      "pagination": false
+    },
+    "getInventoryItem": {
+      "resource": "inventoryItems",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updateInventoryItem": {
+      "resource": "inventoryItems",
+      "method": "update",
+      "pagination": false
+    },
+    "listInventoryLevels": {
+      "resource": "inventoryLevels",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "getInventoryLevel": {
+      "resource": "inventoryLevels",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updateInventoryLevel": {
+      "resource": "inventoryLevels",
+      "method": "update",
+      "pagination": false
+    },
+    "listInventoryMovements": {
+      "resource": "inventoryMovements",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "getInventoryMovement": {
+      "resource": "inventoryMovements",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "listInventoryReceipts": {
+      "resource": "inventoryReceipts",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createInventoryReceipt": {
+      "resource": "inventoryReceipts",
+      "method": "create",
+      "pagination": false
+    },
+    "getInventoryReceipt": {
+      "resource": "inventoryReceipts",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "listInventoryReservations": {
+      "resource": "inventoryReservations",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createInventoryReservation": {
+      "resource": "inventoryReservations",
+      "method": "create",
+      "pagination": false
+    },
+    "getInventoryReservation": {
+      "resource": "inventoryReservations",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updateInventoryReservation": {
+      "resource": "inventoryReservations",
+      "method": "update",
+      "pagination": false
+    },
+    "transitionInventoryReservation": {
+      "resource": "inventoryReservations",
+      "method": "transition",
+      "pagination": false
+    },
+    "listInventoryTransfers": {
+      "resource": "inventoryTransfers",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createInventoryTransfer": {
+      "resource": "inventoryTransfers",
+      "method": "create",
+      "pagination": false
+    },
+    "getInventoryTransfer": {
+      "resource": "inventoryTransfers",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updateInventoryTransfer": {
+      "resource": "inventoryTransfers",
+      "method": "update",
+      "pagination": false
+    },
+    "transitionInventoryTransfer": {
+      "resource": "inventoryTransfers",
+      "method": "transition",
+      "pagination": false
+    },
+    "listInvoicePaymentTerms": {
+      "resource": "invoicePaymentTerms",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createInvoicePaymentTerm": {
+      "resource": "invoicePaymentTerms",
+      "method": "create",
+      "pagination": false
+    },
+    "deleteInvoicePaymentTerm": {
+      "resource": "invoicePaymentTerms",
+      "method": "remove",
+      "pagination": false
+    },
+    "getInvoicePaymentTerm": {
+      "resource": "invoicePaymentTerms",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updateInvoicePaymentTerm": {
+      "resource": "invoicePaymentTerms",
+      "method": "update",
+      "pagination": false
+    },
+    "listInvoices": {
+      "resource": "invoices",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createInvoice": {
+      "resource": "invoices",
+      "method": "create",
+      "pagination": false
+    },
     "getInvoice": {
       "resource": "invoices",
       "method": "get",
       "idempotency": false,
       "retry": false,
+      "pagination": false
+    },
+    "updateInvoice": {
+      "resource": "invoices",
+      "method": "update",
+      "pagination": false
+    },
+    "listInvoiceActivities": {
+      "resource": "invoices",
+      "method": "listActivities",
+      "idempotency": false,
+      "retry": false,
+      "response": {
+        "payloadPath": null
+      }
+    },
+    "getOrCreateInvoiceCheckoutSession": {
+      "resource": "invoices",
+      "method": "getOrCreateCheckoutSession",
+      "pagination": false
+    },
+    "collectInvoice": {
+      "resource": "invoices",
+      "method": "collect",
+      "pagination": false
+    },
+    "listInvoiceDeliveryAttempts": {
+      "resource": "invoices",
+      "method": "listDeliveryAttempts",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "issueInvoice": {
+      "resource": "invoices",
+      "method": "issue",
+      "pagination": false
+    },
+    "createInvoiceLateFee": {
+      "resource": "invoices",
+      "method": "createLateFee",
+      "pagination": false
+    },
+    "waiveInvoiceLateFee": {
+      "resource": "invoices",
+      "method": "waiveLateFee",
+      "pagination": false
+    },
+    "listInvoiceManualPayments": {
+      "resource": "invoices",
+      "method": "listManualPayments",
+      "idempotency": false,
+      "retry": false,
+      "response": {
+        "payloadPath": null
+      }
+    },
+    "createInvoiceManualPayment": {
+      "resource": "invoices",
+      "method": "createManualPayment",
+      "pagination": false,
+      "example": {
+        "invoice_id": "example",
+        "body": {
+          "amount_money": {
+            "amount": "100",
+            "currency": "USD"
+          }
+        }
+      }
+    },
+    "getInvoiceManualPayment": {
+      "resource": "invoices",
+      "method": "getManualPayment",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "reverseInvoiceManualPayment": {
+      "resource": "invoices",
+      "method": "reverseManualPayment",
+      "pagination": false
+    },
+    "markInvoiceUncollectible": {
+      "resource": "invoices",
+      "method": "markUncollectible",
+      "pagination": false
+    },
+    "listInvoicePaymentAttempts": {
+      "resource": "invoices",
+      "method": "listPaymentAttempts",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "getInvoicePaymentAttempt": {
+      "resource": "invoices",
+      "method": "getPaymentAttempt",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "cancelInvoicePaymentAttempt": {
+      "resource": "invoices",
+      "method": "cancelPaymentAttempt",
       "pagination": false
     },
     "getInvoicePDF": {
@@ -1229,18 +1985,38 @@
       "retry": false,
       "pagination": false
     },
-    "getInvoicePaymentAttempt": {
+    "regenerateInvoicePublicLink": {
       "resource": "invoices",
-      "method": "getPaymentAttempt",
-      "idempotency": false,
-      "retry": false,
+      "method": "regeneratePublicLink",
       "pagination": false
     },
-    "getInvoicePaymentTerm": {
-      "resource": "invoicePaymentTerms",
-      "method": "get",
+    "sendInvoiceReminder": {
+      "resource": "invoices",
+      "method": "sendReminder",
+      "pagination": false
+    },
+    "voidInvoice": {
+      "resource": "invoices",
+      "method": "voidResource",
+      "pagination": false
+    },
+    "listLocations": {
+      "resource": "locations",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
       "idempotency": false,
-      "retry": false,
+      "retry": false
+    },
+    "createLocation": {
+      "resource": "locations",
+      "method": "create",
+      "pagination": false
+    },
+    "deleteLocation": {
+      "resource": "locations",
+      "method": "remove",
       "pagination": false
     },
     "getLocation": {
@@ -1250,11 +2026,40 @@
       "retry": false,
       "pagination": false
     },
+    "updateLocation": {
+      "resource": "locations",
+      "method": "update",
+      "pagination": false
+    },
     "getMe": {
       "resource": "me",
       "method": "get",
       "idempotency": false,
       "retry": false,
+      "pagination": false
+    },
+    "updateMe": {
+      "resource": "me",
+      "method": "update",
+      "pagination": false
+    },
+    "listMeAddresses": {
+      "resource": "me",
+      "method": "listAddresses",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createMeAddress": {
+      "resource": "me",
+      "method": "createAddress",
+      "pagination": false
+    },
+    "deleteMeAddress": {
+      "resource": "me",
+      "method": "deleteAddress",
       "pagination": false
     },
     "getMeAddress": {
@@ -1263,6 +2068,170 @@
       "idempotency": false,
       "retry": false,
       "pagination": false
+    },
+    "updateMeAddress": {
+      "resource": "me",
+      "method": "updateAddress",
+      "pagination": false
+    },
+    "setDefaultMeAddress": {
+      "resource": "me",
+      "method": "setDefaultAddress",
+      "pagination": false
+    },
+    "listMeDeletionRequests": {
+      "resource": "me",
+      "method": "listDeletionRequests",
+      "idempotency": false,
+      "retry": false,
+      "response": {
+        "payloadPath": null
+      }
+    },
+    "createMeDeletionRequest": {
+      "resource": "me",
+      "method": "createDeletionRequest",
+      "pagination": false
+    },
+    "getMeDeletionRequest": {
+      "resource": "me",
+      "method": "getDeletionRequest",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "createMeEmailChangeRequest": {
+      "resource": "me",
+      "method": "createEmailChangeRequest",
+      "pagination": false
+    },
+    "confirmMeEmailChangeRequest": {
+      "resource": "me",
+      "method": "confirmEmailChangeRequest",
+      "pagination": false,
+      "example": {
+        "email_change_request_id": "example",
+        "body": {
+          "new_email_code": "123456"
+        }
+      }
+    },
+    "getMeEmailPreferences": {
+      "resource": "me",
+      "method": "getEmailPreferences",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updateMeEmailPreferences": {
+      "resource": "me",
+      "method": "updateEmailPreferences",
+      "pagination": false
+    },
+    "listMeFlintWalletPaymentMethods": {
+      "resource": "me",
+      "method": "listFlintWalletPaymentMethods",
+      "idempotency": false,
+      "retry": false,
+      "response": {
+        "payloadPath": null
+      },
+      "pagination": false
+    },
+    "createMeFlintWalletStoreSetup": {
+      "resource": "me",
+      "method": "createFlintWalletStoreSetup",
+      "pagination": false
+    },
+    "listMeFulfillmentEvents": {
+      "resource": "me",
+      "method": "listFulfillmentEvents",
+      "idempotency": false,
+      "retry": false,
+      "response": {
+        "payloadPath": null
+      }
+    },
+    "listMeFulfillments": {
+      "resource": "me",
+      "method": "listFulfillments",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "getMeFulfillment": {
+      "resource": "me",
+      "method": "getFulfillment",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "listMeGiftCards": {
+      "resource": "me",
+      "method": "listGiftCards",
+      "idempotency": false,
+      "retry": false,
+      "response": {
+        "payloadPath": null
+      }
+    },
+    "saveMeGiftCard": {
+      "resource": "me",
+      "method": "saveGiftCard",
+      "pagination": false
+    },
+    "removeMeGiftCard": {
+      "resource": "me",
+      "method": "removeGiftCard",
+      "pagination": false
+    },
+    "getMeGiftCard": {
+      "resource": "me",
+      "method": "getGiftCard",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "listMeGiftCardTransactions": {
+      "resource": "me",
+      "method": "listGiftCardTransactions",
+      "idempotency": false,
+      "retry": false,
+      "response": {
+        "payloadPath": null
+      }
+    },
+    "listMeInvoices": {
+      "resource": "me",
+      "method": "listInvoices",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "getMeInvoice": {
+      "resource": "me",
+      "method": "getInvoice",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "createMeInvoiceCheckoutSession": {
+      "resource": "me",
+      "method": "createInvoiceCheckoutSession",
+      "pagination": false
+    },
+    "listMeCreditNotes": {
+      "resource": "me",
+      "method": "listCreditNotes",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
     },
     "getMeCreditNote": {
       "resource": "me",
@@ -1281,20 +2250,6 @@
       "retry": false,
       "pagination": false
     },
-    "getMeDeletionRequest": {
-      "resource": "me",
-      "method": "getDeletionRequest",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getMeInvoice": {
-      "resource": "me",
-      "method": "getInvoice",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
     "getMeInvoicePDF": {
       "resource": "me",
       "method": "getInvoicePDF",
@@ -1305,11 +2260,141 @@
       "retry": false,
       "pagination": false
     },
+    "listMeOrders": {
+      "resource": "me",
+      "method": "listOrders",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
     "getMeOrder": {
       "resource": "me",
       "method": "getOrder",
       "idempotency": false,
       "retry": false,
+      "pagination": false
+    },
+    "listMeOrderActivities": {
+      "resource": "me",
+      "method": "listOrderActivities",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "sendMeOrderReceipt": {
+      "resource": "me",
+      "method": "sendOrderReceipt",
+      "pagination": false
+    },
+    "listMePackages": {
+      "resource": "me",
+      "method": "listPackages",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "getMePackage": {
+      "resource": "me",
+      "method": "getPackage",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "listMePaymentMethods": {
+      "resource": "me",
+      "method": "listPaymentMethods",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createMePaymentMethod": {
+      "resource": "me",
+      "method": "createPaymentMethod",
+      "pagination": false
+    },
+    "deleteMePaymentMethod": {
+      "resource": "me",
+      "method": "removePaymentMethod",
+      "pagination": false
+    },
+    "getMePaymentMethod": {
+      "resource": "me",
+      "method": "getPaymentMethod",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "listMePayments": {
+      "resource": "me",
+      "method": "listPayments",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "getMePayment": {
+      "resource": "me",
+      "method": "getPayment",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "listMeRefunds": {
+      "resource": "me",
+      "method": "listRefunds",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "getMeRefund": {
+      "resource": "me",
+      "method": "getRefund",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "createMeReturnPreview": {
+      "resource": "me",
+      "method": "createReturnPreview",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "getMeReturnResolution": {
+      "resource": "me",
+      "method": "getReturnResolution",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "createMeReturnResolutionCheckoutSession": {
+      "resource": "me",
+      "method": "createReturnResolutionCheckoutSession",
+      "pagination": false
+    },
+    "listMeReturns": {
+      "resource": "me",
+      "method": "listReturns",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createMeReturn": {
+      "resource": "me",
+      "method": "createReturn",
       "pagination": false
     },
     "getMeReturn": {
@@ -1319,6 +2404,54 @@
       "retry": false,
       "pagination": false
     },
+    "cancelMeReturn": {
+      "resource": "me",
+      "method": "cancelReturn",
+      "pagination": false
+    },
+    "revokeMeSession": {
+      "resource": "me",
+      "method": "revokeSession",
+      "pagination": false
+    },
+    "listMeShipments": {
+      "resource": "me",
+      "method": "listShipments",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "getMeShipment": {
+      "resource": "me",
+      "method": "getShipment",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "createMeSubscriptionPreview": {
+      "resource": "me",
+      "method": "createSubscriptionPreview",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false,
+      "example": {
+        "body": {
+          "mode": "next_renewal",
+          "subscription_id": "sub_00000000000000000000000000"
+        }
+      }
+    },
+    "listMeSubscriptions": {
+      "resource": "me",
+      "method": "listSubscriptions",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
     "getMeSubscription": {
       "resource": "me",
       "method": "getSubscription",
@@ -1326,9 +2459,132 @@
       "retry": false,
       "pagination": false
     },
+    "updateMeSubscription": {
+      "resource": "me",
+      "method": "updateSubscription",
+      "pagination": false
+    },
+    "changeMeSubscriptionBillingInterval": {
+      "resource": "me",
+      "method": "changeSubscriptionBillingInterval",
+      "pagination": false
+    },
+    "cancelMeSubscription": {
+      "resource": "me",
+      "method": "cancelSubscription",
+      "pagination": false
+    },
+    "changeMeSubscriptionDelivery": {
+      "resource": "me",
+      "method": "changeSubscriptionDelivery",
+      "pagination": false,
+      "example": {
+        "subscription_id": "example",
+        "body": {
+          "delivery": {
+            "delivery_method_id": "dmet_00000000000000000000000000",
+            "destination": {
+              "type": "customer_address",
+              "customer_address_id": "caddr_00000000000000000000000000"
+            },
+            "type": "shipment"
+          }
+        }
+      }
+    },
+    "updateMeSubscriptionLineItem": {
+      "resource": "me",
+      "method": "updateSubscriptionLineItem",
+      "pagination": false,
+      "example": {
+        "subscription_id": "example",
+        "subscription_line_item_id": "example",
+        "body": {
+          "variant_id": "var_00000000000000000000000000"
+        }
+      }
+    },
+    "pauseMeSubscription": {
+      "resource": "me",
+      "method": "pauseSubscription",
+      "pagination": false
+    },
+    "changeMeSubscriptionPaymentMethod": {
+      "resource": "me",
+      "method": "changeSubscriptionPaymentMethod",
+      "pagination": false
+    },
+    "createMeSubscriptionPaymentRetry": {
+      "resource": "me",
+      "method": "createSubscriptionPaymentRetry",
+      "pagination": false
+    },
+    "getMeSubscriptionPaymentRetry": {
+      "resource": "me",
+      "method": "getSubscriptionPaymentRetry",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "changeMeSubscriptionQuantity": {
+      "resource": "me",
+      "method": "changeSubscriptionQuantity",
+      "pagination": false
+    },
+    "reactivateMeSubscription": {
+      "resource": "me",
+      "method": "reactivateSubscription",
+      "pagination": false
+    },
+    "renewMeSubscription": {
+      "resource": "me",
+      "method": "renewSubscription",
+      "pagination": false
+    },
+    "resumeMeSubscription": {
+      "resource": "me",
+      "method": "resumeSubscription",
+      "pagination": false
+    },
+    "skipMeSubscriptionCycle": {
+      "resource": "me",
+      "method": "skipSubscriptionCycle",
+      "pagination": false
+    },
     "getMerchant": {
       "resource": "merchants",
       "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updateMerchant": {
+      "resource": "merchants",
+      "method": "update",
+      "pagination": false
+    },
+    "createMerchantAccountSession": {
+      "resource": "merchantAccountSessions",
+      "method": "create",
+      "pagination": false,
+      "retry": {
+        "maxAttempts": 1
+      }
+    },
+    "refreshMerchantAccountSession": {
+      "resource": "merchantAccountSessions",
+      "method": "refresh",
+      "pagination": false,
+      "retry": {
+        "maxAttempts": 1
+      }
+    },
+    "listMerchantBillingBalances": {
+      "resource": "merchantBillingBalances",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
       "idempotency": false,
       "retry": false,
       "pagination": false
@@ -1340,11 +2596,48 @@
       "retry": false,
       "pagination": false
     },
-    "getMerchantSubscriptionInvoice": {
-      "resource": "merchantSubscriptionInvoices",
+    "listMerchantBillingEntries": {
+      "resource": "merchantBillingEntries",
+      "method": "list",
+      "idempotency": false,
+      "retry": false,
+      "response": {
+        "payloadPath": null
+      }
+    },
+    "listMerchantBillingInvoices": {
+      "resource": "merchantBillingInvoices",
+      "method": "list",
+      "idempotency": false,
+      "retry": false,
+      "response": {
+        "payloadPath": null
+      }
+    },
+    "getMerchantBillingInvoice": {
+      "resource": "merchantBillingInvoices",
       "method": "get",
       "idempotency": false,
       "retry": false,
+      "pagination": false
+    },
+    "listModifierGroups": {
+      "resource": "modifierGroups",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createModifierGroup": {
+      "resource": "modifierGroups",
+      "method": "create",
+      "pagination": false
+    },
+    "deleteModifierGroup": {
+      "resource": "modifierGroups",
+      "method": "remove",
       "pagination": false
     },
     "getModifierGroup": {
@@ -1354,6 +2647,30 @@
       "retry": false,
       "pagination": false
     },
+    "updateModifierGroup": {
+      "resource": "modifierGroups",
+      "method": "update",
+      "pagination": false
+    },
+    "listModifierSets": {
+      "resource": "modifierSets",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createModifierSet": {
+      "resource": "modifierSets",
+      "method": "create",
+      "pagination": false
+    },
+    "deleteModifierSet": {
+      "resource": "modifierSets",
+      "method": "remove",
+      "pagination": false
+    },
     "getModifierSet": {
       "resource": "modifierSets",
       "method": "get",
@@ -1361,11 +2678,53 @@
       "retry": false,
       "pagination": false
     },
+    "updateModifierSet": {
+      "resource": "modifierSets",
+      "method": "update",
+      "pagination": false
+    },
+    "authorizePartnerInstall": {
+      "resource": "oauth",
+      "method": "authorizePartnerInstall",
+      "response": {
+        "return": "result"
+      },
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "previewPartnerInstallAuthorization": {
+      "resource": "oauth",
+      "method": "previewPartnerInstallAuthorization",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "advanceOnboarding": {
+      "resource": "onboarding",
+      "method": "advance",
+      "pagination": false
+    },
+    "createOnboardingAPIKey": {
+      "resource": "onboarding",
+      "method": "createAPIKey",
+      "pagination": false
+    },
+    "startOnboarding": {
+      "resource": "onboarding",
+      "method": "startFlow",
+      "pagination": false
+    },
     "getOnboardingState": {
       "resource": "onboarding",
       "method": "getState",
       "idempotency": false,
       "retry": false,
+      "pagination": false
+    },
+    "verifyOnboardingEmail": {
+      "resource": "onboarding",
+      "method": "verifyEmailCode",
       "pagination": false
     },
     "getOpenAPISpec": {
@@ -1378,14 +2737,18 @@
       "retry": false,
       "pagination": false
     },
-    "getOrCreateInvoiceCheckoutSession": {
-      "resource": "invoices",
-      "method": "getOrCreateCheckoutSession",
-      "pagination": false
+    "listOrders": {
+      "resource": "orders",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
     },
-    "getOrCreateReturnResolutionCheckoutSession": {
-      "resource": "returnResolutions",
-      "method": "getOrCreateCheckoutSession",
+    "createOrder": {
+      "resource": "orders",
+      "method": "create",
       "pagination": false
     },
     "getOrder": {
@@ -1395,923 +2758,15 @@
       "retry": false,
       "pagination": false
     },
-    "getOrderCurrentDeliverySelection": {
+    "updateOrder": {
       "resource": "orders",
-      "method": "getCurrentDeliverySelection",
-      "idempotency": false,
-      "retry": false,
+      "method": "update",
       "pagination": false
     },
-    "getOrderPaymentAttempt": {
+    "createOrderAccessLink": {
       "resource": "orders",
-      "method": "getPaymentAttempt",
-      "idempotency": false,
-      "retry": false,
+      "method": "createAccessLink",
       "pagination": false
-    },
-    "getOrganization": {
-      "resource": "organizations",
-      "method": "get",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getPackage": {
-      "resource": "packages",
-      "method": "get",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getPackageItem": {
-      "resource": "packages",
-      "method": "getItem",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getPaymentIntent": {
-      "resource": "paymentIntents",
-      "method": "get",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getPaymentLink": {
-      "resource": "paymentLinks",
-      "method": "get",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getPaymentLinkPublic": {
-      "resource": "paymentLinks",
-      "method": "getPublic",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getPaymentMethod": {
-      "resource": "paymentMethods",
-      "method": "get",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getPaymentMethodDomain": {
-      "resource": "paymentMethodDomains",
-      "method": "get",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getPaymentVolumeTimeseries": {
-      "resource": "analytics",
-      "method": "getPaymentVolumeTimeseries",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getPayout": {
-      "resource": "payouts",
-      "method": "get",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getPayoutDestination": {
-      "resource": "payoutSettings",
-      "method": "getPayoutDestination",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getPayoutSettings": {
-      "resource": "payoutSettings",
-      "method": "get",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getProduct": {
-      "resource": "products",
-      "method": "get",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getProductOption": {
-      "resource": "products",
-      "method": "getOption",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getProductVariant": {
-      "resource": "products",
-      "method": "getVariant",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getPromotion": {
-      "resource": "promotions",
-      "method": "get",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getRefund": {
-      "resource": "refunds",
-      "method": "get",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getReport": {
-      "resource": "reports",
-      "method": "get",
-      "polling": {
-        "state": "data.status",
-        "success": ["succeeded"],
-        "failure": ["failed"],
-        "intervalMs": 1000
-      },
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getReportDownload": {
-      "resource": "reportDownloads",
-      "method": "get",
-      "response": {
-        "return": "result"
-      },
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getResourceTimeline": {
-      "resource": "developer",
-      "method": "getResourceTimeline",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getReturn": {
-      "resource": "returns",
-      "method": "get",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getReturnDisposition": {
-      "resource": "returnDispositions",
-      "method": "get",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getReturnInspection": {
-      "resource": "returnInspections",
-      "method": "get",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getReturnLineItem": {
-      "resource": "returns",
-      "method": "getLineItem",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getReturnPolicy": {
-      "resource": "returnPolicies",
-      "method": "get",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getReturnPolicyRevision": {
-      "resource": "returnPolicies",
-      "method": "getRevision",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getReturnReason": {
-      "resource": "returnReasons",
-      "method": "get",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getReturnReceipt": {
-      "resource": "returnReceipts",
-      "method": "get",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getReturnResolution": {
-      "resource": "returnResolutions",
-      "method": "get",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getReview": {
-      "resource": "reviews",
-      "method": "get",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getRiskList": {
-      "resource": "riskLists",
-      "method": "get",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getRiskListItem": {
-      "resource": "riskLists",
-      "method": "getItem",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getRiskRule": {
-      "resource": "riskRules",
-      "method": "get",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getRiskRuleAttributeRegistry": {
-      "resource": "riskRules",
-      "method": "getAttributeRegistry",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getSettings": {
-      "resource": "settings",
-      "method": "get",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getShipment": {
-      "resource": "shipments",
-      "method": "get",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getSubscription": {
-      "resource": "subscriptions",
-      "method": "get",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getSubscriptionAnalytics": {
-      "resource": "analytics",
-      "method": "getSubscription",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getSubscriptionPaymentRetry": {
-      "resource": "subscriptions",
-      "method": "getPaymentRetry",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getSubscriptionPlan": {
-      "resource": "subscriptionPlans",
-      "method": "get",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getWebhookDelivery": {
-      "resource": "webhookDeliveries",
-      "method": "get",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getWebhookEndpoint": {
-      "resource": "webhookEndpoints",
-      "method": "get",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "getWebhookEvent": {
-      "resource": "webhookEvents",
-      "method": "get",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "grantOrganizationMembership": {
-      "resource": "organizations",
-      "method": "grantMembership",
-      "pagination": false
-    },
-    "issueCreditNote": {
-      "resource": "creditNotes",
-      "method": "issue",
-      "pagination": false
-    },
-    "issueDeveloperSandboxTestKey": {
-      "resource": "developer",
-      "method": "issueSandboxTestKey",
-      "pagination": false
-    },
-    "issueInvoice": {
-      "resource": "invoices",
-      "method": "issue",
-      "pagination": false
-    },
-    "listAPIKeys": {
-      "resource": "apiKeys",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listBalanceTransactions": {
-      "resource": "balanceTransactions",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listBalances": {
-      "resource": "balances",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "listBundleComponents": {
-      "resource": "bundles",
-      "method": "listComponents",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listBundles": {
-      "resource": "bundles",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listCLIContexts": {
-      "hidden": true,
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "listCapabilities": {
-      "resource": "capabilities",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listCategories": {
-      "resource": "categories",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listCheckoutSessions": {
-      "resource": "checkoutSessions",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listCreditNoteAllocations": {
-      "resource": "creditNotes",
-      "method": "listAllocations",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listCreditNoteRefunds": {
-      "resource": "creditNotes",
-      "method": "listRefunds",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listCreditNotes": {
-      "resource": "creditNotes",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listCurrentAPIKeyRequestLogs": {
-      "resource": "developer",
-      "method": "listCurrentAPIKeyRequestLogs",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listCustomerAddresses": {
-      "resource": "customers",
-      "method": "listAddresses",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listCustomerDeletionRequests": {
-      "resource": "customerDeletionRequests",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listCustomers": {
-      "resource": "customers",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listDeliveryLocationSets": {
-      "resource": "deliveryLocationSets",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listDeliveryMethods": {
-      "resource": "deliveryMethods",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listDeliveryProfiles": {
-      "resource": "deliveryProfiles",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listDeliveryQuotes": {
-      "resource": "deliveryQuotes",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listDeliveryRateCallbacks": {
-      "resource": "deliveryRateCallbacks",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listDeliveryZones": {
-      "resource": "deliveryZones",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listDeveloperPartnerAppInstalls": {
-      "resource": "developer",
-      "method": "listPartnerAppInstalls",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listDeveloperPartnerApps": {
-      "resource": "developer",
-      "method": "listPartnerApps",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listDeveloperSandboxes": {
-      "resource": "developer",
-      "method": "listSandboxes",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listDevices": {
-      "resource": "devices",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listDisputes": {
-      "resource": "disputes",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listFeedbackReports": {
-      "resource": "feedbackReports",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listFraudWarnings": {
-      "resource": "fraudWarnings",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listFulfillmentEvents": {
-      "resource": "fulfillmentEvents",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listFulfillmentNotifications": {
-      "resource": "fulfillmentNotifications",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listFulfillments": {
-      "resource": "fulfillments",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listInventoryAdjustments": {
-      "resource": "inventoryAdjustments",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listInventoryAllocationPolicies": {
-      "resource": "inventoryAllocationPolicies",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listInventoryCounts": {
-      "resource": "inventoryCounts",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listInventoryItems": {
-      "resource": "inventoryItems",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listInventoryLevels": {
-      "resource": "inventoryLevels",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listInventoryMovements": {
-      "resource": "inventoryMovements",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listInventoryReceipts": {
-      "resource": "inventoryReceipts",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listInventoryReservations": {
-      "resource": "inventoryReservations",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listInventoryTransfers": {
-      "resource": "inventoryTransfers",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listInvoiceDeliveryAttempts": {
-      "resource": "invoices",
-      "method": "listDeliveryAttempts",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listInvoiceEvents": {
-      "resource": "invoices",
-      "method": "listEvents",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listInvoicePaymentAttempts": {
-      "resource": "invoices",
-      "method": "listPaymentAttempts",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listInvoicePaymentTerms": {
-      "resource": "invoicePaymentTerms",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listInvoices": {
-      "resource": "invoices",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listLocations": {
-      "resource": "locations",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listMeAddresses": {
-      "resource": "me",
-      "method": "listAddresses",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listMeCreditNotes": {
-      "resource": "me",
-      "method": "listCreditNotes",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listMeFulfillments": {
-      "resource": "me",
-      "method": "listFulfillments",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listMeInvoices": {
-      "resource": "me",
-      "method": "listInvoices",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listMeOrderActivities": {
-      "resource": "me",
-      "method": "listOrderActivities",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listMeOrders": {
-      "resource": "me",
-      "method": "listOrders",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listMePackages": {
-      "resource": "me",
-      "method": "listPackages",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listMePaymentMethods": {
-      "resource": "me",
-      "method": "listPaymentMethods",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listMePayments": {
-      "resource": "me",
-      "method": "listPayments",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listMeRefunds": {
-      "resource": "me",
-      "method": "listRefunds",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listMeReturns": {
-      "resource": "me",
-      "method": "listReturns",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listMeShipments": {
-      "resource": "me",
-      "method": "listShipments",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listMeSubscriptions": {
-      "resource": "me",
-      "method": "listSubscriptions",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listMerchantBillingBalances": {
-      "resource": "merchantBillingBalances",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listMerchantSubscriptionInvoices": {
-      "resource": "merchantSubscriptionInvoices",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listModifierGroups": {
-      "resource": "modifierGroups",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
-    },
-    "listModifierSets": {
-      "resource": "modifierSets",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
     },
     "listOrderActivities": {
       "resource": "orders",
@@ -2322,6 +2777,101 @@
       "idempotency": false,
       "retry": false
     },
+    "createOrderCharge": {
+      "resource": "orders",
+      "method": "createCharge",
+      "pagination": false,
+      "example": {
+        "order_id": "example",
+        "body": {
+          "charge": {
+            "name": "example",
+            "type": "service_fee",
+            "amount_money": {
+              "amount": "100",
+              "currency": "USD"
+            }
+          }
+        }
+      }
+    },
+    "deleteOrderCharge": {
+      "resource": "orders",
+      "method": "deleteCharge",
+      "pagination": false
+    },
+    "updateOrderCharge": {
+      "resource": "orders",
+      "method": "updateCharge",
+      "pagination": false
+    },
+    "closeOrder": {
+      "resource": "orders",
+      "method": "closeSession",
+      "pagination": false
+    },
+    "getOrderCurrentDeliverySelection": {
+      "resource": "orders",
+      "method": "getCurrentDeliverySelection",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "applyOrderDiscount": {
+      "resource": "orders",
+      "method": "applyDiscount",
+      "pagination": false
+    },
+    "removeOrderDiscounts": {
+      "resource": "orders",
+      "method": "removeDiscounts",
+      "pagination": false
+    },
+    "repriceOrderDiscounts": {
+      "resource": "orders",
+      "method": "repriceDiscounts",
+      "pagination": false
+    },
+    "createFulfillment": {
+      "resource": "orders",
+      "method": "createFulfillment",
+      "pagination": false
+    },
+    "applyOrderGiftCard": {
+      "resource": "orders",
+      "method": "applyGiftCard",
+      "pagination": false
+    },
+    "removeOrderGiftCard": {
+      "resource": "orders",
+      "method": "removeGiftCard",
+      "pagination": false
+    },
+    "resolveOrderInventoryException": {
+      "resource": "orders",
+      "method": "resolveInventoryException",
+      "pagination": false
+    },
+    "createOrderLineItems": {
+      "resource": "orders",
+      "method": "createLineItems",
+      "pagination": false
+    },
+    "deleteOrderLineItem": {
+      "resource": "orders",
+      "method": "deleteLineItem",
+      "pagination": false
+    },
+    "updateOrderLineItem": {
+      "resource": "orders",
+      "method": "updateLineItem",
+      "pagination": false
+    },
+    "payOrder": {
+      "resource": "orders",
+      "method": "pay",
+      "pagination": false
+    },
     "listOrderPaymentAttempts": {
       "resource": "orders",
       "method": "listPaymentAttempts",
@@ -2331,23 +2881,37 @@
       "idempotency": false,
       "retry": false
     },
-    "listOrders": {
+    "getOrderPaymentAttempt": {
       "resource": "orders",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
+      "method": "getPaymentAttempt",
       "idempotency": false,
-      "retry": false
+      "retry": false,
+      "pagination": false
     },
-    "listOrganizationMemberships": {
-      "resource": "organizations",
-      "method": "listMemberships",
-      "response": {
-        "payloadPath": null
-      },
-      "idempotency": false,
-      "retry": false
+    "cancelOrderPaymentAttempt": {
+      "resource": "orders",
+      "method": "cancelPaymentAttempt",
+      "pagination": false
+    },
+    "createOrderPaymentIntent": {
+      "resource": "orders",
+      "method": "createPaymentIntent",
+      "pagination": false
+    },
+    "cancelOrderPayment": {
+      "resource": "orders",
+      "method": "cancelPayment",
+      "pagination": false
+    },
+    "captureOrderPayment": {
+      "resource": "orders",
+      "method": "capturePayment",
+      "pagination": false
+    },
+    "sendOrderReceipt": {
+      "resource": "orders",
+      "method": "sendReceipt",
+      "pagination": false
     },
     "listOrganizations": {
       "resource": "organizations",
@@ -2358,14 +2922,46 @@
       "idempotency": false,
       "retry": false
     },
-    "listPackageItems": {
-      "resource": "packages",
-      "method": "listPackageItems",
+    "createOrganization": {
+      "resource": "organizations",
+      "method": "create",
+      "pagination": false
+    },
+    "deleteOrganization": {
+      "resource": "organizations",
+      "method": "remove",
+      "pagination": false
+    },
+    "getOrganization": {
+      "resource": "organizations",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updateOrganization": {
+      "resource": "organizations",
+      "method": "update",
+      "pagination": false
+    },
+    "listOrganizationMemberships": {
+      "resource": "organizations",
+      "method": "listMemberships",
       "response": {
         "payloadPath": null
       },
       "idempotency": false,
       "retry": false
+    },
+    "grantOrganizationMembership": {
+      "resource": "organizations",
+      "method": "grantMembership",
+      "pagination": false
+    },
+    "removeOrganizationMembership": {
+      "resource": "organizations",
+      "method": "removeMembership",
+      "pagination": false
     },
     "listPackages": {
       "resource": "packages",
@@ -2376,6 +2972,73 @@
       "idempotency": false,
       "retry": false
     },
+    "getPackage": {
+      "resource": "packages",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updatePackage": {
+      "resource": "packages",
+      "method": "update",
+      "pagination": false
+    },
+    "listPackageItems": {
+      "resource": "packages",
+      "method": "listPackageItems",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createPackageItem": {
+      "resource": "packages",
+      "method": "createItem",
+      "pagination": false
+    },
+    "deletePackageItem": {
+      "resource": "packages",
+      "method": "deleteItem",
+      "pagination": false
+    },
+    "getPackageItem": {
+      "resource": "packages",
+      "method": "getItem",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updatePackageItem": {
+      "resource": "packages",
+      "method": "updateItem",
+      "pagination": false
+    },
+    "transitionPackage": {
+      "resource": "packages",
+      "method": "transition",
+      "pagination": false
+    },
+    "voidPackage": {
+      "resource": "packages",
+      "method": "voidResource",
+      "pagination": false
+    },
+    "listMerchantPartnerAppInstalls": {
+      "resource": "partnerAppInstalls",
+      "method": "list",
+      "idempotency": false,
+      "retry": false,
+      "response": {
+        "payloadPath": null
+      }
+    },
+    "revokeMerchantPartnerAppInstall": {
+      "resource": "partnerAppInstalls",
+      "method": "revoke",
+      "pagination": false
+    },
     "listPaymentIntents": {
       "resource": "paymentIntents",
       "method": "list",
@@ -2384,6 +3047,62 @@
       },
       "idempotency": false,
       "retry": false
+    },
+    "createPaymentIntent": {
+      "resource": "paymentIntents",
+      "method": "create",
+      "example": {
+        "body": {
+          "amount_money": {
+            "amount": "5000",
+            "currency": "USD"
+          },
+          "payment_options": ["card"]
+        },
+        "Idempotency-Key": "00000000-0000-4000-8000-000000000001"
+      },
+      "pagination": false
+    },
+    "getPaymentIntent": {
+      "resource": "paymentIntents",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updatePaymentIntent": {
+      "resource": "paymentIntents",
+      "method": "update",
+      "pagination": false
+    },
+    "listPaymentIntentActivities": {
+      "resource": "paymentIntents",
+      "method": "listActivities",
+      "idempotency": false,
+      "retry": false,
+      "response": {
+        "payloadPath": null
+      }
+    },
+    "cancelPaymentIntent": {
+      "resource": "paymentIntents",
+      "method": "cancel",
+      "pagination": false
+    },
+    "capturePaymentIntent": {
+      "resource": "paymentIntents",
+      "method": "capture",
+      "pagination": false
+    },
+    "confirmPaymentIntent": {
+      "resource": "paymentIntents",
+      "method": "confirm",
+      "pagination": false
+    },
+    "sendPaymentIntentReceipt": {
+      "resource": "paymentIntents",
+      "method": "sendReceipt",
+      "pagination": false
     },
     "listPaymentLinks": {
       "resource": "paymentLinks",
@@ -2394,6 +3113,35 @@
       "idempotency": false,
       "retry": false
     },
+    "createPaymentLink": {
+      "resource": "paymentLinks",
+      "method": "create",
+      "pagination": false
+    },
+    "getPaymentLink": {
+      "resource": "paymentLinks",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updatePaymentLink": {
+      "resource": "paymentLinks",
+      "method": "update",
+      "pagination": false
+    },
+    "getPaymentLinkPublic": {
+      "resource": "paymentLinks",
+      "method": "getPublic",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "resolvePaymentLink": {
+      "resource": "paymentLinks",
+      "method": "resolve",
+      "pagination": false
+    },
     "listPaymentMethodDomains": {
       "resource": "paymentMethodDomains",
       "method": "list",
@@ -2402,6 +3150,28 @@
       },
       "idempotency": false,
       "retry": false
+    },
+    "createPaymentMethodDomain": {
+      "resource": "paymentMethodDomains",
+      "method": "create",
+      "pagination": false,
+      "example": {
+        "body": {
+          "domain_name": "payments.example.invalid"
+        }
+      }
+    },
+    "getPaymentMethodDomain": {
+      "resource": "paymentMethodDomains",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updatePaymentMethodDomain": {
+      "resource": "paymentMethodDomains",
+      "method": "update",
+      "pagination": false
     },
     "listPaymentMethods": {
       "resource": "paymentMethods",
@@ -2412,6 +3182,61 @@
       "idempotency": false,
       "retry": false
     },
+    "createPaymentMethod": {
+      "resource": "paymentMethods",
+      "method": "create",
+      "pagination": false
+    },
+    "deletePaymentMethod": {
+      "resource": "paymentMethods",
+      "method": "remove",
+      "pagination": false
+    },
+    "getPaymentMethod": {
+      "resource": "paymentMethods",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "listPaymentReviews": {
+      "resource": "paymentReviews",
+      "method": "list",
+      "idempotency": false,
+      "retry": false,
+      "response": {
+        "payloadPath": null
+      }
+    },
+    "getPaymentReview": {
+      "resource": "paymentReviews",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "approvePaymentReview": {
+      "resource": "paymentReviews",
+      "method": "approve",
+      "pagination": false
+    },
+    "declinePaymentReview": {
+      "resource": "paymentReviews",
+      "method": "decline",
+      "pagination": false
+    },
+    "getPayoutSettings": {
+      "resource": "payoutSettings",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updatePayoutSettings": {
+      "resource": "payoutSettings",
+      "method": "update",
+      "pagination": false
+    },
     "listPayoutDestinations": {
       "resource": "payoutSettings",
       "method": "listPayoutDestinations",
@@ -2421,14 +3246,22 @@
       "idempotency": false,
       "retry": false
     },
-    "listPayoutEntries": {
-      "resource": "payouts",
-      "method": "listEntries",
-      "response": {
-        "payloadPath": null
-      },
+    "deletePayoutDestination": {
+      "resource": "payoutSettings",
+      "method": "deletePayoutDestination",
+      "pagination": false
+    },
+    "getPayoutDestination": {
+      "resource": "payoutSettings",
+      "method": "getPayoutDestination",
       "idempotency": false,
-      "retry": false
+      "retry": false,
+      "pagination": false
+    },
+    "updatePayoutDestination": {
+      "resource": "payoutSettings",
+      "method": "updatePayoutDestination",
+      "pagination": false
     },
     "listPayouts": {
       "resource": "payouts",
@@ -2439,6 +3272,74 @@
       "idempotency": false,
       "retry": false
     },
+    "createPayout": {
+      "resource": "payouts",
+      "method": "create",
+      "pagination": false,
+      "example": {
+        "body": {
+          "amount_money": {
+            "amount": "100",
+            "currency": "USD"
+          }
+        }
+      }
+    },
+    "getPayout": {
+      "resource": "payouts",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "cancelPayout": {
+      "resource": "payouts",
+      "method": "cancel",
+      "pagination": false
+    },
+    "listProducts": {
+      "resource": "products",
+      "method": "list",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createProduct": {
+      "resource": "products",
+      "method": "create",
+      "pagination": false,
+      "example": {
+        "body": {
+          "name": "example",
+          "product_type": "physical",
+          "default_variant": {
+            "unit_price_money": {
+              "amount": "100",
+              "currency": "USD"
+            }
+          }
+        }
+      }
+    },
+    "deleteProduct": {
+      "resource": "products",
+      "method": "remove",
+      "pagination": false
+    },
+    "getProduct": {
+      "resource": "products",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updateProduct": {
+      "resource": "products",
+      "method": "update",
+      "pagination": false
+    },
     "listProductOptions": {
       "resource": "products",
       "method": "listOptions",
@@ -2447,6 +3348,13 @@
       },
       "idempotency": false,
       "retry": false
+    },
+    "getProductOption": {
+      "resource": "products",
+      "method": "getOption",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
     },
     "listProductVariants": {
       "resource": "products",
@@ -2457,14 +3365,36 @@
       "idempotency": false,
       "retry": false
     },
-    "listProducts": {
+    "createProductVariant": {
       "resource": "products",
-      "method": "list",
-      "response": {
-        "payloadPath": null
-      },
+      "method": "createVariant",
+      "pagination": false,
+      "example": {
+        "product_id": "example",
+        "body": {
+          "unit_price_money": {
+            "amount": "100",
+            "currency": "USD"
+          }
+        }
+      }
+    },
+    "deleteProductVariant": {
+      "resource": "products",
+      "method": "deleteVariant",
+      "pagination": false
+    },
+    "getProductVariant": {
+      "resource": "products",
+      "method": "getVariant",
       "idempotency": false,
-      "retry": false
+      "retry": false,
+      "pagination": false
+    },
+    "updateProductVariant": {
+      "resource": "products",
+      "method": "updateVariant",
+      "pagination": false
     },
     "listPromotionCodes": {
       "resource": "promotions",
@@ -2484,6 +3414,50 @@
       "idempotency": false,
       "retry": false
     },
+    "createPromotion": {
+      "resource": "promotions",
+      "method": "create",
+      "pagination": false
+    },
+    "deletePromotion": {
+      "resource": "promotions",
+      "method": "remove",
+      "pagination": false
+    },
+    "getPromotion": {
+      "resource": "promotions",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updatePromotion": {
+      "resource": "promotions",
+      "method": "update",
+      "pagination": false
+    },
+    "createPromotionCode": {
+      "resource": "promotions",
+      "method": "createCode",
+      "pagination": false
+    },
+    "deletePromotionCode": {
+      "resource": "promotions",
+      "method": "deleteCode",
+      "pagination": false
+    },
+    "getPromotionCode": {
+      "resource": "promotions",
+      "method": "getCode",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updatePromotionCode": {
+      "resource": "promotions",
+      "method": "updateCode",
+      "pagination": false
+    },
     "listRefunds": {
       "resource": "refunds",
       "method": "list",
@@ -2492,6 +3466,33 @@
       },
       "idempotency": false,
       "retry": false
+    },
+    "createRefund": {
+      "resource": "refunds",
+      "method": "create",
+      "pagination": false
+    },
+    "getRefund": {
+      "resource": "refunds",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updateRefund": {
+      "resource": "refunds",
+      "method": "update",
+      "pagination": false
+    },
+    "getReportDownload": {
+      "resource": "reportDownloads",
+      "method": "get",
+      "response": {
+        "return": "result"
+      },
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
     },
     "listReports": {
       "resource": "reports",
@@ -2502,6 +3503,33 @@
       "idempotency": false,
       "retry": false
     },
+    "createReport": {
+      "resource": "reports",
+      "method": "create",
+      "example": {
+        "body": {
+          "currency": "USD",
+          "interval_start_at": "2026-01-01T00:00:00Z",
+          "interval_end_at": "2026-01-02T00:00:00Z",
+          "report_type": "orders_itemized_v1"
+        },
+        "Idempotency-Key": "00000000-0000-4000-8000-000000000002"
+      },
+      "pagination": false
+    },
+    "getReport": {
+      "resource": "reports",
+      "method": "get",
+      "polling": {
+        "state": "data.status",
+        "success": ["succeeded"],
+        "failure": ["failed"],
+        "intervalMs": 1000
+      },
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
     "listReturnDispositions": {
       "resource": "returnDispositions",
       "method": "list",
@@ -2510,6 +3538,23 @@
       },
       "idempotency": false,
       "retry": false
+    },
+    "getReturnDisposition": {
+      "resource": "returnDispositions",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "cancelReturnDisposition": {
+      "resource": "returnDispositions",
+      "method": "cancel",
+      "pagination": false
+    },
+    "retryReturnDisposition": {
+      "resource": "returnDispositions",
+      "method": "retry",
+      "pagination": false
     },
     "listReturnInspections": {
       "resource": "returnInspections",
@@ -2520,14 +3565,17 @@
       "idempotency": false,
       "retry": false
     },
-    "listReturnLineItems": {
-      "resource": "returns",
-      "method": "listLineItems",
-      "response": {
-        "payloadPath": null
-      },
+    "getReturnInspection": {
+      "resource": "returnInspections",
+      "method": "get",
       "idempotency": false,
-      "retry": false
+      "retry": false,
+      "pagination": false
+    },
+    "decideReturnInspectionLineItem": {
+      "resource": "returnInspections",
+      "method": "decideLineItem",
+      "pagination": false
     },
     "listReturnPolicies": {
       "resource": "returnPolicies",
@@ -2538,6 +3586,28 @@
       "idempotency": false,
       "retry": false
     },
+    "createReturnPolicy": {
+      "resource": "returnPolicies",
+      "method": "create",
+      "pagination": false
+    },
+    "deleteReturnPolicy": {
+      "resource": "returnPolicies",
+      "method": "remove",
+      "pagination": false
+    },
+    "getReturnPolicy": {
+      "resource": "returnPolicies",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updateReturnPolicy": {
+      "resource": "returnPolicies",
+      "method": "update",
+      "pagination": false
+    },
     "listReturnPolicyRevisions": {
       "resource": "returnPolicies",
       "method": "listRevisions",
@@ -2546,6 +3616,25 @@
       },
       "idempotency": false,
       "retry": false
+    },
+    "createReturnPolicyRevision": {
+      "resource": "returnPolicies",
+      "method": "createRevision",
+      "pagination": false
+    },
+    "getReturnPolicyRevision": {
+      "resource": "returnPolicies",
+      "method": "getRevision",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "createReturnPreview": {
+      "resource": "returnPreviews",
+      "method": "create",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
     },
     "listReturnReasons": {
       "resource": "returnReasons",
@@ -2556,6 +3645,28 @@
       "idempotency": false,
       "retry": false
     },
+    "createReturnReason": {
+      "resource": "returnReasons",
+      "method": "create",
+      "pagination": false
+    },
+    "deleteReturnReason": {
+      "resource": "returnReasons",
+      "method": "remove",
+      "pagination": false
+    },
+    "getReturnReason": {
+      "resource": "returnReasons",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updateReturnReason": {
+      "resource": "returnReasons",
+      "method": "update",
+      "pagination": false
+    },
     "listReturnReceipts": {
       "resource": "returnReceipts",
       "method": "list",
@@ -2564,6 +3675,18 @@
       },
       "idempotency": false,
       "retry": false
+    },
+    "getReturnReceipt": {
+      "resource": "returnReceipts",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "verifyReturnReceiptLineItem": {
+      "resource": "returnReceipts",
+      "method": "verifyLineItem",
+      "pagination": false
     },
     "listReturnResolutions": {
       "resource": "returnResolutions",
@@ -2574,6 +3697,43 @@
       "idempotency": false,
       "retry": false
     },
+    "getReturnResolution": {
+      "resource": "returnResolutions",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updateReturnResolution": {
+      "resource": "returnResolutions",
+      "method": "update",
+      "pagination": false
+    },
+    "cancelReturnResolution": {
+      "resource": "returnResolutions",
+      "method": "cancel",
+      "pagination": false
+    },
+    "getOrCreateReturnResolutionCheckoutSession": {
+      "resource": "returnResolutions",
+      "method": "getOrCreateCheckoutSession",
+      "pagination": false
+    },
+    "confirmReturnResolution": {
+      "resource": "returnResolutions",
+      "method": "confirm",
+      "pagination": false
+    },
+    "releaseReturnResolution": {
+      "resource": "returnResolutions",
+      "method": "release",
+      "pagination": false
+    },
+    "retryReturnResolution": {
+      "resource": "returnResolutions",
+      "method": "retry",
+      "pagination": false
+    },
     "listReturns": {
       "resource": "returns",
       "method": "list",
@@ -2583,23 +3743,146 @@
       "idempotency": false,
       "retry": false
     },
-    "listReviews": {
-      "resource": "reviews",
-      "method": "list",
+    "createReturn": {
+      "resource": "returns",
+      "method": "create",
+      "pagination": false
+    },
+    "getReturn": {
+      "resource": "returns",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updateReturn": {
+      "resource": "returns",
+      "method": "update",
+      "pagination": false
+    },
+    "createReturnAccessLink": {
+      "resource": "returns",
+      "method": "createAccessLink",
+      "pagination": false
+    },
+    "listReturnActivities": {
+      "resource": "returns",
+      "method": "listActivities",
+      "idempotency": false,
+      "retry": false,
+      "response": {
+        "payloadPath": null
+      }
+    },
+    "cancelReturn": {
+      "resource": "returns",
+      "method": "cancel",
+      "pagination": false
+    },
+    "completeReturn": {
+      "resource": "returns",
+      "method": "complete",
+      "pagination": false
+    },
+    "decideReturn": {
+      "resource": "returns",
+      "method": "decide",
+      "pagination": false,
+      "example": {
+        "return_id": "ret_00000000000000000000000000",
+        "body": {
+          "line_items": [
+            {
+              "approved_quantity": "1",
+              "receiving_location_id": "loc_00000000000000000000000000",
+              "return_line_item_id": "retli_00000000000000000000000000"
+            }
+          ]
+        }
+      }
+    },
+    "createReturnDisposition": {
+      "resource": "returns",
+      "method": "createDisposition",
+      "pagination": false
+    },
+    "createReturnInspection": {
+      "resource": "returns",
+      "method": "createInspection",
+      "pagination": false
+    },
+    "listReturnLineItems": {
+      "resource": "returns",
+      "method": "listLineItems",
       "response": {
         "payloadPath": null
       },
       "idempotency": false,
       "retry": false
     },
-    "listRiskListItems": {
-      "resource": "riskLists",
-      "method": "listRiskListItems",
-      "response": {
-        "payloadPath": null
-      },
+    "createReturnLineItem": {
+      "resource": "returns",
+      "method": "createLineItem",
+      "pagination": false
+    },
+    "deleteReturnLineItem": {
+      "resource": "returns",
+      "method": "deleteLineItem",
+      "pagination": false
+    },
+    "getReturnLineItem": {
+      "resource": "returns",
+      "method": "getLineItem",
       "idempotency": false,
-      "retry": false
+      "retry": false,
+      "pagination": false
+    },
+    "updateReturnLineItem": {
+      "resource": "returns",
+      "method": "updateLineItem",
+      "pagination": false
+    },
+    "cancelReturnLineItem": {
+      "resource": "returns",
+      "method": "cancelLineItem",
+      "pagination": false
+    },
+    "waiveReturnLineItemInspection": {
+      "resource": "returns",
+      "method": "waiveLineItemInspection",
+      "pagination": false
+    },
+    "processReturn": {
+      "resource": "returns",
+      "method": "process",
+      "pagination": false
+    },
+    "createReturnReceipt": {
+      "resource": "returns",
+      "method": "createReceipt",
+      "pagination": false
+    },
+    "reopenReturn": {
+      "resource": "returns",
+      "method": "reopen",
+      "pagination": false
+    },
+    "createReturnResolution": {
+      "resource": "returns",
+      "method": "createResolution",
+      "pagination": false,
+      "example": {
+        "return_id": "example",
+        "body": {
+          "resolution_type": "refund",
+          "line_items": [
+            {
+              "return_line_item_id": "rtli_example",
+              "quantity": "1"
+            }
+          ]
+        }
+      }
     },
     "listRiskLists": {
       "resource": "riskLists",
@@ -2610,6 +3893,72 @@
       "idempotency": false,
       "retry": false
     },
+    "createRiskList": {
+      "resource": "riskLists",
+      "method": "create",
+      "pagination": false
+    },
+    "deleteRiskList": {
+      "resource": "riskLists",
+      "method": "remove",
+      "pagination": false
+    },
+    "getRiskList": {
+      "resource": "riskLists",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updateRiskList": {
+      "resource": "riskLists",
+      "method": "update",
+      "pagination": false
+    },
+    "listRiskListItems": {
+      "resource": "riskLists",
+      "method": "listRiskListItems",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createRiskListItems": {
+      "resource": "riskLists",
+      "method": "createItems",
+      "pagination": false,
+      "example": {
+        "risk_list_id": "example",
+        "body": {
+          "values": ["sdk-example"]
+        }
+      }
+    },
+    "deleteRiskListItem": {
+      "resource": "riskLists",
+      "method": "deleteItem",
+      "pagination": false
+    },
+    "getRiskListItem": {
+      "resource": "riskLists",
+      "method": "getItem",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "createRiskPreview": {
+      "resource": "riskPreviews",
+      "method": "create",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false,
+      "example": {
+        "body": {
+          "risk_rule_id": "rr_example"
+        }
+      }
+    },
     "listRiskRules": {
       "resource": "riskRules",
       "method": "list",
@@ -2618,6 +3967,65 @@
       },
       "idempotency": false,
       "retry": false
+    },
+    "createRiskRule": {
+      "resource": "riskRules",
+      "method": "create",
+      "pagination": false,
+      "example": {
+        "body": {
+          "action": "review",
+          "description": "Synthetic SDK example",
+          "predicate": {
+            "attribute": "payment_method_type",
+            "operator": "eq",
+            "value": "card"
+          }
+        }
+      }
+    },
+    "getRiskRuleAttributes": {
+      "resource": "riskRules",
+      "method": "getAttributes",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "deleteRiskRule": {
+      "resource": "riskRules",
+      "method": "remove",
+      "pagination": false
+    },
+    "getRiskRule": {
+      "resource": "riskRules",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updateRiskRule": {
+      "resource": "riskRules",
+      "method": "update",
+      "pagination": false
+    },
+    "getSettings": {
+      "resource": "settings",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updateSettings": {
+      "resource": "settings",
+      "method": "update",
+      "pagination": false
+    },
+    "getEffectiveSettings": {
+      "resource": "settings",
+      "method": "getEffective",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
     },
     "listShipments": {
       "resource": "shipments",
@@ -2628,14 +4036,88 @@
       "idempotency": false,
       "retry": false
     },
-    "listSubscriptionPaymentRetries": {
-      "resource": "subscriptions",
-      "method": "listPaymentRetries",
+    "getShipment": {
+      "resource": "shipments",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updateShipment": {
+      "resource": "shipments",
+      "method": "update",
+      "pagination": false
+    },
+    "createPackage": {
+      "resource": "shipments",
+      "method": "createPackage",
+      "pagination": false
+    },
+    "voidShipment": {
+      "resource": "shipments",
+      "method": "voidResource",
+      "pagination": false
+    },
+    "listSubscriptionDeliveryMigrations": {
+      "resource": "subscriptionDeliveryMigrations",
+      "method": "list",
+      "idempotency": false,
+      "retry": false,
       "response": {
         "payloadPath": null
-      },
+      }
+    },
+    "createSubscriptionDeliveryMigration": {
+      "resource": "subscriptionDeliveryMigrations",
+      "method": "create",
+      "pagination": false
+    },
+    "getSubscriptionDeliveryMigration": {
+      "resource": "subscriptionDeliveryMigrations",
+      "method": "get",
       "idempotency": false,
-      "retry": false
+      "retry": false,
+      "pagination": false
+    },
+    "listSubscriptionDeliveryMigrationFailures": {
+      "resource": "subscriptionDeliveryMigrations",
+      "method": "listFailures",
+      "idempotency": false,
+      "retry": false,
+      "response": {
+        "payloadPath": null
+      }
+    },
+    "listSubscriptionOffers": {
+      "resource": "subscriptionOffers",
+      "method": "list",
+      "idempotency": false,
+      "retry": false,
+      "response": {
+        "payloadPath": null
+      }
+    },
+    "createSubscriptionOffer": {
+      "resource": "subscriptionOffers",
+      "method": "create",
+      "pagination": false
+    },
+    "deleteSubscriptionOffer": {
+      "resource": "subscriptionOffers",
+      "method": "remove",
+      "pagination": false
+    },
+    "getSubscriptionOffer": {
+      "resource": "subscriptionOffers",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updateSubscriptionOffer": {
+      "resource": "subscriptionOffers",
+      "method": "update",
+      "pagination": false
     },
     "listSubscriptionPlans": {
       "resource": "subscriptionPlans",
@@ -2646,6 +4128,41 @@
       "idempotency": false,
       "retry": false
     },
+    "createSubscriptionPlan": {
+      "resource": "subscriptionPlans",
+      "method": "create",
+      "pagination": false
+    },
+    "deleteSubscriptionPlan": {
+      "resource": "subscriptionPlans",
+      "method": "remove",
+      "pagination": false
+    },
+    "getSubscriptionPlan": {
+      "resource": "subscriptionPlans",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updateSubscriptionPlan": {
+      "resource": "subscriptionPlans",
+      "method": "update",
+      "pagination": false
+    },
+    "createSubscriptionPreview": {
+      "resource": "subscriptionPreviews",
+      "method": "create",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false,
+      "example": {
+        "body": {
+          "mode": "next_renewal",
+          "subscription_id": "sub_00000000000000000000000000"
+        }
+      }
+    },
     "listSubscriptions": {
       "resource": "subscriptions",
       "method": "list",
@@ -2654,6 +4171,123 @@
       },
       "idempotency": false,
       "retry": false
+    },
+    "createSubscription": {
+      "resource": "subscriptions",
+      "method": "create",
+      "pagination": false
+    },
+    "getSubscription": {
+      "resource": "subscriptions",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updateSubscription": {
+      "resource": "subscriptions",
+      "method": "update",
+      "pagination": false
+    },
+    "createSubscriptionAccessLink": {
+      "resource": "subscriptions",
+      "method": "createAccessLink",
+      "pagination": false
+    },
+    "updateSubscriptionBillingSchedule": {
+      "resource": "subscriptions",
+      "method": "updateBillingSchedule",
+      "pagination": false
+    },
+    "cancelSubscription": {
+      "resource": "subscriptions",
+      "method": "cancel",
+      "pagination": false
+    },
+    "changeSubscriptionPlan": {
+      "resource": "subscriptions",
+      "method": "changePlan",
+      "pagination": false,
+      "example": {
+        "subscription_id": "example",
+        "body": {
+          "billing_starts": "now",
+          "subscription_plan_id": "plan_00000000000000000000000000"
+        }
+      }
+    },
+    "createSubscriptionLineItem": {
+      "resource": "subscriptions",
+      "method": "createLineItem",
+      "pagination": false,
+      "example": {
+        "subscription_id": "example",
+        "body": {
+          "quantity": 1,
+          "variant_id": "var_00000000000000000000000000"
+        }
+      }
+    },
+    "deleteSubscriptionLineItem": {
+      "resource": "subscriptions",
+      "method": "deleteLineItem",
+      "pagination": false
+    },
+    "updateSubscriptionLineItem": {
+      "resource": "subscriptions",
+      "method": "updateLineItem",
+      "pagination": false
+    },
+    "pauseSubscription": {
+      "resource": "subscriptions",
+      "method": "pause",
+      "pagination": false
+    },
+    "changeSubscriptionPaymentMethod": {
+      "resource": "subscriptions",
+      "method": "changePaymentMethod",
+      "pagination": false
+    },
+    "listSubscriptionPaymentRetries": {
+      "resource": "subscriptions",
+      "method": "listPaymentRetries",
+      "response": {
+        "payloadPath": null
+      },
+      "idempotency": false,
+      "retry": false
+    },
+    "createSubscriptionPaymentRetry": {
+      "resource": "subscriptions",
+      "method": "createPaymentRetry",
+      "pagination": false
+    },
+    "getSubscriptionPaymentRetry": {
+      "resource": "subscriptions",
+      "method": "getPaymentRetry",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "reactivateSubscription": {
+      "resource": "subscriptions",
+      "method": "reactivate",
+      "pagination": false
+    },
+    "renewSubscription": {
+      "resource": "subscriptions",
+      "method": "renew",
+      "pagination": false
+    },
+    "resumeSubscription": {
+      "resource": "subscriptions",
+      "method": "resume",
+      "pagination": false
+    },
+    "skipSubscriptionCycle": {
+      "resource": "subscriptions",
+      "method": "skipCycle",
+      "pagination": false
     },
     "listWebhookDeliveries": {
       "resource": "webhookEvents",
@@ -2664,6 +4298,18 @@
       "idempotency": false,
       "retry": false
     },
+    "createWebhookDelivery": {
+      "resource": "webhookDeliveries",
+      "method": "create",
+      "pagination": false
+    },
+    "getWebhookDelivery": {
+      "resource": "webhookDeliveries",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
     "listWebhookDeliveryAttempts": {
       "resource": "webhookDeliveries",
       "method": "listAttempts",
@@ -2673,6 +4319,11 @@
       "idempotency": false,
       "retry": false
     },
+    "resendWebhookDelivery": {
+      "resource": "webhookDeliveries",
+      "method": "resend",
+      "pagination": false
+    },
     "listWebhookEndpoints": {
       "resource": "webhookEndpoints",
       "method": "list",
@@ -2681,6 +4332,38 @@
       },
       "idempotency": false,
       "retry": false
+    },
+    "createWebhookEndpoint": {
+      "resource": "webhookEndpoints",
+      "method": "create",
+      "pagination": false
+    },
+    "deleteWebhookEndpoint": {
+      "resource": "webhookEndpoints",
+      "method": "remove",
+      "pagination": false
+    },
+    "getWebhookEndpoint": {
+      "resource": "webhookEndpoints",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
+      "pagination": false
+    },
+    "updateWebhookEndpoint": {
+      "resource": "webhookEndpoints",
+      "method": "update",
+      "pagination": false
+    },
+    "rotateWebhookEndpointSecret": {
+      "resource": "webhookEndpoints",
+      "method": "rotateSecret",
+      "pagination": false
+    },
+    "createWebhookTestEvent": {
+      "resource": "webhookEndpoints",
+      "method": "createWebhookTestEvent",
+      "pagination": false
     },
     "listWebhookEventTypes": {
       "resource": "webhookEventTypes",
@@ -2700,332 +4383,6 @@
       "idempotency": false,
       "retry": false
     },
-    "markInvoiceUncollectible": {
-      "resource": "invoices",
-      "method": "markUncollectible",
-      "pagination": false
-    },
-    "pauseInvoiceReminders": {
-      "resource": "invoices",
-      "method": "pauseReminders",
-      "pagination": false
-    },
-    "pauseMeSubscription": {
-      "resource": "me",
-      "method": "pauseSubscription",
-      "pagination": false
-    },
-    "pauseSubscription": {
-      "resource": "subscriptions",
-      "method": "pause",
-      "pagination": false
-    },
-    "payOrder": {
-      "resource": "orders",
-      "method": "pay",
-      "pagination": false
-    },
-    "previewOrderDiscounts": {
-      "resource": "orders",
-      "method": "previewDiscounts",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "previewPartnerInstallAuthorization": {
-      "resource": "oauth",
-      "method": "previewPartnerInstallAuthorization",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "processExistingReturn": {
-      "resource": "returns",
-      "method": "processExisting",
-      "pagination": false
-    },
-    "publishLocationGeography": {
-      "resource": "locations",
-      "method": "publishGeography",
-      "pagination": false
-    },
-    "publishReturnPolicyRevision": {
-      "resource": "returnPolicies",
-      "method": "publishRevision",
-      "pagination": false
-    },
-    "queryCheckoutSessionPickupAvailability": {
-      "resource": "checkoutSessions",
-      "method": "queryPickupAvailability",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "reactivateMeSubscription": {
-      "resource": "me",
-      "method": "reactivateSubscription",
-      "pagination": false
-    },
-    "reactivateSubscription": {
-      "resource": "subscriptions",
-      "method": "reactivate",
-      "pagination": false
-    },
-    "reauthorizeCLIDevice": {
-      "hidden": true,
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "recordManualInvoicePayment": {
-      "resource": "invoices",
-      "method": "recordManualPayment",
-      "pagination": false
-    },
-    "refreshCustomerSession": {
-      "resource": "customerSessions",
-      "method": "refresh",
-      "pagination": false
-    },
-    "refreshMerchantAccountSession": {
-      "resource": "merchantAccountSessions",
-      "method": "refresh",
-      "retry": {
-        "errors": null,
-        "maxAttempts": 1,
-        "statuses": [],
-        "transport": false
-      },
-      "pagination": false
-    },
-    "regenerateInvoicePublicLink": {
-      "resource": "invoices",
-      "method": "regeneratePublicLink",
-      "pagination": false
-    },
-    "releaseInventoryReservation": {
-      "resource": "inventoryReservations",
-      "method": "release",
-      "idempotency": {
-        "retention": "Retained for at least as long as the inventory command effects; reuse only for exact retries."
-      },
-      "pagination": false
-    },
-    "releaseReturnResolution": {
-      "resource": "returnResolutions",
-      "method": "release",
-      "pagination": false
-    },
-    "removeMePaymentMethod": {
-      "resource": "me",
-      "method": "removePaymentMethod",
-      "pagination": false
-    },
-    "removeOrderDiscounts": {
-      "resource": "orders",
-      "method": "removeDiscounts",
-      "pagination": false
-    },
-    "removePaymentMethod": {
-      "resource": "paymentMethods",
-      "method": "remove",
-      "pagination": false
-    },
-    "reopenReturn": {
-      "resource": "returns",
-      "method": "reopen",
-      "pagination": false
-    },
-    "repriceOrderDiscounts": {
-      "resource": "orders",
-      "method": "repriceDiscounts",
-      "pagination": false
-    },
-    "resendMeOrderReceipt": {
-      "resource": "me",
-      "method": "resendOrderReceipt",
-      "pagination": false
-    },
-    "resendOrderReceipt": {
-      "resource": "orders",
-      "method": "resendReceipt",
-      "pagination": false
-    },
-    "resendWebhookDelivery": {
-      "resource": "webhookDeliveries",
-      "method": "resend",
-      "pagination": false
-    },
-    "resetDemoSession": {
-      "resource": "demoSessions",
-      "method": "reset",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "resetDeveloperSandbox": {
-      "resource": "developer",
-      "method": "resetSandbox",
-      "pagination": false
-    },
-    "resolveCustomerDeletionRequest": {
-      "resource": "customerDeletionRequests",
-      "method": "resolve",
-      "pagination": false
-    },
-    "resolveOrderInventoryException": {
-      "resource": "orders",
-      "method": "resolveInventoryException",
-      "pagination": false
-    },
-    "resolvePaymentLink": {
-      "resource": "paymentLinks",
-      "method": "resolve",
-      "pagination": false
-    },
-    "resolvePromotionCode": {
-      "resource": "promotions",
-      "method": "resolveCode",
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "resumeInvoiceReminders": {
-      "resource": "invoices",
-      "method": "resumeReminders",
-      "pagination": false
-    },
-    "resumeMeSubscription": {
-      "resource": "me",
-      "method": "resumeSubscription",
-      "pagination": false
-    },
-    "resumeSubscription": {
-      "resource": "subscriptions",
-      "method": "resume",
-      "pagination": false
-    },
-    "retryReturnDisposition": {
-      "resource": "returnDispositions",
-      "method": "retry",
-      "pagination": false
-    },
-    "retryReturnResolution": {
-      "resource": "returnResolutions",
-      "method": "retry",
-      "pagination": false
-    },
-    "reverseCreditNoteAllocation": {
-      "resource": "creditNotes",
-      "method": "reverseAllocation",
-      "pagination": false
-    },
-    "reverseManualInvoicePayment": {
-      "resource": "invoices",
-      "method": "reverseManualPayment",
-      "pagination": false
-    },
-    "revokeAPIKey": {
-      "resource": "apiKeys",
-      "method": "revoke",
-      "pagination": false
-    },
-    "revokeCLIGrant": {
-      "hidden": true,
-      "idempotency": false,
-      "retry": false,
-      "pagination": false
-    },
-    "revokeCustomerSession": {
-      "resource": "customerSessions",
-      "method": "revoke",
-      "pagination": false
-    },
-    "revokeCustomerSessions": {
-      "resource": "customers",
-      "method": "revokeSessions",
-      "pagination": false
-    },
-    "revokeDeliveryDependency": {
-      "resource": "deliveryRevocations",
-      "method": "revokeDeliveryDependency",
-      "pagination": false
-    },
-    "revokeDeveloperPartnerAppInstall": {
-      "resource": "developer",
-      "method": "revokePartnerAppInstall",
-      "pagination": false
-    },
-    "revokeDeveloperPartnerEnvironmentGrant": {
-      "resource": "developer",
-      "method": "revokePartnerEnvironmentGrant",
-      "pagination": false
-    },
-    "revokeOrganizationMembership": {
-      "resource": "organizations",
-      "method": "revokeMembership",
-      "pagination": false
-    },
-    "rotateDeliveryRateCallbackSigningKey": {
-      "resource": "deliveryRateCallbacks",
-      "method": "rotateSigningKey",
-      "pagination": false
-    },
-    "rotateDeveloperPartnerAppSecret": {
-      "resource": "developer",
-      "method": "rotatePartnerAppSecret",
-      "pagination": false
-    },
-    "rotateWebhookSecret": {
-      "resource": "webhookEndpoints",
-      "method": "rotateWebhookSecret",
-      "pagination": false
-    },
-    "saveMePaymentMethod": {
-      "resource": "me",
-      "method": "savePaymentMethod",
-      "pagination": false
-    },
-    "savePaymentMethod": {
-      "resource": "paymentMethods",
-      "method": "save",
-      "pagination": false
-    },
-    "sendInvoiceReminder": {
-      "resource": "invoices",
-      "method": "sendReminder",
-      "pagination": false
-    },
-    "setDefaultCustomerAddress": {
-      "resource": "customers",
-      "method": "setDefaultAddress",
-      "pagination": false
-    },
-    "setDefaultMeAddress": {
-      "resource": "me",
-      "method": "setDefaultAddress",
-      "pagination": false
-    },
-    "setDefaultMePaymentMethod": {
-      "resource": "me",
-      "method": "setDefaultPaymentMethod",
-      "pagination": false
-    },
-    "setDefaultPaymentMethod": {
-      "resource": "paymentMethods",
-      "method": "setDefault",
-      "pagination": false
-    },
-    "skipSubscriptionCycle": {
-      "resource": "subscriptions",
-      "method": "skipCycle",
-      "pagination": false
-    },
-    "startOnboarding": {
-      "resource": "onboarding",
-      "method": "startFlow",
-      "pagination": false
-    },
     "streamWebhookEvents": {
       "resource": "webhookEvents",
       "method": "stream",
@@ -3034,365 +4391,53 @@
       },
       "idempotency": false,
       "retry": false,
+      "pagination": false,
+      "stream": {
+        "events": {
+          "disconnect": "#/components/schemas/WebhookStreamDisconnect",
+          "gap": "#/components/schemas/WebhookStreamGap",
+          "ready": "#/components/schemas/WebhookStreamReady",
+          "webhook.event": "#/components/schemas/WebhookEvent",
+          "withheld": "#/components/schemas/WebhookStreamWithheld"
+        }
+      }
+    },
+    "getWebhookEvent": {
+      "resource": "webhookEvents",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
       "pagination": false
     },
-    "transferOrganizationOwnership": {
-      "resource": "organizations",
-      "method": "transferOwnership",
+    "listWorkloadIdentities": {
+      "resource": "workloadIdentities",
+      "method": "list",
+      "idempotency": false,
+      "retry": false,
+      "response": {
+        "payloadPath": null
+      }
+    },
+    "createWorkloadIdentity": {
+      "resource": "workloadIdentities",
+      "method": "create",
       "pagination": false
     },
-    "transitionFulfillment": {
-      "resource": "fulfillments",
-      "method": "transition",
+    "deleteWorkloadIdentity": {
+      "resource": "workloadIdentities",
+      "method": "remove",
       "pagination": false
     },
-    "transitionInventoryTransfer": {
-      "resource": "inventoryTransfers",
-      "method": "transition",
-      "idempotency": {
-        "retention": "Retained for at least as long as the inventory command effects; reuse only for exact retries."
-      },
+    "getWorkloadIdentity": {
+      "resource": "workloadIdentities",
+      "method": "get",
+      "idempotency": false,
+      "retry": false,
       "pagination": false
     },
-    "transitionPackage": {
-      "resource": "packages",
-      "method": "transition",
-      "pagination": false
-    },
-    "updateAPIKey": {
-      "resource": "apiKeys",
+    "updateWorkloadIdentity": {
+      "resource": "workloadIdentities",
       "method": "update",
-      "pagination": false
-    },
-    "updateBundle": {
-      "resource": "bundles",
-      "method": "update",
-      "pagination": false
-    },
-    "updateCategory": {
-      "resource": "categories",
-      "method": "update",
-      "pagination": false
-    },
-    "updateCheckoutSession": {
-      "resource": "checkoutSessions",
-      "method": "update",
-      "pagination": false
-    },
-    "updateCreditNote": {
-      "resource": "creditNotes",
-      "method": "update",
-      "pagination": false
-    },
-    "updateCustomer": {
-      "resource": "customers",
-      "method": "update",
-      "pagination": false
-    },
-    "updateCustomerAddress": {
-      "resource": "customers",
-      "method": "updateAddress",
-      "pagination": false
-    },
-    "updateDeliveryLocationSet": {
-      "resource": "deliveryLocationSets",
-      "method": "update",
-      "pagination": false
-    },
-    "updateDeliveryMethod": {
-      "resource": "deliveryMethods",
-      "method": "update",
-      "pagination": false
-    },
-    "updateDeliveryProfile": {
-      "resource": "deliveryProfiles",
-      "method": "update",
-      "pagination": false
-    },
-    "updateDeliveryRateCallback": {
-      "resource": "deliveryRateCallbacks",
-      "method": "update",
-      "pagination": false
-    },
-    "updateDeliveryZone": {
-      "resource": "deliveryZones",
-      "method": "update",
-      "pagination": false
-    },
-    "updateDeveloperPartnerApp": {
-      "resource": "developer",
-      "method": "updatePartnerApp",
-      "pagination": false
-    },
-    "updateDevice": {
-      "resource": "devices",
-      "method": "update",
-      "pagination": false
-    },
-    "updateFulfillment": {
-      "resource": "fulfillments",
-      "method": "update",
-      "pagination": false
-    },
-    "updateInventoryAllocationPolicy": {
-      "resource": "inventoryAllocationPolicies",
-      "method": "update",
-      "pagination": false
-    },
-    "updateInventoryCount": {
-      "resource": "inventoryCounts",
-      "method": "update",
-      "idempotency": {
-        "retention": "Retained for at least as long as the inventory command effects; reuse only for exact retries."
-      },
-      "pagination": false
-    },
-    "updateInventoryItem": {
-      "resource": "inventoryItems",
-      "method": "update",
-      "pagination": false
-    },
-    "updateInventoryLevel": {
-      "resource": "inventoryLevels",
-      "method": "update",
-      "idempotency": {
-        "retention": "Retained for at least as long as the inventory command effects; reuse only for exact retries."
-      },
-      "pagination": false
-    },
-    "updateInventoryTransfer": {
-      "resource": "inventoryTransfers",
-      "method": "update",
-      "pagination": false
-    },
-    "updateInvoice": {
-      "resource": "invoices",
-      "method": "update",
-      "pagination": false
-    },
-    "updateInvoicePaymentTerm": {
-      "resource": "invoicePaymentTerms",
-      "method": "update",
-      "pagination": false
-    },
-    "updateLocation": {
-      "resource": "locations",
-      "method": "update",
-      "pagination": false
-    },
-    "updateLocationInventory": {
-      "resource": "locations",
-      "method": "updateInventory",
-      "pagination": false
-    },
-    "updateMe": {
-      "resource": "me",
-      "method": "update",
-      "pagination": false
-    },
-    "updateMeAddress": {
-      "resource": "me",
-      "method": "updateAddress",
-      "pagination": false
-    },
-    "updateMerchant": {
-      "resource": "merchants",
-      "method": "update",
-      "pagination": false
-    },
-    "updateModifierGroup": {
-      "resource": "modifierGroups",
-      "method": "update",
-      "pagination": false
-    },
-    "updateModifierSet": {
-      "resource": "modifierSets",
-      "method": "update",
-      "pagination": false
-    },
-    "updateOrder": {
-      "resource": "orders",
-      "method": "update",
-      "pagination": false
-    },
-    "updateOrderCharge": {
-      "resource": "orders",
-      "method": "updateCharge",
-      "pagination": false
-    },
-    "updateOrderLineItem": {
-      "resource": "orders",
-      "method": "updateLineItem",
-      "pagination": false
-    },
-    "updateOrganization": {
-      "resource": "organizations",
-      "method": "update",
-      "pagination": false
-    },
-    "updatePackage": {
-      "resource": "packages",
-      "method": "update",
-      "pagination": false
-    },
-    "updatePackageItem": {
-      "resource": "packages",
-      "method": "updateItem",
-      "pagination": false
-    },
-    "updatePaymentIntent": {
-      "resource": "paymentIntents",
-      "method": "update",
-      "pagination": false
-    },
-    "updatePaymentLink": {
-      "resource": "paymentLinks",
-      "method": "update",
-      "pagination": false
-    },
-    "updatePaymentMethodDomain": {
-      "resource": "paymentMethodDomains",
-      "method": "update",
-      "pagination": false
-    },
-    "updatePayoutDestination": {
-      "resource": "payoutSettings",
-      "method": "updatePayoutDestination",
-      "pagination": false
-    },
-    "updatePayoutSettings": {
-      "resource": "payoutSettings",
-      "method": "update",
-      "pagination": false
-    },
-    "updateProduct": {
-      "resource": "products",
-      "method": "update",
-      "pagination": false
-    },
-    "updateProductVariant": {
-      "resource": "products",
-      "method": "updateVariant",
-      "pagination": false
-    },
-    "updatePromotion": {
-      "resource": "promotions",
-      "method": "update",
-      "pagination": false
-    },
-    "updatePromotionCode": {
-      "resource": "promotions",
-      "method": "updateCode",
-      "pagination": false
-    },
-    "updateRefund": {
-      "resource": "refunds",
-      "method": "update",
-      "pagination": false
-    },
-    "updateReturn": {
-      "resource": "returns",
-      "method": "update",
-      "pagination": false
-    },
-    "updateReturnLineItem": {
-      "resource": "returns",
-      "method": "updateLineItem",
-      "pagination": false
-    },
-    "updateReturnPolicy": {
-      "resource": "returnPolicies",
-      "method": "update",
-      "pagination": false
-    },
-    "updateReturnReason": {
-      "resource": "returnReasons",
-      "method": "update",
-      "pagination": false
-    },
-    "updateReturnResolution": {
-      "resource": "returnResolutions",
-      "method": "update",
-      "pagination": false
-    },
-    "updateRiskList": {
-      "resource": "riskLists",
-      "method": "update",
-      "pagination": false
-    },
-    "updateRiskRule": {
-      "resource": "riskRules",
-      "method": "update",
-      "pagination": false
-    },
-    "updateSettings": {
-      "resource": "settings",
-      "method": "update",
-      "pagination": false
-    },
-    "updateShipment": {
-      "resource": "shipments",
-      "method": "update",
-      "pagination": false
-    },
-    "updateSubscription": {
-      "resource": "subscriptions",
-      "method": "update",
-      "pagination": false
-    },
-    "updateSubscriptionBillingSchedule": {
-      "resource": "subscriptions",
-      "method": "updateBillingSchedule",
-      "pagination": false
-    },
-    "updateSubscriptionPlan": {
-      "resource": "subscriptionPlans",
-      "method": "update",
-      "pagination": false
-    },
-    "updateWebhookEndpoint": {
-      "resource": "webhookEndpoints",
-      "method": "update",
-      "pagination": false
-    },
-    "verifyOnboardingEmail": {
-      "resource": "onboarding",
-      "method": "verifyEmailCode",
-      "pagination": false
-    },
-    "verifyReturnReceiptLineItem": {
-      "resource": "returnReceipts",
-      "method": "verifyLineItem",
-      "pagination": false
-    },
-    "voidCreditNote": {
-      "resource": "creditNotes",
-      "method": "voidResource",
-      "pagination": false
-    },
-    "voidInvoice": {
-      "resource": "invoices",
-      "method": "voidResource",
-      "pagination": false
-    },
-    "voidPackage": {
-      "resource": "packages",
-      "method": "voidResource",
-      "pagination": false
-    },
-    "voidShipment": {
-      "resource": "shipments",
-      "method": "voidResource",
-      "pagination": false
-    },
-    "waiveInvoiceLateFee": {
-      "resource": "invoices",
-      "method": "waiveLateFee",
-      "pagination": false
-    },
-    "waiveReturnLineInspection": {
-      "resource": "returns",
-      "method": "waiveLineInspection",
       "pagination": false
     }
   },
@@ -3406,30 +4451,6 @@
   "targets": ["node", "php"],
   "release": {
     "policy": "semver"
-  },
-  "overrides": {
-    "/components/schemas/GetPaymentIntentResult/properties/risk": {
-      "anyOf": [
-        {
-          "$ref": "#/components/schemas/PaymentRisk"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "readOnly": true
-    },
-    "/components/schemas/GetPaymentIntentResult/properties/last_payment_error": {
-      "anyOf": [
-        {
-          "$ref": "#/components/schemas/PaymentErrorSummary"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "readOnly": true
-    }
   },
   "defaults": {
     "idempotency": {

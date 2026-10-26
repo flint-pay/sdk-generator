@@ -1,0 +1,12 @@
+[
+  {
+    "operation": "createOrderPaymentIntent",
+    "status": "201",
+    "media": "application/json",
+    "exampleName": "example",
+    "error": "response.data.supported_actions: required field is missing",
+    "reason": "upstream example defect; the server's models.go always serializes supported_actions",
+    "revision": "dcd2401490dadf0be5733b2322e37056013dcb11",
+    "source": "https://github.com/flint-pay/flint/blob/dcd2401490dadf0be5733b2322e37056013dcb11/server/monolith/internal/publicapi/models.go#L2467-L2490"
+  }
+]

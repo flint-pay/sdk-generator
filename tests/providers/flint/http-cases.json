@@ -32,25 +32,25 @@
         "headers": {
           "x-request-id": "req_00P5GR7C25QNQYKSNCJF346W0E"
         },
-        "body": "{\"data\":{\"payment_collection\":{},\"payment_intent\":{\"amount_money\":{\"amount\":9007199254740993,\"currency\":\"USD\"},\"payment_flow\":\"api\",\"payment_intent_id\":\"pi_fixture\",\"payment_options\":[\"card\"],\"status\":\"requires_capture\",\"support_reference\":\"support_fixture\",\"risk\":null,\"last_payment_error\":null}}}"
+        "body": "{\"data\":{\"amount_money\":{\"amount\":9007199254740993,\"currency\":\"USD\"},\"payment_flow\":\"api\",\"payment_intent_id\":\"pi_fixture\",\"payment_options\":[\"card\"],\"status\":\"requires_capture\",\"support_reference\":\"support_fixture\",\"risk\":null,\"last_payment_error\":null,\"metadata\":{},\"supported_actions\":[],\"payment_collection\":{}}}"
       }
     ],
     "data": {
       "data": {
-        "payment_collection": {},
-        "payment_intent": {
-          "amount_money": {
-            "amount": "9007199254740993",
-            "currency": "USD"
-          },
-          "payment_flow": "api",
-          "payment_intent_id": "pi_fixture",
-          "payment_options": ["card"],
-          "status": "requires_capture",
-          "support_reference": "support_fixture",
-          "risk": null,
-          "last_payment_error": null
-        }
+        "amount_money": {
+          "amount": "9007199254740993",
+          "currency": "USD"
+        },
+        "payment_flow": "api",
+        "payment_intent_id": "pi_fixture",
+        "payment_options": ["card"],
+        "status": "requires_capture",
+        "support_reference": "support_fixture",
+        "risk": null,
+        "last_payment_error": null,
+        "metadata": {},
+        "supported_actions": [],
+        "payment_collection": {}
       }
     },
     "options": {
@@ -71,7 +71,8 @@
         "amount_money": {
           "amount": "100",
           "currency": "USD"
-        }
+        },
+        "refund_type": "amount"
       }
     },
     "expected": {
@@ -82,7 +83,7 @@
         "idempotency-key": "durable-refund-key",
         "flint-version": "2026-09-07"
       },
-      "body": "{\"payment_intent_id\":\"pi_fixture\",\"amount_money\":{\"amount\":100,\"currency\":\"USD\"}}"
+      "body": "{\"payment_intent_id\":\"pi_fixture\",\"amount_money\":{\"amount\":100,\"currency\":\"USD\"},\"refund_type\":\"amount\"}"
     },
     "responses": [
       {
@@ -94,7 +95,7 @@
         "headers": {
           "x-request-id": "req_00P5GR7C25QNQYKSNCJF346W0E"
         },
-        "body": "{\"data\":{\"amount_money\":{\"amount\":100,\"currency\":\"USD\"},\"refund_id\":\"ref_fixture\",\"refunded_tip_money\":{\"amount\":0,\"currency\":\"USD\"},\"status\":\"pending\"}}"
+        "body": "{\"data\":{\"amount_money\":{\"amount\":100,\"currency\":\"USD\"},\"refund_id\":\"ref_fixture\",\"refunded_tip_money\":{\"amount\":0,\"currency\":\"USD\"},\"status\":\"pending\",\"reason\":\"requested_by_customer\"}}"
       }
     ],
     "data": {
@@ -108,7 +109,8 @@
           "amount": "0",
           "currency": "USD"
         },
-        "status": "pending"
+        "status": "pending",
+        "reason": "requested_by_customer"
       }
     },
     "options": {
@@ -139,7 +141,7 @@
         "headers": {
           "x-request-id": "req_00P5GR7C25QNQYKSNCJF346W0E"
         },
-        "body": "{\"data\":{\"amount_money\":{\"amount\":9007199254740993,\"currency\":\"USD\"},\"payment_flow\":\"api\",\"payment_intent_id\":\"pi_fixture\",\"payment_options\":[\"card\"],\"status\":\"succeeded\",\"support_reference\":\"support_fixture\",\"risk\":null,\"last_payment_error\":null}}"
+        "body": "{\"data\":{\"amount_money\":{\"amount\":9007199254740993,\"currency\":\"USD\"},\"payment_flow\":\"api\",\"payment_intent_id\":\"pi_fixture\",\"payment_options\":[\"card\"],\"status\":\"succeeded\",\"support_reference\":\"support_fixture\",\"risk\":null,\"last_payment_error\":null,\"metadata\":{},\"supported_actions\":[]}}"
       }
     ],
     "data": {
@@ -154,7 +156,9 @@
         "status": "succeeded",
         "support_reference": "support_fixture",
         "risk": null,
-        "last_payment_error": null
+        "last_payment_error": null,
+        "metadata": {},
+        "supported_actions": []
       }
     }
   },
@@ -180,7 +184,7 @@
         "headers": {
           "x-request-id": "req_00P5GR7C25QNQYKSNCJF346W0E"
         },
-        "body": "{\"data\":{\"amount_money\":{\"amount\":9007199254740993,\"currency\":\"USD\"},\"payment_flow\":\"api\",\"payment_intent_id\":\"pi_fixture\",\"payment_options\":[\"card\"],\"status\":\"future_review\",\"support_reference\":\"support_fixture\"}}"
+        "body": "{\"data\":{\"amount_money\":{\"amount\":9007199254740993,\"currency\":\"USD\"},\"payment_flow\":\"api\",\"payment_intent_id\":\"pi_fixture\",\"payment_options\":[\"card\"],\"status\":\"future_review\",\"support_reference\":\"support_fixture\",\"metadata\":{},\"supported_actions\":[],\"last_payment_error\":null}}"
       }
     ],
     "data": {
@@ -193,7 +197,10 @@
         "payment_intent_id": "pi_fixture",
         "payment_options": ["card"],
         "status": "future_review",
-        "support_reference": "support_fixture"
+        "support_reference": "support_fixture",
+        "metadata": {},
+        "supported_actions": [],
+        "last_payment_error": null
       }
     }
   },
@@ -218,7 +225,7 @@
         "headers": {
           "x-request-id": "req_00P5GR7C25QNQYKSNCJF346W0E"
         },
-        "body": "{\"data\":{\"amount_money\":{\"amount\":100,\"currency\":\"USD\"},\"refund_id\":\"ref_fixture\",\"refunded_tip_money\":{\"amount\":0,\"currency\":\"USD\"},\"status\":\"pending\"}}"
+        "body": "{\"data\":{\"amount_money\":{\"amount\":100,\"currency\":\"USD\"},\"refund_id\":\"ref_fixture\",\"refunded_tip_money\":{\"amount\":0,\"currency\":\"USD\"},\"status\":\"pending\",\"reason\":\"requested_by_customer\"}}"
       }
     ],
     "data": {
@@ -232,7 +239,8 @@
           "amount": "0",
           "currency": "USD"
         },
-        "status": "pending"
+        "status": "pending",
+        "reason": "requested_by_customer"
       }
     }
   },
@@ -258,7 +266,7 @@
         "headers": {
           "x-request-id": "req_00P5GR7C25QNQYKSNCJF346W0E"
         },
-        "body": "{\"data\":[{\"amount_money\":{\"amount\":9007199254740993,\"currency\":\"USD\"},\"payment_flow\":\"api\",\"payment_intent_id\":\"pi_fixture\",\"payment_options\":[\"card\"],\"status\":\"requires_capture\",\"support_reference\":\"support_fixture\",\"risk\":null,\"last_payment_error\":null}],\"next_page_token\":\"next_cursor\"}"
+        "body": "{\"data\":[{\"amount_money\":{\"amount\":9007199254740993,\"currency\":\"USD\"},\"payment_flow\":\"api\",\"payment_intent_id\":\"pi_fixture\",\"payment_options\":[\"card\"],\"status\":\"requires_capture\",\"support_reference\":\"support_fixture\",\"risk\":null,\"last_payment_error\":null,\"metadata\":{},\"supported_actions\":[]}],\"next_page_token\":\"next_cursor\"}"
       }
     ],
     "data": {
@@ -274,7 +282,9 @@
           "status": "requires_capture",
           "support_reference": "support_fixture",
           "risk": null,
-          "last_payment_error": null
+          "last_payment_error": null,
+          "metadata": {},
+          "supported_actions": []
         }
       ],
       "next_page_token": "next_cursor"
@@ -301,7 +311,7 @@
         "headers": {
           "x-request-id": "req_00P5GR7C25QNQYKSNCJF346W0E"
         },
-        "body": "{\"data\":[{\"amount_money\":{\"amount\":100,\"currency\":\"USD\"},\"refund_id\":\"ref_fixture\",\"refunded_tip_money\":{\"amount\":0,\"currency\":\"USD\"},\"status\":\"pending\"}]}"
+        "body": "{\"data\":[{\"amount_money\":{\"amount\":100,\"currency\":\"USD\"},\"refund_id\":\"ref_fixture\",\"refunded_tip_money\":{\"amount\":0,\"currency\":\"USD\"},\"status\":\"pending\",\"reason\":\"requested_by_customer\"}]}"
       }
     ],
     "data": {
@@ -316,7 +326,8 @@
             "amount": "0",
             "currency": "USD"
           },
-          "status": "pending"
+          "status": "pending",
+          "reason": "requested_by_customer"
         }
       ]
     }
@@ -331,7 +342,8 @@
         "amount_money": {
           "amount": "100",
           "currency": "USD"
-        }
+        },
+        "refund_type": "amount"
       }
     },
     "expected": {
@@ -341,7 +353,7 @@
         "authorization": "Bearer test-token",
         "flint-version": "2026-09-07"
       },
-      "body": "{\"payment_intent_id\":\"pi_fixture\",\"amount_money\":{\"amount\":100,\"currency\":\"USD\"}}"
+      "body": "{\"payment_intent_id\":\"pi_fixture\",\"amount_money\":{\"amount\":100,\"currency\":\"USD\"},\"refund_type\":\"amount\"}"
     },
     "responses": [
       {
@@ -384,7 +396,9 @@
     "operation": "createRefund",
     "baseUrl": "https://api.example.invalid",
     "input": {
-      "body": {}
+      "body": {
+        "refund_type": "amount"
+      }
     },
     "responses": [],
     "error": {
@@ -402,7 +416,8 @@
         "amount_money": {
           "amount": "-1",
           "currency": "USD"
-        }
+        },
+        "refund_type": "amount"
       }
     },
     "responses": [],
@@ -437,7 +452,8 @@
     "baseUrl": "https://api.example.invalid",
     "input": {
       "body": {
-        "order_id": "ord_fixture"
+        "order_id": "ord_fixture",
+        "refund_type": "full"
       }
     },
     "expected": {
@@ -448,7 +464,7 @@
         "idempotency-key": "durable-refund-key",
         "flint-version": "2026-09-07"
       },
-      "body": "{\"order_id\":\"ord_fixture\"}"
+      "body": "{\"order_id\":\"ord_fixture\",\"refund_type\":\"full\"}"
     },
     "responses": [
       {
@@ -456,7 +472,7 @@
         "headers": {
           "x-request-id": "req_00P5GR7C25QNQYKSNCJF346W0E"
         },
-        "body": "{\"data\":{\"amount_money\":{\"amount\":100,\"currency\":\"USD\"},\"refund_id\":\"ref_fixture\",\"refunded_tip_money\":{\"amount\":0,\"currency\":\"USD\"},\"status\":\"pending\"}}"
+        "body": "{\"data\":{\"amount_money\":{\"amount\":100,\"currency\":\"USD\"},\"refund_id\":\"ref_fixture\",\"refunded_tip_money\":{\"amount\":0,\"currency\":\"USD\"},\"status\":\"pending\",\"reason\":\"requested_by_customer\"}}"
       }
     ],
     "data": {
@@ -470,7 +486,8 @@
           "amount": "0",
           "currency": "USD"
         },
-        "status": "pending"
+        "status": "pending",
+        "reason": "requested_by_customer"
       }
     },
     "options": {
@@ -484,7 +501,8 @@
     "input": {
       "body": {
         "order_id": "ord_fixture",
-        "payment_intent_id": "pi_fixture"
+        "payment_intent_id": "pi_fixture",
+        "refund_type": "full"
       }
     },
     "expected": {
@@ -495,7 +513,7 @@
         "idempotency-key": "durable-refund-key",
         "flint-version": "2026-09-07"
       },
-      "body": "{\"order_id\":\"ord_fixture\",\"payment_intent_id\":\"pi_fixture\"}"
+      "body": "{\"order_id\":\"ord_fixture\",\"payment_intent_id\":\"pi_fixture\",\"refund_type\":\"full\"}"
     },
     "responses": [
       {
@@ -503,7 +521,7 @@
         "headers": {
           "x-request-id": "req_00P5GR7C25QNQYKSNCJF346W0E"
         },
-        "body": "{\"data\":{\"amount_money\":{\"amount\":100,\"currency\":\"USD\"},\"refund_id\":\"ref_fixture\",\"refunded_tip_money\":{\"amount\":0,\"currency\":\"USD\"},\"status\":\"pending\"}}"
+        "body": "{\"data\":{\"amount_money\":{\"amount\":100,\"currency\":\"USD\"},\"refund_id\":\"ref_fixture\",\"refunded_tip_money\":{\"amount\":0,\"currency\":\"USD\"},\"status\":\"pending\",\"reason\":\"requested_by_customer\"}}"
       }
     ],
     "data": {
@@ -517,7 +535,8 @@
           "amount": "0",
           "currency": "USD"
         },
-        "status": "pending"
+        "status": "pending",
+        "reason": "requested_by_customer"
       }
     },
     "options": {
@@ -545,7 +564,7 @@
         "headers": {
           "x-request-id": "req_00P5GR7C25QNQYKSNCJF346W0E"
         },
-        "body": "{\"data\":{\"amount_money\":{\"amount\":9007199254740993,\"currency\":\"USD\"},\"payment_flow\":\"api\",\"payment_intent_id\":\"pi_fixture\",\"payment_options\":[\"card\"],\"status\":\"succeeded\",\"support_reference\":\"support_fixture\",\"last_payment_error\":null,\"risk\":null}}"
+        "body": "{\"data\":{\"amount_money\":{\"amount\":9007199254740993,\"currency\":\"USD\"},\"payment_flow\":\"api\",\"payment_intent_id\":\"pi_fixture\",\"payment_options\":[\"card\"],\"status\":\"succeeded\",\"support_reference\":\"support_fixture\",\"last_payment_error\":null,\"risk\":null,\"metadata\":{},\"supported_actions\":[]}}"
       }
     ],
     "data": {
@@ -560,8 +579,79 @@
         "status": "succeeded",
         "support_reference": "support_fixture",
         "last_payment_error": null,
-        "risk": null
+        "risk": null,
+        "metadata": {},
+        "supported_actions": []
       }
+    }
+  },
+  {
+    "name": "buyer read omits risk and retains empty legacy flow and options",
+    "operation": "getPaymentIntent",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "payment_intent_id": "pi_fixture"
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/payment-intents/pi_fixture",
+      "headers": {
+        "authorization": "Bearer test-token",
+        "flint-version": "2026-09-07"
+      }
+    },
+    "responses": [
+      {
+        "status": 200,
+        "headers": {
+          "x-request-id": "req_00P5GR7C25QNQYKSNCJF346W0E"
+        },
+        "body": "{\"data\":{\"amount_money\":{\"amount\":9007199254740993,\"currency\":\"USD\"},\"payment_flow\":\"\",\"payment_intent_id\":\"pi_fixture\",\"payment_options\":[],\"status\":\"succeeded\",\"support_reference\":\"support_fixture\",\"last_payment_error\":null,\"metadata\":{},\"supported_actions\":[]}}"
+      }
+    ],
+    "data": {
+      "data": {
+        "amount_money": {
+          "amount": "9007199254740993",
+          "currency": "USD"
+        },
+        "payment_flow": "",
+        "payment_intent_id": "pi_fixture",
+        "payment_options": [],
+        "status": "succeeded",
+        "support_reference": "support_fixture",
+        "last_payment_error": null,
+        "metadata": {},
+        "supported_actions": []
+      }
+    }
+  },
+  {
+    "name": "strict read rejects null payment options",
+    "operation": "getPaymentIntent",
+    "baseUrl": "https://api.example.invalid",
+    "input": {
+      "payment_intent_id": "pi_fixture"
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/payment-intents/pi_fixture",
+      "headers": {
+        "authorization": "Bearer test-token",
+        "flint-version": "2026-09-07"
+      }
+    },
+    "responses": [
+      {
+        "status": 200,
+        "headers": {
+          "x-request-id": "req_00P5GR7C25QNQYKSNCJF346W0E"
+        },
+        "body": "{\"data\":{\"amount_money\":{\"amount\":9007199254740993,\"currency\":\"USD\"},\"payment_flow\":\"\",\"payment_intent_id\":\"pi_fixture\",\"payment_options\":null,\"status\":\"succeeded\",\"support_reference\":\"support_fixture\",\"last_payment_error\":null,\"metadata\":{},\"supported_actions\":[]}}"
+      }
+    ],
+    "error": {
+      "kind": "protocol"
     }
   }
 ]

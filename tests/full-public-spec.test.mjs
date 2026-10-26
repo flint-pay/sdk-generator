@@ -1,3 +1,4 @@
+import { responseExamples } from './helpers/flint-response-examples.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
@@ -22,10 +23,10 @@ test('full public export retains pinned source bytes and deterministic exhaustiv
   assert.equal(source['x-flint-api-version'], provenance.apiVersion);
   const inventory = publicInventory(source);
   assert.deepEqual(inventory, read('full-inventory.json'));
-  assert.equal(inventory.operations.length, 507);
-  assert.equal(new Set(inventory.operations.map(({ id }) => id)).size, 507);
-  assert.equal(inventory.incoming.length, 191);
-  assert.equal(inventory.mappings.length, 6);
+  assert.equal(inventory.operations.length, 612);
+  assert.equal(new Set(inventory.operations.map(({ id }) => id)).size, 612);
+  assert.equal(inventory.incoming.length, 245);
+  assert.equal(inventory.mappings.length, 76);
   assert.deepEqual(
     Object.fromEntries(
       [
@@ -40,14 +41,14 @@ test('full public export retains pinned source bytes and deterministic exhaustiv
       ].map((key) => [key, inventory.keywords[key].length]),
     ),
     {
-      multipleOf: 17,
-      uniqueItems: 25,
-      if: 18,
-      then: 18,
-      else: 1,
-      contains: 11,
-      minProperties: 6,
-      maxProperties: 1,
+      multipleOf: 42,
+      uniqueItems: 77,
+      if: 273,
+      then: 273,
+      else: 224,
+      contains: 8,
+      minProperties: 27,
+      maxProperties: 14,
     },
   );
   assert.equal(inventory.keywords.minContains, undefined);
@@ -69,6 +70,76 @@ test('full public export retains pinned source bytes and deterministic exhaustiv
   assert.ok(inventory.incoming.every((op) => !outgoing.has(op.id)));
 });
 
+test('full profile authentication selections retain complete published alternatives', () => {
+  const hidden = new Set([
+    'authorizeCLIDevice',
+    'listCLIContexts',
+    'reauthorizeCLIDevice',
+    'revokeOAuthToken',
+    'exchangeOAuthToken',
+  ]);
+  const operations = Object.values(source.paths).flatMap((item) =>
+    Object.values(item).filter(
+      (operation) => operation.operationId && !hidden.has(operation.operationId),
+    ),
+  );
+  for (const profileName of read('full-sdk.json').profiles) {
+    const profile = read(profileName);
+    const [[, mode]] = Object.entries(profile.auth.modes);
+    const allowed = operations.filter((operation) =>
+      (operation.security ?? source.security ?? []).some(
+        (alternative) =>
+          JSON.stringify(Object.keys(alternative).sort()) ===
+          JSON.stringify(mode.schemes.slice().sort()),
+      ),
+    );
+    assert.deepEqual(
+      mode.operations.slice().sort(),
+      allowed.map((operation) => operation.operationId).sort(),
+      profileName,
+    );
+    const anonymous = operations.filter((operation) => {
+      const alternatives = operation.security ?? source.security ?? [];
+      return (
+        alternatives.length === 0 ||
+        alternatives.some((alternative) => Object.keys(alternative).length === 0)
+      );
+    });
+    assert.deepEqual(
+      profile.include.slice().sort(),
+      [...new Set([...allowed, ...anonymous].map((operation) => operation.operationId))].sort(),
+      profileName,
+    );
+    assert.equal(profile.overrides, undefined, profileName);
+  }
+  assert.equal(read('full-common-sdk.json').overrides, undefined);
+});
+
+test('the single upstream response-example defect is pinned to source evidence', () => {
+  const [defect, ...others] = read('response-example-failures.json');
+  assert.deepEqual(others, []);
+  assert.deepEqual(
+    [defect.operation, defect.status, defect.media, defect.exampleName],
+    ['createOrderPaymentIntent', '201', 'application/json', 'example'],
+  );
+  assert.equal(defect.error, 'response.data.supported_actions: required field is missing');
+  assert.equal(defect.revision, read('provenance.json').revision);
+  assert.equal(
+    defect.source,
+    `https://github.com/flint-pay/flint/blob/${defect.revision}/server/monolith/internal/publicapi/models.go#L2467-L2490`,
+  );
+  const operation = source.paths['/v1/orders/{order_id}/payment-intents'].post;
+  assert.equal(operation.operationId, defect.operation);
+  const response = operation.responses[defect.status].content[defect.media];
+  assert.equal(response.schema.$ref, '#/components/schemas/PaymentIntentWithCollectionResponse');
+  assert.equal(Object.hasOwn(response.example.data, 'supported_actions'), false);
+  assert.ok(source.components.schemas.PaymentIntent.required.includes('supported_actions'));
+  assert.equal(
+    source.components.schemas.PaymentIntentWithCollection.allOf[0].$ref,
+    '#/components/schemas/PaymentIntent',
+  );
+});
+
 test('inventory never treats literal data as subschemas', () => {
   const result = publicInventory({
     components: {
@@ -80,6 +151,78 @@ test('inventory never treats literal data as subschemas', () => {
   assert.deepEqual(result.keywords, {
     const: ['/components/schemas/Literal/const'],
   });
+});
+
+test('response-example inventory follows schema references and includes hidden JSON responses', () => {
+  const document = {
+    components: {
+      schemas: {
+        Shared: {
+          type: 'object',
+          example: { $ref: 'literal data', properties: { example: 'literal' } },
+          properties: { value: { type: 'string', examples: ['nested'] } },
+        },
+      },
+    },
+    paths: {
+      '/resource': {
+        get: {
+          operationId: 'getResource',
+          responses: {
+            200: {
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/Shared' },
+                  examples: { named: { value: { value: 'route' } } },
+                },
+              },
+            },
+            400: {
+              content: {
+                'application/json': { schema: { type: 'string', example: 'not success' } },
+              },
+            },
+          },
+        },
+      },
+      '/hidden': {
+        post: {
+          operationId: 'exchangeOAuthToken',
+          responses: {
+            200: {
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/Shared' },
+                  example: { value: 'hidden' },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+  const inventory = responseExamples(document);
+  assert.deepEqual(
+    inventory.routes.map(({ operation, status, media, exampleName }) => [
+      operation,
+      status,
+      media,
+      exampleName,
+    ]),
+    [['getResource', '200', 'application/json', 'examples/named']],
+  );
+  assert.equal(
+    inventory.schemas.length,
+    3,
+    'two shared schema annotations plus hidden JSON example',
+  );
+  assert.deepEqual(
+    inventory.schemas.map(({ json }) => JSON.parse(json)),
+    [{ $ref: 'literal data', properties: { example: 'literal' } }, 'nested', { value: 'hidden' }],
+  );
+  assert.equal(inventory.schemas[2].operation, 'exchangeOAuthToken');
+  assert.deepEqual(inventory.omitted, []);
 });
 
 test('getBundle retains its original referenced graph and decodes inherited discriminator branches in both targets', async () => {
@@ -114,6 +257,9 @@ test('getBundle retains its original referenced graph and decodes inherited disc
         component_count: 1,
         delivery_configuration_status: 'configured',
         images: [],
+        categories: [],
+        components: [],
+        metadata: {},
         modifier_set_id: null,
         name: 'Bundle',
         status: 'active',

@@ -20,15 +20,15 @@
       "name": "flint",
       "api": "tests/providers/flint/openapi.json",
       "config": "tests/providers/flint/sdk.json",
-      "nodeDeclarationsSha256": "b8a08d0c3ffa167b132d9c3db99a6661eef7a8c3831e01a197a4063f6762442d",
-      "phpDeclarationsSha256": "07b58f9d42ff22dd7b5a960601d76af01db1284767e7be979fd7b95afa16c927"
+      "nodeDeclarationsSha256": "ebd4b0221dd22c347b22bae60dcee0f796be72fb08cd228d072c1c5294af99dd",
+      "phpDeclarationsSha256": "1dd88962f4242c8bd96107622b4490e08a5c4fcb116062e42b3b8ce15969fc88"
     },
     {
       "name": "risk",
       "api": "tests/providers/flint/risk-openapi.json",
       "config": "tests/providers/flint/risk-sdk.json",
-      "nodeDeclarationsSha256": "370e77fea5452bc8e46850fb7e10447e154166da0773fdde903d4ad1251e2acf",
-      "phpDeclarationsSha256": "a28d3352104effef3fba124db6af53f4b6fa8ca6eb374811768ace85cf21123b"
+      "nodeDeclarationsSha256": "74d9255135dc20a652f8f448aafbca9edd6cc48df7aa4875d5f5df63aca7e64c",
+      "phpDeclarationsSha256": "2cfd0fed1f3e6f6141a8242c7e85bc1714ab8ce2a011511b453bac74a44bc4e5"
     }
   ]
 }
