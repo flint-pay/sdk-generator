@@ -1020,14 +1020,30 @@ function checkRepresentations(s: Schema, p: string, explicitNumbers = false): vo
   };
   // Each child has already passed schema validation. Keep fingerprints local:
   // representation inference below mutates owned nodes and invalidates the cache.
-  let fingerprints = new WeakMap<Schema, string>();
-  const fingerprint = (shape: Schema): string => {
-    let hash = fingerprints.get(shape);
-    if (hash === undefined) {
-      hash = stable(shape);
-      fingerprints.set(shape, hash);
+  let fingerprints = new WeakMap<object, string>();
+  const fingerprint = (shape: object): string => {
+    let identity = fingerprints.get(shape);
+    if (identity === undefined) {
+      const child = (value: unknown): unknown =>
+        value !== null && typeof value === 'object' ? { subtree: fingerprint(value) } : value;
+      // Hash child identities once instead of retaining/serializing each complete
+      // subtree in every comparison key. Tags distinguish arrays from objects.
+      identity = hash(
+        JSON.stringify(
+          Array.isArray(shape)
+            ? ['array', shape.map(child)]
+            : [
+                'object',
+                Object.entries(shape)
+                  .filter(([, value]) => value !== undefined)
+                  .sort(([a], [b]) => a.localeCompare(b, 'en'))
+                  .map(([key, value]) => [key, child(value)]),
+              ],
+        ),
+      );
+      fingerprints.set(shape, identity);
     }
-    return hash;
+    return identity;
   };
   const compared = new Set<string>();
   let representationVersion = 0;

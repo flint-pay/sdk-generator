@@ -430,6 +430,35 @@ echo 'ok';`;
   assert.equal(result.stdout, 'ok');
 });
 
+test('representation memo keys keep large repeated annotations within a bounded process', () => {
+  let repeated = {
+    type: 'object',
+    description: 'synthetic annotation '.repeat(2048),
+    properties: { amount: { type: 'integer', format: 'int64' } },
+  };
+  for (let i = 0; i < 6; i++)
+    repeated = {
+      type: 'object',
+      properties: { child: { anyOf: [repeated, structuredClone(repeated)] } },
+    };
+  const api = document({ bounded: { anyOf: [repeated, structuredClone(repeated)] } });
+  api.paths['/bounded'].post.responses = { 200: { description: 'ok' } };
+  const path = join(dir, 'bounded-memo.json');
+  writeFileSync(path, JSON.stringify(api));
+  const script = `import {loadContract} from ${JSON.stringify(new URL('../dist/index.js', import.meta.url).href)};
+const c=loadContract(${JSON.stringify(path)},${JSON.stringify(join(dir, 'sdk.json'))});
+console.log(JSON.stringify({operations:c.operations.length,maxRSS:process.resourceUsage().maxRSS}));`;
+  const result = spawnSync(
+    process.execPath,
+    ['--max-old-space-size=128', '--input-type=module', '-e', script],
+    { encoding: 'utf8', timeout: 20000 },
+  );
+  assert.equal(result.status, 0, result.error?.message ?? result.stderr);
+  const summary = JSON.parse(result.stdout);
+  assert.equal(summary.operations, 1);
+  assert.ok(summary.maxRSS < 256 * 1024, `representation memo peak RSS: ${summary.maxRSS} KiB`);
+});
+
 function referenceCli() {
   const root = join(dir, 'uncached');
   cpSync(new URL('../dist/', import.meta.url), join(root, 'dist'), { recursive: true });
