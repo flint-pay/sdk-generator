@@ -269,6 +269,18 @@ export function assertCompiledSnapshot(value: unknown): asserts value is Compile
         const entry = object(value, 'model.documentation.field');
         fields(entry, ['description'], 'string', 'model.documentation.field');
         fields(entry, ['required'], 'boolean', 'model.documentation.field');
+        if (entry.enums !== undefined) {
+          if (!Array.isArray(entry.enums)) throw new Error('Invalid model field enums');
+          for (const value of entry.enums) {
+            const enumeration = object(value, 'model.documentation.enum');
+            fields(enumeration, ['path'], 'string', 'model.documentation.enum');
+            if (
+              !Array.isArray(enumeration.values) ||
+              !enumeration.values.every((value) => typeof value === 'string')
+            )
+              throw new Error('Invalid model enum values');
+          }
+        }
         if (entry.markdown !== undefined)
           fields(entry, ['markdown'], 'string', 'model.documentation.field');
       }

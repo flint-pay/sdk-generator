@@ -1,4 +1,10 @@
-import { schemaNotes, schemaLiteral } from './schema-documentation.js';
+import {
+  schemaNotes,
+  schemaLiteral,
+  schemaEnumValues,
+  enumNotes,
+  type SchemaEnumValues,
+} from './schema-documentation.js';
 import {
   publicTypePlanner,
   publicTypeDeclarations,
@@ -108,7 +114,7 @@ export function operationInputType(
   return `{ ${Object.entries(schema.properties!)
     .map(
       ([key, value]) =>
-        `${documentation ? schemaComment(value) : ''}${JSON.stringify(key)}${schema.required!.includes(key) ? '' : '?'}: ${schema.required!.includes(key) ? `InputValue<${namedType(value, models, false, documentation)}>` : optionalPropertyType(key, `InputValue<${namedType(value, models, false, documentation)}>`)};`,
+        `${documentation ? schemaComment(value, models) : ''}${JSON.stringify(key)}${schema.required!.includes(key) ? '' : '?'}: ${schema.required!.includes(key) ? `InputValue<${namedType(value, models, false, documentation)}>` : optionalPropertyType(key, `InputValue<${namedType(value, models, false, documentation)}>`)};`,
     )
     .join(' ')} }`;
 }
@@ -226,7 +232,10 @@ export interface PhpModelPlan {
   constructorDoc: string;
   defaultObject: boolean;
   getters: { field: string; method: string; type: string; doc: string }[];
-  documentation?: Record<string, { description: string; markdown?: string; required: boolean }>;
+  documentation?: Record<
+    string,
+    { description: string; markdown?: string; enums?: SchemaEnumValues[]; required: boolean }
+  >;
   description?: string;
   codec: CodecPlan;
   sharedCodec?: string;
@@ -276,21 +285,13 @@ export function compilePhpModel(
           field,
           {
             required: declaration.required?.includes(field) ?? false,
-            markdown: [
-              schemaNotes(includeExamples ? child : withoutExamples, { literal: schemaLiteral }),
-              child.enum
-                ? 'Values: ' +
-                  child.enum.map((v) => schemaLiteral(JSON.stringify(v))).join(', ') +
-                  '.'
-                : '',
-            ]
-              .filter(Boolean)
-              .join(' '),
+            enums: schemaEnumValues(child, declaration['x-sdk-definitions']),
+            markdown: schemaNotes(includeExamples ? child : withoutExamples, {
+              literal: schemaLiteral,
+            }),
             description: [
               schemaNotes(includeExamples ? child : withoutExamples),
-              child.enum
-                ? 'Values: ' + child.enum.map((v) => JSON.stringify(v)).join(', ') + '.'
-                : '',
+              enumNotes(schemaEnumValues(child, declaration['x-sdk-definitions'])),
             ]
               .filter(Boolean)
               .join(' '),

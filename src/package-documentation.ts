@@ -1,4 +1,4 @@
-import { schemaLiteral } from './schema-documentation.js';
+import { schemaLiteral, enumNotes, type EnumLinks } from './schema-documentation.js';
 import { schemaVariants } from './sdk-documentation.js';
 import type { Contract, Operation } from './contract.js';
 
@@ -265,19 +265,12 @@ export function optionsReference(c: Contract, target: 'node' | 'php'): string {
       'Maximum idle duration while consuming SSE.',
     ],
     ['streamLifetimeMs', node ? 'number' : 'int', 'unlimited', 'Optional total SSE lifetime.'],
-    ...(node ||
-    c.operations.some((op) =>
-      op.parameters.some((p) => p['x-flint-request-option'] === 'client_request_id'),
-    )
-      ? [
-          [
-            node ? 'clientRequestId' : 'client_request_id',
-            'string',
-            'none',
-            'Caller correlation: 1–128 visible ASCII characters, no spaces.',
-          ] as const,
-        ]
-      : []),
+    [
+      node ? 'clientRequestId' : 'client_request_id',
+      'string',
+      'none',
+      'Caller correlation: 1–128 visible ASCII characters, no spaces. Forwarded only when the operation declares its request-ID header.',
+    ],
   ];
   for (const name of Object.keys(c.authShortcuts ?? {})) {
     if (name !== 'token')
@@ -298,6 +291,7 @@ export function optionsReference(c: Contract, target: 'node' | 'php'): string {
 export function phpModelReference(
   c: Contract,
   plans: readonly import('./target-plan.js').PhpModelPlan[],
+  enumLinks?: EnumLinks,
 ): string {
   const selected = plans.filter(
     (plan) => plan.response || Object.hasOwn(c.models, plan.name.replace(/Input$/, '')),
@@ -349,7 +343,7 @@ export function phpModelReference(
                 plan.getters
                   .map(
                     (getter) =>
-                      `| \`${getter.field}\` | ${plan.documentation?.[getter.field]?.required ? 'Required' : 'Optional'} | ${type(getter.doc)} | ${cell(plan.documentation?.[getter.field]?.markdown ?? plan.documentation?.[getter.field]?.description ?? '')} |`,
+                      `| \`${getter.field}\` | ${plan.documentation?.[getter.field]?.required ? 'Required' : 'Optional'} | ${type(getter.doc)} | ${[cell(plan.documentation?.[getter.field]?.markdown ?? plan.documentation?.[getter.field]?.description ?? ''), enumNotes(plan.documentation?.[getter.field]?.enums ?? [], (value) => schemaLiteral(value, true), enumLinks)].filter(Boolean).join(' ')} |`,
                   )
                   .join('\n') +
                 '\n\n'

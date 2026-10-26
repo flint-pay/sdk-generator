@@ -126,7 +126,14 @@ test('resource docs separate inputs from linked output fields, errors and shared
       assert.match(request, /Values: `"fast"`, `"safe"`/);
       assert.doesNotMatch(operation, /\[location\]\(/);
       assert.match(response, /Returned payload: \[[^\]]+\]\(\.\.\/MODELS.md#[^)]+\)/);
-      assert.match(response, /\| `id` \| Required \| string \| Record identifier/);
+      assert.doesNotMatch(response, /\| `id` \| Required \| string \| Record identifier/);
+      assert.match(
+        packageDocuments(root)
+          .filter((path) => /MODELS\.md|\/models\//.test(path))
+          .map((path) => readFileSync(path, 'utf8'))
+          .join('\n'),
+        /\| `id` \| Required \| string \| Record identifier/,
+      );
       assert.doesNotMatch(response, /Execution mode/);
       assert.match(response, /400 \| ValidationError \| validation/);
       assert.match(response, /409 \| ConflictError \| conflict/);
@@ -269,4 +276,59 @@ test('response alternatives show top-level output fields and enum values without
   assert.match(source, /Response variant 2/);
   assert.match(source, /Values: `"waiting"`, `"blocked"`/);
   assert.doesNotMatch(source, /`secret`/);
+});
+
+test('inline body variants retain their descriptions while sharing identical field tables', async () => {
+  const { bodyReference } = await import('../dist/sdk-documentation.js');
+  const document = bodyReference(
+    {
+      resource: 'records',
+      method: 'update',
+      body: {
+        type: 'object',
+        properties: { mode: { type: 'string', enum: ['fast', 'safe'] } },
+        anyOf: [
+          { required: ['mode'], description: 'First declared alternative.' },
+          { required: ['mode'], description: 'Second declared alternative.' },
+        ],
+      },
+    },
+    {},
+  );
+  assert.equal(document.split('| Field | Presence | Type | Description |').length - 1, 2);
+  assert.match(document, /Second declared alternative\./);
+  assert.match(
+    document,
+    /Fields: \[records.update body anyOf variant 1 fields\]\(#recordsupdate-body-anyof-variant-1-fields\)/,
+  );
+  assert.match(document, /\| `mode` \| Required \| string \| Values: `"fast"`, `"safe"`/);
+});
+
+test('shared variant tables link to the correct occurrence of a duplicate heading', async () => {
+  const { bodyReference } = await import('../dist/sdk-documentation.js');
+  const document = bodyReference(
+    {
+      resource: 'records',
+      method: 'update',
+      body: {
+        type: 'object',
+        properties: { x: { type: 'string' }, y: { type: 'string' } },
+        allOf: [
+          { anyOf: [{ required: ['x'] }, { required: ['y'] }] },
+          { anyOf: [{ required: ['y'] }, { required: ['x', 'y'] }] },
+          { anyOf: [{ required: ['y'] }, { required: ['x', 'y'] }] },
+        ],
+      },
+    },
+    {},
+  );
+  assert.equal(document.split('| Field | Presence | Type | Description |').length - 1, 4);
+  const headings = document.split('#### records.update body anyOf variant 2 fields');
+  assert.equal(headings.length, 3);
+  assert.match(headings[2], /\| `x` \| Required/);
+  assert.match(headings[2], /\| `y` \| Required/);
+  assert.match(
+    document,
+    /Fields: \[records.update body anyOf variant 2 fields\]\(#recordsupdate-body-anyof-variant-2-fields-1\)/,
+  );
 });

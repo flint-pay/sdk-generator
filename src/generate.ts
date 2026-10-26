@@ -56,6 +56,9 @@ import { requireTool } from './tool-checks.js';
 import { serialize, executeCodec, ExactNumber, SdkError } from './runtime.js';
 import {
   modelReference,
+  modelName,
+  idempotencyReference,
+  errorCodeDocumentation,
   responseReference,
   fieldTable,
   bodyReference,
@@ -1259,6 +1262,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
             'REFERENCE.md',
             'MODELS.md',
             'RUNTIME.md',
+            'ERRORS.md',
             'reference/',
             'llms.txt',
             'LICENSE',
@@ -1377,9 +1381,9 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
 
     for (const [name, model] of Object.entries(models)) {
       if (!model.outputAlias)
-        declarations += `${schemaComment(c.models[name]!)}export type ${name} = ${model.documentedOutput ?? model.output};\n`;
+        declarations += `${schemaComment(c.models[name]!, c.definitions ?? c.models)}export type ${name} = ${model.documentedOutput ?? model.output};\n`;
       if (model.inputReachable === false) continue;
-      declarations += `${schemaComment(c.models[name]!)}export type ${name}Input = ${model.documentedInput ?? model.input};\n`;
+      declarations += `${schemaComment(c.models[name]!, c.definitions ?? c.models)}export type ${name}Input = ${model.documentedInput ?? model.input};\n`;
       // Preserve the validated object branch when a model also permits
       // nonobjects, so its factory can nest inside an object-constrained field.
       if (model.objectFactory) {
@@ -1905,7 +1909,17 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       );
     }
   }
+  const errorDocs = errorCodeDocumentation(c);
+  const bodyUses = new Map<string, number>();
+  for (const op of c.operations) {
+    const name = op.body && modelName(op.body, c.definitions ?? c.models);
+    if (name) bodyUses.set(name, (bodyUses.get(name) ?? 0) + 1);
+  }
+  const sharedBodies = new Set(
+    [...bodyUses].filter(([, count]) => count > 1).map(([name]) => name),
+  );
   for (const target of targets) {
+    if (errorDocs.reference) files.set(`${target}/ERRORS.md`, errorDocs.reference);
     files.set(
       `${target}/README.md`,
       packageReadme(
@@ -1917,11 +1931,16 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     );
     files.set(
       `${target}/RUNTIME.md`,
-      runtimeGuide(c, target, targetPlan[target].standaloneWebhook === true),
+      runtimeGuide(
+        c,
+        target,
+        targetPlan[target].standaloneWebhook === true,
+        Boolean(errorDocs.reference),
+      ),
     );
     const modelDocs = modelDocuments(
       target === 'php'
-        ? phpModelReference(c, targetPlan.php.models)
+        ? phpModelReference(c, targetPlan.php.models, errorDocs.links)
         : modelReference(
             {
               ...c,
@@ -1931,6 +1950,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
             },
             target === 'node' ? modelExports : undefined,
             target,
+            errorDocs.links,
           ),
     );
     for (const [path, source] of modelDocs.files) files.set(`${target}/${path}`, source);
@@ -1969,6 +1989,17 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         : Object.entries(op.responses)
             .filter(([status]) => successStatus(status))
             .flatMap(([, response]) => (response.schema ? [response.schema] : []));
+      // PHP response classes can have operation-based names even when the source
+      // payload references a component. Link that class's canonical field table.
+      const responseModelNames =
+        target === 'php' && outputs.length === 1 && modelDocs.namedLinks.has(returned)
+          ? {
+              ...outputModelNames,
+              ...(modelName(outputs[0]!, c.definitions ?? c.models)
+                ? { [modelName(outputs[0]!, c.definitions ?? c.models)!]: returned }
+                : {}),
+            }
+          : outputModelNames;
       const responseFields = [
         ...new Map(outputs.map((schema) => [stable(schema), schema])).values(),
       ]
@@ -1977,7 +2008,8 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
             schema,
             c.definitions ?? c.models,
             `${op.resource}.${op.method} response`,
-            outputModelNames,
+            responseModelNames,
+            errorDocs.links,
           ),
         )
         .filter(Boolean)
@@ -1995,15 +2027,8 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
           `${op.method}(${target === 'php' ? plan.phpSignature : plan.nodeSignature})`,
           target,
         ) +
-        (positional(op)
-          ? `Path arguments: ${
-              pathParameters(op)
-                .map((p, i) => `\`path${i}\` = \`${p.name}\``)
-                .join(', ') || 'none'
-            }. Params contain flat body fields and query/header fields.\n\n`
-          : 'Pass one input object containing path/query/header fields and a `body` member for the request body. Request options are the last argument.\n\n') +
-        `#### Request fields\n\n${fieldTable(inputSchema(op, c.config.apiVersion, c), c.definitions ?? c.models, `${op.resource}.${op.method} input`, false, target === 'node' ? inputModelNames : phpInputNames) || 'No request fields.\n\n'}${bodyReference(op, c.definitions ?? c.models, target === 'node' ? inputModelNames : phpInputNames)}` +
-        `#### Response\n\n${payloadReturns[op.id] ? 'Returned payload' : 'Response body (inside Result.data)'}: ${linkedReturn}.\n\n${responseFields || 'No top-level object fields; see the return type.\n\n'}` +
+        `#### Request fields\n\n${fieldTable(inputSchema(op, c.config.apiVersion, c), c.definitions ?? c.models, `${op.resource}.${op.method} input`, false, target === 'node' ? inputModelNames : phpInputNames, errorDocs.links) || 'No request fields.\n\n'}${bodyReference(op, c.definitions ?? c.models, target === 'node' ? inputModelNames : phpInputNames, sharedBodies, errorDocs.links)}` +
+        `#### Response\n\n${payloadReturns[op.id] ? 'Returned payload' : 'Response body (inside Result.data)'}: ${linkedReturn}.\n\n${responseFields}` +
         operationErrors(op) +
         operationGuidance(c, op) +
         (op.aliases?.length ? `Deprecated aliases: ${op.aliases.join(', ')}.\n\n` : '') +
@@ -2012,7 +2037,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     };
     files.set(
       `${target}/REFERENCE.md`,
-      `# ${/\bAPI$/i.test(c.title.trim()) ? c.title + ' reference' : c.title + ' API reference'}\n\nPackage ${c.config.version}; API ${c.apiVersion}.\n\n[Models](MODELS.md) · [Runtime guide](RUNTIME.md)\n\n${c.config.webhook ? webhookReference(target) : ''}## Resources\n\n` +
+      `# ${/\bAPI$/i.test(c.title.trim()) ? c.title + ' reference' : c.title + ' API reference'}\n\nPackage ${c.config.version}; API ${c.apiVersion}.\n\n[Models](MODELS.md) · [Runtime guide](RUNTIME.md)\n\n${c.operations.some(positional) ? 'Selected operations use positional arguments; signatures list their order.' : 'Methods take one input object containing path/query/header fields and a body member for JSON requests.'} Request options come last. [Calling convention](RUNTIME.md#calling-convention).\n\n${c.config.webhook ? webhookReference(target) : ''}## Resources\n\n` +
         groups
           .map(
             (group) =>
@@ -3471,7 +3496,12 @@ try {
 }
 
 /** Shared behavior is rendered once, with target-specific syntax and lifecycle rules. */
-function runtimeGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: boolean): string {
+function runtimeGuide(
+  c: Contract,
+  target: 'node' | 'php',
+  standaloneWebhook: boolean,
+  providerCodes = false,
+): string {
   const node = target === 'node';
   const sample = c.operations.find((op) => op.verb === 'GET') ?? c.operations[0];
   const paginated = c.operations.find((op) => op.pagination);
@@ -3523,11 +3553,16 @@ function runtimeGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: bo
     `## Responses and errors\n\nPayload methods return the decoded body or configured payload path directly. WithResponse companions return SdkResponse with body, meta and raw without unwrapping. Each invocation makes its own request; choose one form per action. Result-mode methods return Result with data (the complete body), meta and raw. API envelopes remain inside that body. Pagination Pages and polling Wait follow the base return mode; their WithResponse companions expose the complete body and metadata. Items yields individual items.\n\n${node ? 'Metadata uses properties, and binary bodies are Uint8Array.' : 'Metadata uses array keys, and binary bodies are binary-safe strings.'} Raw JSON is buffered text and may contain sensitive data.\n\n### Errors\n\n` +
     snippet(errorClassExample(c, target)) +
     errorReference(target) +
+    (providerCodes
+      ? '### Provider error codes\n\nSee the [declared provider error-code values](ERRORS.md#provider-error-codes).\n\n'
+      : '') +
     `### Undeclared and invalid responses\n\n${responseRecoveryGuide(target)}\n\n` +
     `## Retries and idempotency\n\nWithout a declared policy, GET/HEAD/OPTIONS allow three total attempts for transport failures and HTTP 408, 429, 500, 502, 503 and 504. Other methods send once. Explicit operation policies replace those defaults; maxAttempts caps total attempts including the first. Mutations with optional idempotency keys send once when no key is supplied. HTTP 412 never retries.\n\nBackoff waits uniformly between half and all of baseDelayMs * 2^(attempt - 1), capped by maxDelayMs when declared. Retry-After is a minimum wait. Nonnegative decimal seconds or canonical GMT HTTP dates are accepted; malformed values are ignored. If the next wait exceeds the deadline, the last error is returned unchanged.\n\n` +
     (c.config.errors?.retry
       ? `The response field \`${c.config.errors.retry.path}\` controls body-driven retries for declared retry values: ${c.config.errors.retry.retryValues.map((v) => js(v)).join(', ')}. A string signal overrides status and code rules; otherwise statuses apply.\n\n`
       : '') +
+    '### Idempotency\n\n' +
+    idempotencyReference(c) +
     'Only operations declaring idempotency accept idempotencyKey. Persist a key with the original input before the first attempt and reuse it for the same action. When automatic keys are enabled, the SDK creates one per call and reuses it across attempts; automatic keys do not span separate calls. Resolved keys are exposed on errors and response metadata, including not_sent failures after key resolution.\n\nAn outcome of unknown means remote completion is uncertain. Reconcile the action with the provider using the saved key before resubmitting. Cancellation and timeouts cannot undo remote work.\n\n' +
     recoveryReference(c, target) +
     `\n## Pagination and polling\n\n${pagination}Pagination is lazy and defaults to at most 1000 pages. maxPages and maxItems cap work. Repeated continuations (including cursor cycles) and two consecutive empty pages still advertising a continuation raise protocol errors. An isolated or terminal empty page is valid. Iteration does not guarantee a stable snapshot or durable continuation. Each page gets a fresh deadline; processing yielded values does not consume it. Polling shares an overall deadline. Per-operation references list helper names and terminal states.\n\n` +

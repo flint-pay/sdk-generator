@@ -136,7 +136,7 @@ export function prepareSite(
     writeFileSync(join(site, path), data);
   };
   for (const path of owned.filter((p) =>
-    /^(node|php)\/(README\.md|REFERENCE\.md|MODELS\.md|RUNTIME\.md|llms\.txt|reference\/.*\.md$|models\/.*\.md$|guides\/|examples\/)/.test(
+    /^(node|php)\/(README\.md|REFERENCE\.md|MODELS\.md|RUNTIME\.md|ERRORS\.md|llms\.txt|reference\/.*\.md$|models\/.*\.md$|guides\/|examples\/)/.test(
       p,
     ),
   ))

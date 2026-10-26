@@ -543,7 +543,7 @@ catch(\InvalidArgumentException $e){}}
 test('operation references explain automatic keys and code-specific retries', () => {
   for (const target of ['node', 'php']) {
     const reference = readReference(output, target);
-    assert.match(reference, /automatic key when omitted/);
+    assert.match(reference, /Idempotent: key automatic/);
     assert.match(
       readFileSync(join(output, target, 'RUNTIME.md'), 'utf8'),
       /the SDK creates one per call/,

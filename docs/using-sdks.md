@@ -4,8 +4,9 @@ Each generated package contains:
 
 - `README.md`: a quickstart and short recipes.
 - `REFERENCE.md`: a resource index linking to operation files under `reference/`.
-- `MODELS.md`: a model index with descriptions, enums, units and constraints; large references split into `models/` files. TypeScript field comments carry the same information.
-- `RUNTIME.md`: options, errors, retries, pagination, webhooks and the authentication table for this SDK.
+- `MODELS.md`: a model index with descriptions, enums, units and constraints; large references split into `models/` files. Named responses and shared named request bodies link here for their canonical field tables. Collection item and map value enums are listed, including nested collections. TypeScript field comments and PHP getters carry the same information.
+- `RUNTIME.md`: calling conventions, options, errors, retries, idempotency policies, pagination, webhooks and the authentication table for this SDK.
+- `ERRORS.md`, when present: declared provider error-code values, linked from the runtime and model references.
 - `llms.txt`: a small agent-oriented index.
 - `examples/`: a runnable script for every operation.
 

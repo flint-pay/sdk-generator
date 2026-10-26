@@ -2,7 +2,14 @@ import { stable } from './canonical.js';
 import { compileRetry, requiresIdempotencyKey } from './runtime-plan.js';
 import { directionalSchema, exactValue, valueInstruction } from './codec-plan.js';
 import type { Contract, Operation, Schema } from './contract.js';
-import { schemaNotes, schemaLiteral as literal } from './schema-documentation.js';
+import {
+  schemaNotes,
+  schemaLiteral as literal,
+  schemaEnumValues,
+  enumIdentity,
+  enumNotes,
+  type EnumLinks,
+} from './schema-documentation.js';
 
 const cell = (text: string) =>
   text
@@ -115,7 +122,7 @@ export function schemaFields(
   return { fields, required };
 }
 const documentedModels = new WeakMap<Record<string, Schema>, Map<string, string>>();
-function modelName(schema: Schema, definitions: Record<string, Schema>): string | undefined {
+export function modelName(schema: Schema, definitions: Record<string, Schema>): string | undefined {
   if (schema['x-sdk-ref']) return schema['x-sdk-ref'];
   if (schema['x-sdk-type-name']) return schema['x-sdk-type-name'];
   let index = documentedModels.get(definitions);
@@ -170,6 +177,7 @@ export function fieldTable(
   scope = 'Field',
   includeExamples = true,
   names?: ModelNames,
+  enumLinks?: EnumLinks,
 ): string {
   const { fields, required } = schemaFields(schema, definitions);
   if (!Object.keys(fields).length) return '';
@@ -191,16 +199,26 @@ export function fieldTable(
           ];
         };
         const parts = declarations(child);
-        const enumSets = parts.flatMap((part) =>
-          part.enum ? [part.enum.map((value) => JSON.stringify(value))] : [],
-        );
-        const values = enumSets[0]?.filter((value) => enumSets.every((set) => set.includes(value)));
-        const heading = `${scope} ${name} values`;
-        const longEnum = values && values.join(', ').length > 140;
-        if (longEnum)
-          enums.push(
-            `#### ${heading}\n\n${values.map((value) => '- ' + literal(value)).join('\n')}\n\n`,
-          );
+        const entries = schemaEnumValues(child, definitions);
+        const enumDescriptions = entries
+          .map((entry) => {
+            const { path, values } = entry;
+            const label = path ? `${path} values` : 'values';
+            const heading = `${scope} ${name} ${label}`;
+            const link = enumLinks?.get(enumIdentity(values));
+            if (!link && values.join(', ').length > 140) {
+              enums.push(
+                `#### ${heading}\n\n${values.map((value) => '- ' + literal(value)).join('\n')}\n\n`,
+              );
+              return enumNotes(
+                [entry],
+                literalCell,
+                new Map([[enumIdentity(values), '#' + anchor(heading)]]),
+              );
+            }
+            return enumNotes([entry], literalCell, enumLinks);
+          })
+          .join(' ');
         const notes = [
           [
             ...new Set(
@@ -211,11 +229,7 @@ export function fieldTable(
           ]
             .filter(Boolean)
             .join(' '),
-          longEnum
-            ? `Values: [${values.length} declared values](#${anchor(heading)}).`
-            : values
-              ? 'Values: ' + values.map(literalCell).join(', ') + '.'
-              : '',
+          enumDescriptions,
           child.readOnly ? 'Response only.' : '',
           child.writeOnly ? 'Input only.' : '',
         ]
@@ -236,9 +250,15 @@ export function bodyReference(
   op: Operation,
   definitions: Record<string, Schema>,
   names?: ModelNames,
+  sharedBodies?: ReadonlySet<string>,
+  enumLinks?: EnumLinks,
 ): string {
   if (!op.body) return '';
   const body = op.body;
+  const named = modelName(body, definitions);
+  if (named && sharedBodies?.has(named) && names?.[named]) return '';
+  const tables = new Map<string, { heading: string; destination: string }>();
+  const headings = new Map<string, number>();
   const document = (
     schema: Schema,
     label: string,
@@ -258,11 +278,26 @@ export function bodyReference(
       label,
       false,
       names,
+      enumLinks,
     );
     let output = modelName(schema, definitions)
       ? `Body model: ${typeDescription(schema, definitions, names)}.\n\n`
       : '';
-    if (table) output += `#### ${label} fields\n\n${table}`;
+    if (table) {
+      const previous = tables.get(table);
+      if (previous) output += `Fields: [${previous.heading}](${previous.destination}).\n\n`;
+      else {
+        const heading = `${label} fields`;
+        const base = anchor(heading);
+        const occurrence = headings.get(base) ?? 0;
+        headings.set(base, occurrence + 1);
+        tables.set(table, {
+          heading,
+          destination: '#' + base + (occurrence ? '-' + occurrence : ''),
+        });
+        output += `#### ${heading}\n\n${table}`;
+      }
+    }
     // Carry only the common field view into alternatives. Reusing the enclosing
     // graph would traverse the same references/compositions again at every level.
     const parent = { properties: shape.fields, required: [...shape.required] };
@@ -331,6 +366,7 @@ export function modelReference(
   c: Contract,
   exports?: Readonly<Record<string, ModelDocumentationExport>>,
   target: 'node' | 'php' = 'node',
+  enumLinks?: EnumLinks,
 ): string {
   const outputs =
     exports &&
@@ -343,7 +379,7 @@ export function modelReference(
       ),
     );
   const section = (name: string, schema: Schema, names?: ModelNames, replacement = '') =>
-    `## ${name}\n\n${replacement}${markdownNotes(schema)}\n\n${schema.enum ? 'Values: ' + schema.enum.map((v) => literal(JSON.stringify(v))).join(', ') + '.\n\n' : ''}${fieldTable(schema, c.definitions ?? c.models, name, true, names)}${schemaVariants(schema, c.definitions ?? c.models, names)}`;
+    `## ${name}\n\n${replacement}${markdownNotes(schema)}\n\n${enumNotes(schemaEnumValues(schema, c.definitions ?? c.models), literal, enumLinks)}\n\n${fieldTable(schema, c.definitions ?? c.models, name, true, names, enumLinks)}${schemaVariants(schema, c.definitions ?? c.models, names)}`;
   return (
     `# ${c.title} models\n\n[API reference](REFERENCE.md) · [Runtime guide](RUNTIME.md)\n\nFields describe the API's declared shape. Inputs omit read-only fields; responses omit write-only fields and preserve unknown fields and enum values. ${target === 'node' ? 'Request enums are closed unions; response enums accept unknown strings. Input types use the Input suffix.' : 'Operation responses use presence-aware classes with typed getters; optional omitted fields return null.'}\n\nint64/uint64 values are integer strings${target === 'node' ? ' (TypeScript `${bigint}`); inputs also accept bigint' : ''}. Decimal fields use exact numeric strings. Use each field's declared units.\n\n` +
     Object.entries(c.models)
@@ -410,7 +446,7 @@ export function operationGuidance(c: Contract, op: Operation): string {
       ? `Complete body and metadata: ${literal(op.method + 'WithResponse')}. See [response modes](RUNTIME.md#responses-and-errors).\n\n`
       : '') +
     (op.idempotency
-      ? `Idempotency: ${requiresIdempotencyKey(op) ? 'required key' : op.idempotency.auto ? 'automatic key when omitted' : 'optional key'}; header ${literal(op.idempotency.header)}; retention: ${op.idempotency.retention.replace(/[.!?]+$/, '')}; scope: ${op.idempotency.scope.replace(/[.!?]+$/, '')}.\n\n`
+      ? `Idempotent: key ${requiresIdempotencyKey(op) ? 'required' : op.idempotency.auto ? 'automatic' : 'optional'} — [policy ${idempotencyPolicies(c).findIndex((policy) => policy.header === op.idempotency!.header && policy.retention === op.idempotency!.retention && policy.scope === op.idempotency!.scope) + 1}](RUNTIME.md#idempotency).\n\n`
       : '') +
     (c.authentication
       ? `Authentication modes: ${op.authModes?.map((mode) => literal(mode)).join(', ') || 'none (anonymous)'}. [Credential setup](RUNTIME.md#authentication).\n\n`
@@ -433,7 +469,10 @@ export function responseReference(
   definitions: Record<string, Schema>,
   scope: string,
   names?: ModelNames,
+  enumLinks?: EnumLinks,
 ): string {
+  const named = modelName(schema, definitions);
+  if (named && names?.[named]) return '';
   const expand = (value: Schema, seen = new Set<string>()): Schema[] => {
     const { allOf, ['x-sdk-ref']: ref, ...own } = value;
     return [
@@ -459,6 +498,7 @@ export function responseReference(
       label,
       false,
       names,
+      enumLinks,
     );
   };
   if (!alternative) return table(schema, scope);
@@ -480,4 +520,82 @@ export function responseReference(
       );
     })
     .join('');
+}
+
+/** Preserve each distinct declared policy once; key selection remains operation-specific. */
+export function idempotencyPolicies(c: Contract) {
+  return [
+    ...new Map(
+      c.operations.flatMap((op) =>
+        op.idempotency
+          ? ([
+              [
+                JSON.stringify([
+                  op.idempotency.header,
+                  op.idempotency.retention,
+                  op.idempotency.scope,
+                ]),
+                {
+                  header: op.idempotency.header,
+                  retention: op.idempotency.retention,
+                  scope: op.idempotency.scope,
+                },
+              ],
+            ] as const)
+          : [],
+      ),
+    ).values(),
+  ];
+}
+export function idempotencyReference(c: Contract): string {
+  const policies = idempotencyPolicies(c);
+  return policies.length
+    ? '| Policy | Header | Retention | Scope |\n| --- | --- | --- | --- |\n' +
+        policies
+          .map(
+            (policy, index) =>
+              `| ${index + 1} | ${literalCell(policy.header)} | ${cell(policy.retention)} | ${cell(policy.scope)} |`,
+          )
+          .join('\n') +
+        '\n\n'
+    : '';
+}
+
+/** Provider error-code values are shared across model and operation field docs. */
+export function errorCodeDocumentation(c: Contract): {
+  links: Map<string, string>;
+  reference: string;
+} {
+  const links = new Map<string, string>();
+  const values = new Set<string>();
+  if (c.config.errors?.codePath)
+    for (const op of c.operations)
+      for (const response of Object.values(op.responses)) {
+        if (response.classification !== 'error' || !response.schema) continue;
+        let shapes = [response.schema];
+        for (const field of c.config.errors.codePath.split('.'))
+          shapes = shapes.flatMap((shape) =>
+            [shape, ...(shape.oneOf ?? shape.anyOf ?? [])].flatMap((part) => {
+              const child = schemaFields(part, c.definitions ?? c.models).fields[field];
+              return child ? [child] : [];
+            }),
+          );
+        for (const shape of shapes)
+          for (const entry of schemaEnumValues(shape, c.definitions ?? c.models)) {
+            if (entry.path) continue;
+            links.set(enumIdentity(entry.values), 'ERRORS.md#provider-error-codes');
+            for (const value of entry.values) values.add(value);
+          }
+      }
+  return {
+    links,
+    reference: values.size
+      ? '# Provider error codes\n\n[Runtime error reference](RUNTIME.md#error-reference)\n\nInspect the provider code together with status and kind; retry only when the operation permits it. Declared values:\n\n' +
+        [...values]
+          .sort()
+          .map((value) => '- ' + literal(value))
+          .join('\n') +
+        '\n\n'
+      : '',
+  };
 }

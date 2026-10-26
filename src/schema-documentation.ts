@@ -61,7 +61,96 @@ export function schemaNotes(
   }
   return notes.join(' ');
 }
-export function schemaComment(s: Schema): string {
-  const notes = schemaNotes(s);
+export function schemaComment(
+  s: Schema,
+  definitions: Readonly<Record<string, Schema>> = {},
+): string {
+  const notes = [
+    schemaNotes(s),
+    enumNotes(schemaEnumValues(s, definitions).filter((entry) => entry.path)),
+  ]
+    .filter(Boolean)
+    .join(' ');
   return notes ? '\n/** ' + notes.replaceAll('*/', '* /').replace(/[\r\n]+/g, ' ') + ' */\n' : '';
+}
+
+export interface SchemaEnumValues {
+  /** Empty for the value itself; [] for items and .* for dictionary values. */
+  path: string;
+  values: string[];
+}
+export type EnumLinks = ReadonlyMap<string, string>;
+export const enumIdentity = (values: readonly string[]) => JSON.stringify([...values].sort());
+
+/** Read declared enum metadata through references, compositions and collection elements. */
+export function schemaEnumValues(
+  schema: Schema,
+  definitions: Readonly<Record<string, Schema>> = {},
+  seen = new Set<string>(),
+): SchemaEnumValues[] {
+  definitions = schema['x-sdk-definitions'] ?? definitions;
+  const enums = new Map<string, string[]>();
+  const merge = (entries: SchemaEnumValues[], intersection: boolean) => {
+    for (const { path, values } of entries) {
+      const previous = enums.get(path);
+      enums.set(
+        path,
+        previous
+          ? intersection
+            ? previous.filter((value) => values.includes(value))
+            : [...new Set([...previous, ...values])]
+          : values,
+      );
+    }
+  };
+  if (schema.enum)
+    merge([{ path: '', values: schema.enum.map((value) => JSON.stringify(value)) }], true);
+  if (schema.items)
+    merge(
+      schemaEnumValues(schema.items, definitions, seen).map((entry) => ({
+        ...entry,
+        path: '[]' + entry.path,
+      })),
+      true,
+    );
+  if (typeof schema.additionalProperties === 'object')
+    merge(
+      schemaEnumValues(schema.additionalProperties, definitions, seen).map((entry) => ({
+        ...entry,
+        path: '.*' + entry.path,
+      })),
+      true,
+    );
+  const ref = schema['x-sdk-ref'];
+  if (ref && definitions[ref] && !seen.has(ref))
+    merge(schemaEnumValues(definitions[ref]!, definitions, new Set(seen).add(ref)), true);
+  for (const part of schema.allOf ?? []) merge(schemaEnumValues(part, definitions, seen), true);
+  const alternatives = new Map<string, Set<string>>();
+  for (const part of schema.oneOf ?? schema.anyOf ?? [])
+    for (const { path, values } of schemaEnumValues(part, definitions, seen)) {
+      const group = alternatives.get(path) ?? new Set<string>();
+      for (const value of values) group.add(value);
+      alternatives.set(path, group);
+    }
+  merge(
+    [...alternatives].map(([path, values]) => ({ path, values: [...values] })),
+    true,
+  );
+  return [...enums].map(([path, values]) => ({ path, values }));
+}
+
+export function enumNotes(
+  entries: readonly SchemaEnumValues[],
+  literal: (text: string) => string = (text) => text,
+  links?: EnumLinks,
+): string {
+  return entries
+    .map(({ path, values }) => {
+      const label = path
+        ? `${path.startsWith('[]') ? 'Items' : 'Map'}${path.slice(2)} values`
+        : 'Values';
+      const link = links?.get(enumIdentity(values));
+      return `${label}: ${link ? `[${values.length} declared values](${link})` : values.map(literal).join(', ')}.`;
+    })
+    .join(' ');
 }

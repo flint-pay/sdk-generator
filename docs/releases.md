@@ -239,7 +239,7 @@ For example, with `validation: "schema"`, adding `minLength: 3` to a string inpu
 
 ## Upgrade an existing SDK
 
-Generated documentation now uses `REFERENCE.md` as an index, with operations in `reference/<resource>.md`. Model references over 100 KB use `MODELS.md` as an index with sections in `models/<name>.md`. Update bookmarks and tooling that read the previous single files, or start at `llms.txt`. Generated example scripts require `API_BASE_URL`; set it to your sandbox or local mock and supply the listed credential environment variables.
+Generated documentation now uses `REFERENCE.md` as an index, with operations in `reference/<resource>.md`. Model references over 100 KB use `MODELS.md` as an index with sections in `models/<name>.md`. Named response fields and shared named request body fields are documented in their canonical model tables. Calling conventions and idempotency policies live in `RUNTIME.md`; configured provider error-code lists move to `ERRORS.md`. Update bookmarks and tooling that read the previous single files, or start at `llms.txt`. Generated example scripts require `API_BASE_URL`; set it to your sandbox or local mock and supply the listed credential environment variables.
 
 CLI automation must read failed `diagnose --json` reports from stdout. Other JSON failures remain on stderr and now include stable codes, diagnostic source files and relative file paths. Diagnostic locations point to existing nodes; missing settings are named in the message. JSON previews omit diffs by default: pass `preview --json --diff` and read its modified-file `diffs` array. The library's dry-run diff API is unchanged.
 
