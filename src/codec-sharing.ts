@@ -49,6 +49,7 @@ export function codecSharing(original: Record<string, CodecPlan>) {
             ),
           }
         : {}),
+      ...(codec.propertyNames ? { propertyNames: compact(codec.propertyNames) } : {}),
       ...(codec.element ? { element: compact(codec.element) } : {}),
       ...(codec.extra && typeof codec.extra === 'object' ? { extra: compact(codec.extra) } : {}),
       ...(codec.every ? { every: codec.every.map((value) => compact(value)) } : {}),

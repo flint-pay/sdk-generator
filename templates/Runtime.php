@@ -1778,7 +1778,7 @@ final class Codec
                 self::assertPlan($child, "$path.$key.$name", $depth + 1);
             }
         }
-        foreach (['element', 'exclude', 'includes'] as $key) {
+        foreach (['element', 'propertyNames', 'exclude', 'includes'] as $key) {
             if (isset($value[$key])) {
                 self::assertPlan($value[$key], "$path.$key", $depth + 1);
             }
@@ -3527,6 +3527,18 @@ final class Codec
             }
             $out = new \stdClass();
             foreach ($data as $key => $v) {
+                if (isset($s['propertyNames'])) {
+                    self::executeNode(
+                        (string) $key,
+                        $s['propertyNames'],
+                        $path . '.{key}',
+                        true,
+                        true,
+                        $definitions,
+                        $depth + 1,
+                        true,
+                    );
+                }
                 if (isset($s['fields'][$key])) {
                     if (!$response && ($s['fields'][$key]['rejectInput'] ?? false)) {
                         self::fail("$path.$key", 'readOnly fields cannot be sent');

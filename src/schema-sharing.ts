@@ -37,6 +37,7 @@ function identities() {
                 [
                   'items',
                   'additionalProperties',
+                  'propertyNames',
                   'allOf',
                   'anyOf',
                   'oneOf',
@@ -94,7 +95,7 @@ export function shareContractSchemas(
     if (typeof schema.additionalProperties === 'object') input(schema.additionalProperties);
     for (const keyword of ['allOf', 'anyOf', 'oneOf'] as const)
       for (const child of schema[keyword] ?? []) input(child);
-    for (const keyword of ['not', 'contains', 'if', 'then', 'else'] as const)
+    for (const keyword of ['not', 'contains', 'propertyNames', 'if', 'then', 'else'] as const)
       if (schema[keyword]) input(schema[keyword]);
   };
   for (const op of contract.operations) {
@@ -144,7 +145,7 @@ export function shareContractSchemas(
       out.additionalProperties = compact(schema.additionalProperties, true);
     for (const keyword of ['allOf', 'anyOf', 'oneOf'] as const)
       if (schema[keyword]) out[keyword] = schema[keyword].map((child) => compact(child));
-    for (const keyword of ['not', 'contains', 'if', 'then', 'else'] as const)
+    for (const keyword of ['not', 'contains', 'propertyNames', 'if', 'then', 'else'] as const)
       if (schema[keyword]) out[keyword] = compact(schema[keyword]);
     return out;
   };

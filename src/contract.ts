@@ -49,6 +49,7 @@ export type Schema = {
   'x-sdk-definitions'?: Record<string, Schema>;
   type?: string | string[];
   properties?: Record<string, Schema>;
+  propertyNames?: Schema;
   required?: string[];
   items?: Schema;
   enum?: Json[];
@@ -554,6 +555,59 @@ function portablePattern(source: string, p: string): string {
 function schema(s: Schema, p: string, legacy = false, explicitNumbers = false): void {
   if (!s || typeof s !== 'object' || Array.isArray(s)) fail(p, 'expected a schema object');
   if (s['x-sdk-ref']) return;
+  if (!legacy && Array.isArray(s.type)) {
+    const types = s.type;
+    if (
+      !types.length ||
+      new Set(types).size !== types.length ||
+      types.some(
+        (type) =>
+          !['object', 'array', 'string', 'integer', 'number', 'boolean', 'null'].includes(type),
+      )
+    )
+      fail(p + '/type', 'expected supported unique JSON types');
+    if (types.length === 1) {
+      if (types[0] === 'null') s.type = 'null';
+    } else if (types.length !== 2 || !types.includes('null')) {
+      delete s.type;
+      const alternatives = {
+        anyOf: types.map((type) => ({ type, ...(s.format ? { format: s.format } : {}) })),
+      };
+      delete s.format;
+      if (s.anyOf) s.allOf = [...(s.allOf ?? []), alternatives];
+      else s.anyOf = alternatives.anyOf;
+    }
+  }
+  if (s.propertyNames !== undefined) {
+    const names = s.propertyNames;
+    const remedy =
+      'propertyNames supports only string type, minLength, maxLength, pattern, enum and const; express key constraints with these keywords';
+    if (!names || typeof names !== 'object' || Array.isArray(names))
+      fail(p + '/propertyNames', remedy);
+    for (const key of Object.keys(names))
+      if (
+        ![
+          'type',
+          'minLength',
+          'maxLength',
+          'pattern',
+          'enum',
+          'const',
+          'x-sdk-pattern-php',
+        ].includes(key)
+      )
+        fail(p + '/propertyNames/' + pointerSegment(key), remedy);
+    if (names.type !== undefined && names.type !== 'string')
+      fail(p + '/propertyNames/type', remedy);
+    if (
+      names.enum !== undefined &&
+      (!Array.isArray(names.enum) || names.enum.some((key) => typeof key !== 'string'))
+    )
+      fail(p + '/propertyNames/enum', remedy);
+    if (Object.hasOwn(names, 'const') && typeof names.const !== 'string')
+      fail(p + '/propertyNames/const', remedy);
+    schema(names, p + '/propertyNames', legacy, explicitNumbers);
+  }
   if (s.dependentRequired !== undefined) {
     const dependencies = s.dependentRequired;
     if (!dependencies || typeof dependencies !== 'object' || Array.isArray(dependencies))
@@ -624,6 +678,7 @@ function schema(s: Schema, p: string, legacy = false, explicitNumbers = false): 
     'else',
     'discriminator',
     'additionalProperties',
+    'propertyNames',
     'format',
     'minimum',
     'maximum',
@@ -961,6 +1016,17 @@ function checkRepresentations(s: Schema, p: string, explicitNumbers = false): vo
     }
     return false;
   };
+  // Each child has already passed schema validation. Keep fingerprints local:
+  // representation inference below mutates owned nodes and invalidates the cache.
+  let fingerprints = new WeakMap<Schema, string>();
+  const fingerprint = (shape: Schema): string => {
+    let hash = fingerprints.get(shape);
+    if (hash === undefined) {
+      hash = stable(shape);
+      fingerprints.set(shape, hash);
+    }
+    return hash;
+  };
   const checkOverlap = (
     left: Schema[],
     right: Schema[],
@@ -968,6 +1034,18 @@ function checkRepresentations(s: Schema, p: string, explicitNumbers = false): vo
     relation: Relation = 'alternatives',
   ): void => {
     if (!left.length || !right.length) return;
+    // Comparing two identical, already validated subtrees adds no ambiguity.
+    // Expanding both copies would multiply nested union branches needlessly.
+    if (left.length === right.length && left.every((shape, i) => shape === right[i])) return;
+    const expands = (shapes: Schema[]) =>
+      shapes.some((shape) => shape.oneOf || shape.anyOf || shape.allOf);
+    if (
+      expands(left) &&
+      expands(right) &&
+      left.length === right.length &&
+      left.every((shape, i) => fingerprint(shape) === fingerprint(right[i]!))
+    )
+      return;
     const originals = new Map<Schema, Schema>();
     const shallow = (shape: Schema): Schema => {
       const { allOf, ...copy } = shape;
@@ -1020,6 +1098,7 @@ function checkRepresentations(s: Schema, p: string, explicitNumbers = false): vo
           shape['x-sdk-number-input'] = 'explicit';
           const original = originals.get(shape);
           if (original) original['x-sdk-number-input'] = 'explicit';
+          fingerprints = new WeakMap();
         }
       }
     }
@@ -1220,6 +1299,7 @@ function loadContractInput(
         [
           'items',
           'additionalProperties',
+          'propertyNames',
           'allOf',
           'anyOf',
           'oneOf',
