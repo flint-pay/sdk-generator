@@ -229,6 +229,8 @@ foreach ([$c->alpha->create(), $c->beta->create()] as $value) {
   // canonical payload name still receives the existing breaking classification.
   const recordPath = join(f.output, '.sdk-generator.json');
   const record = JSON.parse(readFileSync(recordPath, 'utf8'));
+  // Simulate a record written before draft/release baseline tracking.
+  delete record.baseline;
   const snapshot = restoreCompiledSnapshot(record.compiled);
   const previous = structuredClone(snapshot.plan);
   previous.node.operations.createAlpha.output = previous.node.operations.createBeta.output;
@@ -613,7 +615,10 @@ for (const style of ['object', 'positional']) {
       credentials: { session: { SessionID: 'session-id', SessionSecret: 'session-secret' } },
       transport: async (_url, r) => {
         seen.push(r.headers);
-        return new Response(null, { status: 204, headers: { 'X-Request-Id': 'req_007ARQX9HRSSV4DWBYC52DZKJ6' } });
+        return new Response(null, {
+          status: 204,
+          headers: { 'X-Request-Id': 'req_007ARQX9HRSSV4DWBYC52DZKJ6' },
+        });
       },
     });
     const args =
@@ -698,6 +703,8 @@ if(count($seen)!==1)throw new Exception('Invalid headers dispatched');
     // Restore the previous compiler's input decisions, leaving the source API unchanged.
     const recordPath = join(f.output, '.sdk-generator.json');
     const record = JSON.parse(readFileSync(recordPath));
+    // Simulate a record written before draft/release baseline tracking.
+    delete record.baseline;
     const snapshot = restoreCompiledSnapshot(record.compiled);
     const previous = structuredClone(snapshot.plan);
     const oldInput = {
@@ -1073,6 +1080,8 @@ if(count($seen)!==1||$seen[0]['x-checkout-id']!=='id')throw new Exception('Crede
   // Model the origin/main declarations: every header was an operation input.
   const recordPath = join(f.output, '.sdk-generator.json');
   const record = JSON.parse(readFileSync(recordPath));
+  // Simulate a record written before draft/release baseline tracking.
+  delete record.baseline;
   const snapshot = restoreCompiledSnapshot(record.compiled);
   const previous = structuredClone(snapshot.plan);
   for (const op of f.contract.operations) {

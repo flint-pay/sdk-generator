@@ -28,6 +28,7 @@ import {
   compare,
   validate,
   prepareRelease,
+  setCompatibilityBaseline,
   publishRelease,
   render,
 } from '../dist/index.js';
@@ -616,6 +617,7 @@ test('release PHP archive excludes neighboring handwritten/private files', () =>
 test('compatibility findings persist into release migrations', () => {
   const out = join(temporary, 'migration');
   generate(contract, out);
+  setCompatibilityBaseline(out, 'released');
   const next = structuredClone(contract);
   next.config.version = '1.0.0';
   const op = next.operations.find((o) => o.id === 'getPayment');
@@ -902,6 +904,7 @@ test('dangling symlinks are rejected before writes and older generation records 
   assert.equal(existsSync(victim), false);
   const migrate = join(temporary, 'generator-upgrade');
   generate(contract, migrate);
+  setCompatibilityBaseline(migrate, 'released');
   const record = JSON.parse(readFileSync(join(migrate, '.sdk-generator.json')));
   record.generator = '0.0.9';
   writeFileSync(join(migrate, '.sdk-generator.json'), JSON.stringify(record));

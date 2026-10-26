@@ -5,7 +5,13 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { loadContract, generate, compare, prepareRelease } from '../dist/generate.js';
+import {
+  loadContract,
+  generate,
+  compare,
+  prepareRelease,
+  setCompatibilityBaseline,
+} from '../dist/generate.js';
 import { compareSchemas } from '../dist/compatibility.js';
 import { validateFixtures } from '../dist/fixtures.js';
 
@@ -41,7 +47,13 @@ function load(f) {
   return loadContract(join(f.dir, 'api.json'), join(f.dir, 'config.json'));
 }
 function emit(f) {
-  return generate(load(f), f.out);
+  const report = generate(load(f), f.out);
+  // These cases compare upgrades of a previously released SDK.
+  if (!f.released) {
+    setCompatibilityBaseline(f.out, 'released');
+    f.released = true;
+  }
+  return report;
 }
 function php(f, code) {
   const r = spawnSync(
@@ -558,13 +570,16 @@ const c=new Client({baseUrl:'https://example.invalid'});
   assert.equal(prepareRelease(f.out, join(f.dir, 'compatible-patch')).version, '1.0.1');
 
   f.doc.paths['/values'].get.responses[201] = json(dictionary);
+  f.cfg.version = '1.0.2';
   const changes = emit(f).compatibility;
   const changed = compileConsumer(f, consumer);
   assert.equal(changed.status, 0, changed.stdout + changed.stderr);
   const { Client: After } = await import(pathToFileURL(join(f.out, 'node/index.js')).href);
   const data = (await new After(options(201, '{}')).api.read()).data;
   assert.throws(() => consume(data), TypeError);
-  assert(changes.some((c) => c.severity === 'breaking' && c.subject === 'read.response.201'));
+  assert(
+    changes.some((c) => c.severity === 'breaking' && c.subject.startsWith('read.response.201')),
+  );
   assert.throws(() => prepareRelease(f.out, join(f.dir, 'breaking-patch')), /major/);
   f.cfg.version = '2.0.0';
   emit(f);

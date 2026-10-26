@@ -5,6 +5,7 @@ import {
   cleanupOwnedGeneration,
   isGenerationOwner,
   acquireGenerationLock,
+  releaseGenerationLock,
 } from './generation-cleanup.js';
 import { removesPublishedExamples } from './example-protection.js';
 import { reservePublicSymbols } from './public-symbols.js';
@@ -34,7 +35,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
-import { comparePolicies } from './compatibility.js';
+import { comparePolicies, policyPair, dedupeCompatibility } from './compatibility.js';
 import { artifactHashes, prepareSite, verifyRelease, npmPackResult } from './distribution.js';
 import { checkVersionPolicy } from './version.js';
 import { DiagnosticGroup, pointerSegment } from './diagnostic.js';
@@ -92,7 +93,11 @@ export interface Compatibility {
   subject: string;
   message: string;
 }
+type ReleaseBaseline =
+  | { kind: 'draft' }
+  | { kind: 'released'; interface: Contract; compiled?: CompiledSnapshot };
 interface RecordFile {
+  baseline?: ReleaseBaseline;
   recordVersion?: number;
   generator: string;
   contractHash: string;
@@ -106,6 +111,8 @@ interface RecordFile {
   compiledComparisonBase?: CompiledSnapshot;
 }
 function compiledBase(before: RecordFile, next: Contract): CompiledSnapshot | undefined {
+  if (before.baseline)
+    return before.baseline.kind === 'released' ? before.baseline.compiled : undefined;
   const retainsBase =
     before.interface.config.version === next.config.version ||
     before.previousVersion === before.interface.config.version;
@@ -148,6 +155,7 @@ const compactRecord = (value: unknown): string =>
 
 const recordName = '.sdk-generator.json';
 function comparisonBase(before: RecordFile, next: Contract): Contract {
+  if (before.baseline?.kind === 'released') return before.baseline.interface;
   return before.interface.config.version === next.config.version ||
     before.previousVersion === before.interface.config.version
     ? (before.comparisonBase ?? before.interface)
@@ -1994,6 +2002,20 @@ function compareWithCompiled(
     changes.push({ severity, subject, message });
   const oldModels = oldPlan.policy.models,
     newModels = newPlan.policy.models;
+  const responseOnly = new Set(
+    (oldPlan.policy.responseOnlyModels ?? []).filter((name) =>
+      newPlan.policy.responseOnlyModels?.includes(name),
+    ),
+  );
+  const shared = new Map<string, string>();
+  for (const [name, previous] of Object.entries(oldModels)) {
+    const next = newModels[name];
+    if (next)
+      for (const direction of ['input', 'response'] as const) {
+        const key = policyPair(previous[direction], next[direction], direction);
+        if (!shared.has(key)) shared.set(key, `models.${name}.${direction}`);
+      }
+  }
   for (const name of Object.keys(oldModels))
     if (!Object.hasOwn(newModels, name))
       add('breaking', name, 'Exported model removed; update model imports and helper usage.');
@@ -2009,6 +2031,10 @@ function compareWithCompiled(
             next[direction],
             `models.${name}.${direction}`,
             direction,
+            {
+              responseOnly: responseOnly.has(name),
+              shared,
+            },
           ),
         );
   }
@@ -2028,6 +2054,7 @@ function compareWithCompiled(
             next[direction],
             `definitions.${name}`,
             direction,
+            { responseOnly: responseOnly.has(name), shared },
           ),
         );
   }
@@ -2075,6 +2102,7 @@ function compareWithCompiled(
         newPlan.policy.operations[old.id]!.input,
         `${old.id}.input`,
         'input',
+        { shared },
       ),
     );
     for (const status of new Set([
@@ -2145,7 +2173,9 @@ function compareWithCompiled(
         const nextBody = newPlan.policy.operations[old.id]!.responses[status];
         if (previousBody && nextBody)
           changes.push(
-            ...comparePolicies(previousBody, nextBody, `${old.id}.response.${status}`, 'response'),
+            ...comparePolicies(previousBody, nextBody, `${old.id}.response.${status}`, 'response', {
+              shared,
+            }),
           );
         else if (Boolean(previousBody) !== Boolean(nextBody))
           add(
@@ -2240,8 +2270,34 @@ function compareWithCompiled(
         key,
         'Package identity, generated types, target selection, or capability changed',
       );
-  if (previousPlan && nextPlan) changes.push(...compareCompiledContracts(previousPlan, nextPlan));
-  return [...new Map(changes.map((finding) => [stable(finding), finding])).values()];
+  if (previousPlan && nextPlan) {
+    // Group declaration reviews without discarding saved historical uncertainty.
+    const owners = new Map<string, string>();
+    for (const [name, previous] of Object.entries(oldModels))
+      if (newModels[name] && stable(previous) !== stable(newModels[name])) {
+        owners.set(`models.${name}`, `models.${name}`);
+        owners.set(`models.${name}Input`, `models.${name}`);
+      }
+    for (const [id, operation] of Object.entries(oldPlan.policy.operations)) {
+      const roots = new Set<string>();
+      for (const [status, previous] of Object.entries(operation.responses)) {
+        const next = newPlan.policy.operations[id]?.responses[status];
+        if (!next || stable(previous) === stable(next)) continue;
+        const owner = shared.get(policyPair(previous, next, 'response'));
+        if (!owner) continue;
+        const root = owner.replace(/\.response$/, '');
+        roots.add(root);
+        const binding = oldPlan.php.runtime.operations.find((op) => op.id === id)?.responses[
+          status
+        ];
+        if (binding?.model) owners.set(`models.${binding.model}`, root);
+      }
+      const [root] = roots;
+      if (roots.size === 1 && root) owners.set(id, root);
+    }
+    changes.push(...compareCompiledContracts(previousPlan, nextPlan, owners));
+  }
+  return dedupeCompatibility(changes);
 }
 function safeTree(path: string): void {
   let stat;
@@ -2306,7 +2362,7 @@ function previewOutput(
   safeTree(output);
   const recordPath = join(output, recordName);
   const before: RecordFile | undefined = existsSync(recordPath)
-    ? readGenerationRecord(recordPath)
+    ? readGenerationRecord(recordPath).record
     : undefined;
   if (before && (![1, 2].includes(before.recordVersion ?? 1) || !before.files || !before.interface))
     throw new Diagnostic(
@@ -2317,6 +2373,14 @@ function previewOutput(
     if (before?.compiled) before.compiled = restoreCompiledSnapshot(before.compiled);
     if (before?.compiledComparisonBase)
       before.compiledComparisonBase = restoreCompiledSnapshot(before.compiledComparisonBase);
+    if (before?.baseline) {
+      if (before.baseline.kind === 'released') {
+        if (!before.baseline.interface?.config)
+          throw new Error('Missing released baseline interface');
+        if (before.baseline.compiled)
+          before.baseline.compiled = restoreCompiledSnapshot(before.baseline.compiled);
+      } else if (before.baseline.kind !== 'draft') throw new Error('Unsupported release baseline');
+    }
     if (before?.recordVersion === 2 && !before.compiled)
       throw new Error('Missing compiled contract in generation record');
   } catch (error) {
@@ -2409,51 +2473,52 @@ function previewOutput(
     before,
     compiled,
     changes,
-    compatibility: before
-      ? [
-          ...compareWithCompiled(
-            comparisonBase(before, contract),
-            contract,
-            previousCompiled?.plan,
-            compiled.plan,
-          ),
-          ...(!previousCompiled
-            ? [
-                {
-                  severity: 'review' as const,
-                  subject: 'compiled contract',
-                  message:
-                    'The previous generation predates compiled contract records; historical runtime guarantees require review. Existing source-level checks still apply.',
-                },
-              ]
-            : []),
-          ...(previousCompiled &&
-          (previousCompiled.plan.semantics !== compiled.plan.semantics ||
-            compiled.plan.targets.some(
-              (target) =>
-                previousCompiled.plan.targets.includes(target) &&
-                previousCompiled.runtimeIdentity[target] !== compiled.runtimeIdentity[target],
-            ))
-            ? [
-                {
-                  severity: 'review' as const,
-                  subject: 'runtime',
-                  message:
-                    'Compiled runtime implementation or semantic identity changed; equal value plans do not prove unchanged runtime behavior.',
-                },
-              ]
-            : []),
-          ...(before.generator !== version
-            ? [
-                {
-                  severity: 'review' as const,
-                  subject: 'generator',
-                  message: `Generator/runtime changed from ${before.generator} to ${version}; review generated behavior and supported runtimes`,
-                },
-              ]
-            : []),
-        ]
-      : [],
+    compatibility:
+      before && before.baseline?.kind !== 'draft'
+        ? [
+            ...compareWithCompiled(
+              comparisonBase(before, contract),
+              contract,
+              previousCompiled?.plan,
+              compiled.plan,
+            ),
+            ...(!previousCompiled
+              ? [
+                  {
+                    severity: 'review' as const,
+                    subject: 'compiled contract',
+                    message:
+                      'The previous generation predates compiled contract records; historical runtime guarantees require review. Existing source-level checks still apply.',
+                  },
+                ]
+              : []),
+            ...(previousCompiled &&
+            (previousCompiled.plan.semantics !== compiled.plan.semantics ||
+              compiled.plan.targets.some(
+                (target) =>
+                  previousCompiled.plan.targets.includes(target) &&
+                  previousCompiled.runtimeIdentity[target] !== compiled.runtimeIdentity[target],
+              ))
+              ? [
+                  {
+                    severity: 'review' as const,
+                    subject: 'runtime',
+                    message:
+                      'Compiled runtime implementation or semantic identity changed; equal value plans do not prove unchanged runtime behavior.',
+                  },
+                ]
+              : []),
+            ...(before.generator !== version
+              ? [
+                  {
+                    severity: 'review' as const,
+                    subject: 'generator',
+                    message: `Generator/runtime changed from ${before.generator} to ${version}; review generated behavior and supported runtimes`,
+                  },
+                ]
+              : []),
+          ]
+        : [],
   };
 }
 export function generate(contract: Contract, output: string, dryRun = false) {
@@ -2610,6 +2675,11 @@ function writeGeneration(
     }
     const record: RecordFile = {
       recordVersion: 2,
+      ...(!current.before
+        ? { baseline: { kind: 'draft' as const } }
+        : current.before.baseline
+          ? { baseline: current.before.baseline }
+          : {}),
       generator: version,
       contractHash: contract.hash,
       sources: contract.sources,
@@ -2617,7 +2687,11 @@ function writeGeneration(
       interface: contract,
       compiled: current.compiled,
       compatibility: current.compatibility,
+      ...(current.before?.baseline?.kind === 'released'
+        ? { previousVersion: current.before.baseline.interface.config.version }
+        : {}),
       ...(current.before &&
+      !current.before.baseline &&
       (current.before.comparisonBase ||
         current.changes.length ||
         current.compatibility.length ||
@@ -2636,6 +2710,16 @@ function writeGeneration(
       compactRecord({
         ...record,
         compiled: storeCompiledSnapshot(current.compiled),
+        ...(record.baseline?.kind === 'released'
+          ? {
+              baseline: {
+                ...record.baseline,
+                ...(record.baseline.compiled
+                  ? { compiled: storeCompiledSnapshot(record.baseline.compiled) }
+                  : {}),
+              },
+            }
+          : {}),
         ...(record.compiledComparisonBase
           ? { compiledComparisonBase: storeCompiledSnapshot(record.compiledComparisonBase) }
           : {}),
@@ -2656,9 +2740,10 @@ function writeGeneration(
   }
   return { changes: plan.changes, compatibility: plan.compatibility };
 }
-function readGenerationRecord(path: string): RecordFile {
+function readGenerationRecord(path: string): { record: RecordFile; source: string } {
   try {
-    return JSON.parse(readFileSync(path, 'utf8'));
+    const source = readFileSync(path, 'utf8');
+    return { record: JSON.parse(source), source };
   } catch {
     throw new Diagnostic(
       path,
@@ -2670,7 +2755,7 @@ function readGenerationRecord(path: string): RecordFile {
 function selectedTargets(output: string): ('node' | 'php')[] {
   const recordPath = join(output, recordName);
   if (existsSync(recordPath)) {
-    const record: RecordFile = readGenerationRecord(recordPath);
+    const { record } = readGenerationRecord(recordPath);
     return record.interface.config.targets ?? ['node', 'php'];
   }
   // Validation also supports packages copied without the private generation record.
@@ -2872,7 +2957,7 @@ export function prepareRelease(output: string, destination: string, acknowledgeR
       recordPath,
       'private generation record is missing; restore it from the original output backup, or regenerate from pinned API/config inputs into a fresh directory before release',
     );
-  const record: RecordFile = readGenerationRecord(recordPath);
+  const { record, source: recordSource } = readGenerationRecord(recordPath);
   // Older normalized records cannot prove which source ancestors or reference
   // uses protected a value. Reload the original inputs before packaging them.
   if (record.interface.exampleProtection === undefined)
@@ -3021,10 +3106,71 @@ export function prepareRelease(output: string, destination: string, acknowledgeR
     Object.assign(checksums, artifactHashes(destination));
     const fullPlan = { ...plan, site };
     writeFileSync(join(destination, 'release-plan.json'), stable(fullPlan));
+    updateCompatibilityBaseline(output, 'released', false, recordSource);
     return fullPlan;
   } catch (e) {
     rmSync(destination, { recursive: true, force: true });
     throw e;
+  }
+}
+/** Explicitly adopt the generated interface as released, or discard an unpublished draft's history. */
+export function setCompatibilityBaseline(output: string, mode: 'draft' | 'released'): void {
+  updateCompatibilityBaseline(output, mode, true);
+}
+function updateCompatibilityBaseline(
+  output: string,
+  mode: 'draft' | 'released',
+  clearFindings: boolean,
+  expectedRecord?: string,
+): void {
+  if (mode !== 'draft' && mode !== 'released')
+    throw new Diagnostic('baseline', 'expected draft or released');
+  output = resolve(output);
+  const lock = output + '.sdk-generator.lock';
+  const owner = { pid: process.pid, token: randomUUID() };
+  let fd: number;
+  try {
+    fd = acquireGenerationLock(lock, owner);
+  } catch {
+    throw new Diagnostic(lock, 'another generation is running; inspect the lock before retrying');
+  }
+  const temporary = join(output, recordName + '.tmp-' + randomUUID());
+  try {
+    safeTree(output);
+    const path = join(output, recordName);
+    const { record, source } = readGenerationRecord(path);
+    if (expectedRecord !== undefined && source !== expectedRecord)
+      throw new Diagnostic(
+        output,
+        'generation record changed during release preparation; retry from the current output',
+      );
+    // Validate ownership and saved snapshots before changing only baseline metadata.
+    const integrity = expectedRecord === undefined ? preview(record.interface, output) : undefined;
+    if (integrity?.changes.length)
+      throw new Diagnostic(output, 'regenerate before setting a compatibility baseline');
+    record.baseline =
+      mode === 'draft'
+        ? { kind: 'draft' }
+        : {
+            kind: 'released',
+            interface: record.interface,
+            ...(record.compiled ? { compiled: record.compiled } : {}),
+          };
+    if (clearFindings) {
+      record.compatibility = [];
+      delete record.previousVersion;
+      delete record.comparisonBase;
+      delete record.compiledComparisonBase;
+    }
+    writeFileSync(temporary, JSON.stringify(record), { mode: 0o600 });
+    renameSync(temporary, path);
+  } finally {
+    rmSync(temporary, { force: true });
+    try {
+      releaseGenerationLock(lock, fd, owner);
+    } finally {
+      closeSync(fd);
+    }
   }
 }
 export { loadContract };

@@ -8,7 +8,12 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import { createHmac } from 'node:crypto';
-import { loadContract, generate as generateSdk, validateFixtures } from '../dist/index.js';
+import {
+  loadContract,
+  generate as generateSdk,
+  validateFixtures,
+  setCompatibilityBaseline,
+} from '../dist/index.js';
 
 const root = mkdtempSync(join(tmpdir(), 'sdk-review-regressions-'));
 after(() => rmSync(root, { recursive: true, force: true }));
@@ -55,6 +60,7 @@ test('aliased renames report removed public types and prevent incompatible patch
   profile.release = { policy: 'semver' };
   const i = inputs('alias', api, profile);
   generate(i);
+  setCompatibilityBaseline(i.output, 'released');
   const tsFile = join(i.dir, 'consumer.mts');
   writeFileSync(
     tsFile,

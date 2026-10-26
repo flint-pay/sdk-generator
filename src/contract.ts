@@ -10,6 +10,7 @@ import {
   webhookEventTypeName,
 } from './naming.js';
 import { shareContractSchemas } from './schema-sharing.js';
+import { schemaUsageFingerprint } from './schema-usage.js';
 import { schemaAnnotations, isSchemaAnnotation } from './schema-annotations.js';
 import {
   EXAMPLE_PROTECTION_MARKER,
@@ -248,6 +249,8 @@ export interface Config {
   release?: { baseUrl?: string; policy?: 'review' | 'semver' };
 }
 export interface Contract {
+  /** Private compatibility proof captured before reference/composition inlining. */
+  schemaUsage?: { fingerprint: string; responseOnlyModels: string[] };
   /** Private publication provenance; excluded from compiled compatibility facts and effective output. */
   exampleProtection?: { locations: string[]; schemas: string[] };
   defaultBaseUrl?: string;
@@ -3557,12 +3560,26 @@ function loadContractInput(
       dependencyPrefixes.set(prefix, node.models);
     }
   }
+  // Source paths survive dereferencing and validation's composition inlining.
+  // Only explicit response uses count as proof; ambiguous and incoming uses
+  // keep full input rules. Cached references include their transitive models.
+  const responseModels = new Set<string>();
+  const inputModels = new Set<string>();
   for (const ref of references) {
+    const name = publicModel(ref.model);
+    const use = /^\/paths\/[^/]+\/([^/]+)(?:\/(.*))?$/.exec(ref.path);
+    if (use) {
+      const response =
+        use[1] !== 'parameters' &&
+        (use[2]?.startsWith('responses/') || use[2]?.startsWith('stream/events/'));
+      (response ? responseModels : inputModels).add(name);
+    }
+    if (ref.path.startsWith('/webhooks/')) inputModels.add(name);
     let node: ReferencePrefix | undefined = referenceRoot;
     for (const char of ref.path) {
       node = node.children.get(char);
       if (!node) break;
-      node.models?.add(publicModel(ref.model));
+      node.models?.add(name);
     }
   }
   const contract: Contract = {
@@ -3603,8 +3620,21 @@ function loadContractInput(
   // are collectible instead of remaining rooted through doc.paths/selectedPaths.
   for (const path of Object.keys(selectedPaths)) delete selectedPaths[path];
   streamSchemas.clear();
-  if (config.schemaSharing === 'named') shareContractSchemas(contract, referenceNames, typeNames);
+  const responseOnly =
+    config.schemaSharing === 'named'
+      ? shareContractSchemas(
+          contract,
+          referenceNames,
+          typeNames,
+          new Set([...responseModels].filter((name) => !inputModels.has(name))),
+        )
+      : [];
   saveExampleProtection(contract, exampleProtection.locations);
   contract.hash = hash(stable(contract));
+  // Compatibility proof is private metadata, not part of the emitted contract hash.
+  contract.schemaUsage = {
+    fingerprint: schemaUsageFingerprint(contract),
+    responseOnlyModels: responseOnly,
+  };
   return contract;
 }

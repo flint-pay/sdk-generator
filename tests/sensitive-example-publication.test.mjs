@@ -122,6 +122,8 @@ function historicalGeneration(contract, output) {
   generate({ ...contract, exampleProtection: { locations: [], schemas: [] } }, output);
   const path = join(output, '.sdk-generator.json');
   const record = JSON.parse(readFileSync(path));
+  // Simulate a record written before draft/release baseline tracking.
+  delete record.baseline;
   delete record.interface.exampleProtection;
   writeFileSync(path, JSON.stringify(record));
 }

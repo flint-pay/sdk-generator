@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { join } from 'node:path';
-import { loadContract, generate, preview } from '../dist/index.js';
+import { setCompatibilityBaseline, loadContract, generate, preview } from '../dist/index.js';
 import { compileSdkContract } from '../dist/target-plan.js';
 import { operationNames, modelNames } from '../dist/naming.js';
 const root = mkdtempSync(join(tmpdir(), 'sdk-defaults-'));
@@ -271,6 +271,7 @@ test('regeneration requires an explicit return choice before migrating an existi
   const f = fixture({ responses: { return: 'result' } }),
     output = join(f.dir, 'out');
   generate(f.contract, output);
+  setCompatibilityBaseline(output, 'released');
   const config = JSON.parse(readFileSync(f.configuration));
   delete config.responses;
   writeFileSync(f.configuration, JSON.stringify(config));

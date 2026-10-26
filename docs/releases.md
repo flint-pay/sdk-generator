@@ -109,14 +109,18 @@ The release plan's `reviewRequired` is `true` when findings include a breaking o
 - Library callers pass `true` as the third argument: `prepareRelease(output, destination, acknowledgeReview)`.
 - Acknowledgment is metadata only. It does not bypass validation or version policy, remove findings, or publish anything.
 
-The generator compares against the previous interface in the private generation record. Preserve that record across upgrades; a fresh output directory has no earlier version to compare. A package-version bump does not change the API contract or the pinned request version header.
+New output starts as an unreleased draft. Generation and preview do not compare drafts, even across package-version changes. The first successful `release` / `prepareRelease` records the generated interface and its saved compiled snapshot as the baseline for future generations. Its CHANGELOG and MIGRATION contain no draft-to-draft compatibility findings. Release preparation establishes this local baseline without publishing; if you discard that first prepared release, reset the output to draft as described below.
+
+Later generations compare against the most recently prepared release, including edits made before a version bump. Successful release preparation advances the baseline only after writing all artifacts. The prepared release retains its findings; the next generation starts comparison against that newly prepared interface. Repeating preparation without regeneration retains the recorded findings.
+
+Preserve the private generation record across upgrades; a fresh output directory has no earlier release to compare. Records from generators without explicit draft tracking retain their historical baseline and uncertainty until explicitly reset or a release is prepared. A package-version bump alone never resets a baseline, changes the API contract or changes the pinned request version header.
 
 Version stable SDKs as follows:
 
 | Change                                                                                                                                                             | Version |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
 | Removed or renamed public interfaces without aliases, changed HTTP semantics, tighter requiredness or nullability, changed exact representations, dropped runtimes | Major   |
-| Additive compatible operations                                                                                                                                     | Minor   |
+| Additive compatible operations and optional response-model fields                                                                                                  | Minor   |
 | Corrections that preserve behavior                                                                                                                                 | Patch   |
 
 Unknown future response fields and enums are tolerated but never reinterpreted as success. Keep aliases until the provider's documented deprecation window has elapsed; the generator makes no promise about that window.
@@ -128,7 +132,9 @@ Structural comparison covers added and removed fields, requiredness, nullability
 ### Direction
 
 - Inputs and outputs break in opposite directions: a newly required input and a newly optional output both break callers.
-- Exported models are checked in both directions, including their input factories when the model appears only in responses. Adding a required response field can therefore require a major version.
+- Exported models are checked in both directions, including their input factories when the model appears only in responses. Adding an optional response-model field is additive, including when `additionalProperties` is omitted or `true`. Model factories adopt its declared type when that field is supplied. Adding a required response field can require a major version because factories now require it. Models reachable through operation inputs, including nested named definitions, use the full input rules: adding an optional typed field can narrow previously accepted additional values and require a major version. Grouping repeated findings preserves their highest severity.
+- Requiredness is independent of property declarations. Removing a required response key is breaking even when its old schema had no `properties` entry for that key and its new schema declares an optional typed field.
+- The optional-field exemption requires positive response-only provenance in both the saved and new compiled contracts. Source reference uses are recorded before composition inlining, and request uses veto the exemption across shared aliases, nested properties, compositions, arrays, dictionaries and incoming webhook schemas. Missing or stale provenance uses full input rules. Older compiled records remain readable; unknown use is never treated as proof of response-only use.
 - Dictionary value policies follow the same direction as ordinary fields when both versions permit objects under their types and input enums. Replacing omitted or `true` `additionalProperties` with a restrictive schema can break object inputs. Dictionary rules cannot tighten string-only or null-only inputs. Equivalent unconstrained declarations are not breaking; exact numeric representation changes for dictionary values are still checked.
 
 ### Names and aliases
@@ -166,14 +172,33 @@ A matching existing shape produces a review finding for its HTTP semantics, unle
 
 ### Saved baselines
 
+Use the library API to reset an unpublished output or adopt an SDK released through another workflow:
+
+```js
+import { setCompatibilityBaseline } from '@public-sdk/generator';
+
+// Discard draft history, including false findings in older unreleased records.
+setCompatibilityBaseline('./generated', 'draft');
+
+// Adopt the currently generated SDK as the already released comparison baseline.
+setCompatibilityBaseline('./generated', 'released');
+```
+
+Both modes validate the existing output, preserve ownership hashes, source provenance and saved compiled decisions, and clear recorded findings and the superseded comparison base. They update only the private record under the generation lock. Regenerate from source first if the output is stale. Reset only an unpublished draft; using either mode to discard a shipped contract's history removes its compatibility protection. Never delete the private record to reset: that also loses file ownership.
+
+For CI, `preview API_JSON SDK_JSON OUTPUT --fail-on breaking` prints the ordinary report and exits 1 for breaking findings. `review` fails for review or breaking findings; `additive` fails for any finding; `none` (the default) reports without failing. Both human and `--json` output use the same threshold, and preview writes no files. Version-policy enforcement during `release` is independent of this flag.
+
+Repeated shared-schema changes are reported at the exported model instead of every response use site. Input and response guarantees remain distinct. Generic declaration reviews for the same changed model are grouped; independent compiled guarantees, PHP identities and historical uncertainty still participate.
+
 - Error subclasses and unrecognized-webhook reasons are recorded as additive runtime APIs; Node and PHP standalone verification are additive when declared. Existing `SdkError` catches and `kind` checks keep working. Node error names and inspection now show the subclass name.
 - Node webhook event types are public identities. Removing or renaming a recorded `WebhookEvent<EventName>` export is breaking. Additions follow the existing event-configuration compatibility check.
 - The first regeneration with named Node webhook types produces the existing `webhook` declaration and `compiled codecs` review findings. The equivalent named return shape preserves consumers; the declaration upgrade alone produces no breaking finding. Older records without the event-name map remain readable.
 
-- The private generation record saves compiled contracts and runtime identities with source provenance and the original comparison baseline. Regeneration preserves that baseline even when a generator-only change affects compatibility without changing generated files.
+- The private generation record saves compiled contracts and runtime identities with source provenance and the release comparison baseline. Regeneration preserves that baseline even when a generator-only change affects compatibility without changing generated files.
 - Older records remain usable and keep explicit historical review findings; recompiling their schemas does not establish what an older runtime guaranteed. Older snapshots without non-JSON result guarantees remain readable; comparisons that depend on those guarantees require review and are not reinterpreted as empty results.
 - Malformed or unrecognized records fail with diagnostics.
 - Runtime implementation changes produce review findings even when compiled value guarantees are equal.
+- Codec changes without a semantic policy change require review, including when the old snapshot lacks response-only provenance. This comparison uses models, definitions and operations; adding derived provenance alone neither suppresses codec review nor creates a compatibility finding.
 
 ## Known compatibility limitations
 
@@ -188,6 +213,10 @@ For example, with `validation: "schema"`, adding `minLength: 3` to a string inpu
 CLI automation must read failed `diagnose --json` reports from stdout. Other JSON failures remain on stderr and now include stable codes, diagnostic source files and relative file paths. Diagnostic locations point to existing nodes; missing settings are named in the message. JSON previews omit diffs by default: pass `preview --json --diff` and read its modified-file `diffs` array. The library's dry-run diff API is unchanged.
 
 The method name `delete` is now allowed in both targets. For an existing SDK whose `deleteWidget` operation was inferred as `api.deleteWidget`, pin `resource: "api"` and `method: "deleteWidget"` to preserve that public call, or review the move to `widgets.delete` as a breaking change. Other fallback names are unchanged and now produce warnings. Shared [capability defaults](configuration.md#capability-defaults) are optional; compare generated output before replacing explicit blocks. Replace `@example/` and `example/` package vendors before publishing.
+
+Compatibility tracking now distinguishes drafts from released SDKs. Existing records keep their historical comparisons; reset an output that has never shipped with `setCompatibilityBaseline(output, 'draft')`. For packages published outside this release workflow, adopt the generated published version with `setCompatibilityBaseline(output, 'released')` before editing it. New outputs start as drafts automatically. Release preparation now updates the private record after success; retain it along with your generated output.
+
+Optional response-model additions now permit minor releases. CI that previously relied on these false breaking findings should use `preview --fail-on additive` to fail on every reported change, or `--fail-on review` to include uncertain changes. Compatibility reports group shared schemas, so automation must not rely on finding counts or repeated use-site subjects.
 
 Regenerate older SDKs to remove schema examples/defaults from sensitive, write-only and password locations, including shared reference targets and compositions. Removing previously published annotation values requires review; publication provenance alone does not change compatibility. Rendering, generation and release preparation require reloading the source inputs for records that predate publication protection, including PHP-only SDKs. Private records preserve source examples and must remain private.
 

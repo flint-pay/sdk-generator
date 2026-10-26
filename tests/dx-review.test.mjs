@@ -279,6 +279,8 @@ export function create(options:RequestOptions={}) { return client.api.createValu
   // a direct comparison result disconnected from release/version policy.
   const recordPath = join(f.output, '.sdk-generator.json');
   const record = JSON.parse(readFileSync(recordPath));
+  // Simulate a record written before draft/release baseline tracking.
+  delete record.baseline;
   const snapshot = { ...restoreCompiledSnapshot(record.compiled), plan: historical };
   record.compiled = storeCompiledSnapshot(snapshot);
   writeFileSync(recordPath, JSON.stringify(record));

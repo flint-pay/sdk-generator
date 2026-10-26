@@ -6,7 +6,13 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { inspect } from 'node:util';
 import { execFileSync } from 'node:child_process';
-import { loadContract, generate, preview, validateFixtures } from '../dist/index.js';
+import {
+  setCompatibilityBaseline,
+  loadContract,
+  generate,
+  preview,
+  validateFixtures,
+} from '../dist/index.js';
 import { compileSdkContract } from '../dist/target-plan.js';
 import { compareCompiledContracts } from '../dist/compiled-compatibility.js';
 import { checkVersionPolicy } from '../dist/version.js';
@@ -82,7 +88,10 @@ async function client(
     transport: async () =>
       new Response(status === 204 ? null : body, {
         status,
-        headers: { 'content-type': 'application/json', 'x-request-id': 'req_00VZKVWV7E7ECWMRV2HQKH1E8M' },
+        headers: {
+          'content-type': 'application/json',
+          'x-request-id': 'req_00VZKVWV7E7ECWMRV2HQKH1E8M',
+        },
       }),
   });
 }
@@ -298,6 +307,7 @@ test('nested and composed payload paths are validated and decoded', async () => 
 });
 test('return mode and path migrations are breaking in preview and semver policy', () => {
   const legacy = fixture({ responses: { return: 'result' } });
+  setCompatibilityBaseline(legacy.output, 'released');
   const opted = fixture({ responses: { return: 'payload', payloadPath: 'data' } });
   const before = compileSdkContract(legacy.contract).plan,
     after = compileSdkContract(opted.contract).plan;
@@ -502,7 +512,8 @@ for (const mode of ['result', 'whole', 'projected']) {
       calls = 0;
       await assert.rejects(
         c.api[method](),
-        (error) => error.kind === 'api' && error.meta.requestId === 'req_003NEZWWW0H0Z8VJPZ0T3E1AYE',
+        (error) =>
+          error.kind === 'api' && error.meta.requestId === 'req_003NEZWWW0H0Z8VJPZ0T3E1AYE',
       );
       assert.equal(calls, 1);
       calls = 0;
