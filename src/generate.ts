@@ -5,6 +5,7 @@ import {
   cleanupOwnedGeneration,
   isGenerationOwner,
   acquireGenerationLock,
+  releaseGenerationLock,
 } from './generation-cleanup.js';
 import { removesPublishedExamples } from './example-protection.js';
 import { reservePublicSymbols } from './public-symbols.js';
@@ -3126,9 +3127,10 @@ function updateCompatibilityBaseline(
     throw new Diagnostic('baseline', 'expected draft or released');
   output = resolve(output);
   const lock = output + '.sdk-generator.lock';
+  const owner = { pid: process.pid, token: randomUUID() };
   let fd: number;
   try {
-    fd = openSync(lock, 'wx');
+    fd = acquireGenerationLock(lock, owner);
   } catch {
     throw new Diagnostic(lock, 'another generation is running; inspect the lock before retrying');
   }
@@ -3164,8 +3166,11 @@ function updateCompatibilityBaseline(
     renameSync(temporary, path);
   } finally {
     rmSync(temporary, { force: true });
-    closeSync(fd);
-    rmSync(lock, { force: true });
+    try {
+      releaseGenerationLock(lock, fd, owner);
+    } finally {
+      closeSync(fd);
+    }
   }
 }
 export { loadContract };

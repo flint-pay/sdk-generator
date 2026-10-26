@@ -333,6 +333,10 @@ test('reset and rebaseline retain ownership and saved compiled snapshots', (t) =
 
 test('preview --fail-on chooses CI exit status and preserves the report without writes', (t) => {
   const f = fixture(t, ['node']);
+  f.cfg.$schema = 'https://example.invalid/sdk-config.schema.json';
+  f.cfg.operations = Object.fromEntries(
+    ['one', 'two', 'three'].map((name) => [name, { resource: 'api', method: name }]),
+  );
   generate(f.load(), f.output);
   setCompatibilityBaseline(f.output, 'released');
   f.doc.components.schemas.Value.properties.label = { type: 'string' };
@@ -351,18 +355,28 @@ test('preview --fail-on chooses CI exit status and preserves the report without 
     const failed = cli(...json, '--fail-on', 'additive');
     assert.equal(failed.status, 1, failed.stderr);
     assert.equal(failed.stderr, '');
-    if (json.length) assert(JSON.parse(failed.stdout).compatibility.length);
+    const withDiff = cli(...json, '--diff', '--fail-on', 'additive');
+    assert.equal(withDiff.status, 1, withDiff.stderr);
+    if (json.length) {
+      const report = JSON.parse(failed.stdout);
+      const diffReport = JSON.parse(withDiff.stdout);
+      assert(report.compatibility.length);
+      assert.equal(Object.hasOwn(report, 'diffs'), false);
+      assert(diffReport.diffs.length);
+      assert.deepEqual(diffReport.compatibility, report.compatibility);
+      assert.deepEqual(diffReport.changes, report.changes);
+    }
   }
   // An uncertain lifecycle change fails the review threshold but not breaking.
   delete f.doc.components.schemas.Value.properties.label;
-  f.cfg.operations = { one: { deprecated: 'Use the replacement operation.' } };
+  f.cfg.operations.one.deprecated = 'Use the replacement operation.';
   f.load();
   assert.equal(cli('--fail-on', 'review').status, 1);
   assert.equal(cli('--fail-on', 'breaking').status, 0);
   const bad = cli('--fail-on', 'typo');
   assert.equal(bad.status, 1);
   assert.match(bad.stderr, /--fail-on must be/);
-  delete f.cfg.operations;
+  delete f.cfg.operations.one;
   delete f.doc.paths['/one'];
   f.load();
   assert.equal(cli('--fail-on', 'breaking').status, 1);
