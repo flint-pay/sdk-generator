@@ -13,6 +13,7 @@ import {
   nodeDescriptors,
   scopedNodeClients,
   splitNodeDeclarations,
+  compactNodeDeclarations,
   splitPhpClasses,
 } from './package-render.js';
 import { packagePlan, codecClosure } from './package-plan.js';
@@ -852,7 +853,7 @@ function exampleImports(
 ): string {
   return target === 'node'
     ? `import { ${[...new Set(symbols)].join(', ')} } from ${js(c.config.npm.name)};\n`
-    : `<?php\ndeclare(strict_types=1);\nrequire __DIR__ . ${php(standalone ? '/../vendor/autoload.php' : '/vendor/autoload.php')};\nuse ${c.config.composer.namespace}\\{${[...new Set(symbols)].join(', ')}};\n`;
+    : `<?php\ndeclare(strict_types=1);\n${standalone ? `$autoload = __DIR__;\nwhile (!is_file($autoload . '/vendor/autoload.php') && !is_file($autoload . '/autoload.php')) {\n    $parent = dirname($autoload);\n    if ($parent === $autoload) throw new \\RuntimeException('Run composer install in the application before running this example.');\n    $autoload = $parent;\n}\nrequire_once is_file($autoload . '/vendor/autoload.php') ? $autoload . '/vendor/autoload.php' : $autoload . '/autoload.php';` : "require __DIR__ . '/vendor/autoload.php';"}\nuse ${c.config.composer.namespace}\\{${[...new Set(symbols)].join(', ')}};\n`;
 }
 
 function downloadGuide(c: Contract, target: 'node' | 'php'): string {
@@ -1007,7 +1008,7 @@ function packageReadme(
     c.config.documentation?.overview ??
     `${node ? 'TypeScript and JavaScript' : 'PHP'} client for the ${api}.`;
   const install = node
-    ? `\`\`\`sh\nnpm install ${c.config.npm.name}\n\`\`\`\n\nRequires Node.js 22+, or Node.js 22.12+ to \`require()\` from CommonJS. TypeScript projects need TypeScript 5.9+ with NodeNext module resolution and \`npm install --save-dev @types/node@22\` (22.16.0+).`
+    ? `\`\`\`sh\nnpm install ${c.config.npm.name}\n\`\`\`\n\nRequires Node.js 22.3+, or Node.js 22.12+ to \`require()\` from CommonJS. TypeScript projects need TypeScript 5.9+ with NodeNext module resolution and \`npm install --save-dev @types/node@22\` (22.16.0+).`
     : `\`\`\`sh\ncomposer require ${c.config.composer.name}\n\`\`\`\n\nRequires PHP 8.2+ with ext-json and ext-curl. PHPDoc types target PHPStan 2.2+.`;
   const environment = [
     ...new Set(
@@ -1063,7 +1064,7 @@ function packageReadme(
     `## Errors and retries\n\nFailed calls throw \`SdkError\` with \`${node ? 'message' : 'getMessage()'}\`, \`kind\`, \`status\`, \`${node ? 'code' : 'errorCode'}\` and the request ID in \`meta\`. An \`outcome\` of \`unknown\` means the request may have succeeded, so check the current state before resubmitting. ${retries} See [errors](RUNTIME.md#responses-and-errors) and [retries](RUNTIME.md#retries-and-idempotency).\n\nCheck an error's class to handle a specific failure; every class extends \`SdkError\`:\n\n\`\`\`${node ? 'js' : 'php'}\n${errorSnippet}\n\`\`\`\n\n` +
     pagination +
     webhooks +
-    `## Documentation\n\n- [API reference](REFERENCE.md): every operation, with examples\n- [Models](MODELS.md): fields and descriptions\n- [Runtime guide](RUNTIME.md): request options, errors, retries${c.config.webhook ? ', pagination and webhooks' : ' and pagination'}\n${guides.join('')}- \`examples/\`: a runnable script per operation. ${node ? 'Run `node examples/RESOURCE-METHOD.mjs`; TypeScript versions are alongside.' : 'Run `composer install`, then `php examples/RESOURCE-METHOD.php`.'}\n\nPackage ${c.config.version}, generated for API ${c.apiVersion}.\n`
+    `## Documentation\n\n- [API reference](REFERENCE.md): every operation, with examples\n- [Models](MODELS.md): fields and descriptions\n- [Runtime guide](RUNTIME.md): request options, errors, retries${c.config.webhook ? ', pagination and webhooks' : ' and pagination'}\n${guides.join('')}- \`examples/\`: a runnable script per operation. ${node ? 'Run `node examples/RESOURCE-METHOD.mjs`; examples are checked with TypeScript checkJs.' : 'Run `composer install`, then `php examples/RESOURCE-METHOD.php`.'}\n\nPackage ${c.config.version}, generated for API ${c.apiVersion}.\n`
   );
 }
 
@@ -1254,6 +1255,15 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
           types: './index.d.ts',
           exports: {
             '.': { types: './index.d.ts', import: './index.js', default: './index.js' },
+            ...(c.config.webhook
+              ? {
+                  './webhooks': {
+                    types: './webhooks.d.ts',
+                    import: './webhooks.js',
+                    default: './webhooks.js',
+                  },
+                }
+              : {}),
             './custom/*': './custom/*',
             './resources/*': {
               types: './resources/*.d.ts',
@@ -1261,7 +1271,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
               default: './resources/*.js',
             },
           },
-          engines: { node: '>=22' },
+          engines: { node: '>=22.3' },
           peerDependencies: { '@types/node': '>=22.16.0' },
           peerDependenciesMeta: { '@types/node': { optional: true } },
           publishConfig: {
@@ -1425,7 +1435,8 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       code += '    });\n';
       declarations += '  };\n';
     }
-    code += '  }\n';
+    code +=
+      "  }\n  [Symbol.for('nodejs.util.inspect.custom')]() { return { resources: Object.keys(this).length }; }\n";
     if (streamTypes) {
       code += '  close() { return this.#runtime.close(); }\n';
       declarations += '  close(): Promise<void>;\n';
@@ -1472,8 +1483,21 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     if (c.config.webhook)
       put(
         'examples/webhook-inbox.mjs',
-        readFileSync(join(here, '../templates/webhook-inbox.mjs'), 'utf8'),
+        readFileSync(join(here, '../templates/webhook-inbox.mjs'), 'utf8').replace(
+          "'../runtime.js'",
+          js(c.config.npm.name + '/webhooks'),
+        ),
       );
+    if (c.config.webhook) {
+      put(
+        'webhooks.js',
+        `import { verifyWebhookFromPlan } from './runtime.js';\nexport { parseExact } from './runtime.js';\n${descriptorOutput.source([], './', true, false)}\nexport function verifyWebhook(rawBody, headers, secrets, nowSeconds) { return verifyWebhookFromPlan(_sdkDescriptors, rawBody, headers, secrets, nowSeconds); }\n`,
+      );
+      put(
+        'webhooks.d.ts',
+        `export { parseExact } from './runtime.js';\nexport { verifyWebhook } from './declarations/verifyWebhook.js';\n${['KnownWebhookEvent', 'VerifiedWebhook', ...webhookTypes].map((name) => `export type { ${name} } from './declarations/${name}.js';`).join('\n')}\n`,
+      );
+    }
     descriptorOutput.finish();
     put('index.js', code);
     const selectiveTypes = splitNodeDeclarations(
@@ -1522,6 +1546,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
             .join(''),
       );
     }
+    compactNodeDeclarations(files, 'node/');
     put(
       'descriptors/modules.json',
       JSON.stringify(
@@ -1537,7 +1562,6 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       const example =
         exampleImports(c, 'node', parts.symbols, true) + parts.setup + parts.call + parts.close;
       put(`examples/${op.resource}-${op.method}.mjs`, example);
-      put(`examples/${op.resource}-${op.method}.ts`, example);
     }
   }
   if (targets.includes('php')) {
@@ -1723,13 +1747,10 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       }
       code += '}\n';
     }
-    put('src/schema-definitions.json', JSON.stringify(c.definitions ?? {}) + '\n');
     code += `final class SchemaRegistry {
-      private static ?array $values = null;
       private static ?array $contract = null;
       private static ?Internal\\DescriptorSource $source = null;
       public static function source(): Internal\\DescriptorSource { return self::$source ??= new Internal\\DescriptorSource(dirname(__DIR__) . '/descriptors', ${phpContract.webhook ? 'true' : 'false'}); }
-      public static function definitions(): array { return self::$values ??= json_decode(file_get_contents(dirname(__DIR__) . '/schema-definitions.json'), true, 512, JSON_THROW_ON_ERROR); }
       public static function contract(): array { return self::$contract ??= self::source()->contract(); }
       public static function codecs(): array { return self::contract()['definitions'] ?? []; }
     }\n`;
@@ -2888,30 +2909,35 @@ export function validateWithProgress(
   if (targets.includes('node')) {
     const cwd = join(output, 'node');
     const examples = readdirSync(join(cwd, 'examples'))
-      .filter((p) => p.endsWith('.ts'))
+      .filter((p) => p.endsWith('.mjs') && p !== 'webhook-inbox.mjs')
       .map((p) => join('examples', p));
-    check({ target: 'node', label: 'TypeScript examples', files: examples.length }, () => {
-      run(
-        process.execPath,
-        [
-          require.resolve('typescript/bin/tsc'),
-          '--strict',
-          '--noEmit',
-          '--target',
-          'ES2022',
-          '--module',
-          'NodeNext',
-          '--moduleResolution',
-          'NodeNext',
-          '--types',
-          'node',
-          '--typeRoots',
-          dirname(dirname(require.resolve('@types/node/package.json'))),
-          ...examples,
-        ],
-        cwd,
-      );
-    });
+    check(
+      { target: 'node', label: 'Type-checked JavaScript examples', files: examples.length },
+      () => {
+        run(
+          process.execPath,
+          [
+            require.resolve('typescript/bin/tsc'),
+            '--strict',
+            '--allowJs',
+            '--checkJs',
+            '--noEmit',
+            '--target',
+            'ES2022',
+            '--module',
+            'NodeNext',
+            '--moduleResolution',
+            'NodeNext',
+            '--types',
+            'node',
+            '--typeRoots',
+            dirname(dirname(require.resolve('@types/node/package.json'))),
+            ...examples,
+          ],
+          cwd,
+        );
+      },
+    );
   }
   if (targets.includes('php')) {
     const files = ['src', 'examples'].flatMap((sub) =>
@@ -3253,7 +3279,7 @@ function webhookReference(target: 'node' | 'php'): string {
   return (
     '## verifyWebhook\n\nVerify original request bytes with signing headers and one secret or a rotation array. Returns { known, event }; only matched declared envelopes are known. When known is false, reason is unknown_event for undeclared names or unmatched_envelope for declared names with no matching payload. Known deliveries have no reason. ' +
     (target === 'node'
-      ? 'The return type is `VerifiedWebhook`: checking `known` exposes `KnownWebhookEvent`, the union of the root-only `WebhookEvent<EventName>` types. Per-event types use the PHP event naming rule and match class names where PHP emits an event class; multi-variant events have Node types without corresponding PHP event classes. Unknown events remain `unknown`; check `reason` when `known` is false. '
+      ? 'The return type is `VerifiedWebhook`: checking `known` exposes `KnownWebhookEvent`, the union of the `WebhookEvent<EventName>` types exported by the root and `webhooks` subpath. Per-event types use the PHP event naming rule and match class names where PHP emits an event class; multi-variant events have Node types without corresponding PHP event classes. Unknown events remain `unknown`; check `reason` when `known` is false. '
       : '') +
     'See [signatures, framework examples, and errors](RUNTIME.md#webhooks-and-recovery).\n\n'
   );
@@ -3268,7 +3294,7 @@ function webhookGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: bo
     .join(', ');
   const verifier =
     target === 'node'
-      ? 'Import verifyWebhook from the package root to verify without client options, a base URL or API credentials. Client.verifyWebhook delegates to the same verifier. '
+      ? 'Import verifyWebhook from the webhooks subpath to verify without client options, a base URL, API credentials or operation descriptors. The package-root export remains available. Client.verifyWebhook delegates to the same verifier. '
       : standaloneWebhook
         ? `Use ${c.config.composer.namespace}\\Webhooks::verify($rawBody, $headers, $secrets, $nowSeconds = null) to verify without client options, a base URL or API credentials. Client::verifyWebhook delegates to the same verifier. The static method keeps mixed arguments so invalid inputs produce SDK error subclasses. `
         : 'The Webhooks name belongs to an API model; use Client::verifyWebhook for verification. Its mixed arguments keep invalid inputs within the SDK error guards. ';
@@ -3539,6 +3565,11 @@ function runtimeGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: bo
     bullets([
       'Generated clients defer descriptor loading until first use and reuse validated descriptors across clients. Generated methods and factories use the codecs included in the package.',
       'Node resource subpaths (resources/RESOURCE) export scoped clients with the same resource methods.',
+      ...(node && c.config.webhook
+        ? [
+            'Import verifyWebhook and webhook event types from the webhooks subpath to avoid loading operation descriptors. The package root and Client.verifyWebhook remain available.',
+          ]
+        : []),
       'PHP uses class-based Composer autoloading and individual class files; including vendor/autoload.php does not eagerly include SDK implementation files.',
       'For a null-only schema, use {"type":"null"}. The legacy form {"type":["null"]} also permits non-null values in Node; PHP rejects them.',
     ])

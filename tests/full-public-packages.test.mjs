@@ -476,6 +476,14 @@ $streaming->close();
       const weight = measureSdkWeight(output);
       console.log('SDK consumer budget ' + JSON.stringify(weight));
       assert.equal(weight.node.failed, undefined, JSON.stringify(weight.node));
+      assert.equal(weight.types.failed, undefined, JSON.stringify(weight.types));
+      assert.ok(weight.types.files < 1000, 'root types load too many declaration files');
+      assert.ok(
+        weight.bundles.webhooks < 1536 * 1024,
+        'webhook bundle includes excess descriptors',
+      );
+      assert.ok(weight.sizes.node.files < 4000, 'Node package file count budget exceeded');
+      assert.ok(weight.sizes.php['.json'] < 14 * 1024 * 1024, 'PHP includes duplicate raw schemas');
       assert.ok(weight.sizes.node['.js'] < 15 * 1024 * 1024, 'Node source size budget exceeded');
       assert.ok(weight.sizes.node['.d.ts'] < 13 * 1024 * 1024, 'declaration size budget exceeded');
       assert.ok(

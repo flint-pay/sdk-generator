@@ -1,3 +1,4 @@
+import { replacePhpExampleAutoload } from './local-example.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
@@ -100,12 +101,10 @@ async function runNode(f, source, statuses) {
 }
 
 function runPhp(f, source, statuses) {
-  const executable = source
-    .replace('<?php\n', '')
-    .replace(
-      "require __DIR__ . '/vendor/autoload.php';",
-      `require $argv[1].'/src/Runtime.php'; require $argv[1].'/src/Client.php';`,
-    )
+  const executable = replacePhpExampleAutoload(
+    source.replace('<?php\n', ''),
+    `require $argv[1].'/src/Runtime.php'; require $argv[1].'/src/Client.php';`,
+  )
     .replace(
       'new ClientOptions(',
       `new ClientOptions(transport: function($r) use (&$requests, $statuses) {

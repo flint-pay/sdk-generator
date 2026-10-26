@@ -1,7 +1,15 @@
 import { npmPackResult } from '../../dist/distribution.js';
 import { buildSync } from 'esbuild';
 import { tmpdir } from 'node:os';
-import { readdirSync, statSync, readFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
+import {
+  readdirSync,
+  statSync,
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  mkdtempSync,
+  rmSync,
+} from 'node:fs';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
@@ -23,6 +31,8 @@ export function measureSdkWeight(output) {
         paths.filter((p) => p.endsWith(suffix)).reduce((n, p) => n + statSync(p).size, 0),
       ]),
     );
+    sizes[target].files = paths.length;
+    sizes[target].bytes = paths.reduce((n, p) => n + statSync(p).size, 0);
     sizes[target].largestSource = Math.max(
       ...paths
         .filter((p) => p.endsWith(target === 'node' ? '.js' : '.php'))
@@ -55,6 +65,56 @@ export function measureSdkWeight(output) {
     console.log(JSON.stringify({version:process.version,importMs:imported-start,importRss:importRss-rss,firstClientMs:first-imported,repeatedClientMs,firstRequestMs:performance.now()-requestStart,rss:process.memoryUsage().rss-rss}));
   `,
   ]);
+  const imports = {};
+  for (const entry of ['resources/invoices', 'webhooks']) {
+    if (!existsSync(join(output, 'node', entry + '.js'))) continue;
+    imports[entry] = run(process.execPath, [
+      '--input-type=module',
+      '-e',
+      `
+      const started=performance.now(),rss=process.memoryUsage().rss;
+      await import(${JSON.stringify(pathToFileURL(join(output, 'node', entry + '.js')).href)});
+      console.log(JSON.stringify({importMs:performance.now()-started,importRss:process.memoryUsage().rss-rss}));
+    `,
+    ]);
+  }
+  const consumer = join(output, 'node', '_sdk-weight.ts');
+  let types;
+  try {
+    writeFileSync(
+      consumer,
+      "import {Client} from './index.js'; const client=new Client({token:'synthetic'}); void client;\n",
+    );
+    const result = spawnSync(
+      process.execPath,
+      [
+        resolve('node_modules/typescript/bin/tsc'),
+        '--strict',
+        '--noEmit',
+        '--target',
+        'ES2022',
+        '--module',
+        'NodeNext',
+        '--typeRoots',
+        resolve('node_modules/@types'),
+        '--extendedDiagnostics',
+        consumer,
+      ],
+      { encoding: 'utf8', timeout: 120000 },
+    );
+    const field = (label) =>
+      Number(result.stdout.match(new RegExp('^' + label + ':\\s+([0-9.]+)', 'm'))?.[1]);
+    types =
+      result.status === 0
+        ? {
+            files: field('Files'),
+            memoryKiB: field('Memory used'),
+            totalSeconds: field('Total time'),
+          }
+        : { failed: true, error: result.error?.message ?? result.stdout + result.stderr };
+  } finally {
+    rmSync(consumer, { force: true });
+  }
   const ns = JSON.parse(readFileSync(join(output, 'php/composer.json'), 'utf8')).autoload;
   // Namespace is available in the generated client in both package layouts.
   const clientSource = readFileSync(join(output, 'php/src/Client.php'), 'utf8');
@@ -89,11 +149,14 @@ export function measureSdkWeight(output) {
   }));
   rmSync(cache, { recursive: true, force: true });
   const bundles = {};
-  for (const entry of ['index', 'resources/invoices'])
+  for (const entry of ['index', 'resources/invoices', 'webhooks'])
     if (existsSync(join(output, 'node', entry + '.js'))) {
       const result = buildSync({
         stdin: {
-          contents: `import {Client} from './${entry}.js'; export const call=()=>new Client({baseUrl:'https://example.invalid',token:'synthetic'}).invoices.getPDF({invoice_id:'inv_test'});`,
+          contents:
+            entry === 'webhooks'
+              ? `export {verifyWebhook} from './webhooks.js';`
+              : `import {Client} from './${entry}.js'; export const call=()=>new Client({baseUrl:'https://example.invalid',token:'synthetic'}).invoices.getPDF({invoice_id:'inv_test'});`,
           resolveDir: join(output, 'node'),
         },
         bundle: true,
@@ -121,7 +184,7 @@ export function measureSdkWeight(output) {
         : { failed: true, error: archive.stderr.slice(-2000) },
   };
   rmSync(archiveDir, { recursive: true, force: true });
-  return { sizes, node, php, bundles, archives };
+  return { sizes, node, imports, types, php, bundles, archives };
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href)
   console.log(JSON.stringify(measureSdkWeight(process.argv[2]), null, 2));

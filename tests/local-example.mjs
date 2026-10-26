@@ -19,3 +19,11 @@ export function localExampleFile(file) {
   );
   return copy;
 }
+
+// Inject test autoloaders around either a documentation snippet or standalone example.
+export function replacePhpExampleAutoload(source, replacement) {
+  return source.replace(
+    /(?:\$autoload = __DIR__;[\s\S]*?require_once [^\n]+;|require __DIR__ \. '[^']*vendor\/autoload.php';)/,
+    replacement,
+  );
+}

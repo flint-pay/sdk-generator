@@ -215,11 +215,6 @@ test('download scripts, quickstarts and runtime recipes save exact bytes and ins
           method,
           readFileSync(join(output, target, `examples/api-${method}.${extension}`), 'utf8'),
         ]);
-        if (target === 'node')
-          examples.push([
-            'download-ts',
-            readFileSync(join(output, target, 'examples/api-download.ts'), 'utf8'),
-          ]);
         for (const document of ['README.md', 'RUNTIME.md']) {
           const source = readFileSync(join(output, target, document), 'utf8');
           const blocks = [...source.matchAll(/```(?:typescript|php)\n([\s\S]*?)```/g)].map(

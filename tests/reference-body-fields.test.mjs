@@ -1,3 +1,4 @@
+import { replacePhpExampleAutoload } from './local-example.mjs';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
@@ -145,14 +146,14 @@ const query = (name, schema = { type: 'string' }, metadata = {}) => ({
 });
 function samples(files) {
   return [...files].filter(([name]) =>
-    /(?:README|RUNTIME)\.md$|examples\/api-createValue\.(?:mjs|ts|php)$/.test(name),
+    /(?:README|RUNTIME)\.md$|examples\/api-createValue\.(?:mjs|php)$/.test(name),
   );
 }
 function everySample(files, present = [], absent = []) {
   const scripts = [...files].filter(([name]) =>
-    /examples\/api-createValue\.(?:mjs|ts|php)$/.test(name),
+    /examples\/api-createValue\.(?:mjs|php)$/.test(name),
   );
-  assert.equal(scripts.length, 3);
+  assert.equal(scripts.length, 2);
   for (const [name, source] of samples(files)) {
     for (const value of present) assert.ok(source.includes(value), `${name}: missing ${value}`);
     for (const value of absent) assert.ok(!source.includes(value), `${name}: copied ${value}`);
@@ -1059,22 +1060,19 @@ test('generated PHP examples preserve schema examples alongside new parameter va
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, source);
   }
-  const source = files
-    .get('php/examples/api-createValue.php')
-    .replace(
-      "require __DIR__ . '/../vendor/autoload.php';",
-      "require __DIR__ . '/../src/Runtime.php'; require __DIR__ . '/../src/Client.php';",
-    )
-    .replace(
-      'new ClientOptions(',
-      `new ClientOptions(transport: function($request) {
+  const source = replacePhpExampleAutoload(
+    files.get('php/examples/api-createValue.php'),
+    "require __DIR__ . '/../src/Runtime.php'; require __DIR__ . '/../src/Client.php';",
+  ).replace(
+    'new ClientOptions(',
+    `new ClientOptions(transport: function($request) {
       if ($request['url'] !== 'https://example.invalid/values/example?exact=9007199254740993&label=synthetic-query&password=example') throw new \\Exception('wrong URL');
       if ($request['method'] !== 'POST') throw new \\Exception('wrong method');
       if ($request['body'] !== '{"label":"synthetic-existing-body","uuid":"00000000-0000-4000-8000-000000000001"}') throw new \\Exception('wrong body');
       echo "synthetic wire assertions passed\\n";
       return ['status'=>204,'headers'=>[],'body'=>''];
     },`,
-    );
+  );
   const file = join(output, 'php/examples/wire.php');
   writeFileSync(file, source);
   const run = execFileSync('php', [file], {

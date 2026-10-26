@@ -891,10 +891,12 @@ test('exact fractional union samples produce executable and typechecked examples
       });
       mkdirSync(join(dir, 'out/php/vendor'));
       writeFileSync(join(dir, 'out/php/vendor/autoload.php'), phpHeader(dir));
-      const tsExample = join(dir, 'out/node/examples/api-save.ts');
+      const nodeExample = join(dir, 'out/node/examples/api-save.mjs');
       await exec(process.execPath, [
         resolve('node_modules/typescript/bin/tsc'),
         '--noEmit',
+        '--allowJs',
+        '--checkJs',
         '--strict',
         '--target',
         'es2022',
@@ -902,11 +904,10 @@ test('exact fractional union samples produce executable and typechecked examples
         'nodenext',
         '--typeRoots',
         resolve('node_modules/@types'),
-        tsExample,
+        nodeExample,
       ]);
       for (const [command, args] of [
         [process.execPath, [join(dir, 'out/node/examples/api-save.mjs')]],
-        [process.execPath, ['--experimental-strip-types', tsExample]],
         ['php', [join(dir, 'out/php/examples/api-save.php')]],
       ]) {
         const localFile = localExampleFile(args.at(-1));
@@ -918,7 +919,7 @@ test('exact fractional union samples produce executable and typechecked examples
         assert.deepEqual(JSON.parse(seen.at(-1)), JSON.parse(wire));
       }
     }
-    assert.equal(seen.length, 24);
+    assert.equal(seen.length, 16);
   } finally {
     server.closeAllConnections();
     await new Promise((r) => server.close(r));

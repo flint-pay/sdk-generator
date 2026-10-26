@@ -11,12 +11,22 @@ const file = (name: string) => encodeURIComponent(name);
 
 export function nodeDescriptors(runtime: CompiledRuntimePlan, put: Put) {
   const plan = packagePlan(runtime);
-  const dataLines: string[] = [];
-  const data = (value: unknown, codec = false): string => {
-    const name = 'd' + dataLines.length;
-    dataLines.push(
-      `export const ${name} = ${codec ? '/* @__PURE__ */ lazyCodec(' : ''}${json(json(value))}${codec ? ')' : ''};`,
-    );
+  const dataFiles = new Map<string, string[]>();
+  const dataPaths = new Map<string, string>();
+  let nextData = 0;
+  let bucket = 0;
+  let bucketSize = 0;
+  const data = (value: unknown, codec = false, group?: string): string => {
+    const name = 'd' + nextData++;
+    const line = `export const ${name} = ${codec ? '/* @__PURE__ */ lazyCodec(' : ''}${json(json(value))}${codec ? ')' : ''};`;
+    if (bucketSize > 32768) {
+      bucket++;
+      bucketSize = 0;
+    }
+    const path = group ?? `data/${bucket}.js`;
+    if (!group) bucketSize += line.length;
+    dataFiles.set(path, [...(dataFiles.get(path) ?? []), line]);
+    dataPaths.set(name, path);
     return name;
   };
   const codecData = new Map<string, string>();
@@ -26,37 +36,58 @@ export function nodeDescriptors(runtime: CompiledRuntimePlan, put: Put) {
     'descriptors/settings.js',
     `export default ${json(plan.settings).replaceAll('"__proto__":', '["__proto__"]:')};\n`,
   );
-  for (const [name, codec] of Object.entries(plan.definitions)) {
+  // Keep codecs with the same resource consumers adjacent in bounded data chunks.
+  const consumers = new Map<string, string>();
+  for (const [resource, group] of Object.entries(plan.resources))
+    for (const name of group.dependencies)
+      consumers.set(name, (consumers.get(name) ?? '') + ',' + resource);
+  const order = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+  for (const [name, codec] of Object.entries(plan.definitions).sort(
+    ([a], [b]) => order(consumers.get(a) ?? '', consumers.get(b) ?? '') || order(a, b),
+  )) {
     const raw = data(codec, true);
     codecData.set(name, raw);
   }
+  const dataImports = (entries: [string, string][], prefix: string): string => {
+    const imports = new Map<string, string[]>();
+    for (const [name, alias] of entries) {
+      const path = dataPaths.get(name);
+      if (!path) throw new Error('Missing descriptor data ' + name);
+      imports.set(path, [...(imports.get(path) ?? []), `${name} as ${alias}`]);
+    }
+    return [...imports]
+      .map(([path, names]) => `import { ${names.join(', ')} } from '${prefix}descriptors/${path}';`)
+      .join('\n');
+  };
   const dependencies = (names: string[], prefix: string) => ({
-    imports: names.length
-      ? `import { ${names.map((name, index) => `${codecData.get(name)} as c${index}`).join(', ')} } from '${prefix}descriptors/data.js';`
-      : '',
+    imports: dataImports(
+      names.map((name, index) => [codecData.get(name)!, `c${index}`]),
+      prefix,
+    ),
     object: `{${names.map((name, index) => `[${json(name)}]:c${index}()`).join(',')}}`,
   });
   const loaders: string[] = [];
   for (const [name, group] of Object.entries(plan.resources)) {
     const deps = dependencies(group.dependencies, '../../');
-    const raw = data(group.operations);
+    const raw = data(group.operations, false, `data/resource-${file(name)}.js`);
     resourceData.set(name, raw);
     put(
       `descriptors/resources/${file(name)}.js`,
-      `${deps.imports}\nimport { ${raw} } from '../data.js';\nimport settings from '../settings.js';\nlet value;\nexport default function load() { return value ??= {...settings, operations: JSON.parse(${raw}), definitions:${deps.object}}; }\n`,
+      `${deps.imports}\n${dataImports([[raw, raw]], '../../')}\nimport settings from '../settings.js';\nlet value;\nexport default function load() { return value ??= {...settings, operations: JSON.parse(${raw}), definitions:${deps.object}}; }\n`,
     );
     loaders.push(name);
   }
-  const webhookData = plan.webhook ? data(plan.webhook.webhook) : undefined;
+  const webhookData = plan.webhook
+    ? data(plan.webhook.webhook, false, 'data/webhook.js')
+    : undefined;
   if (plan.webhook) {
     const deps = dependencies(plan.webhook.dependencies, '../');
     put(
       'descriptors/webhook.js',
-      `${deps.imports}\nimport { ${webhookData} } from './data.js';\nimport settings from './settings.js';\nlet value;\nexport default function load() { return value ??= {...settings, webhook:JSON.parse(${webhookData}), definitions:${deps.object}}; }\n`,
+      `${deps.imports}\n${dataImports([[webhookData!, webhookData!]], '../')}\nimport settings from './settings.js';\nlet value;\nexport default function load() { return value ??= {...settings, webhook:JSON.parse(${webhookData}), definitions:${deps.object}}; }\n`,
     );
   }
-  const source = (groups: string[], prefix: string, webhook: boolean) => {
-    const root = prefix === './';
+  const source = (groups: string[], prefix: string, webhook: boolean, root = prefix === './') => {
     const imports = root
       ? `import { resource, webhook, modelCodec as _sdkModelCodec } from './descriptors/root.js';\n` +
         groups.map((name, index) => `const r${index} = () => resource(${json(name)});`).join('\n')
@@ -81,12 +112,17 @@ export function nodeDescriptors(runtime: CompiledRuntimePlan, put: Put) {
     if (!raw) throw new Error('Missing shared model codec ' + shared);
     factoryData.set(name, { data: raw, dependencies: names });
     const deps = dependencies(names, '../');
-    return `${deps.imports}\nimport { ${raw} } from '../descriptors/data.js';\nimport { lazyCodec, preparedCodec } from '../descriptor-source.js';\nconst read = ${raw};\nlet prepared;\nfunction codec() { return prepared ??= preparedCodec(read(), ${deps.object}); }\nexport { codec as _validate };\n`;
+    return `${deps.imports}\n${dataImports([[raw, raw]], '../')}\nimport { lazyCodec, preparedCodec } from '../descriptor-source.js';\nconst read = ${raw};\nlet prepared;\nfunction codec() { return prepared ??= preparedCodec(read(), ${deps.object}); }\nexport { codec as _validate };\n`;
   };
   const finish = () => {
+    for (const [path, lines] of dataFiles)
+      put(
+        'descriptors/' + path,
+        `import { lazyCodec } from '../../descriptor-source.js';\n` + lines.join('\n') + '\n',
+      );
     put(
       'descriptors/data.js',
-      `import { lazyCodec } from '../descriptor-source.js';\n` + dataLines.join('\n') + '\n',
+      [...dataFiles.keys()].map((path) => `export * from './${path}';`).join('\n') + '\n',
     );
     put(
       'descriptors/root.js',
@@ -349,6 +385,111 @@ export function splitNodeDeclarations(
     for (const name of [...names]) visitShared(name);
   }
   return roots;
+}
+
+/** Coalesce large declaration graphs without duplicating types or changing public symbols. */
+export function compactNodeDeclarations(files: Map<string, string>, prefix: string): void {
+  const directory = prefix + 'declarations/';
+  const declarations = [...files.keys()]
+    .filter(
+      (path) =>
+        path.startsWith(directory) && path.endsWith('.d.ts') && path !== directory + 'Client.d.ts',
+    )
+    .sort();
+  if (declarations.length < 128) return;
+  const destinations = new Map(
+    declarations.map((path, index) => [path, `${directory}types-${Math.floor(index / 64)}.d.ts`]),
+  );
+  const groups = new Map<string, string[]>();
+  for (const [path, destination] of destinations)
+    groups.set(destination, [...(groups.get(destination) ?? []), path]);
+  const rewrite = (paths: string[], destination: string): string => {
+    const imports = new Map<string, Map<string, string>>();
+    const exports = new Map<string, { module: string; typeOnly: boolean; names: Set<string> }>();
+    const bodies: string[] = [];
+    for (const path of paths) {
+      const source = ts.createSourceFile(path, files.get(path)!, ts.ScriptTarget.Latest, true);
+      for (const statement of source.statements) {
+        if (
+          (ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)) &&
+          statement.moduleSpecifier &&
+          ts.isStringLiteral(statement.moduleSpecifier)
+        ) {
+          const module = statement.moduleSpecifier.text;
+          const base =
+            module.startsWith('../declarations/') || module.startsWith('./declarations/')
+              ? directory
+              : path.startsWith(directory) && module.startsWith('./')
+                ? directory
+                : undefined;
+          const target = base
+            ? base + module.slice(module.lastIndexOf('/') + 1).replace(/\.js$/, '.d.ts')
+            : undefined;
+          const mapped = target ? destinations.get(target) : undefined;
+          const specifier = mapped
+            ? (destination.startsWith(directory)
+                ? './'
+                : destination.slice(prefix.length).includes('/')
+                  ? '../declarations/'
+                  : './declarations/') + mapped.slice(directory.length).replace(/\.d\.ts$/, '.js')
+            : module;
+          if (mapped === destination && ts.isImportDeclaration(statement)) continue;
+          if (ts.isImportDeclaration(statement)) {
+            const bindings = statement.importClause?.namedBindings;
+            if (!bindings || !ts.isNamedImports(bindings) || statement.importClause?.name)
+              throw new Error('Unsupported generated declaration import');
+            const key = `${statement.importClause?.isTypeOnly ? 'type ' : ''}${specifier}`;
+            const names = imports.get(key) ?? new Map<string, string>();
+            for (const binding of bindings.elements)
+              names.set(binding.name.text, binding.getText(source));
+            imports.set(key, names);
+          } else if (statement.exportClause && ts.isNamedExports(statement.exportClause)) {
+            const key = `${statement.isTypeOnly ? 'type ' : ''}${specifier}`;
+            const entry = exports.get(key) ?? {
+              module: specifier,
+              typeOnly: statement.isTypeOnly,
+              names: new Set<string>(),
+            };
+            for (const binding of statement.exportClause.elements)
+              entry.names.add(binding.getText(source));
+            exports.set(key, entry);
+          } else throw new Error('Unsupported generated declaration export');
+        } else bodies.push(statement.getFullText(source));
+      }
+    }
+    return (
+      [...imports]
+        .map(([key, names]) => {
+          const typeOnly = key.startsWith('type ');
+          return `import ${typeOnly ? 'type ' : ''}{ ${[...names.values()].join(', ')} } from '${typeOnly ? key.slice(5) : key}';`;
+        })
+        .join('\n') +
+      '\n' +
+      [...exports.values()]
+        .map(
+          (entry) =>
+            `export ${entry.typeOnly ? 'type ' : ''}{ ${[...entry.names].join(', ')} } from '${entry.module}';`,
+        )
+        .join('\n') +
+      '\n' +
+      bodies.join('\n') +
+      '\n'
+    );
+  };
+  // Render against the complete old map before replacing any source modules.
+  const updates = new Map<string, string>();
+  for (const [destination, paths] of groups) updates.set(destination, rewrite(paths, destination));
+  for (const path of files.keys())
+    if (
+      path.startsWith(prefix) &&
+      path.endsWith('.d.ts') &&
+      !destinations.has(path) &&
+      (path === directory + 'Client.d.ts' ||
+        /from ['\"]\.\.?\/declarations\//.test(files.get(path)!))
+    )
+      updates.set(path, rewrite([path], path));
+  for (const path of destinations.keys()) files.delete(path);
+  for (const [path, text] of updates) files.set(path, text);
 }
 
 /** PHP lexical scan: braces inside strings and comments do not delimit classes. */

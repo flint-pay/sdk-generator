@@ -15,19 +15,36 @@ export function measureWebhookTypes(directory, eventTypes, phpEventModels, typeF
     ).size;
   const owned = new Set(['KnownWebhookEvent', 'VerifiedWebhook', ...Object.values(eventTypes)]);
   const root = readFileSync(join(directory, 'index.d.ts'), 'utf8');
-  for (const name of owned)
-    assert.ok(root.includes(`export type { ${name} }`), name + ' missing root type export');
+  const rootSource = ts.createSourceFile('index.d.ts', root, ts.ScriptTarget.Latest, true);
+  const rootTypes = new Set(
+    rootSource.statements.flatMap((statement) =>
+      ts.isExportDeclaration(statement) &&
+      statement.isTypeOnly &&
+      statement.exportClause &&
+      ts.isNamedExports(statement.exportClause)
+        ? statement.exportClause.elements.map((binding) => binding.name.text)
+        : [],
+    ),
+  );
+  for (const name of owned) assert.ok(rootTypes.has(name), name + ' missing root type export');
   const declarations = join(directory, 'declarations');
   let bytes = 0;
   for (const file of readdirSync(declarations)) {
-    if (
-      !file.endsWith('.d.ts') ||
-      !(owned.has(file.slice(0, -5)) || file.startsWith('_SdkWebhookEnvelope'))
-    )
-      continue;
-    const content = readFileSync(join(declarations, file), 'utf8');
-    bytes += Buffer.byteLength(content);
-    assert.ok(literalCount(content) < 10, file + ' repeats event-name literals');
+    if (!file.endsWith('.d.ts')) continue;
+    const source = ts.createSourceFile(
+      file,
+      readFileSync(join(declarations, file), 'utf8'),
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    for (const statement of source.statements) {
+      if (!(ts.isTypeAliasDeclaration(statement) || ts.isInterfaceDeclaration(statement))) continue;
+      if (!owned.has(statement.name.text) && !statement.name.text.startsWith('_SdkWebhookEnvelope'))
+        continue;
+      const content = statement.getFullText(source);
+      bytes += Buffer.byteLength(content);
+      assert.ok(literalCount(content) < 10, statement.name.text + ' repeats event-name literals');
+    }
   }
   assert.ok(bytes <= 256 * 1024, `webhook-owned declarations: ${bytes} bytes`);
   const client = readFileSync(join(declarations, 'Client.d.ts'), 'utf8');
