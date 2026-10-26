@@ -11,11 +11,31 @@ import { ANY_CODEC } from '../dist/codec-plan.js';
 import { publicTypePlanner, publicTypeDeclarations } from '../dist/public-type-plan.js';
 import { certifies } from '../dist/type-certificate.js';
 
+test('open enum certificates retain scalar promises without repeated autocomplete members', () => {
+  const plan = publicTypePlanner({});
+  const open = plan('"known" | "other" | (string & {})');
+  assert.deepEqual(open.type, { kind: 'string' });
+  for (const value of ['known', 'future']) assert.equal(certifies(value, open), true);
+  for (const value of [42, null, {}]) assert.equal(certifies(value, open), false);
+  const closed = plan('"known" | "other"');
+  assert.equal(certifies('known', closed), true);
+  assert.equal(certifies('future', closed), false);
+  const objects = plan('{ foo: string } | { bar: number }');
+  assert.equal(certifies({ foo: 'safe', bar: 'invalid' }, objects), false);
+  const shape = '{ content: { foo: string; bar: number; nested: { value: string } } }';
+  const aliases = publicTypePlanner({ First: shape, Second: shape })('First | Second');
+  const valid = { content: { foo: 'safe', bar: 42, nested: { value: 'safe' } } };
+  assert.equal(certifies(valid, aliases), true);
+  assert.equal(certifies({ content: { ...valid.content, nested: { value: 42 } } }, aliases), false);
+});
+
 // An independent value/probe generator over the public type plan. It deliberately
 // ignores schema codecs: the certificate must uphold declarations on its own.
 function explore(certificate) {
-  const resolveNode = (node) =>
-    node.kind === 'reference' ? certificate.definitions[node.name] : node;
+  const resolveNode = (node) => {
+    while (node?.kind === 'reference') node = certificate.definitions[node.name];
+    return node;
+  };
   function sample(declaration, depth = 0) {
     if (depth > 16) throw new Error('recursive sample');
     const node = resolveNode(declaration);
