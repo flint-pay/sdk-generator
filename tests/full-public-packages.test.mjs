@@ -121,7 +121,7 @@ assert.deepEqual(preview(restored,${JSON.stringify(output)}).changes,[],'full ex
       assert.ok(size(output) < 300 * 1024 * 1024, 'full package/record size budget exceeded');
       const recordBytes = statSync(join(output, '.sdk-generator.json')).size;
       console.log('Private generation record ' + JSON.stringify({ bytes: recordBytes }));
-      assert.ok(recordBytes < 160 * 1024 * 1024, 'private generation record exceeds 160 MiB');
+      assert.ok(recordBytes < 128 * 1024 * 1024, 'private generation record exceeds 128 MiB');
       const preview = JSON.parse(
         run(process.execPath, ['dist/cli.js', 'preview', api, config, output, '--json']),
       );
@@ -504,7 +504,7 @@ $streaming->close();
       assert.ok(weight.sizes.node.files < 4000, 'Node package file count budget exceeded');
       assert.ok(weight.sizes.php['.json'] < 18 * 1024 * 1024, 'PHP includes duplicate raw schemas');
       assert.ok(weight.sizes.node['.js'] < 24 * 1024 * 1024, 'Node source size budget exceeded');
-      assert.ok(weight.sizes.node['.d.ts'] < 22 * 1024 * 1024, 'declaration size budget exceeded');
+      assert.ok(weight.sizes.node['.d.ts'] < 13 * 1024 * 1024, 'declaration size budget exceeded');
       assert.ok(
         weight.sizes.php['.json'] < 24 * 1024 * 1024,
         'PHP descriptor size budget exceeded',
