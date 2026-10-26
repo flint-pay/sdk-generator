@@ -336,7 +336,12 @@ test('response field pins leave readOnly fields out of inputs and retain sensiti
       new Response('{"details":{"location":{"id":"synthetic-private-marker"}}}', { status: 400 }),
   });
   await assert.rejects(client.api.sendValue({ body: { data: {} } }), (error) => {
-    assert.ok(!JSON.stringify(error.details).includes('synthetic-private-marker'));
+    assert.ok(!JSON.stringify(error.details ?? null).includes('synthetic-private-marker'));
+    assert.equal(
+      error.details,
+      undefined,
+      'redacted object fields cannot claim their original object type',
+    );
     return true;
   });
 });

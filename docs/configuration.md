@@ -742,17 +742,17 @@ For OpenAPI 3.0, put annotations and nullability on an explicit wrapper:
 
 ### Schema representations
 
-| Contract                          | Node/TypeScript                       | PHP                                                | JSON wire              |
-| --------------------------------- | ------------------------------------- | -------------------------------------------------- | ---------------------- |
-| `integer` (without int64/uint64)  | Safe integer `number`                 | Safe-range `int`                                   | Integer token          |
-| `integer`, `format: int64/uint64` | Exact `string`                        | Exact `string`                                     | Unquoted integer token |
-| `number`, `format: decimal`       | Exact `string`                        | Exact `string`                                     | Unquoted decimal token |
-| `number`, plain/float/double      | `number`                              | `int\|float` input, `float` output                 | Number token           |
-| `string`, `format: date-time`     | `string\|Date` input, `string` output | `string\|DateTimeInterface` input, `string` output | JSON string            |
-| Other `string` formats            | `string`                              | `string`                                           | JSON string            |
-| Optional field                    | Omitted/undefined property            | Omitted array key                                  | Absent                 |
-| Nullable field                    | `T \| null`                           | Null value                                         | Explicit null          |
-| Object/array                      | Object/array                          | Typed response model, object or array              | Object/array           |
+| Contract                          | Node/TypeScript                                 | PHP                                                | JSON wire              |
+| --------------------------------- | ----------------------------------------------- | -------------------------------------------------- | ---------------------- |
+| `integer` (without int64/uint64)  | Safe integer `number`                           | Safe-range `int`                                   | Integer token          |
+| `integer`, `format: int64/uint64` | `${bigint}` output; `${bigint} \| bigint` input | Exact `string`                                     | Unquoted integer token |
+| `number`, `format: decimal`       | Exact `string`                                  | Exact `string`                                     | Unquoted decimal token |
+| `number`, plain/float/double      | `number`                                        | `int\|float` input, `float` output                 | Number token           |
+| `string`, `format: date-time`     | `string\|Date` input, `string` output           | `string\|DateTimeInterface` input, `string` output | JSON string            |
+| Other `string` formats            | `string`                                        | `string`                                           | JSON string            |
+| Optional field                    | Omitted/undefined property                      | Omitted array key                                  | Absent                 |
+| Nullable field                    | `T \| null`                                     | Null value                                         | Explicit null          |
+| Object/array                      | Object/array                                    | Typed response model, object or array              | Object/array           |
 
 - Plain numbers must be finite; ordinary floating-point rounding applies.
 - Other integers use the shared safe range ±9,007,199,254,740,991. Exact numeric strings may be larger.
@@ -799,7 +799,7 @@ For OpenAPI 3.0, put annotations and nullability on an explicit wrapper:
 
 ### Nested models and ambiguous representations
 
-- Node creates `Name`, `NameInput` and `makeName` helpers per model. PHP emits presence-aware `NameInput` classes, operation input and response classes, PHPDoc shapes and typed field accessors. Request and response types are compiled separately to keep responses extensible.
+- Node emits a canonical response name for identical declarations, retaining distinct effective shapes. `NameInput` and `makeName` helpers are emitted only for models reachable from operation inputs. Request-body names follow source component references; anonymous bodies stay within the owning operation input. PHP emits presence-aware `NameInput` classes, operation input and response classes, PHPDoc shapes and typed field accessors. Request and response types are compiled separately to keep responses extensible.
 - PHP object inputs use `new OperationInput(['field' => null])`. Scalar, array and nullable named model constructors accept their values and expose them with `jsonSerialize()`. Omitted keys stay omitted; `has()` distinguishes missing from null. Omitted optional response fields read as null through nullable getters; omitted input fields still throw on access. Required response fields fail during decode, and unknown property names fail loudly.
 - TypeScript models field-absence constraints where possible; value-specific `not` constraints keep a broader input type and are enforced at runtime.
 - Named model factories nest in TypeScript inputs through `InputValue<T>`. For models that also permit nonobjects, passing an object keeps the object branch in the factory return type, so it fits object-constrained fields, including recursive references. Factories normalize nested wrappers into plain values, and serialization revalidates them.

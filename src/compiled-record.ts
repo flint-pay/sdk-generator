@@ -173,6 +173,8 @@ export function assertCompiledSnapshot(value: unknown): asserts value is Compile
   if (plan.responseReturns !== undefined)
     for (const [id, value] of Object.entries(object(plan.responseReturns, 'responseReturns'))) {
       const response = object(value, 'responseReturns.' + id);
+      if (response.validate !== undefined && response.validate !== true)
+        throw new Error('Invalid payload validation flag for ' + id);
       fields(response, ['node', 'nodeDocumentation', 'php', 'phpNative'], 'string', id);
       if (response.helperReturn !== undefined && response.helperReturn !== 'payload')
         throw new Error('Invalid payload helper return mode for ' + id);
@@ -197,6 +199,13 @@ export function assertCompiledSnapshot(value: unknown): asserts value is Compile
       if (typeof name !== 'string') throw new Error('node.eventTypes: invalid event type name');
   if (node.responseReturnDeclarations !== undefined)
     fields(node, ['responseReturnDeclarations'], 'string', 'node');
+  if (node.errorTypes !== undefined)
+    fields(
+      object(node.errorTypes, 'node.errorTypes'),
+      ['code', 'details'],
+      'string',
+      'node.errorTypes',
+    );
   if (node.authentication !== undefined) {
     const authentication = object(node.authentication, 'node.authentication');
     fields(authentication, ['declarations'], 'string', 'node.authentication');
@@ -212,12 +221,15 @@ export function assertCompiledSnapshot(value: unknown): asserts value is Compile
     for (const field of ['documentedInput', 'documentedOutput'])
       if (model[field] !== undefined) fields(model, [field], 'string', name);
     fields(model, ['objectFactory'], 'boolean', name);
+    if (model.inputReachable !== undefined) fields(model, ['inputReachable'], 'boolean', name);
+    if (model.outputAlias !== undefined) fields(model, ['outputAlias'], 'string', name);
     assertCodecPlan(model.codec, 'node.models.' + name);
     if (model.sharedCodec !== undefined) fields(model, ['sharedCodec'], 'string', name);
   }
   for (const [name, value] of Object.entries(object(node.operations, 'node.operations'))) {
     const op = object(value, name);
     fields(op, ['input', 'output', 'items'], 'string', name);
+    if (op.responseType !== undefined) fields(op, ['responseType'], 'string', name);
     if (op.idempotencyKeyRequired !== undefined)
       fields(op, ['idempotencyKeyRequired'], 'boolean', name);
     if (op.idempotencyKey !== undefined) fields(op, ['idempotencyKey'], 'boolean', name);

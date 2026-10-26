@@ -264,7 +264,7 @@ export function create(options:RequestOptions={}) { return client.api.createValu
         path,
         text
           .replace(
-            /export type RequestOptions<M extends AuthMode = AuthMode> =[^\n]+\n/,
+            /export type RequestOptions<M extends AuthMode = AuthMode> =[\s\S]*$/,
             'export type RequestOptions = RuntimeRequestOptions;\n',
           )
           .replace(/RequestOptions<[^>]+>/g, 'RequestOptions')

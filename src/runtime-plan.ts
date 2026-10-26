@@ -153,6 +153,8 @@ export interface CompiledOperation
   retry: Retry;
   replay: 'safe' | 'idempotency';
   streamEventCodecs?: Record<string, CodecPlan>;
+  /** Node payload unions must decode to one of their declared projected shapes. */
+  payloadCodecs?: CodecPlan[];
   parameters: (Omit<Operation['parameters'][number], 'schema'> & {
     codec: CodecPlan;
     /** Absent in historical descriptors and for ordinary input parameters. */
@@ -175,6 +177,8 @@ export interface CompiledOperation
 
 export interface CompiledRuntimePlan
   extends Omit<RuntimeContract, 'operations' | 'definitions' | 'webhook' | 'incoming'> {
+  /** Node provider details are validated when their public schema type is known. */
+  typedErrorDetails?: true;
   format: typeof CODEC_FORMAT;
   semantics: string;
   retrySemantics?: typeof RETRY_SEMANTICS | 'budgets-1';
@@ -374,6 +378,8 @@ export function assertRuntimePlan(
     return value as Record<string, unknown>;
   }
   const plan = record(value, 'runtime');
+  if (plan.typedErrorDetails !== undefined && plan.typedErrorDetails !== true)
+    throw new Error('Invalid typedErrorDetails in compiled runtime');
   if (plan.defaultBaseUrl !== undefined && !isDefaultBaseUrl(plan.defaultBaseUrl))
     throw new Error('Invalid defaultBaseUrl in compiled runtime');
   if (plan.format !== CODEC_FORMAT || typeof plan.semantics !== 'string')
@@ -556,6 +562,13 @@ export function assertRuntimePlan(
       assertCodecPlan(field.codec, `${op.id}.parameter.${field.name}`);
     }
     if (op.body !== undefined) assertCodecPlan(op.body, `${op.id}.body`);
+    if (op.payloadCodecs !== undefined) {
+      if (!Array.isArray(op.payloadCodecs) || !op.payloadCodecs.length)
+        throw new Error(`${op.id}: invalid payload codecs`);
+      op.payloadCodecs.forEach((codec, index) =>
+        assertCodecPlan(codec, `${op.id}.payloadCodecs.${index}`),
+      );
+    }
     if (op.streamEventSchemas !== undefined)
       throw new Error('Raw stream schemas in compiled operation');
     if (op.streamEventCodecs !== undefined)

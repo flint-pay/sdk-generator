@@ -10,6 +10,7 @@ import {
 import { removesPublishedExamples } from './example-protection.js';
 import { reservePublicSymbols } from './public-symbols.js';
 import {
+  formatNodeDeclaration,
   nodeDescriptors,
   scopedNodeClients,
   splitNodeDeclarations,
@@ -1308,7 +1309,30 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         '\n',
       ),
     );
-    put('runtime.d.ts', readFileSync(join(here, 'runtime.d.ts'), 'utf8'));
+    let runtimeDeclarations = readFileSync(join(here, 'runtime.d.ts'), 'utf8');
+    if (targetPlan.node.errorTypes) {
+      const { code, details } = targetPlan.node.errorTypes;
+      const qualify = (type: string) =>
+        type.replace(
+          /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|[A-Za-z_$][\w$]*/g,
+          (token) =>
+            Object.hasOwn(models, token) ? `import('./declarations/${token}.js').${token}` : token,
+        );
+      // Specialize only the SDK error class; transport cause codes keep their own declaration.
+      const start = runtimeDeclarations.indexOf('export declare class SdkError ');
+      const end = runtimeDeclarations.indexOf('\ndeclare const BaseSdkError', start);
+      runtimeDeclarations =
+        runtimeDeclarations.slice(0, start) +
+        runtimeDeclarations
+          .slice(start, end)
+          .replaceAll('code?: string', 'code?: SdkErrorCode')
+          .replaceAll('details?: unknown', 'details?: SdkErrorDetails')
+          .replaceAll('\n        code: string', '\n        code: SdkErrorCode')
+          .replaceAll('        details: unknown', '        details: SdkErrorDetails | undefined') +
+        runtimeDeclarations.slice(end) +
+        `\nexport type SdkErrorCode = (${qualify(code)}) & string;\nexport type SdkErrorDetails = ${qualify(details)} | RuntimeErrorDetails;\n`;
+    }
+    put('runtime.d.ts', runtimeDeclarations);
     for (const name of [
       'descriptor-source.js',
       'descriptor-source.d.ts',
@@ -1354,6 +1378,8 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       code = "import { requestInput as _sdkRequestInput } from './request.js';\n" + code;
     }
     let declarations = `import type { ${c.authentication ? 'ClientOptions as RuntimeClientOptions, RequestOptions as RuntimeRequestOptions' : 'ClientOptions as RuntimeClientOptions, RequestOptions'}, Result, InputValue, CredentialProvider${defaultCredentials ? ', WorkloadIdentityOptions' : ''}${c.config.webhook ? ', WebhookHeaders as _SdkWebhookHeaders' : ''} } from './runtime.js';\nimport { Model${extraValues} } from './runtime.js';\nexport { SdkError, errors, Model${extraValues}, serialize, parseExact, redact } from './runtime.js';\nexport type { ${c.authentication ? '' : 'RequestOptions, '}Result, Metadata, ErrorKind, DiagnosticEvent, InputValue, CredentialProvider${streamTypes ? ', ServerSentEvent' : ''} } from './runtime.js';\n`;
+    if (targetPlan.node.errorTypes)
+      declarations += "export type { SdkErrorCode, SdkErrorDetails } from './runtime.js';\n";
     if (defaultCredentials)
       declarations += `export type { WorkloadIdentityOptions, WorkloadIdentitySource } from './runtime.js';\nexport declare function defaultCredentials(): CredentialProvider;\nexport declare function workloadIdentityCredentials(options: WorkloadIdentityOptions): CredentialProvider;\n`;
     if (c.operations.some((op) => !op.idempotency))
@@ -1374,7 +1400,10 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     }
 
     for (const [name, model] of Object.entries(models)) {
-      declarations += `${schemaComment(c.models[name]!)}export type ${name} = ${model.documentedOutput ?? model.output};\n${schemaComment(c.models[name]!)}export type ${name}Input = ${model.documentedInput ?? model.input};\n`;
+      if (!model.outputAlias)
+        declarations += `${schemaComment(c.models[name]!)}export type ${name} = ${model.documentedOutput ?? model.output};\n`;
+      if (model.inputReachable === false) continue;
+      declarations += `${schemaComment(c.models[name]!)}export type ${name}Input = ${model.documentedInput ?? model.input};\n`;
       // Preserve the validated object branch when a model also permits
       // nonobjects, so its factory can nest inside an object-constrained field.
       if (model.objectFactory) {
@@ -1383,8 +1412,13 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       }
       declarations += `export declare function make${name}(value: InputValue<${name}Input>): Model<${name}Input>;\n`;
     }
-    for (const op of c.operations)
-      declarations += `export type ${pascal(op.resource)}${pascal(op.method)}Input = ${targetPlan.node.operations[op.id]!.documentedInput ?? targetPlan.node.operations[op.id]!.input};\nexport type ${pascal(op.resource)}${pascal(op.method)}Response = ${targetPlan.node.operations[op.id]!.output};\n`;
+    const responseType = (op: Operation): string =>
+      targetPlan.node.operations[op.id]!.responseType!;
+    for (const op of c.operations) {
+      declarations += `export type ${pascal(op.resource)}${pascal(op.method)}Input = ${targetPlan.node.operations[op.id]!.documentedInput ?? targetPlan.node.operations[op.id]!.input};\n`;
+      if (responseType(op) !== targetPlan.node.operations[op.id]!.output)
+        declarations += `export type ${responseType(op)} = ${targetPlan.node.operations[op.id]!.output};\n`;
+    }
     declarations += `export declare class Client {\n  constructor(options${targetPlan.node.clientOptions?.optional ? '?' : ''}: ClientOptions);\n`;
     for (const group of groups) {
       code += `    this.${group} = Object.freeze({\n`;
@@ -1395,14 +1429,17 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         const requestOptionsType =
           targetPlan.node.operations[op.id]!.requestOptions ?? 'RequestOptions';
         const payload = payloadReturns[op.id];
+        const decodePayload = payload?.validate
+          ? `, (result, path) => this.#runtime.decodePayload(${js(op.id)}, result, path)`
+          : '';
         const call = callPlan(op, targetPlan, requestOptionsType);
         for (const method of [op.method, ...(op.aliases ?? [])]) {
           const request = `this.#runtime.request(${js(op.id)}, ${call.nodeInput}, options)`;
-          code += `      ${method}: ${positional(op) ? 'async ' : ''}(${call.nodeArgs}) => ${request}${payload ? `.then(result => _sdkPayload(result, ${js(payload.path)}))` : ''},\n`;
-          declarations += `    ${methodDoc(op, method, definitions)}    ${method}(${call.nodeSignature}): Promise<${payload ? payload.node : `Result<${prefix}Response>`}>;\n`;
+          code += `      ${method}: ${positional(op) ? 'async ' : ''}(${call.nodeArgs}) => ${request}${payload ? `.then(result => _sdkPayload(result, ${js(payload.path)}${decodePayload}))` : ''},\n`;
+          declarations += `    ${methodDoc(op, method, definitions)}    ${method}(${call.nodeSignature}): Promise<${payload ? payload.node : `Result<${responseType(op)}>`}>;\n`;
           if (payload) {
             code += `      ${method}WithResponse: ${positional(op) ? 'async ' : ''}(${call.nodeArgs}) => ${request}.then(_sdkResponse),\n`;
-            declarations += `    /** Complete decoded body and HTTP metadata, without payload unwrapping. */\n    ${method}WithResponse(${call.nodeSignature}): Promise<SdkResponse<${prefix}Response>>;\n`;
+            declarations += `    /** Complete decoded body and HTTP metadata, without payload unwrapping. */\n    ${method}WithResponse(${call.nodeSignature}): Promise<SdkResponse<${responseType(op)}>>;\n`;
           }
         }
         if (op.pagination)
@@ -1410,25 +1447,25 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
             [
               'Pages',
               'pages',
-              payload?.helperReturn === 'payload' ? payload.node : `Result<${prefix}Response>`,
+              payload?.helperReturn === 'payload' ? payload.node : `Result<${responseType(op)}>`,
             ],
             ['Items', 'items', targetPlan.node.operations[op.id]!.items],
           ]) {
             const request = `this.#runtime.${runtime}(${js(op.id)}, ${call.nodeInput}, options)`;
-            code += `      ${op.method}${suffix}: (${call.nodeArgs}) => ${suffix === 'Pages' && payload?.helperReturn === 'payload' ? `_sdkPayloadPages(${request}, ${js(payload.path)})` : request},\n`;
+            code += `      ${op.method}${suffix}: (${call.nodeArgs}) => ${suffix === 'Pages' && payload?.helperReturn === 'payload' ? `_sdkPayloadPages(${request}, ${js(payload.path)}${decodePayload})` : request},\n`;
             declarations += `    ${op.method}${suffix}(${call.nodeSignature}): AsyncGenerator<${returnType}>;\n`;
             if (suffix === 'Pages' && payload?.helperReturn === 'payload') {
               code += `      ${op.method}PagesWithResponse: (${call.nodeArgs}) => _sdkResponsePages(${request}),\n`;
-              declarations += `    ${op.method}PagesWithResponse(${call.nodeSignature}): AsyncGenerator<SdkResponse<${prefix}Response>>;\n`;
+              declarations += `    ${op.method}PagesWithResponse(${call.nodeSignature}): AsyncGenerator<SdkResponse<${responseType(op)}>>;\n`;
             }
           }
         if (op.polling) {
           const request = `this.#runtime.wait(${js(op.id)}, ${call.nodeInput}, options)`;
-          code += `      ${op.method}Wait: (${call.nodeArgs}) => ${request}${payload?.helperReturn === 'payload' ? `.then(result => _sdkPayload(result, ${js(payload.path)}))` : ''},\n`;
-          declarations += `    ${op.method}Wait(${payload?.helperReturn === 'payload' || positional(op) ? call.nodeSignature : `input: ${prefix}Input, options?: ${requestOptionsType}`}): Promise<${payload?.helperReturn === 'payload' ? payload.node : `Result<${prefix}Response>`}>;\n`;
+          code += `      ${op.method}Wait: (${call.nodeArgs}) => ${request}${payload?.helperReturn === 'payload' ? `.then(result => _sdkPayload(result, ${js(payload.path)}${decodePayload}))` : ''},\n`;
+          declarations += `    ${op.method}Wait(${payload?.helperReturn === 'payload' || positional(op) ? call.nodeSignature : `input: ${prefix}Input, options?: ${requestOptionsType}`}): Promise<${payload?.helperReturn === 'payload' ? payload.node : `Result<${responseType(op)}>`}>;\n`;
           if (payload?.helperReturn === 'payload') {
             code += `      ${op.method}WaitWithResponse: (${call.nodeArgs}) => ${request}.then(_sdkResponse),\n`;
-            declarations += `    ${op.method}WaitWithResponse(${call.nodeSignature}): Promise<SdkResponse<${prefix}Response>>;\n`;
+            declarations += `    ${op.method}WaitWithResponse(${call.nodeSignature}): Promise<SdkResponse<${responseType(op)}>>;\n`;
           }
         }
       }
@@ -1449,7 +1486,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     if (c.config.money) {
       code += '  money(...args) { return this.#runtime.money(...args); }\n';
       declarations +=
-        '  money(currency: string, major: string): { currency: string; amount: string };\n';
+        '  money(currency: string, major: string): { currency: string; amount: `${bigint}` };\n';
     }
     code += '}\n';
     declarations += '}\n';
@@ -1463,7 +1500,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       const known = targetPlan.node.operations[op.id]!.known;
       if (!known) continue;
       const prefix = pascal(op.resource) + pascal(op.method) + 'Response';
-      declarations += `export type ${prefix}Known = ${known.type};\nexport declare function is${prefix}Known(value: ${prefix}): value is ${prefix}Known;\n`;
+      declarations += `export type ${prefix}Known = ${known.type};\nexport declare function is${prefix}Known(value: ${responseType(op)}): value is ${prefix}Known;\n`;
       const knownCode = descriptorOutput.codec(prefix, { ...known.codecs[0]!, some: known.codecs });
       put(
         `predicates/${prefix}.js`,
@@ -1473,6 +1510,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       code += `export function is${prefix}Known(value) { const prepared = _sdkModelCodec(${js(prefix)}); return prepared.some.some(codec => isKnownCodec(value, {...codec, definitions: prepared.definitions})); }\n`;
     }
     for (const [name, model] of Object.entries(targetPlan.node.models)) {
+      if (model.inputReachable === false) continue;
       put(
         `models/${name}.js`,
         descriptorOutput.codec(name, model.codec, model.sharedCodec) +
@@ -1504,8 +1542,16 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       declarations,
       groups,
       put,
-      new Set(Object.keys(targetPlan.node.models)),
-      new Map(Object.entries(targetPlan.node.models).map(([name, model]) => [name, model.codec])),
+      new Set(
+        Object.entries(models)
+          .filter(([, model]) => !model.outputAlias)
+          .map(([name]) => name),
+      ),
+      new Map(
+        Object.entries(models)
+          .filter(([, model]) => !model.outputAlias)
+          .map(([name, model]) => [name, model.codec]),
+      ),
       new Set(c.config.webhook ? [...webhookTypes, 'KnownWebhookEvent', 'VerifiedWebhook'] : []),
     );
     const scopedClient = scopedNodeClients(code);
@@ -1513,8 +1559,11 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       const header = code
         .slice(0, code.indexOf(descriptorOutput.source(groups, './', true)))
         .replaceAll("'./", "'../");
-      const factories = [...(selectiveTypes.get(group) ?? [])].filter((name) =>
-        Object.hasOwn(targetPlan.node.models, name),
+      const selected = selectiveTypes.get(group) ?? new Set<string>();
+      const factories = Object.keys(models).filter(
+        (name) =>
+          (selected.has(name) || selected.has(name + 'Input')) &&
+          models[name]!.inputReachable !== false,
       );
       const predicates = c.operations
         .filter((op) => op.resource === group && targetPlan.node.operations[op.id]!.known)
@@ -1995,6 +2044,9 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         ),
       );
     }
+  for (const [path, value] of files)
+    if (path.startsWith('node/') && path.endsWith('.d.ts'))
+      files.set(path, formatNodeDeclaration(value));
   return files;
 }
 const resultStatus = (status: string) => successStatus(status) || status === 'default';

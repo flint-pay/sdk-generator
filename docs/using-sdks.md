@@ -291,6 +291,8 @@ try {
 | Request ID    | `meta?.requestId`       | `$error->meta['requestId']` |
 | HTTP status   | `status` or `undefined` | `status` or `null`          |
 
+Node `SdkError.code` uses the schema’s known string codes plus an open string alternative. `SdkError.details` uses the configured error schema plus runtime failure details; narrow the shape before reading a field. Malformed API details, or redacted details that no longer fit the schema, are `undefined`; explicit `raw` access remains available for recovery.
+
 `SdkError` and `kind` remain the authoritative API. Each runtime failure also has a subclass chosen solely from `kind`. Node exposes the classes through `errors` at the package root and resource subpaths; `errors.SdkError === SdkError`, and `errors.NotFoundError` works as a TypeScript type. PHP classes live in `Example\Library\Errors`, separate from generated models. Every subclass is still an `SdkError`. Node `name` and inspection show the subclass name, including in minified bundles. Node stacks and PHP exception file/line metadata identify the factory's calling site.
 
 | Kind             | Class                 |
@@ -619,7 +621,7 @@ $client->close();
 
 ### Numbers and dates
 
-Inputs and outputs follow the [schema representations](configuration.md#schema-representations) table. int64/uint64 and decimal fields use exact strings, such as `"9007199254740993"`; date-time inputs also accept JavaScript `Date` or PHP `DateTimeInterface`.
+Inputs and outputs follow the [schema representations](configuration.md#schema-representations) table. int64/uint64 and decimal fields use exact strings, such as `"9007199254740993"`. TypeScript int64/uint64 outputs use `${bigint}`; inputs also accept `bigint`, including ambiguous integer/string unions. Decimal strings retain `string`: `${number}` admits spellings that are not valid exact decimals. Date-time inputs also accept JavaScript `Date` or PHP `DateTimeInterface`.
 
 - The schema decides whether an exact string becomes an unquoted number token on the wire. Don't convert an exact amount to a floating-point number before passing it.
 - Plain numbers use floating-point precision and reject non-finite values.
@@ -632,8 +634,10 @@ Inputs and outputs follow the [schema representations](configuration.md#schema-r
 
 ### TypeScript object types
 
-Response types keep the component name their source schema references, even when another component has an identical shape. All exported component names remain available.
+Response types use the referenced component name, with structurally identical declarations sharing a canonical name (shortest name, then alphabetical order). Different effective shapes retain separate names, including differences introduced by schema profiles. Payload methods return concrete component types or unions; `WithResponse` keeps the envelope and HTTP metadata. A projected payload that matches no declared alternative raises a protocol error; `WithResponse` retains the complete forward-compatible envelope.
 
+- Request enums are closed unions; response enums include future strings.
+- Only models reachable from operation inputs have `NameInput` types and `makeName` factories. Request bodies use their referenced component input name; anonymous bodies stay within the owning operation input.
 - Fresh object literals with undeclared properties, and misspelled response fields, are type errors. Explicitly open objects and dictionaries accept arbitrary keys.
 - Structural typing can still accept extra keys through existing variables; runtime request rules follow the schema.
 - Unknown response fields stay present. Read them with an explicit dictionary assertion or narrowing.

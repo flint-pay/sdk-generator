@@ -12,7 +12,12 @@ import { assertRuntimePlan, compileRuntimePlan } from '../dist/runtime-plan.js';
 import { compileSchemaPolicy } from '../dist/schema-policy.js';
 import { typescriptType } from '../dist/target-types.js';
 import { storeCompiledSnapshot, restoreCompiledSnapshot } from '../dist/compiled-record.js';
-import { splitNodeDeclarations } from '../dist/package-render.js';
+import {
+  splitNodeDeclarations,
+  compactNodeDeclarations,
+  formatNodeDeclaration,
+} from '../dist/package-render.js';
+import { compareCompiledContracts } from '../dist/compiled-compatibility.js';
 
 function fixture(t, api, config = {}) {
   mkdirSync('.generated', { recursive: true });
@@ -92,7 +97,7 @@ function phpstan(dir, output, source, succeeds = true) {
   return r.stdout + r.stderr;
 }
 
-test('structurally shared results retain source component names, exported shapes and PHP identities', async (t) => {
+test('identical response shapes share a canonical name while PHP identities remain stable', async (t) => {
   const result = { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] };
   const response = (name) => ({
     type: 'object',
@@ -135,9 +140,9 @@ test('structurally shared results retain source component names, exported shapes
   const a = compileSdkContract(f.contract);
   assert.deepEqual(a, compileSdkContract(f.contract));
   assert.deepEqual(f.contract, before);
-  assert.equal(a.plan.node.operations.createAlpha.output, 'AlphaResponse');
+  assert.equal(a.plan.node.operations.createAlpha.output, 'BetaResponse');
   assert.equal(a.plan.node.operations.createBeta.output, 'BetaResponse');
-  assert.equal(a.plan.node.operations.getAlpha.output, 'AlphaResult');
+  assert.equal(a.plan.node.operations.getAlpha.output, 'BetaResult');
   // Codec identity remains shared, independently of the public Node name.
   assert.equal(
     a.plan.runtime.operations[0].responses['200'].codec.fields.data.reference,
@@ -147,13 +152,10 @@ test('structurally shared results retain source component names, exported shapes
     a.plan.runtime.operations[1].responses['200'].codec.fields.data.reference,
     'BetaResult',
   );
-  assert.match(
-    readFileSync(join(f.output, 'node/declarations/AlphaResult.d.ts'), 'utf8'),
-    /export type AlphaResult = \{ "id": string; \};/,
-  );
+  assert.equal(a.plan.node.models.AlphaResult.outputAlias, 'BetaResult');
   assert.match(
     readFileSync(join(f.output, 'node/declarations/BetaResult.d.ts'), 'utf8'),
-    /export interface BetaResult extends AlphaResult \{\}/,
+    /export type BetaResult = \{\s*"id": string;\s*\};/,
   );
   const consumer = join(f.output, 'node/consumer.ts');
   const constrained = typescriptType(
@@ -165,18 +167,18 @@ test('structurally shared results retain source component names, exported shapes
   );
   writeFileSync(
     consumer,
-    `import {Client, type AlphaResult, type BetaResult, type AlphaResponse} from './index.js';
+    `import {Client, type BetaResult, type BetaResponse} from './index.js';
 const c = new Client({baseUrl:'https://example.invalid'});
 const alpha = c.alpha.create();
 const beta = c.beta.create();
 const direct = c.alpha.get();
-const existingAlpha: Promise<AlphaResult> = alpha;
+const existingAlpha: Promise<BetaResult> = alpha;
 const existingBeta: Promise<BetaResult> = beta;
-const response: Promise<AlphaResponse> = c.alpha.createWithResponse().then(r => r.body);
-import {Client as ScopedClient, type AlphaResult as ScopedResult, type BetaResult as PreviousScopedResult} from './resources/alpha.js';
+const response: Promise<BetaResponse> = c.alpha.createWithResponse().then(r => r.body);
+import {Client as ScopedClient, type BetaResult as ScopedResult, type BetaResult as PreviousScopedResult} from './resources/alpha.js';
 const scoped: Promise<ScopedResult> = new ScopedClient({baseUrl:'https://example.invalid'}).alpha.create();
 const previousScoped: Promise<PreviousScopedResult> = scoped;
-type OwnedNullable = AlphaResult | null;
+type OwnedNullable = BetaResult | null;
 type SharedNullable = BetaResult | null;
 type Constrained = ${constrained};
 const nullableControl: OwnedNullable = null;
@@ -201,10 +203,10 @@ const constrainedNull: Constrained = null;
     ts.forEachChild(node, visit);
   }
   visit(program.getSourceFile(consumer));
-  assert.equal(names.get('alpha'), 'AlphaResult');
+  assert.equal(names.get('alpha'), 'BetaResult');
   assert.equal(names.get('beta'), 'BetaResult');
-  assert.equal(names.get('direct'), 'AlphaResult');
-  assert.equal(names.get('scoped'), 'AlphaResult');
+  assert.equal(names.get('direct'), 'BetaResult');
+  assert.equal(names.get('scoped'), 'BetaResult');
   const sdk = await import(pathToFileURL(join(f.output, 'node/index.js')));
   const c = new sdk.Client({
     baseUrl: 'https://example.invalid',
@@ -233,8 +235,8 @@ foreach ([$c->alpha->create(), $c->beta->create()] as $value) {
   delete record.baseline;
   const snapshot = restoreCompiledSnapshot(record.compiled);
   const previous = structuredClone(snapshot.plan);
-  previous.node.operations.createAlpha.output = previous.node.operations.createBeta.output;
-  previous.responseReturns.createAlpha.node = previous.responseReturns.createBeta.node;
+  previous.node.operations.createAlpha.output = 'AlphaResponse';
+  previous.responseReturns.createAlpha.node = 'AlphaResult';
   record.compiled = storeCompiledSnapshot({ ...snapshot, plan: previous });
   writeFileSync(recordPath, JSON.stringify(record));
   assert.ok(
@@ -1207,4 +1209,359 @@ if(count($seen)!==1||$seen[0]['x-request-id']!=='caller'||$seen[0]['idempotency-
 `,
     join(f.output, 'php'),
   ]);
+});
+
+test('Node consumers get canonical payload names, closed inputs, integer strings and request-only factories', async (t) => {
+  const thing = {
+    type: 'object',
+    properties: {
+      id: { type: 'string' },
+      amount: { type: 'integer', format: 'int64' },
+      status: { type: 'string', enum: ['pending', 'succeeded'] },
+    },
+    required: ['id', 'amount', 'status'],
+  };
+  const input = {
+    type: 'object',
+    properties: {
+      amount: { type: 'integer', format: 'int64' },
+      status: { type: 'string', enum: ['pending', 'succeeded'] },
+      child: ref('InputChild'),
+      ambiguous: { oneOf: [{ type: 'integer', format: 'int64' }, { type: 'string' }] },
+      fixed: { type: 'integer', format: 'int64', const: 7 },
+      allowed: { type: 'integer', format: 'int64', enum: [7, 8] },
+    },
+    required: ['amount', 'status'],
+  };
+  const envelope = (name) => ({
+    type: 'object',
+    properties: { data: ref(name) },
+    required: ['data'],
+  });
+  const error = { type: 'object', properties: { error: ref('ErrorObject') }, required: ['error'] };
+  const f = fixture(
+    t,
+    {
+      components: {
+        schemas: {
+          Thing: thing,
+          GetThingResult: thing,
+          NoInputs: { type: 'object', properties: {}, required: [], additionalProperties: false },
+          ThingResponse: envelope('Thing'),
+          GetThingResponse: envelope('GetThingResult'),
+          DistinctThing: { ...thing, required: ['id'] },
+          UpdateThingRequest: input,
+          CancelUnrelatedRequest: input,
+          InputChild: {
+            type: 'object',
+            properties: { enabled: { type: 'boolean' } },
+            required: ['enabled'],
+          },
+          ErrorObject: {
+            type: 'object',
+            properties: {
+              code: { type: 'string', enum: ['INVALID_AMOUNT', 'NOT_READY'] },
+              message: { type: 'string' },
+              field: { type: 'string' },
+            },
+            required: ['code', 'message'],
+          },
+          LookupRequest: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              name: { type: 'string' },
+              expected_version: { type: 'integer', format: 'int64' },
+            },
+            oneOf: [
+              { required: ['id'], not: { required: ['name'] } },
+              { required: ['name'], not: { required: ['id'] } },
+            ],
+          },
+        },
+      },
+      paths: {
+        '/thing': {
+          post: {
+            operationId: 'updateThing',
+            requestBody: {
+              required: true,
+              content: { 'application/json': { schema: ref('UpdateThingRequest') } },
+            },
+            responses: {
+              ...jsonResponse(ref('GetThingResponse')),
+              400: { description: 'Invalid', content: { 'application/json': { schema: error } } },
+            },
+          },
+        },
+        '/lookup': {
+          post: {
+            operationId: 'lookupThing',
+            requestBody: {
+              required: true,
+              content: { 'application/json': { schema: ref('LookupRequest') } },
+            },
+            responses: jsonResponse(ref('GetThingResponse')),
+          },
+        },
+        '/empty': {
+          get: { operationId: 'readEmpty', responses: jsonResponse(envelope('NoInputs')) },
+        },
+        '/choice': {
+          get: {
+            operationId: 'chooseThing',
+            responses: jsonResponse({ oneOf: [envelope('Thing'), envelope('DistinctThing')] }),
+          },
+        },
+      },
+    },
+    {
+      responses: { return: 'payload', payloadPath: 'data' },
+      errors: { codePath: 'error.code', messagePath: 'error.message', detailsPath: 'error' },
+      operations: {
+        updateThing: { resource: 'things', method: 'update' },
+        lookupThing: { resource: 'things', method: 'lookup' },
+        chooseThing: { resource: 'things', method: 'choose' },
+        readEmpty: { resource: 'things', method: 'readEmpty' },
+      },
+    },
+  );
+  const { plan } = compileSdkContract(f.contract);
+  assert.equal(plan.responseReturns.updateThing.node, 'Thing');
+  assert.equal(plan.node.models.GetThingResult.outputAlias, 'Thing');
+  assert.equal(plan.node.models.DistinctThing.outputAlias, undefined);
+  assert.equal(plan.node.models.Thing.inputReachable, false);
+  assert.equal(plan.node.models.NoInputs.inputReachable, false);
+  assert.equal(plan.node.models.InputChild.inputReachable, true);
+  const historical = structuredClone(plan);
+  delete historical.node.models.GetThingResult.outputAlias;
+  delete historical.node.models.Thing.inputReachable;
+  delete historical.node.operations.updateThing.responseType;
+  const breaking = compareCompiledContracts(historical, plan).filter(
+    (finding) => finding.severity === 'breaking',
+  );
+  for (const name of ['GetThingResult', 'Thing']) {
+    assert.ok(
+      breaking.some(
+        (finding) => finding.subject === 'models.' + name && /removed/.test(finding.message),
+      ),
+    );
+  }
+  assert.ok(
+    breaking.some(
+      (finding) =>
+        finding.subject === 'updateThing.responseType' &&
+        /ThingsUpdateResponse was removed; use/.test(finding.message),
+    ),
+    JSON.stringify(breaking),
+  );
+  assert.ok(
+    breaking.some((finding) => /GetThingResult was removed; use Thing/.test(finding.message)),
+  );
+  assert.match(plan.node.operations.updateThing.input, /UpdateThingRequestInput/);
+  assert.doesNotMatch(plan.responseReturns.chooseThing.node, /unknown|_SdkPayloadAt/);
+  assert.match(plan.responseReturns.chooseThing.node, /Thing.*DistinctThing/);
+  for (const corrupt of [
+    (runtime) => {
+      runtime.typedErrorDetails = false;
+    },
+    (runtime) => {
+      runtime.operations[0].payloadCodecs = [];
+    },
+    (runtime) => {
+      runtime.operations[0].payloadCodecs = [{ value: { kind: 'invalid' } }];
+    },
+  ]) {
+    const runtime = structuredClone(plan.runtime);
+    corrupt(runtime);
+    assert.throws(() => assertRuntimePlan(runtime));
+  }
+  const snapshot = structuredClone(
+    restoreCompiledSnapshot(
+      JSON.parse(readFileSync(join(f.output, '.sdk-generator.json'), 'utf8')).compiled,
+    ),
+  );
+  snapshot.plan.responseReturns.chooseThing.validate = false;
+  assert.throws(() => restoreCompiledSnapshot(snapshot), /payload validation/);
+  const source = join(f.output, 'node/consumer.ts');
+  writeFileSync(
+    source,
+    `import {Client, SdkError, errors, makeUpdateThingRequest, makeInputChild, type Thing, type DistinctThing, type InputValue} from './index.js';
+const c = new Client({baseUrl:'https://example.invalid'});
+const request = makeUpdateThingRequest({amount:9007199254740993n, status:'pending', child:makeInputChild({enabled:true})});
+const value: Promise<Thing> = c.things.update({body:request});
+c.things.update({body:{amount:'50',status:'succeeded',ambiguous:9007199254740993n,fixed:7n,allowed:8n}});
+// @ts-expect-error decimal currency values are not integer minor units
+c.things.update({body:{amount:'50.00',status:'pending'}});
+// @ts-expect-error formatted currency is not an integer string
+c.things.update({body:{amount:'$50',status:'pending'}});
+// @ts-expect-error enum inputs are closed
+c.things.update({body:{amount:'50',status:'succeded'}});
+declare const response: Thing;
+const futureComparison = response.status === 'succeded';
+const amount: \`\${bigint}\` = response.amount;
+// @ts-expect-error exact response strings do not have a fractional part
+const fractional: Thing['amount'] = '50.00';
+const choice: Promise<Thing | DistinctThing> = c.things.choose();
+c.things.lookup({body:{id:'one',expected_version:2n}});
+c.things.lookup({body:{name:'one'}});
+// @ts-expect-error oneOf fields are mutually exclusive
+c.things.lookup({body:{id:'one',name:'one'}});
+// @ts-expect-error one alternative is required
+c.things.lookup({body:{}});
+// @ts-expect-error the declared version retains its integer type
+c.things.lookup({body:{id:'one',expected_version:'2.5'}});
+declare const error: SdkError;
+const code: 'INVALID_AMOUNT' | 'NOT_READY' | (string & {}) | undefined = error.code;
+if (error.details && 'field' in error.details) { const field: string | undefined = error.details.field; }
+if (error instanceof errors.ValidationError && error.details && 'message' in error.details) { const message: string | undefined = error.details.message; }
+// @ts-expect-error response-only factories are absent
+import {makeThing} from './index.js';
+// @ts-expect-error redundant result names are absent
+import type {GetThingResult} from './index.js';
+// @ts-expect-error redundant operation response aliases are absent
+import type {ThingsUpdateResponse} from './index.js';
+const omitted: InputValue<undefined> = undefined;
+`,
+  );
+  typecheck(source);
+  const { readdirSync } = await import('node:fs');
+  for (const name of readdirSync(join(f.output, 'node/declarations'))) {
+    const declaration = readFileSync(join(f.output, 'node/declarations', name), 'utf8');
+    assert.doesNotMatch(declaration, /_SdkPayloadAt|InputValue<undefined>/);
+    assert.ok(
+      declaration.split('\n').every((line) => line.length < 500),
+      name,
+    );
+  }
+  const sdk = await import(pathToFileURL(join(f.output, 'node/index.js')));
+  assert.equal(sdk.makeThing, undefined);
+  const bodies = [];
+  let failed = false;
+  let malformed = false;
+  let unknownPayload = false;
+  const client = new sdk.Client({
+    baseUrl: 'https://example.invalid',
+    transport: async (_url, request) => {
+      bodies.push(request.body);
+      if (failed)
+        return new Response(
+          JSON.stringify({
+            error: malformed
+              ? { code: 'NOT_READY', message: 42 }
+              : { code: 'INVALID_AMOUNT', message: 'Invalid amount', field: 'amount' },
+          }),
+          { status: 400 },
+        );
+      if (unknownPayload) return new Response('{"data":{"future":true}}');
+      return new Response('{"data":{"id":"one","amount":9007199254740993,"status":"future"}}');
+    },
+  });
+  assert.deepEqual(
+    { ...(await client.things.update({ body: { amount: 9007199254740993n, status: 'pending' } })) },
+    { id: 'one', amount: '9007199254740993', status: 'future' },
+  );
+  assert.equal(bodies[0], '{"amount":9007199254740993,"status":"pending"}');
+  await client.things.update({
+    body: { amount: 1n, status: 'pending', ambiguous: 9007199254740993n, fixed: 7n, allowed: 8n },
+  });
+  assert.equal(
+    bodies[1],
+    '{"amount":1,"status":"pending","ambiguous":9007199254740993,"fixed":7,"allowed":8}',
+  );
+  for (const amount of [
+    '50.00',
+    '5e3',
+    '50\n',
+    '50\r',
+    '50\u2028',
+    '01',
+    '+50',
+    ' 50',
+    new sdk.ExactNumber('50.00'),
+    new sdk.ExactNumber('5e3'),
+  ])
+    await assert.rejects(
+      client.things.update({ body: { amount, status: 'pending' } }),
+      /integer string/,
+    );
+  // Match the independently expected PHP integer spellings, including explicit wrappers.
+  for (const amount of ['0', '-0', '50', '-50', new sdk.ExactNumber('50')]) {
+    await client.things.update({ body: { amount, status: 'pending' } });
+    assert.equal(
+      bodies.at(-1),
+      `{"amount":${amount instanceof sdk.ExactNumber ? amount.value : amount},"status":"pending"}`,
+    );
+  }
+  await assert.rejects(
+    client.things.lookup({ body: {} }),
+    (e) =>
+      /alternative 1:.*id.*required/.test(e.message) &&
+      /alternative 2:.*name.*required/.test(e.message),
+  );
+  assert.deepEqual(
+    { ...(await client.things.choose()) },
+    { id: 'one', amount: '9007199254740993', status: 'future' },
+  );
+  await assert.rejects(
+    client.things.update({ body: { amount: 1n, status: 'pending', fixed: 8n } }),
+    { kind: 'validation' },
+  );
+  unknownPayload = true;
+  await assert.rejects(
+    client.things.choose(),
+    (error) =>
+      error.kind === 'protocol' && error.meta.status === 200 && error.raw.includes('future'),
+  );
+  assert.deepEqual(
+    { ...(await client.things.chooseWithResponse()).body },
+    { data: { future: true } },
+  );
+  unknownPayload = false;
+  failed = true;
+  await assert.rejects(
+    client.things.update({ body: { amount: 1n, status: 'pending' } }),
+    (e) => e instanceof sdk.SdkError && e.code === 'INVALID_AMOUNT' && e.details.field === 'amount',
+  );
+  malformed = true;
+  await assert.rejects(
+    client.things.update({ body: { amount: 1n, status: 'pending' } }),
+    (e) => e.details === undefined && e.raw.includes('42'),
+  );
+});
+
+test('compacted declarations retain inline error-detail references and readable imports', (t) => {
+  const dir = mkdtempSync(resolve('.generated/compacted-types-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const files = new Map();
+  const names = Array.from({ length: 130 }, (_, i) => 'SyntheticModel' + i);
+  for (const name of names)
+    files.set(`node/declarations/${name}.d.ts`, `export interface ${name} { field?: string }`);
+  files.set(
+    'node/runtime.d.ts',
+    `export type SdkErrorDetails = import('./declarations/SyntheticModel0.js').SyntheticModel0;`,
+  );
+  files.set(
+    'node/declarations/Client.d.ts',
+    `export declare class Client { details: import('./SyntheticModel0.js').SyntheticModel0; }`,
+  );
+  files.set(
+    'node/index.d.ts',
+    names.map((name) => `export type { ${name} } from './declarations/${name}.js';`).join('\n') +
+      `\nexport type { SdkErrorDetails } from './runtime.js';\nexport { Client } from './declarations/Client.js';`,
+  );
+  compactNodeDeclarations(files, 'node/');
+  assert.match(files.get('node/runtime.d.ts'), /import\(["']\.\/declarations\/types-0\.js["']\)/);
+  assert.match(files.get('node/declarations/Client.d.ts'), /import\(["']\.\/types-0\.js["']\)/);
+  for (const [path, text] of files) {
+    const formatted = formatNodeDeclaration(text);
+    assert.ok(
+      formatted.split('\n').every((line) => line.length < 500),
+      path,
+    );
+    mkdirSync(join(dir, path, '..'), { recursive: true });
+    writeFileSync(join(dir, path), formatted);
+  }
+  writeFileSync(join(dir, 'package.json'), '{"type":"module"}');
+  typecheck(join(dir, 'node/index.d.ts'));
 });

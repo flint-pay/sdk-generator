@@ -274,7 +274,7 @@ for(const {resource,method,payload,pagination,polling} of methods) {
 }
 assert.ok(Object.keys(c).length > 1);
 assert.equal(typeof c.paymentIntents.create,'function');
-for(const incoming of ${JSON.stringify(summary.incoming)}) assert.equal(typeof sdk['make'+incoming.model],'function',incoming.name);
+for(const incoming of ${JSON.stringify(summary.incoming)}) assert.equal(sdk['make'+incoming.model],undefined,'response-only webhook: '+incoming.name);
 const verified=c.verifyWebhook(Buffer.from(${JSON.stringify(raw)}),${JSON.stringify(headers)},[${JSON.stringify(encodedSecret)}],${timestamp});
 assert.equal(verified.known,true);
 assert.equal(verified.event.data.amount_money.amount,'9007199254740993');

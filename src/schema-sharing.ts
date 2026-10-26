@@ -134,6 +134,7 @@ export function shareContractSchemas(
         ...(schema['x-sensitive'] ? { 'x-sensitive': true } : {}),
       };
     const out = { ...schema };
+    if (typeName) out['x-sdk-type-name'] = typeName;
     if (schema.properties)
       out.properties = Object.fromEntries(
         Object.entries(schema.properties).map(([key, child]) => [key, compact(child, true)]),
@@ -160,7 +161,13 @@ export function shareContractSchemas(
   );
   for (const operation of contract.operations) {
     for (const parameter of operation.parameters) parameter.schema = compactRoot(parameter.schema);
-    if (operation.body) operation.body = compactRoot(operation.body);
+    if (operation.body) {
+      const name = typeNames.get(operation.body);
+      operation.body = {
+        ...compactRoot(operation.body),
+        ...(name ? { 'x-sdk-type-name': name } : {}),
+      };
+    }
     for (const response of Object.values(operation.responses))
       if (response.schema) {
         const name = typeNames.get(response.schema);

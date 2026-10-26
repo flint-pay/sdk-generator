@@ -100,6 +100,30 @@ export function compareCompiledContracts(
       });
     for (const [id, old] of Object.entries(previous.node.operations)) {
       const current = next.node.operations[id];
+      const operation = previous.runtime.operations.find((op) => op.id === id);
+      const nextOperation = next.runtime.operations.find((op) => op.id === id);
+      const previousName =
+        old.responseType ??
+        (operation &&
+          operation.resource[0]!.toUpperCase() +
+            operation.resource.slice(1) +
+            operation.method[0]!.toUpperCase() +
+            operation.method.slice(1) +
+            'Response');
+      if (
+        current?.responseType &&
+        operation?.resource === nextOperation?.resource &&
+        operation?.method === nextOperation?.method &&
+        previousName &&
+        previousName !== current.responseType &&
+        (!next.node.models[previousName] || next.node.models[previousName]!.outputAlias) &&
+        !Object.values(next.node.operations).some((op) => op.responseType === previousName)
+      )
+        findings.push({
+          severity: 'breaking',
+          subject: id + '.responseType',
+          message: `Node response alias ${previousName} was removed; use ${current.responseType}.`,
+        });
       if (
         !current ||
         (old.requestOptions ?? 'RequestOptions') === (current.requestOptions ?? 'RequestOptions')
@@ -345,8 +369,28 @@ export function compareCompiledContracts(
       const current = next.node.models[name];
       if (
         current &&
+        ((!model.outputAlias && current.outputAlias) ||
+          (model.inputReachable !== false && current.inputReachable === false))
+      )
+        findings.push({
+          severity: 'breaking',
+          subject: 'models.' + name,
+          message: [
+            !model.outputAlias && current.outputAlias
+              ? `Node response alias ${name} was removed; use ${current.outputAlias}.`
+              : '',
+            model.inputReachable !== false && current.inputReachable === false
+              ? `Response-only ${name}Input and make${name} were removed; use the response type for reading or the owning operation input for requests.`
+              : '',
+          ]
+            .filter(Boolean)
+            .join(' '),
+        });
+      if (
+        current &&
         (model.input !== current.input ||
           model.output !== current.output ||
+          (model.inputReachable !== false) !== (current.inputReachable !== false) ||
           model.objectFactory !== current.objectFactory)
       )
         declaration(

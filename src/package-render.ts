@@ -5,6 +5,64 @@ import type { CodecPlan } from './codec-plan.js';
 import { stable } from './canonical.js';
 
 export type Put = (path: string, value: string) => void;
+
+/** Use the pinned TypeScript printer, then wrap long unions at syntax boundaries. */
+export function formatNodeDeclaration(text: string): string {
+  const parse = (value: string) =>
+    ts.createSourceFile('sdk.d.ts', value, ts.ScriptTarget.Latest, true);
+  const printed = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed }).printFile(parse(text));
+  const source = parse(printed);
+  const breaks = new Map<number, string>();
+  const visit = (node: ts.Node): void => {
+    if (
+      (ts.isUnionTypeNode(node) || ts.isIntersectionTypeNode(node)) &&
+      node.getWidth(source) > 100
+    ) {
+      const line = printed.lastIndexOf('\n', node.getStart(source)) + 1;
+      const indent = printed.slice(line).match(/^\s*/)?.[0].replaceAll('\n', '') ?? '';
+      for (let i = 1; i < node.types.length; i++) {
+        const previous = node.types[i - 1]!;
+        const next = node.types[i]!;
+        const between = printed.slice(previous.end, next.getStart(source));
+        const offset = between.search(/[|&]/);
+        if (offset >= 0) breaks.set(previous.end + offset, '\n' + indent + '    ');
+      }
+    }
+    if ((ts.isNamedImports(node) || ts.isNamedExports(node)) && node.getWidth(source) > 100) {
+      const line = printed.lastIndexOf('\n', node.getStart(source)) + 1;
+      const indent = printed.slice(line).match(/^\s*/)?.[0].replaceAll('\n', '') ?? '';
+      for (const element of node.elements)
+        breaks.set(element.getStart(source), '\n' + indent + '    ');
+      breaks.set(node.end - 1, '\n' + indent);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  let result = printed;
+  for (const [position, prefix] of [...breaks].sort(([a], [b]) => b - a))
+    result = result.slice(0, position).trimEnd() + prefix + result.slice(position);
+  return result
+    .split('\n')
+    .map((line) => {
+      const single = line.match(/^(\s*)\/\*\* (.*) \*\/$/);
+      const comment = single ?? line.match(/^(\s*) \* (.*)$/);
+      if (!comment || line.length <= 100) return line;
+      const indent = comment[1]!;
+      const lines = single ? [indent + '/**'] : [];
+      let current = indent + ' *';
+      for (const word of comment[2]!.split(/\s+/)) {
+        if (current.length + word.length > 98 && current !== indent + ' *') {
+          lines.push(current);
+          current = indent + ' *';
+        }
+        current += ' ' + word;
+      }
+      lines.push(current);
+      if (single) lines.push(indent + ' */');
+      return lines.join('\n');
+    })
+    .join('\n');
+}
 const json = (value: unknown) => JSON.stringify(value);
 const literal = (value: unknown) => json(value).replaceAll('"__proto__":', '["__proto__"]:');
 const file = (name: string) => encodeURIComponent(name);
@@ -403,12 +461,55 @@ export function compactNodeDeclarations(files: Map<string, string>, prefix: stri
   const groups = new Map<string, string[]>();
   for (const [path, destination] of destinations)
     groups.set(destination, [...(groups.get(destination) ?? []), path]);
+  const moduleTarget = (module: string, path: string, destination: string) => {
+    const base =
+      module.startsWith('../declarations/') || module.startsWith('./declarations/')
+        ? directory
+        : path.startsWith(directory) && module.startsWith('./')
+          ? directory
+          : undefined;
+    const target = base
+      ? base + module.slice(module.lastIndexOf('/') + 1).replace(/\.js$/, '.d.ts')
+      : undefined;
+    const mapped = target ? destinations.get(target) : undefined;
+    const specifier = mapped
+      ? (destination.startsWith(directory)
+          ? './'
+          : destination.slice(prefix.length).includes('/')
+            ? '../declarations/'
+            : './declarations/') + mapped.slice(directory.length).replace(/\.d\.ts$/, '.js')
+      : module;
+    return { mapped, specifier };
+  };
   const rewrite = (paths: string[], destination: string): string => {
     const imports = new Map<string, Map<string, string>>();
     const exports = new Map<string, { module: string; typeOnly: boolean; names: Set<string> }>();
     const bodies: string[] = [];
     for (const path of paths) {
-      const source = ts.createSourceFile(path, files.get(path)!, ts.ScriptTarget.Latest, true);
+      let text = files.get(path)!;
+      const parsed = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
+      const replacements: { start: number; end: number; value: string }[] = [];
+      const visit = (node: ts.Node): void => {
+        if (
+          ts.isImportTypeNode(node) &&
+          ts.isLiteralTypeNode(node.argument) &&
+          ts.isStringLiteral(node.argument.literal)
+        ) {
+          const literal = node.argument.literal;
+          const { specifier } = moduleTarget(literal.text, path, destination);
+          if (specifier !== literal.text)
+            replacements.push({
+              start: literal.getStart(parsed),
+              end: literal.end,
+              value: JSON.stringify(specifier),
+            });
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(parsed);
+      for (const replacement of replacements.sort((a, b) => b.start - a.start))
+        text = text.slice(0, replacement.start) + replacement.value + text.slice(replacement.end);
+      const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
       for (const statement of source.statements) {
         if (
           (ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)) &&
@@ -416,23 +517,7 @@ export function compactNodeDeclarations(files: Map<string, string>, prefix: stri
           ts.isStringLiteral(statement.moduleSpecifier)
         ) {
           const module = statement.moduleSpecifier.text;
-          const base =
-            module.startsWith('../declarations/') || module.startsWith('./declarations/')
-              ? directory
-              : path.startsWith(directory) && module.startsWith('./')
-                ? directory
-                : undefined;
-          const target = base
-            ? base + module.slice(module.lastIndexOf('/') + 1).replace(/\.js$/, '.d.ts')
-            : undefined;
-          const mapped = target ? destinations.get(target) : undefined;
-          const specifier = mapped
-            ? (destination.startsWith(directory)
-                ? './'
-                : destination.slice(prefix.length).includes('/')
-                  ? '../declarations/'
-                  : './declarations/') + mapped.slice(directory.length).replace(/\.d\.ts$/, '.js')
-            : module;
+          const { mapped, specifier } = moduleTarget(module, path, destination);
           if (mapped === destination && ts.isImportDeclaration(statement)) continue;
           if (ts.isImportDeclaration(statement)) {
             const bindings = statement.importClause?.namedBindings;
@@ -485,7 +570,7 @@ export function compactNodeDeclarations(files: Map<string, string>, prefix: stri
       path.endsWith('.d.ts') &&
       !destinations.has(path) &&
       (path === directory + 'Client.d.ts' ||
-        /from ['\"]\.\.?\/declarations\//.test(files.get(path)!))
+        /(?:from |import\()['\"]\.\.?\/declarations\//.test(files.get(path)!))
     )
       updates.set(path, rewrite([path], path));
   for (const path of destinations.keys()) files.delete(path);

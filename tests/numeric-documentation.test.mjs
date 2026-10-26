@@ -112,7 +112,7 @@ test('numeric field docs agree with generated declarations and factories in both
       assert.ok(comment, name);
       assert.doesNotMatch(comment, /exact numeric string|ExactNumber/);
     }
-    assert.match(declarations, /plain reading\. \*\/ "plain"\?: number/);
+    assert.match(declarations, /plain reading\. \*\/\s*"plain"\?: number/);
     assert.match(declarations, /decimal reading\. Use an exact numeric string/);
     const branch = contract.models.ExactChoice.oneOf[0];
     assert.equal(schemaNotes(branch), 'Use ExactNumber for an exact JSON number. Format: decimal.');

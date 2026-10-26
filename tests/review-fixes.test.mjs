@@ -229,9 +229,10 @@ test('response alternatives retain exact fields and known guards when new fields
       expected,
     );
     // The response fallback must not permit extra fields in caller inputs.
-    assert.throws(
-      () => generated.makeDetail({ amount: '7', future: true }),
-      (e) => e.kind === 'validation',
+    assert.equal(
+      generated.makeDetail,
+      undefined,
+      'response-only models have no Node input factory',
     );
     assert.equal(
       await php(
@@ -794,11 +795,12 @@ test('an installed generated npm archive typechecks with consumer-owned Node typ
   assert.equal(compilation.status, 0, compilation.stdout + compilation.stderr);
 });
 
-test('exported response-model factories enforce major versions when their inputs tighten', async () => {
+test('request-reachable factories enforce major versions when their inputs tighten', async () => {
   const f = fixture(
     'compatibility',
     { $ref: '#/components/schemas/Book' },
     {
+      body: { $ref: '#/components/schemas/Book' },
       components: {
         Book: { type: 'object', required: ['title'], properties: { title: { type: 'string' } } },
       },

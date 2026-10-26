@@ -630,7 +630,9 @@ test('error field paths traverse JSON containers without indexing scalar strings
           details: error.details,
           raw: error.raw,
         },
-        expected,
+        !redacted && typeof JSON.parse(body).message !== 'string'
+          ? { ...expected, details: undefined }
+          : expected,
       );
       return true;
     });

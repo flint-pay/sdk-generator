@@ -73,6 +73,8 @@ export function codecSharing(original: Record<string, CodecPlan>) {
     for (const operation of plan.operations) {
       for (const parameter of operation.parameters) parameter.codec = compact(parameter.codec);
       if (operation.body) operation.body = compact(operation.body);
+      if (operation.payloadCodecs)
+        operation.payloadCodecs = operation.payloadCodecs.map((codec) => compact(codec));
       for (const response of Object.values(operation.responses))
         if (response.codec) response.codec = compact(response.codec);
       if (operation.streamEventCodecs)

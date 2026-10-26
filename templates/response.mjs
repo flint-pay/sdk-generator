@@ -12,7 +12,7 @@ export function sdkResponse(result) {
   return response;
 }
 
-export function responsePayload(result, path) {
+export function responsePayload(result, path, decode) {
   let value = result.data;
   for (const key of path) {
     if (value === null || typeof value !== 'object' || !Object.hasOwn(value, key)) {
@@ -30,11 +30,11 @@ export function responsePayload(result, path) {
     }
     value = value[key];
   }
-  return value;
+  return decode ? decode(result, path) : value;
 }
 
-export async function* payloadPages(pages, path) {
-  for await (const result of pages) yield responsePayload(result, path);
+export async function* payloadPages(pages, path, decode) {
+  for await (const result of pages) yield responsePayload(result, path, decode);
 }
 
 export async function* sdkResponsePages(pages) {
