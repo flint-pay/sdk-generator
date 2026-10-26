@@ -1,9 +1,9 @@
 {
   "profiles": ["full-common-sdk.json"],
   "include": [
+    "authorizePartnerInstall",
     "createDemoSession",
     "createMeInvoiceCheckoutSession",
-    "exchangePartnerInstallToken",
     "getMeCreditNote",
     "getMeCreditNotePDF",
     "getMeInvoice",
@@ -37,11 +37,6 @@
         "mode": "invoice",
         "scheme": "InvoiceAccessTokenBearer"
       }
-    }
-  },
-  "operations": {
-    "exchangePartnerInstallToken": {
-      "requestMediaType": "application/json"
     }
   }
 }

@@ -11,18 +11,15 @@
     "name": "example/flint-risk-sdk",
     "namespace": "Example\\FlintRisk"
   },
-  "include": ["addRiskListItems"],
-  "overrides": {
-    "/components/schemas/AddRiskListItemsRequest/required": []
-  },
+  "include": ["createRiskListItems"],
   "operations": {
-    "addRiskListItems": {
+    "createRiskListItems": {
       "resource": "riskLists",
       "method": "addItems",
       "example": {
         "risk_list_id": "rl_replace_with_sandbox_id",
         "body": {
-          "value": "sdk-example"
+          "values": ["sdk-example"]
         }
       }
     }
@@ -42,5 +39,11 @@
   },
   "responses": {
     "return": "result"
+  },
+  "errors": {
+    "codePath": "error.code",
+    "messagePath": "error.message",
+    "detailsPath": "error",
+    "requestIdHeader": "X-Request-Id"
   }
 }

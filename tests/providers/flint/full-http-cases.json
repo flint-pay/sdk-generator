@@ -156,7 +156,7 @@
     "responses": [
       {
         "status": 400,
-        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\",\"doc_url\":\"https://developers.withflintpay.com/errors/SDK_TEST\",\"request_id\":\"req_00000000000000000000000000\",\"error_source\":\"flint\",\"remediation\":{\"retry\":\"none\"},\"type\":\"invalid_request_error\"}}"
       }
     ],
     "error": {
@@ -208,21 +208,15 @@
       "client_id": "app_test",
       "redirect_uri": "https://client.example.invalid/callback",
       "mode": "test",
-      "state": "csrf_test"
-    },
-    "options": {
-      "authMode": "merchant",
-      "credentials": {
-        "BearerAuth": "merchant-test"
-      }
+      "state": "csrf_test",
+      "code_challenge": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "code_challenge_method": "S256"
     },
     "expected": {
       "method": "GET",
-      "path": "/v1/oauth/authorize?response_type=code&client_id=app_test&redirect_uri=https%3A%2F%2Fclient.example.invalid%2Fcallback&mode=test&state=csrf_test",
-      "headers": {
-        "authorization": "Bearer merchant-test"
-      },
-      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"]
+      "path": "/v1/oauth/authorize?response_type=code&client_id=app_test&redirect_uri=https%3A%2F%2Fclient.example.invalid%2Fcallback&mode=test&code_challenge=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&code_challenge_method=S256&state=csrf_test",
+      "headers": {},
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret", "authorization"]
     },
     "responses": [
       {
@@ -248,18 +242,16 @@
     "options": {
       "authMode": "checkout",
       "credentials": {
-        "CheckoutSessionIDHeader": "cs_test",
-        "CheckoutSessionSecretHeader": "checkout-test"
+        "CheckoutSessionBearer": "checkout-test"
       }
     },
     "expected": {
       "method": "GET",
       "path": "/v1/checkout-sessions/cs_test/delivery-quotes/dq_test",
       "headers": {
-        "x-checkout-session-id": "cs_test",
-        "x-checkout-session-secret": "checkout-test"
+        "authorization": "Bearer checkout-test"
       },
-      "absentHeaders": ["authorization"]
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"]
     },
     "responses": [
       {
@@ -297,24 +289,22 @@
     "options": {
       "authMode": "checkout",
       "credentials": {
-        "CheckoutSessionIDHeader": "cs_test",
-        "CheckoutSessionSecretHeader": "checkout-test"
+        "CheckoutSessionBearer": "checkout-test"
       }
     },
     "expected": {
       "method": "POST",
       "path": "/v1/checkout-sessions/cs_test/delivery-selections",
       "headers": {
-        "x-checkout-session-id": "cs_test",
-        "x-checkout-session-secret": "checkout-test"
+        "authorization": "Bearer checkout-test"
       },
-      "absentHeaders": ["authorization"],
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
       "body": "{\"choices\":[],\"delivery_quote_id\":\"dq_test\",\"expected_delivery_selection_id\":null}"
     },
     "responses": [
       {
         "status": 201,
-        "body": "{\"data\":{\"audience\":\"buyer\",\"checkout_session\":{\"checkout_session_id\":\"cs_test\",\"delivery_method_ids\":[],\"delivery_selection_required\":false,\"problems\":[],\"recovery_mode\":false,\"status\":\"open\",\"surface\":\"hosted\"},\"delivery_selection\":{\"amount_money\":{\"amount\":0,\"currency\":\"USD\"},\"choices\":[],\"delivery_quote_id\":\"dq_test\",\"delivery_selection_id\":\"ds_test\",\"expires_at\":\"2026-01-01T00:00:00Z\",\"status\":\"selected\",\"input_requirements\":[]},\"order\":{\"line_items\":[],\"order_id\":\"ord_test\",\"payment_status\":\"unpaid\",\"pricing_amounts\":{\"charge_money\":{\"amount\":0,\"currency\":\"USD\"},\"discount_money\":{\"amount\":0,\"currency\":\"USD\"},\"requested_tip_money\":{\"amount\":0,\"currency\":\"USD\"},\"subtotal_money\":{\"amount\":0,\"currency\":\"USD\"},\"tax_money\":{\"amount\":0,\"currency\":\"USD\"},\"total_money\":{\"amount\":0,\"currency\":\"USD\"}},\"refund_status\":\"none\",\"settlement_amounts\":{\"balance_money\":{\"amount\":0,\"currency\":\"USD\"},\"credit_money\":{\"amount\":0,\"currency\":\"USD\"},\"net_collected_money\":{\"amount\":0,\"currency\":\"USD\"},\"outstanding_money\":{\"amount\":0,\"currency\":\"USD\"},\"paid_money\":{\"amount\":0,\"currency\":\"USD\"},\"refunded_money\":{\"amount\":0,\"currency\":\"USD\"},\"settled_tip_money\":{\"amount\":0,\"currency\":\"USD\"}},\"status\":\"open\",\"tax\":{\"enabled\":false,\"mode\":\"none\",\"status\":\"none\",\"taxability_reason\":\"none\"}}}}"
+        "body": "{\"data\":{\"audience\":\"buyer\",\"checkout_session\":{\"checkout_session_id\":\"cs_test\",\"delivery_method_ids\":[],\"delivery_selection_required\":false,\"problems\":[],\"recovery_mode\":false,\"status\":\"open\",\"surface\":\"hosted\",\"is_in_recovery\":false,\"type\":\"order\"},\"delivery_selection\":{\"amount_money\":{\"amount\":0,\"currency\":\"USD\"},\"choices\":[],\"delivery_quote_id\":\"dq_test\",\"delivery_selection_id\":\"ds_test\",\"expires_at\":\"2026-01-01T00:00:00Z\",\"status\":\"selected\",\"input_requirements\":[]},\"order\":{\"line_items\":[],\"order_id\":\"ord_test\",\"payment_status\":\"unpaid\",\"pricing_amounts\":{\"charge_money\":{\"amount\":0,\"currency\":\"USD\"},\"discount_money\":{\"amount\":0,\"currency\":\"USD\"},\"requested_tip_money\":{\"amount\":0,\"currency\":\"USD\"},\"subtotal_money\":{\"amount\":0,\"currency\":\"USD\"},\"tax_money\":{\"amount\":0,\"currency\":\"USD\"},\"total_money\":{\"amount\":0,\"currency\":\"USD\"},\"additive_tax_money\":{\"amount\":0,\"currency\":\"USD\"},\"inclusive_tax_money\":{\"amount\":0,\"currency\":\"USD\"}},\"refund_status\":\"none\",\"settlement_amounts\":{\"balance_money\":{\"amount\":0,\"currency\":\"USD\"},\"credit_money\":{\"amount\":0,\"currency\":\"USD\"},\"net_collected_money\":{\"amount\":0,\"currency\":\"USD\"},\"outstanding_money\":{\"amount\":0,\"currency\":\"USD\"},\"paid_money\":{\"amount\":0,\"currency\":\"USD\"},\"refunded_money\":{\"amount\":0,\"currency\":\"USD\"},\"settled_tip_money\":{\"amount\":0,\"currency\":\"USD\"},\"written_off_money\":{\"amount\":0,\"currency\":\"USD\"}},\"status\":\"open\",\"tax\":{\"enabled\":false,\"mode\":\"none\",\"status\":\"none\",\"taxability_reason\":\"none\"},\"buyer_actions\":[],\"charges\":[],\"checkout_session_ids\":[],\"discounts\":[],\"fulfillments\":[],\"gift_card_settlements\":[],\"gift_card_tender_enabled\":false,\"gift_cards\":[],\"payment_intent_ids\":[],\"refund_ids\":[],\"return_credit_settlements\":[],\"tips\":[],\"version\":1}}}"
       }
     ],
     "data": {
@@ -327,7 +317,9 @@
           "problems": [],
           "recovery_mode": false,
           "status": "open",
-          "surface": "hosted"
+          "surface": "hosted",
+          "is_in_recovery": false,
+          "type": "order"
         },
         "delivery_selection": {
           "amount_money": {
@@ -369,6 +361,14 @@
             "total_money": {
               "amount": "0",
               "currency": "USD"
+            },
+            "additive_tax_money": {
+              "amount": "0",
+              "currency": "USD"
+            },
+            "inclusive_tax_money": {
+              "amount": "0",
+              "currency": "USD"
             }
           },
           "refund_status": "none",
@@ -400,6 +400,10 @@
             "settled_tip_money": {
               "amount": "0",
               "currency": "USD"
+            },
+            "written_off_money": {
+              "amount": "0",
+              "currency": "USD"
             }
           },
           "status": "open",
@@ -408,7 +412,20 @@
             "mode": "none",
             "status": "none",
             "taxability_reason": "none"
-          }
+          },
+          "buyer_actions": [],
+          "charges": [],
+          "checkout_session_ids": [],
+          "discounts": [],
+          "fulfillments": [],
+          "gift_card_settlements": [],
+          "gift_card_tender_enabled": false,
+          "gift_cards": [],
+          "payment_intent_ids": [],
+          "refund_ids": [],
+          "return_credit_settlements": [],
+          "tips": [],
+          "version": "1"
         }
       }
     }
@@ -423,30 +440,29 @@
     "options": {
       "authMode": "checkout",
       "credentials": {
-        "CheckoutSessionIDHeader": "cs_test",
-        "CheckoutSessionSecretHeader": "checkout-test"
+        "CheckoutSessionBearer": "checkout-test"
       }
     },
     "expected": {
       "method": "GET",
       "path": "/v1/checkout-sessions/cs_test/delivery-selections/current",
       "headers": {
-        "x-checkout-session-id": "cs_test",
-        "x-checkout-session-secret": "checkout-test"
+        "authorization": "Bearer checkout-test"
       },
-      "absentHeaders": ["authorization"]
+      "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"]
     },
     "responses": [
       {
         "status": 200,
-        "body": "{\"data\":{\"audience\":\"buyer\",\"mutable\":true,\"source\":\"none\"}}"
+        "body": "{\"data\":{\"audience\":\"buyer\",\"mutable\":true,\"source\":\"none\",\"delivery_selection\":null}}"
       }
     ],
     "data": {
       "data": {
         "audience": "buyer",
         "mutable": true,
-        "source": "none"
+        "source": "none",
+        "delivery_selection": null
       }
     }
   },
@@ -475,7 +491,7 @@
     "responses": [
       {
         "status": 200,
-        "body": "{\"data\":{\"audience\":\"merchant\",\"checkout_session_id\":\"cs_test\",\"choice_groups\":[],\"delivery_quote_id\":\"dq_test\",\"delivery_quote_revision\":0,\"eligibility_context_revision\":0,\"evaluated_at\":\"2026-01-01T00:00:00Z\",\"evaluation_status\":\"complete\",\"expires_at\":\"2026-01-01T00:00:00Z\",\"input_requirements\":[],\"merchant_diagnostics\":[],\"order_id\":\"ord_test\",\"selection_required\":true,\"status\":\"active\"}}"
+        "body": "{\"data\":{\"audience\":\"merchant\",\"checkout_session_id\":\"cs_test\",\"choice_groups\":[],\"delivery_quote_id\":\"dq_test\",\"delivery_quote_revision\":0,\"eligibility_context_revision\":0,\"evaluated_at\":\"2026-01-01T00:00:00Z\",\"evaluation_status\":\"complete\",\"expires_at\":\"2026-01-01T00:00:00Z\",\"input_requirements\":[],\"merchant_diagnostics\":[],\"order_id\":\"ord_test\",\"selection_required\":true,\"status\":\"active\",\"buyer_reasons\":[]}}"
       }
     ],
     "data": {
@@ -484,8 +500,8 @@
         "checkout_session_id": "cs_test",
         "choice_groups": [],
         "delivery_quote_id": "dq_test",
-        "delivery_quote_revision": "0",
-        "eligibility_context_revision": "0",
+        "delivery_quote_revision": 0,
+        "eligibility_context_revision": 0,
         "evaluated_at": "2026-01-01T00:00:00Z",
         "evaluation_status": "complete",
         "expires_at": "2026-01-01T00:00:00Z",
@@ -493,7 +509,8 @@
         "merchant_diagnostics": [],
         "order_id": "ord_test",
         "selection_required": true,
-        "status": "active"
+        "status": "active",
+        "buyer_reasons": []
       }
     }
   },
@@ -527,7 +544,7 @@
     "responses": [
       {
         "status": 201,
-        "body": "{\"data\":{\"audience\":\"merchant\",\"checkout_session\":{\"checkout_session_id\":\"cs_test\",\"delivery_method_ids\":[],\"delivery_selection_required\":false,\"problems\":[],\"recovery_mode\":false,\"status\":\"open\",\"surface\":\"hosted\"},\"delivery_selection\":{\"amount_money\":{\"amount\":0,\"currency\":\"USD\"},\"calculation_expires_at\":\"2026-01-01T00:00:00Z\",\"checkout_session_id\":\"cs_test\",\"choices\":[],\"created_at\":\"2026-01-01T00:00:00Z\",\"delivery_quote_id\":\"dq_test\",\"delivery_quote_revision\":0,\"delivery_selection_id\":\"ds_test\",\"eligibility_context_revision\":0,\"expires_at\":\"2026-01-01T00:00:00Z\",\"lifecycle_updated_at\":\"2026-01-01T00:00:00Z\",\"limiting_deadline_reason\":\"selection_guarantee_expiry\",\"order_id\":\"ord_test\",\"status\":\"selected\",\"input_requirements\":[]},\"order\":{\"line_items\":[],\"order_id\":\"ord_test\",\"payment_status\":\"unpaid\",\"pricing_amounts\":{\"charge_money\":{\"amount\":0,\"currency\":\"USD\"},\"discount_money\":{\"amount\":0,\"currency\":\"USD\"},\"requested_tip_money\":{\"amount\":0,\"currency\":\"USD\"},\"subtotal_money\":{\"amount\":0,\"currency\":\"USD\"},\"tax_money\":{\"amount\":0,\"currency\":\"USD\"},\"total_money\":{\"amount\":0,\"currency\":\"USD\"}},\"refund_status\":\"none\",\"settlement_amounts\":{\"balance_money\":{\"amount\":0,\"currency\":\"USD\"},\"credit_money\":{\"amount\":0,\"currency\":\"USD\"},\"net_collected_money\":{\"amount\":0,\"currency\":\"USD\"},\"outstanding_money\":{\"amount\":0,\"currency\":\"USD\"},\"paid_money\":{\"amount\":0,\"currency\":\"USD\"},\"refunded_money\":{\"amount\":0,\"currency\":\"USD\"},\"settled_tip_money\":{\"amount\":0,\"currency\":\"USD\"}},\"status\":\"open\",\"tax\":{\"enabled\":false,\"mode\":\"none\",\"status\":\"none\",\"taxability_reason\":\"none\"}}}}"
+        "body": "{\"data\":{\"audience\":\"merchant\",\"checkout_session\":{\"checkout_session_id\":\"cs_test\",\"delivery_method_ids\":[],\"delivery_selection_required\":false,\"problems\":[],\"recovery_mode\":false,\"status\":\"open\",\"surface\":\"hosted\",\"is_in_recovery\":false,\"type\":\"order\"},\"delivery_selection\":{\"amount_money\":{\"amount\":0,\"currency\":\"USD\"},\"calculation_expires_at\":\"2026-01-01T00:00:00Z\",\"checkout_session_id\":\"cs_test\",\"choices\":[],\"created_at\":\"2026-01-01T00:00:00Z\",\"delivery_quote_id\":\"dq_test\",\"delivery_quote_revision\":0,\"delivery_selection_id\":\"ds_test\",\"eligibility_context_revision\":0,\"expires_at\":\"2026-01-01T00:00:00Z\",\"lifecycle_updated_at\":\"2026-01-01T00:00:00Z\",\"limiting_deadline_reason\":\"selection_guarantee_expiry\",\"order_id\":\"ord_test\",\"status\":\"selected\",\"input_requirements\":[]},\"order\":{\"line_items\":[],\"order_id\":\"ord_test\",\"payment_status\":\"unpaid\",\"pricing_amounts\":{\"charge_money\":{\"amount\":0,\"currency\":\"USD\"},\"discount_money\":{\"amount\":0,\"currency\":\"USD\"},\"requested_tip_money\":{\"amount\":0,\"currency\":\"USD\"},\"subtotal_money\":{\"amount\":0,\"currency\":\"USD\"},\"tax_money\":{\"amount\":0,\"currency\":\"USD\"},\"total_money\":{\"amount\":0,\"currency\":\"USD\"},\"additive_tax_money\":{\"amount\":0,\"currency\":\"USD\"},\"inclusive_tax_money\":{\"amount\":0,\"currency\":\"USD\"}},\"refund_status\":\"none\",\"settlement_amounts\":{\"balance_money\":{\"amount\":0,\"currency\":\"USD\"},\"credit_money\":{\"amount\":0,\"currency\":\"USD\"},\"net_collected_money\":{\"amount\":0,\"currency\":\"USD\"},\"outstanding_money\":{\"amount\":0,\"currency\":\"USD\"},\"paid_money\":{\"amount\":0,\"currency\":\"USD\"},\"refunded_money\":{\"amount\":0,\"currency\":\"USD\"},\"settled_tip_money\":{\"amount\":0,\"currency\":\"USD\"},\"written_off_money\":{\"amount\":0,\"currency\":\"USD\"}},\"status\":\"open\",\"tax\":{\"enabled\":false,\"mode\":\"none\",\"status\":\"none\",\"taxability_reason\":\"none\"},\"buyer_actions\":[],\"charges\":[],\"checkout_session_ids\":[],\"discounts\":[],\"fulfillments\":[],\"gift_card_settlements\":[],\"gift_card_tender_enabled\":false,\"gift_cards\":[],\"payment_intent_ids\":[],\"refund_ids\":[],\"return_credit_settlements\":[],\"tips\":[],\"version\":1}}}"
       }
     ],
     "data": {
@@ -540,7 +557,9 @@
           "problems": [],
           "recovery_mode": false,
           "status": "open",
-          "surface": "hosted"
+          "surface": "hosted",
+          "is_in_recovery": false,
+          "type": "order"
         },
         "delivery_selection": {
           "amount_money": {
@@ -552,9 +571,9 @@
           "choices": [],
           "created_at": "2026-01-01T00:00:00Z",
           "delivery_quote_id": "dq_test",
-          "delivery_quote_revision": "0",
+          "delivery_quote_revision": 0,
           "delivery_selection_id": "ds_test",
-          "eligibility_context_revision": "0",
+          "eligibility_context_revision": 0,
           "expires_at": "2026-01-01T00:00:00Z",
           "lifecycle_updated_at": "2026-01-01T00:00:00Z",
           "limiting_deadline_reason": "selection_guarantee_expiry",
@@ -590,6 +609,14 @@
             "total_money": {
               "amount": "0",
               "currency": "USD"
+            },
+            "additive_tax_money": {
+              "amount": "0",
+              "currency": "USD"
+            },
+            "inclusive_tax_money": {
+              "amount": "0",
+              "currency": "USD"
             }
           },
           "refund_status": "none",
@@ -621,6 +648,10 @@
             "settled_tip_money": {
               "amount": "0",
               "currency": "USD"
+            },
+            "written_off_money": {
+              "amount": "0",
+              "currency": "USD"
             }
           },
           "status": "open",
@@ -629,7 +660,20 @@
             "mode": "none",
             "status": "none",
             "taxability_reason": "none"
-          }
+          },
+          "buyer_actions": [],
+          "charges": [],
+          "checkout_session_ids": [],
+          "discounts": [],
+          "fulfillments": [],
+          "gift_card_settlements": [],
+          "gift_card_tender_enabled": false,
+          "gift_cards": [],
+          "payment_intent_ids": [],
+          "refund_ids": [],
+          "return_credit_settlements": [],
+          "tips": [],
+          "version": "1"
         }
       }
     }
@@ -658,14 +702,15 @@
     "responses": [
       {
         "status": 200,
-        "body": "{\"data\":{\"audience\":\"merchant\",\"mutable\":true,\"source\":\"none\"}}"
+        "body": "{\"data\":{\"audience\":\"merchant\",\"mutable\":true,\"source\":\"none\",\"delivery_selection\":null}}"
       }
     ],
     "data": {
       "data": {
         "audience": "merchant",
         "mutable": true,
-        "source": "none"
+        "source": "none",
+        "delivery_selection": null
       }
     }
   },
@@ -697,7 +742,7 @@
     "responses": [
       {
         "status": 400,
-        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\",\"doc_url\":\"https://developers.withflintpay.com/errors/SDK_TEST\",\"request_id\":\"req_00000000000000000000000000\",\"error_source\":\"flint\",\"remediation\":{\"retry\":\"none\"},\"type\":\"invalid_request_error\"}}"
       }
     ],
     "error": {
@@ -734,7 +779,7 @@
     "responses": [
       {
         "status": 400,
-        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\",\"doc_url\":\"https://developers.withflintpay.com/errors/SDK_TEST\",\"request_id\":\"req_00000000000000000000000000\",\"error_source\":\"flint\",\"remediation\":{\"retry\":\"none\"},\"type\":\"invalid_request_error\"}}"
       }
     ],
     "error": {
@@ -771,7 +816,7 @@
     "responses": [
       {
         "status": 400,
-        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\",\"doc_url\":\"https://developers.withflintpay.com/errors/SDK_TEST\",\"request_id\":\"req_00000000000000000000000000\",\"error_source\":\"flint\",\"remediation\":{\"retry\":\"none\"},\"type\":\"invalid_request_error\"}}"
       }
     ],
     "error": {
@@ -808,7 +853,7 @@
     "responses": [
       {
         "status": 400,
-        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\",\"doc_url\":\"https://developers.withflintpay.com/errors/SDK_TEST\",\"request_id\":\"req_00000000000000000000000000\",\"error_source\":\"flint\",\"remediation\":{\"retry\":\"none\"},\"type\":\"invalid_request_error\"}}"
       }
     ],
     "error": {
@@ -846,7 +891,7 @@
     "responses": [
       {
         "status": 400,
-        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\",\"doc_url\":\"https://developers.withflintpay.com/errors/SDK_TEST\",\"request_id\":\"req_00000000000000000000000000\",\"error_source\":\"flint\",\"remediation\":{\"retry\":\"none\"},\"type\":\"invalid_request_error\"}}"
       }
     ],
     "error": {
@@ -884,7 +929,7 @@
     "responses": [
       {
         "status": 400,
-        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\",\"doc_url\":\"https://developers.withflintpay.com/errors/SDK_TEST\",\"request_id\":\"req_00000000000000000000000000\",\"error_source\":\"flint\",\"remediation\":{\"retry\":\"none\"},\"type\":\"invalid_request_error\"}}"
       }
     ],
     "error": {
@@ -922,7 +967,7 @@
     "responses": [
       {
         "status": 400,
-        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\",\"doc_url\":\"https://developers.withflintpay.com/errors/SDK_TEST\",\"request_id\":\"req_00000000000000000000000000\",\"error_source\":\"flint\",\"remediation\":{\"retry\":\"none\"},\"type\":\"invalid_request_error\"}}"
       }
     ],
     "error": {
@@ -959,7 +1004,7 @@
     "responses": [
       {
         "status": 400,
-        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\",\"doc_url\":\"https://developers.withflintpay.com/errors/SDK_TEST\",\"request_id\":\"req_00000000000000000000000000\",\"error_source\":\"flint\",\"remediation\":{\"retry\":\"none\"},\"type\":\"invalid_request_error\"}}"
       }
     ],
     "error": {
@@ -996,7 +1041,7 @@
     "responses": [
       {
         "status": 400,
-        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\",\"doc_url\":\"https://developers.withflintpay.com/errors/SDK_TEST\",\"request_id\":\"req_00000000000000000000000000\",\"error_source\":\"flint\",\"remediation\":{\"retry\":\"none\"},\"type\":\"invalid_request_error\"}}"
       }
     ],
     "error": {
@@ -1033,7 +1078,7 @@
     "responses": [
       {
         "status": 400,
-        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\",\"doc_url\":\"https://developers.withflintpay.com/errors/SDK_TEST\",\"request_id\":\"req_00000000000000000000000000\",\"error_source\":\"flint\",\"remediation\":{\"retry\":\"none\"},\"type\":\"invalid_request_error\"}}"
       }
     ],
     "error": {
@@ -1070,7 +1115,7 @@
     "responses": [
       {
         "status": 400,
-        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\",\"doc_url\":\"https://developers.withflintpay.com/errors/SDK_TEST\",\"request_id\":\"req_00000000000000000000000000\",\"error_source\":\"flint\",\"remediation\":{\"retry\":\"none\"},\"type\":\"invalid_request_error\"}}"
       }
     ],
     "error": {
@@ -1109,7 +1154,7 @@
     "responses": [
       {
         "status": 400,
-        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\",\"doc_url\":\"https://developers.withflintpay.com/errors/SDK_TEST\",\"request_id\":\"req_00000000000000000000000000\",\"error_source\":\"flint\",\"remediation\":{\"retry\":\"none\"},\"type\":\"invalid_request_error\"}}"
       }
     ],
     "error": {
@@ -1146,7 +1191,7 @@
     "responses": [
       {
         "status": 400,
-        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\",\"doc_url\":\"https://developers.withflintpay.com/errors/SDK_TEST\",\"request_id\":\"req_00000000000000000000000000\",\"error_source\":\"flint\",\"remediation\":{\"retry\":\"none\"},\"type\":\"invalid_request_error\"}}"
       }
     ],
     "error": {
@@ -1205,7 +1250,7 @@
     "responses": [
       {
         "status": 400,
-        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\",\"doc_url\":\"https://developers.withflintpay.com/errors/SDK_TEST\",\"request_id\":\"req_00000000000000000000000000\",\"error_source\":\"flint\",\"remediation\":{\"retry\":\"none\"},\"type\":\"invalid_request_error\"}}"
       }
     ],
     "error": {
@@ -1242,7 +1287,7 @@
     "responses": [
       {
         "status": 400,
-        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\",\"doc_url\":\"https://developers.withflintpay.com/errors/SDK_TEST\",\"request_id\":\"req_00000000000000000000000000\",\"error_source\":\"flint\",\"remediation\":{\"retry\":\"none\"},\"type\":\"invalid_request_error\"}}"
       }
     ],
     "error": {
@@ -1279,7 +1324,7 @@
     "responses": [
       {
         "status": 400,
-        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\",\"doc_url\":\"https://developers.withflintpay.com/errors/SDK_TEST\",\"request_id\":\"req_00000000000000000000000000\",\"error_source\":\"flint\",\"remediation\":{\"retry\":\"none\"},\"type\":\"invalid_request_error\"}}"
       }
     ],
     "error": {
@@ -1316,7 +1361,7 @@
     "responses": [
       {
         "status": 400,
-        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\",\"doc_url\":\"https://developers.withflintpay.com/errors/SDK_TEST\",\"request_id\":\"req_00000000000000000000000000\",\"error_source\":\"flint\",\"remediation\":{\"retry\":\"none\"},\"type\":\"invalid_request_error\"}}"
       }
     ],
     "error": {
@@ -1353,7 +1398,7 @@
     "responses": [
       {
         "status": 400,
-        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\",\"doc_url\":\"https://developers.withflintpay.com/errors/SDK_TEST\",\"request_id\":\"req_00000000000000000000000000\",\"error_source\":\"flint\",\"remediation\":{\"retry\":\"none\"},\"type\":\"invalid_request_error\"}}"
       }
     ],
     "error": {
@@ -1390,7 +1435,7 @@
     "responses": [
       {
         "status": 400,
-        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\",\"doc_url\":\"https://developers.withflintpay.com/errors/SDK_TEST\",\"request_id\":\"req_00000000000000000000000000\",\"error_source\":\"flint\",\"remediation\":{\"retry\":\"none\"},\"type\":\"invalid_request_error\"}}"
       }
     ],
     "error": {
@@ -1427,7 +1472,7 @@
     "responses": [
       {
         "status": 400,
-        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\",\"doc_url\":\"https://developers.withflintpay.com/errors/SDK_TEST\",\"request_id\":\"req_00000000000000000000000000\",\"error_source\":\"flint\",\"remediation\":{\"retry\":\"none\"},\"type\":\"invalid_request_error\"}}"
       }
     ],
     "error": {
@@ -1464,7 +1509,7 @@
     "responses": [
       {
         "status": 400,
-        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\",\"doc_url\":\"https://developers.withflintpay.com/errors/SDK_TEST\",\"request_id\":\"req_00000000000000000000000000\",\"error_source\":\"flint\",\"remediation\":{\"retry\":\"none\"},\"type\":\"invalid_request_error\"}}"
       }
     ],
     "error": {
@@ -1528,7 +1573,7 @@
     "responses": [
       {
         "status": 400,
-        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\",\"doc_url\":\"https://developers.withflintpay.com/errors/SDK_TEST\",\"request_id\":\"req_00000000000000000000000000\",\"error_source\":\"flint\",\"remediation\":{\"retry\":\"none\"},\"type\":\"invalid_request_error\"}}"
       }
     ],
     "error": {
@@ -1565,7 +1610,7 @@
     "responses": [
       {
         "status": 400,
-        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\",\"doc_url\":\"https://developers.withflintpay.com/errors/SDK_TEST\",\"request_id\":\"req_00000000000000000000000000\",\"error_source\":\"flint\",\"remediation\":{\"retry\":\"none\"},\"type\":\"invalid_request_error\"}}"
       }
     ],
     "error": {
@@ -1582,7 +1627,7 @@
       "order_id": "ord_test",
       "body": {
         "action": "resume",
-        "payment_attempt_id": "pat_test"
+        "order_payment_attempt_id": "pat_test"
       }
     },
     "options": {
@@ -1598,12 +1643,12 @@
         "authorization": "Bearer merchant-test"
       },
       "absentHeaders": ["x-checkout-session-id", "x-checkout-session-secret"],
-      "body": "{\"action\":\"resume\",\"payment_attempt_id\":\"pat_test\"}"
+      "body": "{\"action\":\"resume\",\"order_payment_attempt_id\":\"pat_test\"}"
     },
     "responses": [
       {
         "status": 400,
-        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\",\"doc_url\":\"https://developers.withflintpay.com/errors/SDK_TEST\",\"request_id\":\"req_00000000000000000000000000\",\"error_source\":\"flint\",\"remediation\":{\"retry\":\"none\"},\"type\":\"invalid_request_error\"}}"
       }
     ],
     "error": {
@@ -1643,7 +1688,7 @@
     "responses": [
       {
         "status": 400,
-        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\",\"doc_url\":\"https://developers.withflintpay.com/errors/SDK_TEST\",\"request_id\":\"req_00000000000000000000000000\",\"error_source\":\"flint\",\"remediation\":{\"retry\":\"none\"},\"type\":\"invalid_request_error\"}}"
       }
     ],
     "error": {
@@ -1675,7 +1720,7 @@
     "attempts": 0
   },
   {
-    "name": "missing CheckoutSessionIDHeader",
+    "name": "missing CheckoutSessionBearer",
     "operation": "getCheckoutSessionCurrentDeliverySelection",
     "baseUrl": "https://api.example.invalid",
     "input": {
@@ -1683,9 +1728,7 @@
     },
     "options": {
       "authMode": "checkout",
-      "credentials": {
-        "CheckoutSessionSecretHeader": "checkout-test"
-      }
+      "credentials": {}
     },
     "responses": [],
     "error": {
@@ -1694,7 +1737,7 @@
     "attempts": 0
   },
   {
-    "name": "missing CheckoutSessionSecretHeader",
+    "name": "empty CheckoutSessionBearer",
     "operation": "getCheckoutSessionCurrentDeliverySelection",
     "baseUrl": "https://api.example.invalid",
     "input": {
@@ -1703,7 +1746,7 @@
     "options": {
       "authMode": "checkout",
       "credentials": {
-        "CheckoutSessionIDHeader": "cs_test"
+        "CheckoutSessionBearer": ""
       }
     },
     "responses": [],
@@ -1771,7 +1814,7 @@
     "responses": [
       {
         "status": 400,
-        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\",\"doc_url\":\"https://developers.withflintpay.com/errors/SDK_TEST\",\"request_id\":\"req_00000000000000000000000000\",\"error_source\":\"flint\",\"remediation\":{\"retry\":\"none\"},\"type\":\"invalid_request_error\"}}"
       }
     ],
     "error": {
@@ -1839,7 +1882,7 @@
     "responses": [
       {
         "status": 400,
-        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\",\"doc_url\":\"https://developers.withflintpay.com/errors/SDK_TEST\",\"request_id\":\"req_00000000000000000000000000\",\"error_source\":\"flint\",\"remediation\":{\"retry\":\"none\"},\"type\":\"invalid_request_error\"}}"
       }
     ],
     "error": {
@@ -1880,7 +1923,7 @@
     "responses": [
       {
         "status": 400,
-        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\"}}"
+        "body": "{\"error\":{\"code\":\"SDK_TEST\",\"message\":\"Synthetic error after dispatch\",\"doc_url\":\"https://developers.withflintpay.com/errors/SDK_TEST\",\"request_id\":\"req_00000000000000000000000000\",\"error_source\":\"flint\",\"remediation\":{\"retry\":\"none\"},\"type\":\"invalid_request_error\"}}"
       }
     ],
     "error": {

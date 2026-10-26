@@ -96,8 +96,26 @@ function explore(certificate) {
       case 'intersection': {
         const values = node.members.map((member) => sample(member, depth + 1));
         const concrete = values.filter((v) => v !== undefined && v !== null);
-        if (concrete.every((v) => typeof v === 'object' && !Array.isArray(v)))
-          return Object.assign({}, ...concrete);
+        const satisfies = (value, type) => certifies(value, { ...certificate, type });
+        const complete = values.find((value) => satisfies(value, node));
+        if (complete !== undefined) return complete;
+        if (concrete.every((v) => typeof v === 'object' && !Array.isArray(v))) {
+          const merged = Object.assign({}, ...concrete);
+          const fields = new Map();
+          for (const member of node.members) {
+            const record = resolveNode(member);
+            if (record.kind !== 'record') continue;
+            for (const [key, field] of Object.entries(record.fields))
+              if (Object.hasOwn(merged, key))
+                fields.set(key, [...(fields.get(key) ?? []), field.type]);
+          }
+          // A required unknown key can be typed by an optional sibling field.
+          // Synthesize the shared constraint instead of overwriting it with {}.
+          for (const [key, types] of fields)
+            if (!types.every((type) => satisfies(merged[key], type)))
+              merged[key] = sample({ kind: 'intersection', members: types }, depth + 1);
+          return merged;
+        }
         return (
           concrete.find((v) => Array.isArray(v)) ??
           concrete.find((v) => typeof v !== 'object') ??
@@ -186,6 +204,16 @@ function adversaries(sample, knownKeys) {
   mutate(sample);
   return values;
 }
+
+test('independent intersection samples honor optional types on required unknown fields', () => {
+  const plan = publicTypePlanner({});
+  const certificate = plan('({items?:Array<{id:string}>}) & ({items:unknown})');
+  const value = explore(certificate).sample;
+  assert.deepEqual(value, { items: [{ id: 'synthetic' }] });
+  assert.equal(certifies(value, certificate), true);
+  const literal = plan('string & "fixed"');
+  assert.equal(explore(literal).sample, 'fixed');
+});
 
 for (const provider of ['library', 'flint']) {
   test(`generated ${provider} public types certify conforming and adversarial values before tsc-approved accesses`, async (t) => {

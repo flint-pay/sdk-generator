@@ -1,7 +1,7 @@
 [
   {
     "name": "neither choice",
-    "operation": "addRiskListItems",
+    "operation": "createRiskListItems",
     "baseUrl": "https://api.example.invalid",
     "input": {
       "risk_list_id": "rl_fixture",
@@ -15,7 +15,7 @@
   },
   {
     "name": "single value",
-    "operation": "addRiskListItems",
+    "operation": "createRiskListItems",
     "baseUrl": "https://api.example.invalid",
     "input": {
       "risk_list_id": "rl_fixture",
@@ -23,45 +23,15 @@
         "value": "sdk-fixture"
       }
     },
-    "expected": {
-      "method": "POST",
-      "path": "/v1/risk-lists/rl_fixture/items",
-      "body": "{\"value\":\"sdk-fixture\"}",
-      "headers": {
-        "flint-version": "2026-09-07"
-      }
+    "responses": [],
+    "error": {
+      "kind": "validation"
     },
-    "responses": [
-      {
-        "status": 201,
-        "body": "{\"data\":{\"items\":[{\"status\":\"created\",\"risk_list_item\":{\"created_at\":\"2026-09-07T12:00:00Z\",\"created_by\":\"sdk-fixture\",\"risk_list_id\":\"rl_fixture\",\"risk_list_item_id\":\"rli_fixture\",\"value\":\"sdk-fixture\"}}]}}"
-      }
-    ],
-    "data": {
-      "data": {
-        "items": [
-          {
-            "status": "created",
-            "risk_list_item": {
-              "created_at": "2026-09-07T12:00:00Z",
-              "created_by": "sdk-fixture",
-              "risk_list_id": "rl_fixture",
-              "risk_list_item_id": "rli_fixture",
-              "value": "sdk-fixture"
-            }
-          }
-        ]
-      }
-    },
-    "options": {
-      "headers": {
-        "fLiNt-VeRsIoN": "2026-02-01"
-      }
-    }
+    "attempts": 0
   },
   {
     "name": "value list",
-    "operation": "addRiskListItems",
+    "operation": "createRiskListItems",
     "baseUrl": "https://api.example.invalid",
     "input": {
       "risk_list_id": "rl_fixture",
@@ -80,21 +50,21 @@
     "responses": [
       {
         "status": 201,
-        "body": "{\"data\":{\"items\":[{\"status\":\"created\",\"risk_list_item\":{\"created_at\":\"2026-09-07T12:00:00Z\",\"created_by\":\"sdk-fixture\",\"risk_list_id\":\"rl_fixture\",\"risk_list_item_id\":\"rli_fixture\",\"value\":\"sdk-fixture\"}}]}}"
+        "body": "{\"data\":{\"additions\":[{\"risk_list_item\":{\"created_at\":\"2026-09-07T12:00:00Z\",\"created_by\":null,\"risk_list_id\":\"rl_fixture\",\"risk_list_item_id\":\"rli_fixture\",\"value\":\"sdk-fixture\"},\"outcome\":\"created\"}]}}"
       }
     ],
     "data": {
       "data": {
-        "items": [
+        "additions": [
           {
-            "status": "created",
             "risk_list_item": {
               "created_at": "2026-09-07T12:00:00Z",
-              "created_by": "sdk-fixture",
+              "created_by": null,
               "risk_list_id": "rl_fixture",
               "risk_list_item_id": "rli_fixture",
               "value": "sdk-fixture"
-            }
+            },
+            "outcome": "created"
           }
         ]
       }
@@ -102,7 +72,7 @@
   },
   {
     "name": "both choices",
-    "operation": "addRiskListItems",
+    "operation": "createRiskListItems",
     "baseUrl": "https://api.example.invalid",
     "input": {
       "risk_list_id": "rl_fixture",
@@ -111,10 +81,25 @@
         "values": ["sdk-fixture"]
       }
     },
-    "responses": [],
+    "responses": [
+      {
+        "status": 400,
+        "body": "{\"error\":{\"code\":\"INVALID_REQUEST\",\"message\":\"Unknown field value.\"}}"
+      }
+    ],
     "error": {
-      "kind": "validation"
+      "kind": "validation",
+      "status": 400,
+      "code": "INVALID_REQUEST"
     },
-    "attempts": 0
+    "attempts": 1,
+    "expected": {
+      "method": "POST",
+      "path": "/v1/risk-lists/rl_fixture/items",
+      "body": "{\"value\":\"sdk-fixture\",\"values\":[\"sdk-fixture\"]}",
+      "headers": {
+        "flint-version": "2026-09-07"
+      }
+    }
   }
 ]

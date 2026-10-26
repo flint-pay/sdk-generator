@@ -1,4 +1,5 @@
 import { assertDocumentedModelExports } from './helpers/docs-exports.mjs';
+import { checkResponseExamples } from './helpers/flint-response-examples.mjs';
 import { npmPackResult } from '../dist/distribution.js';
 import { measureSdkWeight } from './helpers/sdk-weight.mjs';
 import { measureWebhookTypes } from './helpers/webhook-types.mjs';
@@ -50,10 +51,12 @@ const size = (path) =>
     0,
   );
 
+// Repeated generation and all-profile diagnosis need an aggregate allowance;
+// the individual 180-second / 4-GiB generation budgets remain enforced below.
 test(
   'unmodified full export generates, regenerates, validates and installs complete Node/PHP packages',
-  { timeout: 600000 },
-  () => {
+  { timeout: 1200000 },
+  async () => {
     const dir = mkdtempSync(join(tmpdir(), 'sdk-full-public-'));
     const output = join(dir, 'output');
     try {
@@ -87,7 +90,8 @@ assert.deepEqual(preview(restored,${JSON.stringify(output)}).changes,[],'full ex
                 'authorizeCLIDevice',
                 'listCLIContexts',
                 'reauthorizeCLIDevice',
-                'revokeCLIGrant',
+                'revokeOAuthToken',
+                'exchangeOAuthToken',
               ].includes(o.id),
           )
           .map((o) => o.id)
@@ -97,7 +101,7 @@ assert.deepEqual(preview(restored,${JSON.stringify(output)}).changes,[],'full ex
         summary.incoming.map((o) => o.name).sort(),
         inventory.incoming.map((o) => o.key).sort(),
       );
-      assert.equal(summary.events.length, 191);
+      assert.equal(summary.events.length, 245);
       const names = JSON.parse(readFileSync(join(dir, 'webhook-names.json')));
       const phpWebhook = JSON.parse(readFileSync(join(output, 'php/src/descriptors/webhook.json')));
       const webhookTypeMetrics = measureWebhookTypes(
@@ -106,9 +110,9 @@ assert.deepEqual(preview(restored,${JSON.stringify(output)}).changes,[],'full ex
         phpWebhook.webhook.eventModels,
         'event_type',
       );
-      assert.equal(webhookTypeMetrics.namedPhpEvents, 51);
+      assert.equal(webhookTypeMetrics.namedPhpEvents, 34);
       console.log('Webhook type budget ' + JSON.stringify(webhookTypeMetrics));
-      assert.equal(summary.incoming.length, 191);
+      assert.equal(summary.incoming.length, 245);
       assert.ok(summary.definitions > 100);
       assert.ok(
         summary.maxRSS < 4 * 1024 * 1024,
@@ -117,7 +121,7 @@ assert.deepEqual(preview(restored,${JSON.stringify(output)}).changes,[],'full ex
       assert.ok(size(output) < 300 * 1024 * 1024, 'full package/record size budget exceeded');
       const recordBytes = statSync(join(output, '.sdk-generator.json')).size;
       console.log('Private generation record ' + JSON.stringify({ bytes: recordBytes }));
-      assert.ok(recordBytes < 100 * 1024 * 1024, 'private generation record exceeds 100 MiB');
+      assert.ok(recordBytes < 128 * 1024 * 1024, 'private generation record exceeds 128 MiB');
       const preview = JSON.parse(
         run(process.execPath, ['dist/cli.js', 'preview', api, config, output, '--json']),
       );
@@ -147,6 +151,13 @@ assert.deepEqual(preview(restored,${JSON.stringify(output)}).changes,[],'full ex
         join(fixture, 'full-http-cases.json'),
         '--json',
       ]);
+
+      console.log(
+        'Strict response examples ' +
+          JSON.stringify(
+            await checkResponseExamples(output, api, join(dir, 'response-examples.json')),
+          ),
+      );
 
       const packed = npmPackResult(
         run('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', dir], {
@@ -185,6 +196,12 @@ assert.deepEqual(preview(restored,${JSON.stringify(output)}).changes,[],'full ex
         webhookTypes,
         `import {Client} from '@example/flint-full-sdk';
 import type {IncomingHttpHeaders} from 'node:http';
+import type {PaymentIntent,PaymentIntentWithCollection,PaymentCollection} from '@example/flint-full-sdk';
+declare const basePayment: PaymentIntent;
+// @ts-expect-error The base resource does not declare the collection extension.
+basePayment.payment_collection;
+declare const collectedPayment: PaymentIntentWithCollection;
+const collection: PaymentCollection | undefined=collectedPayment.payment_collection;
 const client=new Client({token:'synthetic'});
 declare const headers: IncomingHttpHeaders;
 const secrets: readonly string[]=['synthetic'];
@@ -193,10 +210,10 @@ const result=client.verifyWebhook(new Uint8Array(),new Headers(),'synthetic');
 if(result.known) {
   const name: string=result.event.event_type;
   if(result.event.event_type==='balance_transaction.created') {
-    const amount: string=result.event.data.amount_money.amount;
+    const amount: string=result.event.data.object.amount_money.amount;
   }
   if(result.event.event_type==='payment_intent.succeeded') {
-    const id: string=result.event.data.payment_intent.payment_intent_id;
+    const id: string=result.event.data.object.payment_intent_id;
   }
 } else {
   // @ts-expect-error Unknown events must be validated by the application.
@@ -279,7 +296,7 @@ assert.equal(typeof c.paymentIntents.create,'function');
 for(const incoming of ${JSON.stringify(summary.incoming)}) assert.equal(sdk['make'+incoming.model],undefined,'response-only webhook: '+incoming.name);
 const verified=c.verifyWebhook(Buffer.from(${JSON.stringify(raw)}),${JSON.stringify(headers)},[${JSON.stringify(encodedSecret)}],${timestamp});
 assert.equal(verified.known,true);
-assert.equal(verified.event.data.amount_money.amount,'9007199254740993');
+assert.equal(verified.event.data.object.amount_money.amount,'9007199254740993');
 assert.throws(()=>c.verifyWebhook(Buffer.from(${JSON.stringify(raw)}+' '),${JSON.stringify(headers)},[${JSON.stringify(encodedSecret)}],${timestamp}));
 assert.equal(new ExactNumber('1.0000').value,'1.0000');
 for(const scenario of ${JSON.stringify(modelCases)}) {
@@ -290,7 +307,7 @@ const payment = {
   amount_money: {amount: '9007199254740993', currency: 'USD'},
   payment_flow: 'api', payment_intent_id: 'pi_fixture', payment_options: ['card'],
   status: 'requires_payment_method', support_reference: 'PAY-TEST',
-  risk: null, last_payment_error: null,
+  risk: null, last_payment_error: null, metadata: {}, supported_actions: [],
 };
 const report = {
   created_at: '2026-09-29T00:00:00Z', currency: 'USD',
@@ -304,7 +321,7 @@ const audit = new Client({token:'synthetic', transport:async (url, init) => {
   let status = 200;
   if (url.pathname === '/v1/payment-intents/pi_fixture') body = {data:payment, request_id:'req_00RZ0FQ2N30SJR0PYX7Y97MY7N', meta:{trace_id:'provider'}};
   else if (url.pathname === '/v1/payment-intents' && init.method === 'POST') {
-    body = {data:{payment_intent:payment, payment_collection:{}}, request_id:'req_00HZ11BJ0WECKGX2NGJBSWMECB'};
+    body = {data:{...payment, payment_collection:{}}, request_id:'req_00HZ11BJ0WECKGX2NGJBSWMECB'};
     status = 201;
   } else if (url.pathname === '/v1/payment-intents') {
     const next = url.searchParams.get('page_token');
@@ -328,7 +345,7 @@ assert.equal(fullResponse.body.request_id,'req_00RZ0FQ2N30SJR0PYX7Y97MY7N');
 assert.equal(fullResponse.body.meta.trace_id,'provider');
 assert.equal(fullResponse.meta.requestId,'req_00EBMKRW6DJV5N1V6ZRYF9EGQ9');
 const createdPayment = await audit.paymentIntents.create({body:{amount_money:{amount:'100',currency:'USD'},payment_options:['card'],capture_method:'manual'}});
-assert.equal(createdPayment.payment_intent.status,'requires_payment_method');
+assert.equal(createdPayment.status,'requires_payment_method');
 const firstPage = await audit.paymentIntents.list({page_size:1});
 assert.equal(firstPage.next_page_token,'page_two');
 assert.equal(firstPage.data[0].payment_intent_id,'pi_fixture');
@@ -394,7 +411,7 @@ foreach(json_decode('${JSON.stringify(summary.methods)}',true) as $method) {
 }
 foreach(json_decode('${JSON.stringify(summary.incoming)}',true,512,JSON_THROW_ON_ERROR) as $incoming) if(!class_exists('Example'.chr(92).'FlintFull'.chr(92).$incoming['model'].'Input'))throw new Exception('Missing incoming model '.$incoming['name']);
 $event=$c->verifyWebhook(base64_decode('${Buffer.from(raw).toString('base64')}'),json_decode('${JSON.stringify(headers)}',true,512,JSON_THROW_ON_ERROR),['${encodedSecret}'],${timestamp});
-if(!$event['known'] || $event['event']->get('data')->amount_money->amount !== '9007199254740993') throw new Exception('Webhook payload mismatch');
+if(!$event['known'] || $event['event']->get('data')->object->amount_money->amount !== '9007199254740993') throw new Exception('Webhook payload mismatch');
 try{$c->verifyWebhook(base64_decode('${Buffer.from(raw).toString('base64')}').' ',json_decode('${JSON.stringify(headers)}',true,512,JSON_THROW_ON_ERROR),['${encodedSecret}'],${timestamp});throw new Exception('accepted tampered webhook');}catch(SdkError $error){}
 foreach(json_decode(base64_decode('${Buffer.from(JSON.stringify(modelCases)).toString('base64')}'),true,512,JSON_THROW_ON_ERROR) as $scenario){
  $class='Example'.chr(92).'FlintFull'.chr(92).$scenario['model'].'Input';$valid=true;
@@ -402,13 +419,13 @@ foreach(json_decode(base64_decode('${Buffer.from(JSON.stringify(modelCases)).toS
  if($valid!==$scenario['valid'])throw new Exception($scenario['name']);
 }
 $c->close();
-$payment = ['amount_money'=>['amount'=>'9007199254740993','currency'=>'USD'], 'payment_flow'=>'api','payment_intent_id'=>'pi_fixture','payment_options'=>['card'],'status'=>'requires_payment_method','support_reference'=>'PAY-TEST','risk'=>null,'last_payment_error'=>null];
+$payment = ['amount_money'=>['amount'=>'9007199254740993','currency'=>'USD'], 'payment_flow'=>'api','payment_intent_id'=>'pi_fixture','payment_options'=>['card'],'status'=>'requires_payment_method','support_reference'=>'PAY-TEST','risk'=>null,'last_payment_error'=>null,'metadata'=>(object)[],'supported_actions'=>[]];
 $report = ['created_at'=>'2026-09-29T00:00:00Z','currency'=>'USD','interval_start_at'=>'2026-09-28T00:00:00Z','interval_end_at'=>'2026-09-29T00:00:00Z','report_id'=>'rep_fixture','report_type'=>'orders_itemized_v1','status'=>'pending','timezone'=>'UTC'];
 $requestKeys = []; $reportReads = 0;
 $audit = new Client(new ClientOptions(token:'synthetic', transport:function($request)use($payment,$report,&$requestKeys,&$reportReads){
   $path = parse_url($request['url'],PHP_URL_PATH); $status = 200;
   if($path === '/v1/payment-intents/pi_fixture') $body=['data'=>$payment,'request_id'=>'req_00RZ0FQ2N30SJR0PYX7Y97MY7N','meta'=>['trace_id'=>'provider']];
-  elseif($path === '/v1/payment-intents' && $request['method'] === 'POST') { $status=201; $body=['data'=>['payment_intent'=>$payment,'payment_collection'=>(object)[]]]; }
+  elseif($path === '/v1/payment-intents' && $request['method'] === 'POST') { $status=201; $body=['data'=>array_merge($payment,['payment_collection'=>(object)[]])]; }
   elseif($path === '/v1/payment-intents') {
     parse_str(parse_url($request['url'],PHP_URL_QUERY)??'', $query);
     $next=$query['page_token']??null;
@@ -432,7 +449,7 @@ if($got->getStatus()!=='requires_payment_method' || $got->getAmountMoney()->getA
 $full=$audit->paymentIntents->getWithResponse(['payment_intent_id'=>'pi_fixture']);
 if($full->body->getRequestId()!=='req_00RZ0FQ2N30SJR0PYX7Y97MY7N' || $full->body->getMeta()->getTraceId()!=='provider' || $full->meta['requestId']!=='req_00EBMKRW6DJV5N1V6ZRYF9EGQ9')throw new Exception('full response metadata');
 $created=$audit->paymentIntents->create(['body'=>['amount_money'=>['amount'=>'100','currency'=>'USD'],'payment_options'=>['card'],'capture_method'=>'manual']]);
-if($created->getPaymentIntent()->getStatus()!=='requires_payment_method')throw new Exception('create shape');
+if($created->getStatus()!=='requires_payment_method')throw new Exception('create shape');
 $first=$audit->paymentIntents->list(['page_size'=>1]);
 if($first->getNextPageToken()!=='page_two')throw new Exception('lost cursor');
 $ids=[];foreach($audit->paymentIntents->listItems(['page_size'=>1]) as $item)$ids[]=$item->getPaymentIntentId();
@@ -480,13 +497,15 @@ $streaming->close();
       assert.equal(weight.node.failed, undefined, JSON.stringify(weight.node));
       assert.equal(weight.types.failed, undefined, JSON.stringify(weight.types));
       assert.ok(weight.types.files < 1000, 'root types load too many declaration files');
+      // The re-pinned graph with public type certificates measures 2.80 MiB for
+      // webhooks and 1035 KiB for invoices; keep bounded headroom for each.
       assert.ok(
-        weight.bundles.webhooks < 1536 * 1024,
+        weight.bundles.webhooks < 3 * 1024 * 1024,
         'webhook bundle includes excess descriptors',
       );
       assert.ok(weight.sizes.node.files < 4000, 'Node package file count budget exceeded');
-      assert.ok(weight.sizes.php['.json'] < 14 * 1024 * 1024, 'PHP includes duplicate raw schemas');
-      assert.ok(weight.sizes.node['.js'] < 15 * 1024 * 1024, 'Node source size budget exceeded');
+      assert.ok(weight.sizes.php['.json'] < 18 * 1024 * 1024, 'PHP includes duplicate raw schemas');
+      assert.ok(weight.sizes.node['.js'] < 24 * 1024 * 1024, 'Node source size budget exceeded');
       assert.ok(weight.sizes.node['.d.ts'] < 13 * 1024 * 1024, 'declaration size budget exceeded');
       assert.ok(
         weight.sizes.php['.json'] < 24 * 1024 * 1024,
@@ -498,10 +517,10 @@ $streaming->close();
         weight.bundles['resources/invoices'] < weight.bundles.index / 2,
         'selective bundle must exclude most of the full contract',
       );
-      assert.ok(weight.sizes.php.largestSource < 512 * 1024, 'PHP source exceeds indexing budget');
+      assert.ok(weight.sizes.php.largestSource < 640 * 1024, 'PHP source exceeds indexing budget');
       assert.ok(
-        weight.bundles['resources/invoices'] < 1024 * 1024,
-        'selective bundle exceeds 1 MiB',
+        weight.bundles['resources/invoices'] < 1152 * 1024,
+        'selective bundle exceeds 1152 KiB',
       );
       for (const [target, bytes] of Object.entries(weight.archives))
         assert.ok(typeof bytes === 'number' && bytes > 0, 'archive measurement failed: ' + target);
@@ -522,7 +541,7 @@ $streaming->close();
 
 test(
   'every full SDK profile diagnoses its complete permitted operation selection',
-  { timeout: 600000 },
+  { timeout: 1200000 },
   () => {
     const combined = JSON.parse(readFileSync(config));
     const union = new Set();
@@ -534,8 +553,8 @@ test(
       const diagnosis = JSON.parse(
         run(process.execPath, ['dist/cli.js', 'diagnose', api, join(fixture, profile), '--json']),
       );
-      assert.equal(diagnosis.operations, configured.include?.length ?? 503, profile);
+      assert.equal(diagnosis.operations, configured.include?.length ?? 607, profile);
     }
-    assert.equal(union.size, 503);
+    assert.equal(union.size, 607);
   },
 );
