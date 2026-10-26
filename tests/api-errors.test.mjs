@@ -67,6 +67,15 @@ function fixture(t, errors, operations) {
   return { source, config, output: join(dir, 'sdk') };
 }
 
+function phpErrorContext(row, status, requestId) {
+  return {
+    ...row,
+    message:
+      row.message +
+      ` [HTTP ${status}${row.code !== null ? ', code ' + row.code : ''}${requestId ? ', requestId ' + requestId : ''}]`,
+  };
+}
+
 const cases = [
   {
     status: 404,
@@ -246,7 +255,10 @@ echo json_encode($results);
       { encoding: 'utf8', input: JSON.stringify(wireCases) },
     );
     assert.equal(result.status, 0, result.stderr + result.stdout);
-    assert.deepEqual(JSON.parse(result.stdout), expected);
+    assert.deepEqual(
+      JSON.parse(result.stdout),
+      expected.map((row) => phpErrorContext(row, row.status, 'req_000MH8MWQ7PKC0N7TXERB9CJ9P')),
+    );
   });
 }
 
@@ -293,7 +305,7 @@ require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
 $body=stream_get_contents(STDIN);
 $client=new Example\Errors\Client(new Example\Errors\ClientOptions('https://example.invalid',redactFields:['customField'],transport:fn($r)=>['status'=>404,'headers'=>[],'body'=>$body]));
 try{$client->api->readValue();exit(1);}catch(Example\Errors\SdkError $e){
-  if($e->getMessage()!=='[REDACTED]'||$e->errorCode!=='[REDACTED]'||$e->raw!==$body)throw $e;
+  if($e->getMessage()!=='[REDACTED] [HTTP 404, code [REDACTED]]'||$e->errorCode!=='[REDACTED]'||$e->raw!==$body)throw $e;
   ob_start();var_dump($e);$logged=ob_get_clean();
   if(str_contains($logged,'hidden-')||!str_contains($logged,'Missing payment'))throw new Exception('Invalid redaction');
 }
@@ -398,7 +410,10 @@ echo json_encode($rows);
     { encoding: 'utf8', input: JSON.stringify(bodies) },
   );
   assert.equal(result.status, 0, result.stderr + result.stdout);
-  assert.deepEqual(JSON.parse(result.stdout), expected);
+  assert.deepEqual(
+    JSON.parse(result.stdout),
+    expected.map((row) => phpErrorContext(row, 404)),
+  );
 });
 
 for (const redacted of [false, true]) {
@@ -495,7 +510,7 @@ echo json_encode($rows);
     assert.equal(result.status, 0, result.stderr + result.stdout);
     assert.deepEqual(
       JSON.parse(result.stdout),
-      wireCases.map(({ expected }) => expected),
+      wireCases.map(({ expected }) => phpErrorContext(expected, 503)),
     );
   });
 }
@@ -549,7 +564,7 @@ try{$c->api->readValue();exit(1);}catch(Example\Errors\SdkError $e){echo json_en
   );
   assert.equal(result.status, 0, result.stderr + result.stdout);
   assert.deepEqual(JSON.parse(result.stdout), {
-    message: 'API returned HTTP 503',
+    message: 'API returned HTTP 503 [HTTP 503]',
     code: null,
     retryAllowed: false,
     attempts: 1,
@@ -640,7 +655,7 @@ echo json_encode($rows);
   assert.equal(result.status, 0, result.stderr + result.stdout);
   assert.deepEqual(
     JSON.parse(result.stdout),
-    cases.map(({ expected }) => expected),
+    cases.map(({ expected }) => phpErrorContext(expected, 503)),
   );
 });
 

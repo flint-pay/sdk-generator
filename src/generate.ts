@@ -423,10 +423,10 @@ function phpModel(
     .filter((getter) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(getter.field))
     .map((getter) => ` * @property-read ${comment(getter.doc)} $${getter.field}`)
     .join('\n');
-  let code = `/**${properties ? '\n' + properties + '\n *' : ''} Presence-aware ${plan.response ? 'response' : 'input'}; omitted fields throw when accessed. */\nfinal class ${plan.name} extends Model {\n    /** @param ${comment(plan.constructorDoc)} $values */\n    public function __construct(${plan.constructorType} $values${plan.defaultObject ? ' = []' : ''}, array $redactFields = []) { parent::__construct($values, [], ${plan.response ? 'true' : 'false'}, $redactFields, ['constraints' => ${validation === 'schema' ? 'true' : 'false'}] + ${expression}); }\n`;
+  let code = `/**${properties ? '\n' + properties + '\n *' : ''} Presence-aware ${plan.response ? 'response' : 'input'}; ${plan.response ? 'omitted optional fields return null' : 'omitted fields throw when accessed'}. */\nfinal class ${plan.name} extends Model {\n    /** @param ${comment(plan.constructorDoc)} $values */\n    public function __construct(${plan.constructorType} $values${plan.defaultObject ? ' = []' : ''}, array $redactFields = []) { parent::__construct($values, [], ${plan.response ? 'true' : 'false'}, $redactFields, ['constraints' => ${validation === 'schema' ? 'true' : 'false'}] + ${expression}); }\n`;
   for (const getter of plan.getters) {
     if (getter.method)
-      code += `    /** @return ${comment(getter.doc)}\n     * @throws SdkError When ${comment(getter.field)} is omitted; use has${getter.method.slice(3)}() or valueOrDefault().\n     */\n    public function ${getter.method}(): ${getter.type} { return $this->get(${php(getter.field)}); }\n    public function has${getter.method.slice(3)}(): bool { return $this->has(${php(getter.field)}); }\n`;
+      code += `    /** @return ${comment(getter.doc)}\n${plan.response ? '' : `     * @throws SdkError When ${comment(getter.field)} is omitted; use has${getter.method.slice(3)}() or valueOrDefault().\n`}     */\n    public function ${getter.method}(): ${getter.type} { return $this->get(${php(getter.field)}); }\n    public function has${getter.method.slice(3)}(): bool { return $this->has(${php(getter.field)}); }\n`;
   }
   return code + '}\n';
 }
@@ -1688,12 +1688,20 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
           `namespace ${ns};`,
         ),
       );
-    let code = `<?php\ndeclare(strict_types=1);\nnamespace ${ns};\n${hasPayloadReturns ? "require_once __DIR__ . '/SdkResponse.php';\n" : ''}\nfinal class Client {\n    private Runtime $runtime;\n`;
-    for (const group of groups) code += `    public readonly ${pascal(group)}Resource $${group};\n`;
-    code += `    public function __construct(ClientOptions $options${c.defaultBaseUrl !== undefined ? ' = new ClientOptions()' : ''}) {\n        $this->runtime = new Runtime(SchemaRegistry::source(), $options, true);\n`;
+    const resourceProperties = groups
+      .map((group) => ` * @property-read ${pascal(group)}Resource $${group}`)
+      .join('\n');
+    let code = `<?php\ndeclare(strict_types=1);\nnamespace ${ns};\n${hasPayloadReturns ? "require_once __DIR__ . '/SdkResponse.php';\n" : ''}\n/**\n${resourceProperties}\n */\nfinal class Client {\n    private Runtime $runtime;\n    private array $resourceCache = [];\n`;
+    code += `    public function __construct(ClientOptions $options${c.defaultBaseUrl !== undefined ? ' = new ClientOptions()' : ''}) {\n        $this->runtime = new Runtime(SchemaRegistry::source(), $options, true);\n    }\n`;
+    code += '    public function __get(string $name): mixed {\n        return match ($name) {\n';
     for (const group of groups)
-      code += `        $this->${group} = new ${pascal(group)}Resource($this->runtime);\n`;
-    code += '    }\n    public function close(): void { $this->runtime->close(); }\n';
+      code += `            ${php(group)} => $this->resourceCache[${php(group)}] ??= new ${pascal(group)}Resource($this->runtime),\n`;
+    code +=
+      "            default => throw SdkError::create('validation', 'Unknown client property ' . $name),\n        };\n    }\n";
+    code +=
+      "    public function __set(string $name, mixed $value): void { throw SdkError::create('validation', 'Client resource properties are read-only'); }\n";
+    code += `    public function __isset(string $name): bool { return in_array($name, [${groups.map(php).join(', ')}], true); }\n`;
+    code += '    public function close(): void { $this->runtime->close(); }\n';
     if (c.config.webhook)
       // Runtime and Webhooks delegate to the same verifier; Runtime retains client redaction.
       code += `${webhookDoc('string|array<array-key, string>')}    public function verifyWebhook(mixed $rawBody, mixed $headers, mixed $secrets, mixed $nowSeconds = null): array { return $this->runtime->verifyWebhook($rawBody, $headers, $secrets, $nowSeconds); }\n`;
@@ -3298,7 +3306,7 @@ function webhookGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: bo
       : standaloneWebhook
         ? `Use ${c.config.composer.namespace}\\Webhooks::verify($rawBody, $headers, $secrets, $nowSeconds = null) to verify without client options, a base URL or API credentials. Client::verifyWebhook delegates to the same verifier. The static method keeps mixed arguments so invalid inputs produce SDK error subclasses. `
         : 'The Webhooks name belongs to an API model; use Client::verifyWebhook for verification. Its mixed arguments keep invalid inputs within the SDK error guards. ';
-  const requirements = `${verifier}Call verifyWebhook(rawBody, headers, secrets, nowSeconds?) with original request bytes and ${headers}. This package uses ${w.format ?? 'hex'} HMAC-SHA256 signing and a ${w.toleranceSeconds}-second timestamp tolerance. ${w.format === 'standard-webhooks' ? 'Secrets must use the whsec_ prefix and canonical base64 encoding of exactly 32 key bytes.' : 'Use the signing secret supplied by the provider.'} Pass one secret string or an array of active secrets during rotation. nowSeconds is an optional Unix time override in seconds for deterministic tests; normally omit it. Millisecond-scale values raise an input error explaining the conversion. ${target === 'node' ? 'Node accepts original Buffer, Uint8Array or ArrayBuffer bytes. ' : ''}\n\n`;
+  const requirements = `${verifier}Call verifyWebhook(rawBody, headers, secrets, nowSeconds?) with original request bytes and ${headers}. This package uses ${w.format ?? 'hex'} HMAC-SHA256 signing and a ${w.toleranceSeconds}-second timestamp tolerance. ${w.format === 'standard-webhooks' ? 'Secrets must use the whsec_ prefix and canonical base64 encoding of exactly 32 key bytes.' : 'Use the signing secret supplied by the provider.'} Pass one secret string or an array of active secrets during rotation. nowSeconds is an optional Unix time override in seconds for deterministic tests; normally omit it. Millisecond-scale values raise an input error explaining the conversion. ${target === 'node' ? 'Node accepts original Buffer, Uint8Array or ArrayBuffer bytes. ' : 'PHP emits event classes for supported single object envelopes. Multi-variant or ambiguous event schemas verify and validate normally but return stdClass values (with arrays for JSON lists), even when known is true. Check the event name and payload fields before using these values; known does not guarantee a generated PHP class. '}\n\n`;
   const examples =
     target === 'node'
       ? `### Fetch\n\nThe request body must not have been consumed. Pass the SDK client and your configured signing secret to this helper:\n\n\`\`\`js
@@ -3451,6 +3459,11 @@ function runtimeGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: bo
     `\`\`\`${target === 'node' ? 'js' : 'php'}\n${errorClassExample(c, target)}\n\`\`\`\n\n` +
     bullets([
       'SdkError exposes the server message (message in Node, getMessage() in PHP), status, kind, outcome, retryAllowed and optional metadata; provider codes use code in Node and errorCode in PHP. Every error after key resolution exposes idempotencyKey, including not_sent failures; results expose meta.idempotencyKey. retryAfterMs records a valid server Retry-After in milliseconds.',
+      ...(node
+        ? []
+        : [
+            'PHP exposes SdkError::KIND_VALIDATION and the other KIND_* constants, plus OUTCOME_NOT_SENT, OUTCOME_RESPONSE and OUTCOME_UNKNOWN. getCode() is the HTTP status when available, otherwise 0; provider codes remain in errorCode. getMessage() appends HTTP status, provider code and requestId when available. Local validation, server validation and decode failures retain their existing ValidationError/ProtocolError classes and outcome metadata.',
+          ]),
       'outcome is not_sent, response or unknown. Reconcile an unknown mutation outcome with the provider and the original persisted idempotency key before resubmitting.',
       'Per-attempt timeouts use kind timeout (TimeoutError); overall deadlines use deadline (DeadlineError) with retryAllowed false. Connection refusal and DNS lookup failures use transport (ConnectionError), outcome not_sent and machine-readable codes. Node details.transportCode and PHP details[curlCode]/details[curlError] identify the underlying transport failure without including request URLs.',
       'HTTP 404 uses kind not_found; HTTP 500–599 uses server. Status is undefined in Node or null in PHP when no response is available. Provider-specific details remain unknown in TypeScript.',
@@ -3545,11 +3558,14 @@ function runtimeGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: bo
       'Optional properties distinguish omission from null.',
       'Portable digit/word pattern escapes retain their ASCII ECMAScript meaning in both targets, including inside character classes. Full request encoding checks run locally; server business effects require provider tests.',
     ]) +
+    (node
+      ? ''
+      : '\nPHP integer input strings, including ExactNumber tokens used for integer fields, must contain decimal integer digits with an optional minus sign. Decimal and exponent spellings such as 50.00 and 5e3 are rejected with an integer string validation error. Decimal fields retain exact fractional/exponent spellings; integer responses still decode integral JSON decimal/exponent tokens exactly.\n') +
     `\n### PHP inputs and models\n\n` +
     bullets([
       'PHP methods accept associative arrays or presence-aware typed input objects constructed from arrays: omit a key to omit it; include a key with null to clear only where permitted.',
-      'PHP models expose presence through has()/get() and generated hasField() methods. Use valueOrDefault("field", fallback) for optional values; explicit null stays null.',
-      'Response getters return generated entities for declared nested objects, lists of entities, and typed PHP arrays for dictionaries. Generated getters, get(), and property access return the same public values. Getters throw with the field name when a field is omitted.',
+      'PHP models expose presence through has() and generated hasField() methods. Use valueOrDefault("field", fallback) for optional values; explicit null stays null.',
+      'Response getters return generated entities for declared nested objects, lists of entities, and typed PHP arrays for dictionaries. Generated getters, get(), and property access return the same public values. Omitted optional response fields return null; their accessor types are nullable. has() distinguishes omission from present-null. Missing required response fields fail during decode with a ProtocolError; unknown property names raise a validation error. Omitted input fields still throw on access.',
       'toArray() and jsonSerialize() retain raw normalized objects and lists, including empty JSON objects. In object/array alternatives, PHP lists (including []) represent JSON arrays; use (object) [] for an empty JSON object.',
       'PHP response wrapper class names include status codes and, for tagged alternatives, branch positions. Nested entities reuse configured component names; inline entities use their owning model and property path.',
       'Getters normalize wire names: request_id becomes getRequestId() and hasRequestId(). Webhook class names use event names, for example WebhookEventPaymentIntentSucceeded. This replaces underscore getters and numbered webhook classes without aliases; update class checks and dictionary access when upgrading.',
@@ -3559,7 +3575,7 @@ function runtimeGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: bo
     bullets([
       'Node Model.toJSON() returns a defensive copy of the public JSON representation, with exact numbers represented as strings. Rebuilding from that copy treats these as JSON strings in number/string alternatives.',
       'To edit a Node input, retain the original input values, including ExactNumber instances, and construct a new model from the updated input. If editing a toJSON() copy, explicitly restore ExactNumber at fields intended to be JSON numbers in ambiguous alternatives.',
-      'PHP model accessors also return defensive copies; use toInputArray()/toInputValue() to edit and rebuild inputs while preserving exact numeric kinds.',
+      'PHP accessors memoize hydrated children: repeated reads of an entity return the same immutable instance, and lists/maps of entities use PHP copy-on-write arrays. Mutable untyped objects remain defensive copies. Use toInputArray()/toInputValue() to edit and rebuild inputs while preserving exact numeric kinds.',
     ]) +
     `\n## Schema helpers\n\n${node ? 'The package exports serialize(value, schema), new Model(value, schema), and redact(value, schema) for application-supplied schemas.' : 'The base Model constructor, Codec::normalize and Codec::redact accept application-supplied schemas. Codec::encode writes normalized values as JSON.'} These helpers use the package's local value execution rules and require no generator installation or schema registry service.\n\n` +
     bullets([
@@ -3570,6 +3586,7 @@ function runtimeGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: bo
             'Import verifyWebhook and webhook event types from the webhooks subpath to avoid loading operation descriptors. The package root and Client.verifyWebhook remain available.',
           ]
         : []),
+      'PHP client resource wrappers initialize on first access, retain their identity and remain read-only.',
       'PHP uses class-based Composer autoloading and individual class files; including vendor/autoload.php does not eagerly include SDK implementation files.',
       'For a null-only schema, use {"type":"null"}. The legacy form {"type":["null"]} also permits non-null values in Node; PHP rejects them.',
     ])

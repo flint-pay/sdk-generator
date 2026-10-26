@@ -5,6 +5,22 @@ require_once __DIR__ . '/SchemaAdapter.php';
 
 class SdkError extends \RuntimeException implements \JsonSerializable
 {
+    public const KIND_TRANSPORT = 'transport';
+    public const KIND_TIMEOUT = 'timeout';
+    public const KIND_AUTHENTICATION = 'authentication';
+    public const KIND_VALIDATION = 'validation';
+    public const KIND_RATE_LIMIT = 'rate_limit';
+    public const KIND_NOT_FOUND = 'not_found';
+    public const KIND_CONFLICT = 'conflict';
+    public const KIND_SERVER = 'server';
+    public const KIND_API = 'api';
+    public const KIND_PROTOCOL = 'protocol';
+    public const KIND_CANCELLED = 'cancelled';
+    public const KIND_DEADLINE = 'deadline';
+    public const KIND_DESTINATION = 'destination';
+    public const OUTCOME_NOT_SENT = 'not_sent';
+    public const OUTCOME_RESPONSE = 'response';
+    public const OUTCOME_UNKNOWN = 'unknown';
     public readonly ?int $status;
     public ?string $idempotencyKey = null;
     public int|float|null $retryAfterMs = null;
@@ -21,7 +37,17 @@ class SdkError extends \RuntimeException implements \JsonSerializable
         ?\Throwable $previous = null,
         public readonly ?string $raw = null,
     ) {
-        parent::__construct($message, 0, $previous);
+        if (isset($meta['status'])) {
+            $context = ['HTTP ' . $meta['status']];
+            if ($errorCode !== null) {
+                $context[] = 'code ' . $errorCode;
+            }
+            if (isset($meta['requestId'])) {
+                $context[] = 'requestId ' . $meta['requestId'];
+            }
+            $message .= ' [' . implode(', ', $context) . ']';
+        }
+        parent::__construct($message, $meta['status'] ?? 0, $previous);
         $this->status = $meta['status'] ?? null;
         $this->idempotencyKey = $meta['idempotencyKey'] ?? null;
     }
@@ -1209,6 +1235,9 @@ final class EventStream implements \IteratorAggregate
 
 class Model implements \JsonSerializable
 {
+    private array $hydrated = [];
+    private array $copyOnRead = [];
+    private readonly bool $response;
     protected readonly mixed $values;
     private readonly mixed $inputValues;
     private readonly array $codec;
@@ -1222,6 +1251,7 @@ class Model implements \JsonSerializable
         array $redactFields = [],
         ?array $compiled = null,
     ) {
+        $this->response = $response;
         $this->schema = $schema;
         $codec = $compiled ?? \SdkNamespace\Internal\SchemaAdapter::compile($schema);
         $this->codec = $codec;
@@ -1239,7 +1269,8 @@ class Model implements \JsonSerializable
         ]);
         // Store public values: unwrap nested models and exact wire-number wrappers,
         // while retaining the normalized distinction between objects and lists.
-        $unwrap = function (mixed $value, int $depth = 0) use (&$unwrap): mixed {
+        $hasWireNumbers = false;
+        $unwrap = function (mixed $value, int $depth = 0) use (&$unwrap, &$hasWireNumbers): mixed {
             if ($depth > 256) {
                 Codec::fail(
                     'value',
@@ -1250,6 +1281,7 @@ class Model implements \JsonSerializable
                 return $unwrap($value->jsonSerialize(), $depth + 1);
             }
             if ($value instanceof RawNumber) {
+                $hasWireNumbers = true;
                 return $value->value;
             }
             if (is_array($value)) {
@@ -1283,8 +1315,10 @@ class Model implements \JsonSerializable
             }
             return $value;
         };
-        $this->inputValues = $preserveNumbers($normalized);
         $this->values = $unwrap($normalized);
+        // Most response trees have identical public and input representations.
+        // Share the privately owned tree unless exact wire numbers need wrappers.
+        $this->inputValues = $hasWireNumbers ? $preserveNumbers($normalized) : $this->values;
     }
     /** @internal Validate the serialized public-value graph without invoking schema adapters. */
     public static function assertRepresentation(mixed $plan, int $depth = 0): void
@@ -1414,9 +1448,59 @@ class Model implements \JsonSerializable
             ? property_exists($this->values, $field)
             : is_array($this->values) && array_key_exists($field, $this->values);
     }
+    private static function declaresField(
+        array $codec,
+        string $field,
+        array $definitions = [],
+        int $depth = 0,
+    ): bool {
+        if ($depth > 256) {
+            throw new \InvalidArgumentException('Codec nesting limit');
+        }
+        $definitions = $codec['definitions'] ?? $definitions;
+        if (isset($codec['fields'][$field])) {
+            return true;
+        }
+        if (isset($codec['reference'])) {
+            return self::declaresField(
+                $definitions[$codec['reference']],
+                $field,
+                $definitions,
+                $depth + 1,
+            );
+        }
+        foreach (['every', 'some', 'exactlyOne'] as $group) {
+            foreach ($codec[$group] ?? [] as $branch) {
+                if (self::declaresField($branch, $field, $definitions, $depth + 1)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+    private static function containsMutableObject(mixed $value): bool
+    {
+        if ($value instanceof \stdClass) {
+            return true;
+        }
+        if (is_array($value)) {
+            foreach ($value as $child) {
+                if (self::containsMutableObject($child)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
     public function get(string $field): mixed
     {
         if (!$this->has($field)) {
+            if (!self::declaresField($this->codec, $field)) {
+                throw SdkError::create('validation', 'Unknown model property ' . $field);
+            }
+            if ($this->response) {
+                return null;
+            }
             throw SdkError::create(
                 'validation',
                 'Field ' .
@@ -1424,11 +1508,21 @@ class Model implements \JsonSerializable
                     ' was omitted; use has() or valueOrDefault() for optional fields.',
             );
         }
-        $value = is_object($this->values) ? $this->values->{$field} : $this->values[$field];
-        $plan = $this->representation['fields'][$field] ?? ($this->representation['extra'] ?? null);
-        return $plan === null
-            ? self::copyValue($value)
-            : self::hydrate($value, $plan, $this->redactFields);
+        if (!array_key_exists($field, $this->hydrated)) {
+            $value = is_object($this->values) ? $this->values->{$field} : $this->values[$field];
+            $plan =
+                $this->representation['fields'][$field] ?? ($this->representation['extra'] ?? null);
+            $this->hydrated[$field] =
+                $plan === null
+                    ? self::copyValue($value)
+                    : self::hydrate($value, $plan, $this->redactFields);
+            $this->copyOnRead[$field] = self::containsMutableObject($this->hydrated[$field]);
+        }
+        // PHP arrays use copy-on-write; immutable model children can be shared.
+        // Untyped objects remain defensive copies so callers cannot mutate the cache.
+        return $this->copyOnRead[$field]
+            ? self::copyValue($this->hydrated[$field])
+            : $this->hydrated[$field];
     }
     /** Return the fallback only for omission; an explicit null remains null. */
     public function valueOrDefault(string $field, mixed $default = null): mixed
@@ -1722,69 +1816,67 @@ final class Codec
     }
     public static function parse(string $text, bool $preserveNumbers = false): mixed
     {
-        // This tree supplies token kinds only; rounded values are never returned.
-        $original = json_decode($text, false, 512, JSON_THROW_ON_ERROR);
+        // Validate the original bytes before rewriting numeric tokens. Discard
+        // that temporary tree before decoding the exact representation.
+        if (!function_exists('json_validate') || !json_validate($text)) {
+            json_decode($text, false, 512, JSON_THROW_ON_ERROR);
+        }
+        // Scan validated JSON in linear time. Skip string contents, including
+        // escaped quotes/backslashes, without depending on PCRE resource limits.
+        // Copy unchanged spans only when a token actually needs rewriting.
         $encoded = '';
-        $quoted = false;
-        $escaped = false;
+        $copied = 0;
+        $offset = 0;
         $length = strlen($text);
-        for ($i = 0; $i < $length; ) {
-            $c = $text[$i];
-            if ($quoted) {
-                $encoded .= $c;
-                $i++;
-                if ($escaped) {
-                    $escaped = false;
-                } elseif ($c === '\\') {
-                    $escaped = true;
-                } elseif ($c === '"') {
-                    $quoted = false;
+        while ($offset < $length) {
+            $offset += strcspn($text, '"-0123456789', $offset);
+            if ($offset === $length) {
+                break;
+            }
+            $start = $offset;
+            if ($text[$offset] === '"') {
+                ++$offset;
+                // Escape genuine strings beginning with our private marker.
+                if (substr_compare($text, '\u0000', $offset, 6) === 0) {
+                    $encoded .= substr($text, $copied, $offset - $copied) . '\u0000';
+                    $copied = $offset;
                 }
+                do {
+                    $offset += strcspn($text, "\"\\", $offset);
+                    $escaped = $text[$offset] === '\\';
+                    $offset += $escaped ? 2 : 1;
+                } while ($escaped);
                 continue;
             }
-            if ($c === '"') {
-                $quoted = true;
-                $encoded .= $c;
-                $i++;
-                continue;
+            $offset += strspn($text, '0123456789.eE+-', $offset);
+            $token = substr($text, $start, $offset - $start);
+            $safe =
+                strcspn($token, '.eE') === strlen($token) &&
+                abs((float) $token) <= 9007199254740991;
+            if (!$safe) {
+                $encoded .= substr($text, $copied, $start - $copied) . '"\u0000' . $token . '"';
+                $copied = $offset;
             }
-            if ($c === '-' || ctype_digit($c)) {
-                preg_match(
-                    '/\G-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/',
-                    $text,
-                    $matches,
-                    0,
-                    $i,
-                );
-                $token = $matches[0];
-                $safe =
-                    preg_match('/^-?(?:0|[1-9]\d*)$/', $token) &&
-                    abs((float) $token) <= 9007199254740991;
-                $encoded .= $safe ? $token : json_encode($token, JSON_THROW_ON_ERROR);
-                $i += strlen($token);
-                continue;
-            }
-            $encoded .= $c;
-            $i++;
         }
-        $parsed = json_decode($encoded, false, 512, JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING);
-        return $preserveNumbers ? self::markNumbers($parsed, $original) : $parsed;
+        $encoded .= substr($text, $copied);
+        $parsed = json_decode($encoded, false, 512, JSON_THROW_ON_ERROR);
+        self::restoreNumbers($parsed, $preserveNumbers);
+        return $parsed;
     }
-    private static function markNumbers(mixed $value, mixed $original): mixed
+    private static function restoreNumbers(mixed &$value, bool $preserveNumbers): void
     {
-        if ((is_int($original) || is_float($original)) && is_string($value)) {
-            return new ParsedNumber($value);
-        }
-        if (is_array($value)) {
-            foreach ($value as $key => $child) {
-                $value[$key] = self::markNumbers($child, $original[$key]);
+        if (is_string($value) && str_starts_with($value, "\0")) {
+            $token = substr($value, 1);
+            $value =
+                str_starts_with($token, "\0") || !$preserveNumbers
+                    ? $token
+                    : new ParsedNumber($token);
+        } elseif (is_array($value) || $value instanceof \stdClass) {
+            foreach ($value as &$child) {
+                self::restoreNumbers($child, $preserveNumbers);
             }
-        } elseif (is_object($value)) {
-            foreach ($value as $key => $child) {
-                $value->{$key} = self::markNumbers($child, $original->{$key});
-            }
+            unset($child);
         }
-        return $value;
     }
     public static function plainNumbers(mixed $value): mixed
     {
@@ -2772,7 +2864,7 @@ final class Codec
             foreach ($shapes as [$codec]) {
                 $pattern =
                     $codec['value']['kind'] === 'exact-integer'
-                        ? '/^-?(?:0|[1-9]\d*)$/'
+                        ? '/^-?(?:0|[1-9]\d*)$/D'
                         : '/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/';
                 if (
                     self::exactValue($codec['value']) &&
@@ -3299,6 +3391,14 @@ final class Codec
         ) {
             self::fail($path, "expected $type; received a JSON string");
         }
+        if (
+            !$response &&
+            $type === 'integer' &&
+            $value instanceof ExactNumber &&
+            !preg_match('/^-?(?:0|[1-9]\d*)$/D', $value->value)
+        ) {
+            self::fail($path, 'expected an integer string');
+        }
         $numberToken = $value instanceof ParsedNumber ? $value->value : null;
         if ($value instanceof ParsedNumber) {
             if ($type === null) {
@@ -3359,10 +3459,15 @@ final class Codec
                 $token = is_int($value) ? (string) $value : $value;
                 $pattern =
                     $type === 'integer'
-                        ? '/^-?(?:0|[1-9]\d*)$/'
+                        ? '/^-?(?:0|[1-9]\d*)$/D'
                         : '/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/';
                 if (!is_string($token) || !preg_match($pattern, $token)) {
-                    self::fail($path, 'expected an exact numeric string');
+                    self::fail(
+                        $path,
+                        $type === 'integer'
+                            ? 'expected an integer string'
+                            : 'expected an exact numeric string',
+                    );
                 }
                 if (!$response || $matching) {
                     self::numericConstraints($token, $s, $path, $validateConstraints || $matching);

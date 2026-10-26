@@ -313,7 +313,8 @@ echo json_encode($results,JSON_THROW_ON_ERROR);
       assert.deepEqual(
         { ...row, events: undefined },
         {
-          message: c.message,
+          message:
+            c.message + ` [HTTP ${c.status ?? 200}, requestId req_00HAPCA3GDPS4T064K3TRG20D0]`,
           kind: 'protocol',
           outcome: 'response',
           retryAllowed: false,
@@ -450,7 +451,7 @@ catch(SdkError $e){
     { encoding: 'utf8' },
   );
   assert.deepEqual(JSON.parse(output), [
-    schemaMessage,
+    schemaMessage + ' [HTTP 200]',
     'protocol',
     'response',
     false,

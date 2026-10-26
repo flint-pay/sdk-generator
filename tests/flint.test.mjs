@@ -526,7 +526,7 @@ $c=new Example\Flint\Client(new Example\Flint\ClientOptions('https://example.inv
 try{$c->paymentIntents->get(['payment_intent_id'=>'pi_1']);exit(1);}catch(Example\Flint\SdkError $e){echo json_encode([$e->getMessage(),$e->status,$e->kind,$e->errorCode]);}
 `;
   assert.deepEqual(JSON.parse(run('php', ['-r', php, join(output, 'php'), body], dir)), [
-    'Payment intent pi_1 not found',
+    'Payment intent pi_1 not found [HTTP 404, code NOT_FOUND]',
     404,
     'not_found',
     'NOT_FOUND',

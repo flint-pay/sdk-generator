@@ -149,7 +149,12 @@ foreach (['provider', 'closureString', 'closureCredential'] as $form) {
             same($error->outcome, 'response', $c['name']);
         }
         if (isset($c['message'])) {
-            same($error->getMessage(), $c['message'], $c['name']);
+            same(
+                $error->getMessage(),
+                $c['message'] .
+                    ($c['name'] === 'invalidation failure is sanitized' ? ' [HTTP 401]' : ''),
+                $c['name'],
+            );
         }
         if (isset($c['error'])) {
             same($error->retryAllowed, false, $c['name']);

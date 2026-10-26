@@ -101,7 +101,7 @@ if (!$p instanceof Example\Entities\Payment || !$p->getChildren()[0] instanceof 
 if ($p->getRequestId() !== 'req_00VZKVWV7E7ECWMRV2HQKH1E8M' || $p->getMetadata()[0] !== 'zero' || $p->getAmount() !== '9007199254740993') throw new Exception('values');
 if ($p->get('children')[0]->getId() !== 'child' || $p->children[0]->getId() !== 'child') throw new Exception('consistent access');
 if (!$p->hasNote() || $p->getNote() !== null || $p->getChildren()[0]->hasNote()) throw new Exception('presence');
-try { $p->getChildren()[0]->getNote(); throw new Exception('missing accepted'); } catch (Example\Entities\SdkError $e) {}
+if ($p->getChildren()[0]->getNote() !== null) throw new Exception('optional read');
 if (!$p->toArray()['related'] instanceof stdClass || !$p->getChildren()[0]->jsonSerialize()->metadata instanceof stdClass) throw new Exception('raw objects');
 if ($p->getChildren()[0]->getMetadata() !== []) throw new Exception('empty map');
 ob_start(); var_dump($p); $debug=ob_get_clean(); if (str_contains($debug,'synthetic-secret')) throw new Exception('redaction');
@@ -418,6 +418,10 @@ test('verified webhooks hydrate nested entities and expose their types to PHPSta
       },
     },
   });
+  assert.match(
+    readFileSync(join(f.output, 'php/RUNTIME.md'), 'utf8'),
+    /Multi-variant or ambiguous event schemas.*stdClass.*known is true/,
+  );
   const file = join(f.dir, 'webhook.php');
   writeFileSync(
     file,
@@ -483,7 +487,7 @@ test('reference-site annotations reuse the configured entity without erasing nes
   const wrapper = compileSdkContract(f.contract).plan.php.models.find(
     (model) => model.name === 'PaymentsRetrieveResponse200',
   );
-  assert.equal(wrapper.getters.find((getter) => getter.field === 'data').doc, 'Payment');
+  assert.equal(wrapper.getters.find((getter) => getter.field === 'data').doc, '?Payment');
   const child = { type: 'object', properties: { id: { type: 'string' } } };
   const graph = phpRepresentations({ InvoicePaymentPolicy: child }, {});
   assert.deepEqual(

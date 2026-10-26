@@ -223,11 +223,13 @@ With `requests.style: "object"`, methods take one input object with path/query/h
 - Optional fields may be omitted.
 - Explicit null is accepted only where the field is nullable. It does not mean the server clears a value.
 - PHP inputs omit an array key for omission and use `['field' => null]` for explicit null.
-- PHP models provide `has()`, presence methods such as `hasDescription()`, and `get()`. Getters, `get()` and magic properties throw a field-specific error for a missing optional field.
+- PHP models provide `has()`, presence methods such as `hasDescription()`, and `get()`. Response getters, `get()` and magic properties return null for an omitted optional field, with nullable accessor types. `has()` distinguishes omission from present-null. Missing required fields fail during response decoding with `ProtocolError`; unknown property names fail with a validation error. Omitted input fields still throw when read.
 - PHP `valueOrDefault('description', 'fallback')` returns the fallback only when the field is omitted; explicit null stays null. Its name avoids the `getField()` namespace, so a wire field such as `orDefault` keeps its `getOrDefault()` getter.
 - With `validation: "schema"`, object property bounds count encoded keys, including explicit nulls and additional properties, but not omitted optional fields. Response decoding stays tolerant of these business bounds.
 
 ## Errors and retries
+
+PHP provides `SdkError::KIND_*` constants (for example `KIND_PROTOCOL`) and `OUTCOME_NOT_SENT`, `OUTCOME_RESPONSE`, `OUTCOME_UNKNOWN`. `getCode()` returns the HTTP status when available, otherwise 0; provider codes use `errorCode`. Server-originated messages append the HTTP status, provider code and request ID when available. Existing per-kind error subclasses are unchanged.
 
 Every error after a call resolves an idempotency key exposes `error.idempotencyKey` (Node) or `$error->idempotencyKey` (PHP), including validation and cancellation before sending. `WithResponse` results expose `meta.idempotencyKey` (PHP: `$result->meta['idempotencyKey']`). Keys are included in error inspection. Persist your key across process restarts and application resubmissions; automatically generated UUID v4 keys, including any configured prefix, last for one SDK call and are reused on every attempt.
 
@@ -655,7 +657,9 @@ Response getters return generated entities for declared nested objects, lists of
 - Unknown or ambiguous alternatives keep their raw fallback representation. Check discriminator values before using a known variant.
 - `toArray()` and `jsonSerialize()` return normalized JSON objects and lists, including empty objects.
 - In object/array alternatives, PHP lists (including `[]`) are JSON arrays; use `(object) []` for an empty JSON object.
-- Accessors (`get()`, magic and typed getters, `toArray()`, `jsonSerialize()`, `toInputArray()`, `toInputValue()`) return defensive copies; editing them does not change the model. To change an input, edit a `toInputArray()` or `toInputValue()` copy and construct a new model. These input exports preserve exact numeric kinds in ambiguous unions.
+- Getters memoize hydrated children: repeated entity reads return the same immutable instance, and lists/maps of entities use PHP copy-on-write arrays. Mutable untyped objects and raw exports (`toArray()`, `jsonSerialize()`, `toInputArray()`, `toInputValue()`) remain defensive copies; editing them does not change the model. To change an input, edit a `toInputArray()` or `toInputValue()` copy and construct a new model. These input exports preserve exact numeric kinds in ambiguous unions.
+
+PHP integer input strings and `ExactNumber` tokens for integer fields must use integer spelling, such as `"5000"`; `"50.00"` and `"5e3"` are rejected with an “integer string” error. Decimal fields retain exact fractional/exponent spellings. Integral decimal/exponent tokens in integer responses still decode exactly. Client resource wrappers initialize on first access and remain read-only.
 
 ### Schema-taking helpers
 

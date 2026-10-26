@@ -149,7 +149,8 @@ $input=['body'=>['amount'=>'100','currency'=>'USD','reference'=>'order']];
 foreach([$input,new PaymentsCreateInput($input)] as $value){
  $data=$c->payments->create($value,new RequestOptions(idempotencyKey:'saved-key',maxAttempts:1))->data;
  if($data->hasDescription() || $data->valueOrDefault('description','fallback')!=='fallback')throw new Exception('omission');
- try{$data->getDescription();throw new Exception('did not throw');}catch(SdkError $e){if(!str_contains($e->getMessage(),'description'))throw $e;}
+ if($data->getDescription()!==null || $data->description!==null)throw new Exception('optional read');
+ try{$data->descripton;throw new Exception('did not throw');}catch(SdkError $e){if(!str_contains($e->getMessage(),'Unknown model property descripton'))throw $e;}
 }
 $model=new Example\\Payments\\PaymentsCreateResponse201(['id'=>'p_1','amount'=>'100','status'=>'pending','description'=>null]);
 if(!$model->hasDescription() || $model->valueOrDefault('description','fallback')!==null)throw new Exception('null');
