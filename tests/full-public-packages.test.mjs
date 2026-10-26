@@ -1,3 +1,4 @@
+import { assertDocumentedModelExports } from './helpers/docs-exports.mjs';
 import { npmPackResult } from '../dist/distribution.js';
 import { measureSdkWeight } from './helpers/sdk-weight.mjs';
 import { measureWebhookTypes } from './helpers/webhook-types.mjs';
@@ -74,6 +75,7 @@ assert.deepEqual(preview(restored,${JSON.stringify(output)}).changes,[],'full ex
 `,
       );
       run(process.execPath, [script]);
+      assertDocumentedModelExports(join(output, 'node'));
       const summary = JSON.parse(readFileSync(join(dir, 'summary.json')));
       const inventory = JSON.parse(readFileSync(join(fixture, 'full-inventory.json')));
       assert.deepEqual(

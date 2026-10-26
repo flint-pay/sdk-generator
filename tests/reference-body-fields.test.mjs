@@ -746,7 +746,12 @@ for (const keyword of ['oneOf', 'anyOf'])
         assert.match(first, /\| `mode` \| Required \| string \| Parent mode\./);
         assert.match(first, /Values: `"first"`\./);
         assert.match(first, /\| `optional` \| Optional \| boolean \|/);
-        assert.match(first, /\| `nested` \| Optional \| \[Child\]\(MODELS\.md#child\) \|/);
+        assert.match(
+          first,
+          target === 'node'
+            ? /\| `nested` \| Optional \| \[ChildInput\]\(MODELS\.md#childinput\) \|/
+            : /\| `nested` \| Optional \| \[Child\]\(MODELS\.md#child\) \|/,
+        );
         assert.doesNotMatch(first, /responseOnly/);
         const second = reference
           .split(`#### api.createValue body ${keyword} variant 2 fields`)[1]

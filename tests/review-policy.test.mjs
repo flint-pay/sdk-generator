@@ -472,13 +472,20 @@ Object.values((await c.api.read()).data).map(value=>value.toUpperCase());`;
   // declared keys. Runtime guarantees must still detect this breaking change.
   assert.equal(changed.status, 0, changed.stdout + changed.stderr);
   const { Client } = await import(pathToFileURL(join(f.out, 'node/index.js')).href);
+  let body = '{"flag":"safe"}';
   const client = new Client({
     baseUrl: 'https://example.invalid',
-    transport: async () => new Response('{"flag":123}', { status: 201 }),
+    transport: async () => new Response(body, { status: 201 }),
   });
-  const values = Object.values((await client.api.read()).data);
-  assert.deepEqual(values, [123]);
-  assert.throws(() => values.map((value) => value.toUpperCase()), TypeError);
+  assert.deepEqual(Object.values((await client.api.read()).data), ['safe']);
+  body = '{"flag":123}';
+  // An extra key selects the dictionary member in the public union. Its string
+  // promise must be certified even though the new closed schema accepts this body.
+  await assert.rejects(client.api.read(), (error) => {
+    assert.equal(error.kind, 'protocol');
+    assert.equal(error.raw, '{"flag":123}');
+    return true;
+  });
   assert.throws(() => prepareRelease(f.out, join(f.dir, 'patch')), /major/);
   f.cfg.version = '2.0.0';
   emit(f);

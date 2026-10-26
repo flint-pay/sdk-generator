@@ -22,6 +22,20 @@ test('open enum certificates retain scalar promises without repeated autocomplet
   assert.equal(certifies('future', closed), false);
   const objects = plan('{ foo: string } | { bar: number }');
   assert.equal(certifies({ foo: 'safe', bar: 'invalid' }, objects), false);
+  const dictionary = plan('Record<string, string> | {bar:number}');
+  assert.equal(certifies({ foo: 'safe', bar: 'allowed-extra' }, dictionary), true);
+  assert.equal(certifies({ bar: 42 }, dictionary), true);
+  assert.equal(certifies({ foo: 'safe', bar: 42 }, dictionary), false);
+  assert.equal(certifies({ foo: 'safe', bar: { invalid: true } }, dictionary), false);
+  assert.equal(certifies({ foo: 42, bar: 42 }, dictionary), false);
+  const indexedShape = plan('{foo:string;[key:string]:unknown}|{bar:number}');
+  assert.equal(certifies({ bar: 42 }, indexedShape), true);
+  assert.equal(certifies({ foo: 'safe', future: true }, indexedShape), true);
+  assert.equal(certifies({ bar: 42, future: true }, indexedShape), false);
+  const typedDictionary = plan('Record<string, number> | {foo:string;bar:string}');
+  assert.equal(certifies({ foo: 42, bar: 42 }, typedDictionary), true);
+  assert.equal(certifies({ foo: 'safe', bar: 'safe' }, typedDictionary), true);
+  assert.equal(certifies({ foo: 42, bar: 'invalid' }, typedDictionary), false);
   const shape = '{ content: { foo: string; bar: number; nested: { value: string } } }';
   const aliases = publicTypePlanner({ First: shape, Second: shape })('First | Second');
   const valid = { content: { foo: 'safe', bar: 42, nested: { value: 'safe' } } };
@@ -146,7 +160,19 @@ function adversaries(sample, knownKeys) {
       parent[path.at(-1)] = replacement;
       values.push(copy);
     };
-    for (const wrong of [null, 42, 'invalid', [], {}, { kind: 'future', foo: 42 }]) replace(wrong);
+    for (const wrong of [
+      null,
+      42,
+      'invalid',
+      '+1',
+      '01',
+      '-01',
+      '1\n',
+      [],
+      {},
+      { kind: 'future', foo: 42 },
+    ])
+      replace(wrong);
     if (value && typeof value === 'object' && !Array.isArray(value)) {
       replace({ ...value, kind: 'future', foo: 42, bar: 'invalid' });
       replace({ ...value, transportCode: 42 });
@@ -180,6 +206,10 @@ for (const provider of ['library', 'flint']) {
       const alternative = { oneOf: [first, second] };
       const shapes = {
         Choice: alternative,
+        OpenChoice: { oneOf: [{ ...first, additionalProperties: true }, second] },
+        TypedDictionaryChoice: {
+          oneOf: [{ type: 'object', additionalProperties: { type: 'string' } }, second],
+        },
         Nested: object({ content: alternative }),
         ArrayChoice: {
           oneOf: [
@@ -370,6 +400,12 @@ for (const provider of ['library', 'flint']) {
         transport: async () => new Response(JSON.stringify(body)),
       });
       for (const value of adversaries(root.explored.sample, root.explored.knownKeys)) {
+        // Every mutation has the original valid value at the same path as its
+        // acceptance control. Runtime rejection cannot masquerade as safety.
+        body = root.explored.sample;
+        const control = await runtime.request(operation.id);
+        for (const p of accepted.filter((p) => p.root === index))
+          assert.doesNotThrow(() => consumer[p.name](control.data), `${root.name} valid control`);
         body = value;
         let result;
         try {

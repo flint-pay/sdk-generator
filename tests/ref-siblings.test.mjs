@@ -157,7 +157,9 @@ test('description siblings retain named identity despite structurally identical 
   for (const target of ['node', 'php']) {
     assert.match(
       files.get(target + '/MODELS.md'),
-      /\| `annotated` \| Required \| \[SecondRecord\]\(MODELS.md#secondrecord\) \| Record at this field\./,
+      target === 'node'
+        ? /\| `annotated` \| Required \| \[FirstRecord\]\(MODELS.md#firstrecord\) \| Record at this field\./
+        : /\| `annotated` \| Required \| \[SecondRecord\]\(MODELS.md#secondrecord\) \| Record at this field\./,
     );
     assert.match(
       files.get(target + '/MODELS.md'),
@@ -172,7 +174,8 @@ test('description siblings retain named identity despite structurally identical 
     files.get('php/src/classes/ApiSendValueResponse200.php'),
     /getOther\(\): FirstRecord/,
   );
-  assert.match(renderedDeclarations(files), /"annotated": SecondRecord/);
+  assert.match(renderedDeclarations(files), /"annotated": FirstRecord;/);
+  assert.match(renderedDeclarations(files), /"annotated": SecondRecordInput;/);
   const value = { plain: { id: 'plain' }, annotated: { id: 'field' }, other: { id: 'other' } };
   await fixtures(i, [
     accepted('named records', value),

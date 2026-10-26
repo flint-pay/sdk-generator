@@ -1220,6 +1220,20 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
   const targets = c.config.targets ?? ['node', 'php'];
   const groups = [...new Set(c.operations.map((o) => o.resource))].sort();
   const models = targetPlan.node.models;
+  const modelExports = Object.fromEntries(
+    Object.entries(models).map(([name, model]) => [
+      name,
+      {
+        output: model.outputAlias ?? name,
+        ...(model.inputReachable !== false ? { input: name + 'Input' } : {}),
+      },
+    ]),
+  );
+  const inputModelNames = Object.fromEntries(
+    Object.entries(modelExports).flatMap(([name, entry]) =>
+      entry.input ? [[name, entry.input]] : [],
+    ),
+  );
   const payloadReturns = targetPlan.responseReturns ?? {};
   const hasPayloadReturns = Object.keys(payloadReturns).length > 0;
   const reserve = reservePublicSymbols(
@@ -1510,12 +1524,13 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       const prefix = pascal(op.resource) + pascal(op.method) + 'Response';
       declarations += `export type ${prefix}Known = ${known.type};\nexport declare function is${prefix}Known(value: ${responseType(op)}): value is ${prefix}Known;\n`;
       const knownCode = descriptorOutput.codec(prefix, { ...known.codecs[0]!, some: known.codecs });
+      const certificateName = '_sdk' + prefix + 'Certificate';
       put(
         `predicates/${prefix}.js`,
         knownCode +
-          `import { isKnownCodec } from '../runtime.js';\nexport function is${prefix}Known(value) { const prepared = codec(); return prepared.some.some(item => isKnownCodec(value, {...item, definitions: prepared.definitions}, ${js(known.certificate)})); }\n`,
+          `import { isKnownCodec } from '../runtime.js';\nconst certificate = ${js(known.certificate)};\nexport function is${prefix}Known(value) { const prepared = codec(); return prepared.some.some(item => isKnownCodec(value, {...item, definitions: prepared.definitions}, certificate)); }\n`,
       );
-      code += `export function is${prefix}Known(value) { const prepared = _sdkModelCodec(${js(prefix)}); return prepared.some.some(codec => isKnownCodec(value, {...codec, definitions: prepared.definitions}, ${js(known.certificate)})); }\n`;
+      code += `const ${certificateName} = ${js(known.certificate)};\nexport function is${prefix}Known(value) { const prepared = _sdkModelCodec(${js(prefix)}); return prepared.some.some(codec => isKnownCodec(value, {...codec, definitions: prepared.definitions}, ${certificateName})); }\n`;
     }
     for (const [name, model] of Object.entries(targetPlan.node.models)) {
       if (model.inputReachable === false) continue;
@@ -1963,10 +1978,13 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     );
     files.set(
       `${target}/MODELS.md`,
-      modelReference({
-        ...c,
-        models: Object.fromEntries(Object.keys(models).map((name) => [name, c.models[name]!])),
-      }),
+      modelReference(
+        {
+          ...c,
+          models: Object.fromEntries(Object.keys(models).map((name) => [name, c.models[name]!])),
+        },
+        target === 'node' ? modelExports : undefined,
+      ),
     );
     files.set(
       `${target}/REFERENCE.md`,
@@ -1983,7 +2001,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
                         .join(', ') || 'none'
                     }. Params contain flat body fields and query/header fields.\n\n`
                   : ''
-              }${referenceType(positional(op) ? 'Canonical input schema (for configuration examples and HTTP fixtures)' : 'Input', target === 'php' ? targetPlan.documentation[op.id]!.phpInput : targetPlan.documentation[op.id]!.nodeInput, target)}${referenceType(payloadReturns[op.id] ? 'Returned payload' : 'Response body (inside Result.data)', target === 'php' ? (payloadReturns[op.id]?.php ?? targetPlan.documentation[op.id]!.phpOutput) : (payloadReturns[op.id]?.nodeDocumentation ?? targetPlan.documentation[op.id]!.nodeOutput), target)}${fieldTable(inputSchema(op, c.config.apiVersion, c), c.definitions ?? c.models, `${op.resource}.${op.method} input`)}${bodyReference(op, c.definitions ?? c.models)}${operationGuidance(c, op)}${op.idempotency ? `Idempotency header: ${op.idempotency.header}; retention: ${op.idempotency.retention.replace(/[.!?]+$/, '')}; scope: ${op.idempotency.scope.replace(/[.!?]+$/, '')}.\n\n` : ''}${op.aliases?.length ? `Deprecated aliases: ${op.aliases.join(', ')} (same wire operation).\n\n` : ''}[Example](examples/${op.resource}-${op.method}.${target === 'node' ? 'mjs' : 'php'})\n\n${convenienceReference(c, op, target)}`,
+              }${referenceType(positional(op) ? 'Canonical input schema (for configuration examples and HTTP fixtures)' : 'Input', target === 'php' ? targetPlan.documentation[op.id]!.phpInput : targetPlan.documentation[op.id]!.nodeInput, target)}${referenceType(payloadReturns[op.id] ? 'Returned payload' : 'Response body (inside Result.data)', target === 'php' ? (payloadReturns[op.id]?.php ?? targetPlan.documentation[op.id]!.phpOutput) : (payloadReturns[op.id]?.nodeDocumentation ?? targetPlan.documentation[op.id]!.nodeOutput), target)}${fieldTable(inputSchema(op, c.config.apiVersion, c), c.definitions ?? c.models, `${op.resource}.${op.method} input`, true, target === 'node' ? inputModelNames : undefined)}${bodyReference(op, c.definitions ?? c.models, target === 'node' ? inputModelNames : undefined)}${operationGuidance(c, op)}${op.idempotency ? `Idempotency header: ${op.idempotency.header}; retention: ${op.idempotency.retention.replace(/[.!?]+$/, '')}; scope: ${op.idempotency.scope.replace(/[.!?]+$/, '')}.\n\n` : ''}${op.aliases?.length ? `Deprecated aliases: ${op.aliases.join(', ')} (same wire operation).\n\n` : ''}[Example](examples/${op.resource}-${op.method}.${target === 'node' ? 'mjs' : 'php'})\n\n${convenienceReference(c, op, target)}`,
           )
           .join('\n'),
     );

@@ -2050,3 +2050,240 @@ export function webhook(v:VerifiedWebhook){if(v.known){if('foo' in v.event.data)
     if (!valid) assert.equal(verified.reason, 'unmatched_envelope');
   }
 });
+
+for (const extra of [true, { type: 'string' }]) {
+  test(`open union payloads and error details retain valid index-signature fields (${JSON.stringify(extra)})`, async (t) => {
+    const object = (properties) => ({
+      type: 'object',
+      properties,
+      required: Object.keys(properties),
+    });
+    const alternatives = (key) => ({
+      oneOf: [object({ [key]: ref('OpenDetail') }), object({ [key]: ref('ClosedDetail') })],
+    });
+    const f = fixture(
+      t,
+      {
+        components: {
+          schemas: {
+            OpenDetail: {
+              ...object({ kind: { type: 'string', enum: ['a'] }, foo: { type: 'string' } }),
+              additionalProperties: extra,
+            },
+            ClosedDetail: object({
+              kind: { type: 'string', enum: ['b'] },
+              bar: { type: 'number' },
+            }),
+          },
+        },
+        paths: {
+          '/choice': {
+            get: {
+              operationId: 'choose',
+              responses: {
+                ...jsonResponse(alternatives('data')),
+                400: {
+                  description: 'Invalid',
+                  content: { 'application/json': { schema: alternatives('error') } },
+                },
+              },
+            },
+          },
+        },
+      },
+      {
+        responses: { return: 'payload', payloadPath: 'data' },
+        errors: { detailsPath: 'error' },
+        operations: { choose: { resource: 'choices', method: 'get' } },
+      },
+    );
+    const source = join(f.output, 'node/open.ts');
+    writeFileSync(
+      source,
+      `import {SdkError,type Client} from './index.js';
+export function inspect(v: Awaited<ReturnType<Client['choices']['get']>>) {
+ if ('bar' in v) {
+ // @ts-expect-error an open member admits bar without promising a number
+ v.bar.toFixed();
+ }
+ if ('bar' in v && typeof v.bar === 'number') return v.bar.toFixed();
+}
+export function inspectFuture(v: Awaited<ReturnType<Client['choices']['get']>>) {
+ if ('future' in v) return v.foo.toUpperCase();
+}
+export function inspectError(e:SdkError) {
+ if(e.details && 'transportCode' in e.details) {
+ // @ts-expect-error open API details retain unknown index-signature values
+ e.details.transportCode.toUpperCase();
+ }
+}
+`,
+    );
+    typecheck(source, ['--exactOptionalPropertyTypes']);
+    const js = source.replace('.ts', '.js');
+    writeFileSync(
+      js,
+      ts.transpileModule(readFileSync(source, 'utf8'), {
+        compilerOptions: { module: ts.ModuleKind.ESNext },
+      }).outputText,
+    );
+    const consumer = await import(pathToFileURL(js));
+    const sdk = await import(pathToFileURL(join(f.output, 'node/index.js')));
+    let status = 200,
+      value;
+    const client = new sdk.Client({
+      baseUrl: 'https://example.invalid',
+      transport: async () =>
+        new Response(JSON.stringify({ [status === 200 ? 'data' : 'error']: value }), { status }),
+    });
+    for (const fields of [
+      { bar: 'allowed-extra' },
+      { future: 'allowed-extra' },
+      { transportCode: 'allowed-extra' },
+      ...(extra === true ? [{ bar: 42 }, { transportCode: 42 }] : []),
+    ]) {
+      value = { kind: 'a', foo: 'safe', ...fields };
+      status = 200;
+      const decoded = await client.choices.get();
+      assert.deepEqual({ ...decoded }, value);
+      assert.doesNotThrow(() => consumer.inspectFuture(decoded));
+      status = 400;
+      await assert.rejects(client.choices.get(), (error) => {
+        assert.deepEqual({ ...error.details }, value);
+        return true;
+      });
+    }
+    // This known closed alternative also fits the open public member, including
+    // the required field promised after an arbitrary-key guard.
+    status = 200;
+    value = { kind: 'b', bar: 42, foo: 'safe', future: true };
+    const indexed = await client.choices.get();
+    assert.equal(consumer.inspectFuture(indexed), 'SAFE');
+    // A closed valid alternative remains accepted; a known malformed field must fail.
+    status = 200;
+    value = { kind: 'b', bar: 42 };
+    assert.deepEqual({ ...(await client.choices.get()) }, value);
+    for (const bad of [
+      { kind: 'a', foo: 42 },
+      { kind: 'b', bar: 'invalid' },
+      { kind: 'b', bar: 42, future: true },
+    ]) {
+      value = bad;
+      status = 200;
+      await assert.rejects(client.choices.get(), { kind: 'protocol' });
+      status = 400;
+      await assert.rejects(client.choices.get(), (error) => {
+        assert.equal(error.details, undefined);
+        assert.deepEqual(JSON.parse(error.raw).error, value);
+        return true;
+      });
+    }
+  });
+}
+
+test('canonical integer strings uphold bigint template types in projected responses and future errors', async (t) => {
+  const object = (properties) => ({
+    type: 'object',
+    properties,
+    required: Object.keys(properties),
+  });
+  const alternatives = (key) => ({
+    oneOf: [object({ [key]: ref('IntegerDetail') }), object({ [key]: ref('OtherDetail') })],
+  });
+  const f = fixture(
+    t,
+    {
+      components: {
+        schemas: {
+          IntegerDetail: object({
+            kind: { type: 'string', enum: ['a'] },
+            amount: { type: 'integer', format: 'int64' },
+          }),
+          OtherDetail: object({ kind: { type: 'string', enum: ['b'] }, bar: { type: 'number' } }),
+        },
+      },
+      paths: {
+        '/choice': {
+          get: {
+            operationId: 'choose',
+            responses: {
+              ...jsonResponse(alternatives('data')),
+              400: {
+                description: 'Invalid',
+                content: { 'application/json': { schema: alternatives('error') } },
+              },
+            },
+          },
+        },
+      },
+    },
+    {
+      responses: { return: 'payload', payloadPath: 'data' },
+      errors: { detailsPath: 'error' },
+      operations: { choose: { resource: 'choices', method: 'get' } },
+    },
+  );
+  const source = join(f.output, 'node/integer.ts');
+  writeFileSync(
+    source,
+    `import {SdkError,type Client} from './index.js';
+export function inspect(e:SdkError): \`\${bigint}\`|undefined {
+ if(e.details && 'amount' in e.details) return e.details.amount;
+}
+export function payload(v:Awaited<ReturnType<Client['choices']['get']>>): \`\${bigint}\`|undefined {
+ if('amount' in v) return v.amount;
+}
+const canonical: \`\${bigint}\`[]=['0','-0','1','-1','9007199254740993'];
+// @ts-expect-error noncanonical integer spelling
+const plus: \`\${bigint}\`='+1';
+// @ts-expect-error noncanonical integer spelling
+const leading: \`\${bigint}\`='01';
+// @ts-expect-error noncanonical integer spelling
+const negative: \`\${bigint}\`='-01';
+// @ts-expect-error trailing newline
+const newline: \`\${bigint}\`='1\\n';
+`,
+  );
+  typecheck(source, ['--exactOptionalPropertyTypes']);
+  const sdk = await import(pathToFileURL(join(f.output, 'node/index.js')));
+  let amount,
+    status = 200,
+    kind = 'future';
+  const client = new sdk.Client({
+    baseUrl: 'https://example.invalid',
+    transport: async () =>
+      new Response(JSON.stringify({ [status === 200 ? 'data' : 'error']: { kind, amount } }), {
+        status,
+      }),
+  });
+  for (const spelling of ['0', '-0', '1', '-1', '9007199254740993']) {
+    amount = spelling;
+    status = 200;
+    assert.equal((await client.choices.get()).amount, spelling);
+    status = 400;
+    await assert.rejects(client.choices.get(), (e) => {
+      assert.equal(e.details.amount, spelling);
+      return true;
+    });
+  }
+  for (const spelling of ['+1', '01', '-01', '1\n', '1.0', '$50']) {
+    amount = spelling;
+    status = 200;
+    await assert.rejects(client.choices.get(), (e) => {
+      assert.equal(e.kind, 'protocol');
+      assert.equal(JSON.parse(e.raw).data.amount, spelling);
+      return true;
+    });
+    status = 400;
+    await assert.rejects(client.choices.get(), (e) => {
+      assert.equal(e.details, undefined);
+      assert.equal(JSON.parse(e.raw).error.amount, spelling);
+      return true;
+    });
+  }
+  // JSON number tokens still decode to canonical exact decimal strings.
+  kind = 'a';
+  amount = 42;
+  status = 200;
+  assert.equal((await client.choices.get()).amount, '42');
+});

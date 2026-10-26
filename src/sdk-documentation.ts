@@ -142,16 +142,28 @@ function modelName(schema: Schema, definitions: Record<string, Schema>): string 
   }
   return index.get(stable(schema));
 }
-function typeDescription(s: Schema, definitions: Record<string, Schema> = {}): string {
-  const name = modelName(s, definitions);
+type ModelNames = Readonly<Record<string, string>>;
+export interface ModelDocumentationExport {
+  output: string;
+  input?: string;
+}
+function typeDescription(
+  s: Schema,
+  definitions: Record<string, Schema> = {},
+  names?: ModelNames,
+): string {
+  const source = modelName(s, definitions);
+  const name = source && (names ? names[source] : source);
   if (name) return `[${name}](MODELS.md#${anchor(name)})`;
   if (s.allOf) {
     const { allOf, ...base } = s;
-    const types = [...new Set([base, ...allOf].map((part) => typeDescription(part, definitions)))];
+    const types = [
+      ...new Set([base, ...allOf].map((part) => typeDescription(part, definitions, names))),
+    ];
     return types.filter((type) => type !== 'any').join(' and ') || 'any';
   }
   if (s.oneOf || s.anyOf) return 'Alternative shapes (see declared variants)';
-  if (s.type === 'array') return `Array of ${typeDescription(s.items ?? {}, definitions)}`;
+  if (s.type === 'array') return `Array of ${typeDescription(s.items ?? {}, definitions, names)}`;
   const types = Array.isArray(s.type) ? s.type : [s.type ?? 'any'];
   return types
     .map((t) =>
@@ -168,6 +180,7 @@ export function fieldTable(
   definitions: Record<string, Schema>,
   scope = 'Field',
   includeExamples = true,
+  names?: ModelNames,
 ): string {
   const { fields, required } = schemaFields(schema, definitions);
   if (!Object.keys(fields).length) return '';
@@ -210,7 +223,7 @@ export function fieldTable(
         ]
           .filter(Boolean)
           .join(' ');
-        return `| \`${cell(name).replaceAll('`', '&#96;')}\` | ${required.has(name) ? 'Required' : 'Optional'} | ${typeDescription(child, includeExamples ? {} : definitions)} | ${notes} |`;
+        return `| \`${cell(name).replaceAll('`', '&#96;')}\` | ${required.has(name) ? 'Required' : 'Optional'} | ${typeDescription(child, includeExamples ? {} : definitions, names)} | ${notes} |`;
       })
       .join('\n') +
     '\n\n' +
@@ -221,7 +234,11 @@ function withoutExamples({ example, examples, ...schema }: Schema): Schema {
   return schema;
 }
 /** Keep canonical body fields visible beside parameters in both target references. */
-export function bodyReference(op: Operation, definitions: Record<string, Schema>): string {
+export function bodyReference(
+  op: Operation,
+  definitions: Record<string, Schema>,
+  names?: ModelNames,
+): string {
   if (!op.body) return '';
   const body = op.body;
   const document = (
@@ -242,9 +259,10 @@ export function bodyReference(op: Operation, definitions: Record<string, Schema>
       definitions,
       label,
       false,
+      names,
     );
     let output = modelName(schema, definitions)
-      ? `Body model: ${typeDescription(schema, definitions)}.\n\n`
+      ? `Body model: ${typeDescription(schema, definitions, names)}.\n\n`
       : '';
     if (table) output += `#### ${label} fields\n\n${table}`;
     // Carry only the common field view into alternatives. Reusing the enclosing
@@ -256,7 +274,7 @@ export function bodyReference(op: Operation, definitions: Record<string, Schema>
         output += `#### ${title}\n\n${markdownNotes(withoutExamples(variant))}\n\n`;
         output +=
           document(variant, title, seen, parent) ||
-          `Body shape: ${typeDescription(variant, definitions)}.\n\n`;
+          `Body shape: ${typeDescription(variant, definitions, names)}.\n\n`;
       }
     // Composition-only wrappers can hide unions several allOf/reference levels
     // deep. Keep the complete common field view while following each wrapper.
@@ -273,17 +291,44 @@ export function bodyReference(op: Operation, definitions: Record<string, Schema>
   };
   return (
     document(body, `${op.resource}.${op.method} body`) ||
-    `Body shape: ${typeDescription(body, definitions)}.\n\n`
+    `Body shape: ${typeDescription(body, definitions, names)}.\n\n`
   );
 }
-export function modelReference(c: Contract): string {
+export function modelReference(
+  c: Contract,
+  exports?: Readonly<Record<string, ModelDocumentationExport>>,
+): string {
+  const outputs =
+    exports &&
+    Object.fromEntries(Object.entries(exports).map(([name, entry]) => [name, entry.output]));
+  const inputs =
+    exports &&
+    Object.fromEntries(
+      Object.entries(exports).flatMap(([name, entry]) =>
+        entry.input ? [[name, entry.input]] : [],
+      ),
+    );
+  const section = (name: string, schema: Schema, names?: ModelNames, replacement = '') =>
+    `## ${name}\n\n${replacement}${markdownNotes(schema)}\n\n${fieldTable(schema, c.definitions ?? c.models, name, true, names)}${schema.oneOf || schema.anyOf ? `Variants: ${(schema.oneOf ?? schema.anyOf ?? []).map((variant) => typeDescription(variant, {}, names)).join(', ')}.\n\n` : ''}`;
   return (
     `# ${c.title} models\n\n[API reference](REFERENCE.md) · [Runtime guide](RUNTIME.md)\n\nFields below describe the API's declared shape. Inputs omit read-only fields; responses omit write-only fields and preserve unknown fields and enum values. Node input types add the suffix \`Input\`. PHP operation responses use presence-aware classes; nested values use the shapes below.\n\nExact numeric strings preserve JSON numeric precision. For a minor-unit amount, \`"100"\` is 100 minor units (USD 1.00), not USD 100.00. Use the field's documented units.\n\n` +
     Object.entries(c.models)
-      .map(
-        ([name, schema]) =>
-          `## ${name}\n\n${markdownNotes(schema)}\n\n${fieldTable(schema, c.definitions ?? c.models, name)}${schema.oneOf || schema.anyOf ? `Variants: ${(schema.oneOf ?? schema.anyOf ?? []).map((variant) => typeDescription(variant)).join(', ')}.\n\n` : ''}`,
-      )
+      .map(([name, schema]) => {
+        if (!exports) return section(name, schema);
+        const entry = exports[name];
+        if (!entry) return '';
+        return (
+          (entry.output === name ? section(name, directionalSchema(schema, true), outputs) : '') +
+          (entry.input
+            ? section(
+                entry.input,
+                directionalSchema(schema, false),
+                inputs,
+                `Request input. Response: [${entry.output}](MODELS.md#${anchor(entry.output)}).\n\n`,
+              )
+            : '')
+        );
+      })
       .join('')
   );
 }
