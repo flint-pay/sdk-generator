@@ -43,6 +43,9 @@ export function schemaNotes(
     'maxLength',
     'minItems',
     'maxItems',
+    'minProperties',
+    'maxProperties',
+    'uniqueItems',
     'pattern',
   ] as const)
     if (s[key] !== undefined) notes.push(key + ': ' + literal(String(s[key])) + '.');

@@ -19,7 +19,10 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { createHmac } from 'node:crypto';
-import { assertCanonicalOperationDocumentation } from './helpers/canonical-docs.mjs';
+import {
+  assertCanonicalOperationDocumentation,
+  assertCanonicalBranchDocumentation,
+} from './helpers/canonical-docs.mjs';
 
 const fixture = resolve('tests/providers/flint');
 const api = join(fixture, 'full-openapi.json');
@@ -87,6 +90,12 @@ assert.deepEqual(preview(restored,${JSON.stringify(output)}).changes,[],'full ex
       ).interface;
       for (const target of ['node', 'php']) {
         assertUniqueFieldTables(join(output, target));
+        const branches = assertCanonicalBranchDocumentation(
+          join(output, target),
+          documentedContract,
+        );
+        assert.ok(branches.checkedBranches > 100, `${target}: full branch fact coverage`);
+        console.log(target + ' canonical branch facts ' + JSON.stringify(branches));
         const coverage = assertCanonicalOperationDocumentation(
           join(output, target),
           documentedContract,

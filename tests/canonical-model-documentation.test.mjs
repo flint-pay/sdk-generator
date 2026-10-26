@@ -1,11 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import {
+  mkdtempSync,
+  writeFileSync,
+  readFileSync,
+  rmSync,
+  cpSync,
+  symlinkSync,
+  mkdirSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { generate, loadContract } from '../dist/index.js';
 import { modelFieldReference } from '../dist/sdk-documentation.js';
 import { compilePhpModel, compileSdkContract } from '../dist/target-plan.js';
+import { modelDocuments } from '../dist/package-documentation.js';
 import { compareCompiledContracts } from '../dist/compiled-compatibility.js';
 import {
   assertPackageLinks,
@@ -14,6 +24,7 @@ import {
 } from './helpers/package-docs.mjs';
 import {
   assertCanonicalOperationDocumentation,
+  assertCanonicalBranchDocumentation,
   operationDocuments,
   linkedModelSections,
 } from './helpers/canonical-docs.mjs';
@@ -38,7 +49,7 @@ const response = (schema) => ({
   content: { 'application/json': { schema } },
 });
 
-test('canonical union tables retain effective branch fields, presence and enums in both targets', () => {
+test('canonical union tables retain effective branch fields, presence, types and constraints in both targets', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'sdk-canonical-docs-'));
   try {
     const shared = {
@@ -53,6 +64,35 @@ test('canonical union tables retain effective branch fields, presence and enums 
       ],
     };
     const schemas = {
+      ModelA: object({ a_id: string }, ['a_id']),
+      ModelB: object({ b_id: string }, ['b_id']),
+      CollectionVariants: {
+        oneOf: [
+          object(
+            {
+              mode: { enum: ['counts'] },
+              values: { type: 'array', items: { type: 'integer', minimum: 0 }, minItems: 1 },
+              named: { type: 'array', items: ref('ModelA') },
+              mapping: { type: 'object', additionalProperties: { type: 'integer', enum: [1, 2] } },
+              nullable: { type: 'array', items: string },
+            },
+            ['mode', 'values', 'named', 'mapping', 'nullable'],
+          ),
+          object(
+            {
+              mode: { enum: ['labels'] },
+              values: { type: 'array', items: { ...string, minLength: 3 }, minItems: 2 },
+              named: { type: 'array', items: ref('ModelB') },
+              mapping: {
+                type: 'object',
+                additionalProperties: { type: 'string', enum: ['home', 'office'] },
+              },
+              nullable: { anyOf: [{ type: 'array', items: string }, { type: 'null' }] },
+            },
+            ['mode', 'values', 'named', 'mapping'],
+          ),
+        ],
+      },
       EnvelopeOne: object({ data: { type: 'array', items: shared } }, ['data']),
       EnvelopeTwo: object(
         {
@@ -164,6 +204,12 @@ test('canonical union tables retain effective branch fields, presence and enums 
         info: { title: 'Canonical docs', version: '1' },
         components: { schemas },
         paths: {
+          '/collections': {
+            post: operation('collections', 'CollectionVariants', 'CollectionVariants'),
+          },
+          '/collections-second': {
+            post: operation('collectionsSecond', 'Revocation', 'CollectionVariants'),
+          },
           '/envelope-one': { get: operation('envelopeOne', 'EnvelopeOne') },
           '/envelope-two': { get: operation('envelopeTwo', 'EnvelopeTwo') },
           '/constraints': { get: operation('constraints', 'ConstraintGroups') },
@@ -209,6 +255,9 @@ test('canonical union tables retain effective branch fields, presence and enums 
       const root = join(output, target);
       assertPackageLinks(root);
       assertUniqueFieldTables(root);
+      const branches = assertCanonicalBranchDocumentation(root, contract);
+      assert.ok(branches.checkedBranches > 10);
+      assert.ok(branches.checkedFacts > 30);
       (target === 'node' ? assertDocumentedModelExports : assertDocumentedPhpExports)(root);
       const coverage = assertCanonicalOperationDocumentation(root, contract);
       assert.ok(
@@ -231,6 +280,15 @@ test('canonical union tables retain effective branch fields, presence and enums 
         'postal_values',
       ])
         assert.match(docs, new RegExp('\\| `' + field + '` \\| (?:Required|Conditional) \\|'));
+      assert.match(docs, /Constraints for `values`: Array of integer\. minItems: `1`/);
+      assert.match(docs, /Constraints for `values`: Array of string\. minItems: `2`/);
+      assert.match(docs, /Constraints for `named`: Array of \[ModelA(?:Input)?\]\([^)]+\)/);
+      assert.match(docs, /Constraints for `named`: Array of \[ModelB(?:Input)?\]\([^)]+\)/);
+      assert.match(docs, /Constraints for `mapping`: Map of integer/);
+      assert.match(docs, /Constraints for `mapping`: Map of string/);
+      assert.match(docs, /Constraints for `nullable`: Array of string or null/);
+      assert.doesNotMatch(docs, /Array of any/);
+      assert.doesNotMatch(docs, /Constraints for `[^`]+`: *$/m);
       assert.match(docs, /variant 1: `mode` = `"eligibility"`/);
       assert.match(docs, /variant 2: `mode` = `"resolution"`/);
       assert.match(docs, /Field definitions apply to all variants/);
@@ -274,6 +332,37 @@ test('canonical union tables retain effective branch fields, presence and enums 
       }
       assert.match(docs, /Constraints for `code`: minLength: `1`\. Values: `"first"`/);
       assert.match(docs, /Constraints for `code`: minLength: `2`\. Values: `"second"`/);
+      const collectionOp = operationDocuments(root).find((op) => op.name.endsWith('.collections'));
+      const collectionDoc = linkedModelSections(
+        collectionOp.path,
+        collectionOp.source.split('#### Response')[0],
+      )[0];
+      assert.ok(collectionDoc);
+      const collectionOriginal = readFileSync(collectionDoc.path, 'utf8');
+      writeFileSync(
+        collectionDoc.path,
+        collectionOriginal.replace(
+          'Constraints for `values`: Array of integer.',
+          'Constraints for `values`: Array of any.',
+        ),
+      );
+      assert.throws(
+        () => assertCanonicalBranchDocumentation(root, contract),
+        /concrete collection degraded to any/,
+      );
+      writeFileSync(collectionDoc.path, collectionOriginal);
+      for (const [before, after, diagnostic] of [
+        ['Array of string or null.', 'Array of string.', /lost nullable type/],
+        ['Map of string.', 'Map of integer.', /lost mapping type/],
+        ['Values: `"counts"`.', '', /lost mode enums/],
+        ['minItems: `2`.', '', /lost values constraints/],
+        ['Items: minLength: `3`.', '', /lost values constraints/],
+      ]) {
+        assert.ok(collectionOriginal.includes(before));
+        writeFileSync(collectionDoc.path, collectionOriginal.replace(before, after));
+        assert.throws(() => assertCanonicalBranchDocumentation(root, contract), diagnostic);
+        writeFileSync(collectionDoc.path, collectionOriginal);
+      }
       const directional = operationDocuments(root).find((op) => op.name.endsWith('.directional'));
       const inputs = linkedModelSections(
         directional.path,
@@ -321,6 +410,31 @@ test('canonical union tables retain effective branch fields, presence and enums 
       );
       writeFileSync(branchDoc.path, original);
     }
+    // Mutate an isolated renderer, not just its output: the plan-based guard
+    // must fail even if all uses of the shared type formatter degrade together.
+    const mutation = join(directory, 'mutated-generator');
+    mkdirSync(mutation);
+    cpSync('dist', join(mutation, 'dist'), { recursive: true });
+    cpSync('LICENSE', join(mutation, 'LICENSE'));
+    cpSync('templates', join(mutation, 'templates'), { recursive: true });
+    symlinkSync(resolve('node_modules'), join(mutation, 'node_modules'));
+    writeFileSync(join(mutation, 'package.json'), '{"type":"module"}');
+    const rendererPath = join(mutation, 'dist/sdk-documentation.js');
+    const renderer = readFileSync(rendererPath, 'utf8');
+    const changed = renderer.replace(
+      'return `Array of ${typeDescription(s.items ?? {}, definitions, names, seen)}`;',
+      'return "Array of any";',
+    );
+    assert.notEqual(changed, renderer, 'the renderer mutation must apply');
+    writeFileSync(rendererPath, changed);
+    const broken = await import(pathToFileURL(join(mutation, 'dist/index.js')).href);
+    const brokenOutput = join(directory, 'broken');
+    broken.generate(contract, brokenOutput);
+    for (const target of ['node', 'php'])
+      assert.throws(
+        () => assertCanonicalBranchDocumentation(join(brokenOutput, target), contract),
+        /concrete collection degraded to any/,
+      );
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -448,6 +562,27 @@ test('the package field-table guard detects a repeated fragment and ignores fenc
     assert.equal(assertUniqueFieldTables(directory), 1);
     writeFileSync(join(directory, 'second.md'), table);
     assert.throws(() => assertUniqueFieldTables(directory), /repeated.*field table/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('colliding dotted scope anchors keep the complete fragment rather than an alias stub', () => {
+  const source =
+    '# Models\n\n## Owner\n\n### Owner.data.choice\n\n| Field | Presence | Type | Description |\n| --- | --- | --- | --- |\n| `value` | Required | string | Complete definition. |\n\n### Owner.data.choice variant 1\n\noneOf variant 1.\n\n## OwnerData\n\n### OwnerData.choice\n\nDeclared alternatives: [Owner.data.choice](MODELS.md#ownerdatachoice).\n\n';
+  const docs = modelDocuments(source + '\n' + 'padding '.repeat(15000));
+  assert.equal(docs.links.get('ownerdatachoice'), 'models/Owner.md#ownerdatachoice');
+  const directory = mkdtempSync(join(tmpdir(), 'sdk-doc-anchor-'));
+  try {
+    mkdirSync(join(directory, 'models'));
+    for (const [path, text] of docs.files) writeFileSync(join(directory, path), text);
+    const linked = linkedModelSections(
+      join(directory, 'MODELS.md'),
+      '[shape](models/Owner.md#ownerdatachoice)',
+    )[0];
+    assert.match(linked.source, /Complete definition/);
+    assert.match(linked.source, /oneOf variant 1/);
+    assert.doesNotMatch(linked.source, /Declared alternatives:/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

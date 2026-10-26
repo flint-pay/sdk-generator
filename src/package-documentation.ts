@@ -5,6 +5,8 @@ import {
   modelFieldReference,
   fieldReferenceNotes,
   modelDocumentationConventions,
+  schemaFields,
+  typeDescription,
 } from './sdk-documentation.js';
 import MarkdownIt from 'markdown-it';
 import { posix } from 'node:path';
@@ -87,12 +89,22 @@ export function modelDocuments(
       docAnchor(section[1]!),
       `${split ? `models/${section[1]}.md` : 'MODELS.md'}#${docAnchor(section[1]!)}`,
     );
-  for (const section of sections)
-    for (const heading of section[0].matchAll(/^#{3,6} (.+)$/gm))
-      links.set(
-        docAnchor(heading[1]!),
-        `${split ? `models/${section[1]}.md` : 'MODELS.md'}#${docAnchor(heading[1]!)}`,
-      );
+  const modelAnchors = new Set(links.keys());
+  for (const section of sections) {
+    const headings = [...section[0].matchAll(/^#{3,6} (.+)$/gm)];
+    for (const [index, heading] of headings.entries()) {
+      const key = docAnchor(heading[1]!);
+      const body = section[0]
+        .slice(heading.index! + heading[0].length, headings[index + 1]?.index)
+        .trim();
+      // Dotted scopes can share a Markdown slug (Owner.data vs OwnerData).
+      // Prefer the complete fragment over a later alias, which could otherwise
+      // redirect its own canonical link back to the alias stub.
+      if (modelAnchors.has(key) || (links.has(key) && body.startsWith('Declared alternatives:')))
+        continue;
+      links.set(key, `${split ? `models/${section[1]}.md` : 'MODELS.md'}#${key}`);
+    }
+  }
   for (const [from, to] of fragmentAliases) if (links.has(to)) links.set(from, links.get(to)!);
   const introduction = source.slice(0, sections[0]?.index ?? source.length);
   const files = new Map<string, string>();
@@ -504,6 +516,16 @@ export function phpModelReference(
               fieldReferences,
             )
           : '';
+        const documentedFields = schema ? schemaFields(schema, definitions).fields : {};
+        const getterType = (getter: (typeof plan.getters)[number]) => {
+          const field = documentedFields[getter.field];
+          // PHP's accessor projection uses mixed for some anonymous item
+          // alternatives. The schema reference can state their declared shape
+          // and link its canonical rules without implying a different accessor.
+          return field && getter.doc.includes('list<mixed>') && field.items
+            ? typeDescription(field, definitions, names)
+            : type(getter.doc);
+        };
         const identity = JSON.stringify([
           plan.getters,
           plan.documentation,
@@ -524,7 +546,7 @@ export function phpModelReference(
                     plan.getters
                       .map(
                         (getter) =>
-                          `| \`${getter.field}\` | ${plan.documentation?.[getter.field]?.required ? 'Required' : 'Optional'} | ${type(getter.doc)} | ${[cell(plan.documentation?.[getter.field]?.markdown ?? plan.documentation?.[getter.field]?.description ?? ''), enumNotes(plan.documentation?.[getter.field]?.enums ?? [], (value) => schemaLiteral(value, true), enumLinks), fieldReferenceNotes(getter.field, fieldReferences)].filter(Boolean).join(' ')} |`,
+                          `| \`${getter.field}\` | ${plan.documentation?.[getter.field]?.required ? 'Required' : 'Optional'} | ${getterType(getter)} | ${[cell(plan.documentation?.[getter.field]?.markdown ?? plan.documentation?.[getter.field]?.description ?? ''), enumNotes(plan.documentation?.[getter.field]?.enums ?? [], (value) => schemaLiteral(value, true), enumLinks), fieldReferenceNotes(getter.field, fieldReferences)].filter(Boolean).join(' ')} |`,
                       )
                       .join('\n') +
                     '\n\n'

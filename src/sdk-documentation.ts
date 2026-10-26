@@ -22,6 +22,27 @@ const markdownNotes = (schema: Schema, table = false) =>
     literal: (text) => literal(text, table),
     ...(table ? { description: cell } : {}),
   });
+// Collection constraints belong to the item/value path, even when the
+// collection's scalar type is shared by all alternatives.
+function collectionNotes(schema: Schema, table = false): string {
+  return [
+    markdownNotes(schema, table),
+    ...(schema.items ? [['Items', schema.items] as const] : []),
+    ...(typeof schema.additionalProperties === 'object'
+      ? [['Map values', schema.additionalProperties] as const]
+      : []),
+  ]
+    .map((part) => {
+      if (typeof part === 'string') return part;
+      const notes = [part[1], ...(part[1].allOf ?? [])]
+        .map((child) => collectionNotes(child, table))
+        .filter(Boolean)
+        .join(' ');
+      return notes ? `${part[0]}: ${notes}` : '';
+    })
+    .filter(Boolean)
+    .join(' ');
+}
 const anchor = (name: string) =>
   name
     .toLowerCase()
@@ -301,8 +322,9 @@ export function modelFieldReference(
     const additional: Schema[] = [];
     for (const part of parts)
       for (const [key, value] of Object.entries(part)) {
-        if (Object.hasOwn(combined, key)) additional.push(part);
-        else Object.assign(combined, { [key]: value });
+        if (Object.hasOwn(combined, key)) {
+          if (stable(combined[key]) !== stable(value)) additional.push(part);
+        } else Object.assign(combined, { [key]: value });
       }
     return additional.length ? { allOf: [combined, ...additional] } : combined;
   };
@@ -310,6 +332,7 @@ export function modelFieldReference(
   // once, then document only the extra constraints under each condition.
   const fields: Record<string, Schema> = Object.create(null);
   const presence = new Map<string, string>();
+  const types = new Map<string, string>();
   const shared = new Map<string, Set<string>>();
   for (const field of new Set(shapes.flatMap((shape) => Object.keys(shape.fields)))) {
     const children = shapes.flatMap((shape) => (shape.fields[field] ? [shape.fields[field]!] : []));
@@ -318,6 +341,12 @@ export function modelFieldReference(
       parts.every((entries) => entries.some((entry) => stable(entry) === stable(part))),
     );
     fields[field] = conjunction(common);
+    const effectiveTypes = new Set(
+      children.map((child) =>
+        typeDescription(conjunction(declarations(child)), definitions, names),
+      ),
+    );
+    types.set(field, effectiveTypes.size === 1 ? [...effectiveTypes][0]! : 'Varies by condition');
     shared.set(field, new Set(common.map(stable)));
     presence.set(
       field,
@@ -394,17 +423,17 @@ export function modelFieldReference(
         if (!extra.length) continue;
         const delta = conjunction(extra);
         const notes = [delta, ...(delta.allOf ?? [])]
-          .map((part) => markdownNotes(part))
+          .map((part) => collectionNotes(part))
           .filter(Boolean)
           .join(' ');
         const values = enumNotes(schemaEnumValues(child, definitions), literal, enumLinks);
-        const changesType = extra.some(
-          (part) => part.type || part.format || part['x-sdk-ref'] || part.oneOf || part.anyOf,
-        );
-        const type = changesType
-          ? typeDescription(conjunction(declarations(child)), definitions, names)
-          : 'any';
-        rules += `- Constraints for ${literal(field)}: ${[type === 'any' ? '' : type + '.', notes, values].filter(Boolean).join(' ')}\n`;
+        // Compare complete effective types, including item/value schemas and
+        // named links. Looking only at scalar keywords loses collection deltas.
+        const type = typeDescription(conjunction(declarations(child)), definitions, names);
+        const facts = [type === types.get(field) ? '' : type + '.', notes, values]
+          .filter(Boolean)
+          .join(' ');
+        if (facts) rules += `- Constraints for ${literal(field)}: ${facts}\n`;
       }
       if (!Object.keys(shape.fields).length)
         rules += `- Value shape: ${typeDescription(shape.schema, definitions, names)}.\n`;
@@ -518,34 +547,76 @@ export function modelFieldReference(
               fieldReferenceNotes(field, fieldReferences),
             ]),
           ),
+          types,
         )
       : '') + output
   );
 }
-function typeDescription(
+export function typeDescription(
   s: Schema,
   definitions: Record<string, Schema> = {},
   names?: ModelNames,
+  seen = new Set<string>(),
 ): string {
   const source = modelName(s, definitions);
   const name = source && (names ? names[source] : source);
+  const ref = s['x-sdk-ref'];
+  if (!name && ref && definitions[ref] && !seen.has(ref))
+    return typeDescription(definitions[ref]!, definitions, names, new Set(seen).add(ref));
   if (name) return `[${name}](MODELS.md#${anchor(name)})`;
   if (s.allOf) {
-    const { allOf, ...base } = s;
-    const types = [
-      ...new Set([base, ...allOf].map((part) => typeDescription(part, definitions, names))),
-    ];
-    return types.filter((type) => type !== 'any').join(' and ') || 'any';
+    // Conjuncts may declare a collection and its element separately. Assemble
+    // their shared structure before describing types; a type-only conjunct
+    // must not introduce an unconstrained element beside a concrete one.
+    const parts = (value: Schema): Schema[] => {
+      const { allOf, ...own } = value;
+      return [own, ...(allOf ?? []).flatMap(parts)];
+    };
+    const combined: Schema = {};
+    const additional: Schema[] = [];
+    for (const part of parts(s))
+      for (const [key, value] of Object.entries(part)) {
+        if (!Object.hasOwn(combined, key)) Object.assign(combined, { [key]: value });
+        else if (stable(combined[key]) !== stable(value)) {
+          if (
+            (key === 'items' || key === 'additionalProperties') &&
+            typeof combined[key] === 'object' &&
+            typeof value === 'object'
+          )
+            Object.assign(combined, { [key]: { allOf: [combined[key], value] } });
+          else additional.push({ [key]: value });
+        }
+      }
+    const types = new Set(
+      [combined, ...additional].map((part) =>
+        typeDescription(
+          part.items
+            ? { type: 'array', ...part }
+            : part.type === 'array' && combined.items
+              ? { items: combined.items, ...part }
+              : part,
+          definitions,
+          names,
+          seen,
+        ),
+      ),
+    );
+    return [...types].filter((type) => type !== 'any').join(' and ') || 'any';
   }
   if (s.oneOf || s.anyOf) {
     const types = [
-      ...new Set((s.oneOf ?? s.anyOf)!.map((part) => typeDescription(part, definitions, names))),
+      ...new Set(
+        (s.oneOf ?? s.anyOf)!.map((part) => typeDescription(part, definitions, names, seen)),
+      ),
     ];
     return types.every((type) => type !== 'object' && type !== 'any')
       ? types.join(' or ')
       : 'Alternative shapes (see declared variants)';
   }
-  if (s.type === 'array') return `Array of ${typeDescription(s.items ?? {}, definitions, names)}`;
+  if (s.type === 'array' || s.items)
+    return `Array of ${typeDescription(s.items ?? {}, definitions, names, seen)}`;
+  if (typeof s.additionalProperties === 'object')
+    return `Map of ${typeDescription(s.additionalProperties, definitions, names, seen)}`;
   const types = Array.isArray(s.type) ? s.type : [s.type ?? 'any'];
   return types
     .map((t) =>
@@ -568,6 +639,7 @@ export function fieldTable(
   enumLinks?: EnumLinks,
   presence?: ReadonlyMap<string, string>,
   references?: ReadonlyMap<string, string>,
+  types?: ReadonlyMap<string, string>,
 ): string {
   const { fields, required } = schemaFields(schema, definitions);
   if (!Object.keys(fields).length) return '';
@@ -613,7 +685,7 @@ export function fieldTable(
           [
             ...new Set(
               parts.map((part) =>
-                markdownNotes(includeExamples ? part : withoutExamples(part), true),
+                collectionNotes(includeExamples ? part : withoutExamples(part), true),
               ),
             ),
           ]
@@ -626,7 +698,7 @@ export function fieldTable(
         ]
           .filter(Boolean)
           .join(' ');
-        return `| \`${cell(name).replaceAll('`', '&#96;')}\` | ${presence?.get(name) ?? (required.has(name) ? 'Required' : 'Optional')} | ${typeDescription(child, definitions, names)} | ${notes} |`;
+        return `| \`${cell(name).replaceAll('`', '&#96;')}\` | ${presence?.get(name) ?? (required.has(name) ? 'Required' : 'Optional')} | ${types?.get(name) ?? typeDescription(child, definitions, names)} | ${notes} |`;
       })
       .join('\n') +
     '\n\n' +
