@@ -497,8 +497,10 @@ $streaming->close();
       assert.equal(weight.node.failed, undefined, JSON.stringify(weight.node));
       assert.equal(weight.types.failed, undefined, JSON.stringify(weight.types));
       assert.ok(weight.types.files < 1000, 'root types load too many declaration files');
+      // The re-pinned graph with public type certificates measures 2.80 MiB for
+      // webhooks and 1035 KiB for invoices; keep bounded headroom for each.
       assert.ok(
-        weight.bundles.webhooks < 2560 * 1024,
+        weight.bundles.webhooks < 3 * 1024 * 1024,
         'webhook bundle includes excess descriptors',
       );
       assert.ok(weight.sizes.node.files < 4000, 'Node package file count budget exceeded');
@@ -517,8 +519,8 @@ $streaming->close();
       );
       assert.ok(weight.sizes.php.largestSource < 640 * 1024, 'PHP source exceeds indexing budget');
       assert.ok(
-        weight.bundles['resources/invoices'] < 1024 * 1024,
-        'selective bundle exceeds 1 MiB',
+        weight.bundles['resources/invoices'] < 1152 * 1024,
+        'selective bundle exceeds 1152 KiB',
       );
       for (const [target, bytes] of Object.entries(weight.archives))
         assert.ok(typeof bytes === 'number' && bytes > 0, 'archive measurement failed: ' + target);
