@@ -3,9 +3,10 @@
 Each generated package contains:
 
 - `README.md`: a quickstart and short recipes.
-- `REFERENCE.md`: operations grouped by resource, with pagination and polling recipes.
-- `MODELS.md`: models with descriptions, units, constraints and examples. TypeScript field comments carry the same information.
+- `REFERENCE.md`: a resource index linking to operation files under `reference/`.
+- `MODELS.md`: a model index with descriptions, enums, units and constraints; large references split into `models/` files. TypeScript field comments carry the same information.
 - `RUNTIME.md`: options, errors, retries, pagination, webhooks and the authentication table for this SDK.
+- `llms.txt`: a small agent-oriented index.
 - `examples/`: a runnable script for every operation.
 
 Resource and method names come from the SDK configuration, or from matching OpenAPI tags and operation IDs. Examples below use the bundled library contract; see the [README](../README.md#use-the-generated-sdk) to generate and install it.
@@ -49,7 +50,7 @@ $client->close();
 - A missing or malformed URL fails with a structured `baseUrl` validation error. Destination errors distinguish protocol failures from allowed-origin failures.
 - SDKs with `auth.defaultCredentials` discover credentials lazily. Other SDKs require explicit credentials from your application's configuration.
 
-All client and request settings are listed under [client and request options](#client-and-request-options).
+Common client and request settings are listed under [client and request options](#client-and-request-options).
 
 ## Authenticate
 
@@ -181,7 +182,9 @@ Failures are authentication errors with `code` (Node) or `errorCode` (PHP): `no_
 
 ### Arguments
 
-The default argument order is the same in Node and PHP:
+The generated reference records the selected calling convention. With `requests.style: "object"`, pass one object with path/query/header fields and a `body` member, followed by request options, for example `client.books.retrieve({ id: 'book_placeholder' }, options)`. The generator default remains positional unless the provider overrides it:
+
+Positional argument order is the same in Node and PHP:
 
 1. Path values, in URL order.
 2. A params object (Node) or array (PHP) holding body fields and query/header parameters. There is no `body` wrapper. Omit this argument when the operation has no body and no query/header parameters.

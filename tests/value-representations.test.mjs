@@ -125,7 +125,12 @@ test('numeric hover and model reference guidance follow the declared value repre
   ]) {
     for (const representation of [type, [type], [type, 'null']]) {
       const s = { type: representation, format };
-      assert.match(schemaNotes(s), /Use an exact numeric string, not a floating-point number\./);
+      assert.match(
+        schemaNotes(s),
+        format === 'decimal'
+          ? /Use an exact numeric string, not a floating-point number\./
+          : /Use an integer string \(decimal digits\), not a floating-point number\./,
+      );
       assert.match(
         schemaNotes({ ...s, 'x-sdk-number-input': 'explicit' }),
         /Use ExactNumber for an exact JSON number\./,
@@ -145,7 +150,11 @@ test('numeric hover and model reference guidance follow the declared value repre
     assert.match(
       input,
       new RegExp(
-        '/\\*\\* Use an exact numeric string, not a floating-point number\\.[^*]*\\*/\\s*"' +
+        '/\\*\\* ' +
+          (['large', 'unsigned'].includes(field)
+            ? 'Use an integer string \\(decimal digits\\), not a floating-point number'
+            : 'Use an exact numeric string, not a floating-point number') +
+          '\\.[^*]*\\*/\\s*"' +
           field +
           '"\\?: ' +
           (['large', 'unsigned'].includes(field) ? '`\\$\\{bigint\\}`' : 'string'),
@@ -156,14 +165,29 @@ test('numeric hover and model reference guidance follow the declared value repre
     for (const field of ['latitude', 'float_number', 'change_percent', 'nullable_number']) {
       const row = docs.split('\n').find((line) => line.startsWith('| `' + field + '` |'));
       assert.ok(row, target + ': ' + field);
-      assert.match(row, /\| number(?: or null)? \|/);
+      assert.match(
+        row,
+        target === 'php' ? /\| int\\\|float(?:\\\|null)? \|/ : /\| number(?: or null)? \|/,
+      );
       assert.doesNotMatch(row, /exact numeric string|ExactNumber/);
     }
     for (const field of ['decimal', 'large', 'unsigned', 'nullable_decimal']) {
       const row = docs.split('\n').find((line) => line.startsWith('| `' + field + '` |'));
       assert.ok(row, target + ': ' + field);
-      assert.match(row, /\| exact numeric string(?: or null)? \|/);
-      assert.match(row, /Use an exact numeric string, not a floating-point number\./);
+      assert.match(
+        row,
+        target === 'php'
+          ? /\| string(?:\\\|null)? \|/
+          : ['large', 'unsigned'].includes(field)
+            ? /\| integer string \|/
+            : /\| exact numeric string(?: or null)? \|/,
+      );
+      assert.match(
+        row,
+        ['large', 'unsigned'].includes(field)
+          ? /Use an integer string \(decimal digits\), not a floating-point number\./
+          : /Use an exact numeric string, not a floating-point number\./,
+      );
     }
   }
 });

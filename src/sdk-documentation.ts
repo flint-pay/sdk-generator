@@ -2,26 +2,13 @@ import { stable } from './canonical.js';
 import { compileRetry, requiresIdempotencyKey } from './runtime-plan.js';
 import { directionalSchema, exactValue, valueInstruction } from './codec-plan.js';
 import type { Contract, Operation, Schema } from './contract.js';
-import { schemaNotes } from './schema-documentation.js';
+import { schemaNotes, schemaLiteral as literal } from './schema-documentation.js';
 
 const cell = (text: string) =>
   text
     .replaceAll('|', '\\|')
     .replace(/[\r\n]+/g, ' ')
     .replaceAll('<', '&lt;');
-function literal(text: string, table = false): string {
-  const value = (table ? text.replaceAll('|', '\\|') : text).replace(/[\r\n]+/g, ' ');
-  const delimiter = '`'.repeat(
-    Math.max(0, ...[...value.matchAll(/`+/g)].map((m) => m[0].length)) + 1,
-  );
-  const padding =
-    value.startsWith('`') ||
-    value.endsWith('`') ||
-    (value.startsWith(' ') && value.endsWith(' ') && !/^ +$/.test(value))
-      ? ' '
-      : '';
-  return `${delimiter}${padding}${value}${padding}${delimiter}`;
-}
 const literalCell = (text: string) => literal(text, true);
 const markdownNotes = (schema: Schema, table = false) =>
   schemaNotes(schema, {
@@ -170,7 +157,9 @@ function typeDescription(
       exactValue(valueInstruction(t, s.format))
         ? s['x-sdk-number-input'] === 'explicit'
           ? 'ExactNumber input; exact numeric string response'
-          : 'exact numeric string'
+          : ['int64', 'uint64'].includes(s.format ?? '')
+            ? 'integer string'
+            : 'exact numeric string'
         : t,
     )
     .join(' or ');
@@ -191,8 +180,17 @@ export function fieldTable(
       .map(([name, child]) => {
         // Effective body fields retain conjuncts rather than overwriting parent
         // constraints with branch annotations. Render every retained declaration.
-        const declarations = (s: Schema): Schema[] => [s, ...(s.allOf ?? []).flatMap(declarations)];
-        const parts = includeExamples ? [child] : declarations(child);
+        const declarations = (s: Schema, seen = new Set<string>()): Schema[] => {
+          const ref = s['x-sdk-ref'];
+          return [
+            s,
+            ...(s.allOf ?? []).flatMap((part) => declarations(part, seen)),
+            ...(ref && definitions[ref] && !seen.has(ref)
+              ? declarations(definitions[ref]!, new Set(seen).add(ref))
+              : []),
+          ];
+        };
+        const parts = declarations(child);
         const enumSets = parts.flatMap((part) =>
           part.enum ? [part.enum.map((value) => JSON.stringify(value))] : [],
         );
@@ -294,9 +292,45 @@ export function bodyReference(
     `Body shape: ${typeDescription(body, definitions, names)}.\n\n`
   );
 }
+export function schemaVariants(
+  schema: Schema,
+  definitions: Record<string, Schema>,
+  names?: ModelNames,
+): string {
+  const variants = schema.oneOf ?? schema.anyOf;
+  if (!variants) return '';
+  return (
+    'Variants:\n\n' +
+    variants
+      .map((variant, i) => {
+        const shape = typeDescription(variant, definitions, names);
+        const fields = Object.entries(schemaFields(variant, definitions).fields);
+        const tags = fields
+          .filter(([, s]) => s.const !== undefined || s.enum?.length === 1)
+          .map(
+            ([key, s]) => `${literal(key)} = ${literal(JSON.stringify(s.const ?? s.enum?.[0]))}`,
+          );
+        const description = [
+          shape,
+          variant.description,
+          tags.length
+            ? tags.join(', ')
+            : fields.length
+              ? 'Fields: ' + fields.map(([key]) => literal(key)).join(', ')
+              : '',
+        ]
+          .filter(Boolean)
+          .join(' — ');
+        return `- Variant ${i + 1}: ${description}.`;
+      })
+      .join('\n') +
+    '\n\n'
+  );
+}
 export function modelReference(
   c: Contract,
   exports?: Readonly<Record<string, ModelDocumentationExport>>,
+  target: 'node' | 'php' = 'node',
 ): string {
   const outputs =
     exports &&
@@ -309,9 +343,9 @@ export function modelReference(
       ),
     );
   const section = (name: string, schema: Schema, names?: ModelNames, replacement = '') =>
-    `## ${name}\n\n${replacement}${markdownNotes(schema)}\n\n${fieldTable(schema, c.definitions ?? c.models, name, true, names)}${schema.oneOf || schema.anyOf ? `Variants: ${(schema.oneOf ?? schema.anyOf ?? []).map((variant) => typeDescription(variant, {}, names)).join(', ')}.\n\n` : ''}`;
+    `## ${name}\n\n${replacement}${markdownNotes(schema)}\n\n${schema.enum ? 'Values: ' + schema.enum.map((v) => literal(JSON.stringify(v))).join(', ') + '.\n\n' : ''}${fieldTable(schema, c.definitions ?? c.models, name, true, names)}${schemaVariants(schema, c.definitions ?? c.models, names)}`;
   return (
-    `# ${c.title} models\n\n[API reference](REFERENCE.md) · [Runtime guide](RUNTIME.md)\n\nFields below describe the API's declared shape. Inputs omit read-only fields; responses omit write-only fields and preserve unknown fields and enum values. Node input types add the suffix \`Input\`. PHP operation responses use presence-aware classes; nested values use the shapes below.\n\nExact numeric strings preserve JSON numeric precision. For a minor-unit amount, \`"100"\` is 100 minor units (USD 1.00), not USD 100.00. Use the field's documented units.\n\n` +
+    `# ${c.title} models\n\n[API reference](REFERENCE.md) · [Runtime guide](RUNTIME.md)\n\nFields describe the API's declared shape. Inputs omit read-only fields; responses omit write-only fields and preserve unknown fields and enum values. ${target === 'node' ? 'Request enums are closed unions; response enums accept unknown strings. Input types use the Input suffix.' : 'Operation responses use presence-aware classes with typed getters; optional omitted fields return null.'}\n\nint64/uint64 values are integer strings${target === 'node' ? ' (TypeScript `${bigint}`); inputs also accept bigint' : ''}. Decimal fields use exact numeric strings. Use each field's declared units.\n\n` +
     Object.entries(c.models)
       .map(([name, schema]) => {
         if (!exports) return section(name, schema);
@@ -320,19 +354,22 @@ export function modelReference(
         return (
           (entry.output === name ? section(name, directionalSchema(schema, true), outputs) : '') +
           (entry.input
-            ? section(
-                entry.input,
-                directionalSchema(schema, false),
-                inputs,
-                `Request input. Response: [${entry.output}](MODELS.md#${anchor(entry.output)}).\n\n`,
-              )
+            ? entry.output === name &&
+              stable(directionalSchema(schema, false)) === stable(directionalSchema(schema, true))
+              ? `## ${entry.input}\n\nRequest input. Response: [${entry.output}](MODELS.md#${anchor(entry.output)}). Fields, descriptions and enum values are shared with that model; request enums accept only the listed values.\n\n`
+              : section(
+                  entry.input,
+                  directionalSchema(schema, false),
+                  inputs,
+                  `Request input. Response: [${entry.output}](MODELS.md#${anchor(entry.output)}).\n\n`,
+                )
             : '')
         );
       })
       .join('')
   );
 }
-export function authenticationGuide(c: Contract): string {
+export function authenticationGuide(c: Contract, target: 'node' | 'php' = 'node'): string {
   if (!c.authentication)
     return c.auth
       ? 'Supply `token` from your credential source.\n\n'
@@ -359,36 +396,88 @@ export function authenticationGuide(c: Contract): string {
           `| \`${cell(name)}\` | ${auth.schemes.map((s) => '`' + cell(s.name) + '`').join(', ')} |`,
       )
       .join('\n') +
-    '\n\nTypeScript checks mode names, credential keys, and the modes permitted by each operation. Credentials themselves are never shown in SDK diagnostics.\n\n'
+    `\n\n${target === 'node' ? 'TypeScript checks mode names, credential keys, and the modes permitted by each operation. ' : ''}Credentials themselves are never shown in SDK diagnostics.\n\n`
   );
 }
 export function operationGuidance(c: Contract, op: Operation): string {
-  const { retry, replay } = compileRetry(op);
-  const guidance =
+  const { retry } = compileRetry(op);
+  return (
+    `#### Request behavior\n\nAttempt limit: ${retry.maxAttempts}; retry statuses: ${retry.statuses.join(', ') || 'none'}; transport retries: ${retry.transport ? 'enabled' : 'disabled'}. See [retries and idempotency](RUNTIME.md#retries-and-idempotency).\n\n` +
+    (retry.errors?.length
+      ? `Code-specific retries: ${retry.errors.map((rule) => `HTTP ${rule.status} (${rule.codes.map((code) => literal(code)).join(', ')})`).join('; ')}.\n\n`
+      : '') +
     (op.response?.return === 'payload'
-      ? `Returns ${op.response.payloadPath ? 'the payload at `' + cell(op.response.payloadPath) + '`' : 'the complete decoded body'} directly. Use \`${op.method}WithResponse\` for \`body\`, \`meta\` and \`raw\` without unwrapping.\n\n`
-      : '') +
-    (c.authentication
-      ? `Authentication modes: ${op.authModes?.map((m) => '`' + m + '`').join(', ') || 'none (unauthenticated)'}. See [credential setup](RUNTIME.md#authentication).\n\n`
-      : '') +
-    `Pass request options as the last argument. Attempt limit: ${retry.maxAttempts}. Client and request maxAttempts are capped at this limit. ` +
-    (retry.maxAttempts > 1
-      ? `Retry statuses: ${retry.statuses.join(', ') || 'none'}; transport retries: ${retry.transport ? 'enabled' : 'disabled'}. `
-      : 'The SDK sends at most one attempt. ') +
-    (retry.maxAttempts > 1 && c.config.errors?.retry
-      ? `Body retry signal: \`${cell(c.config.errors.retry.path)}\`; retry values: ${c.config.errors.retry.retryValues.map((value) => literalCell(value)).join(', ')}. A string signal overrides statuses and code rules; otherwise statuses apply. HTTP 412 never retries. `
-      : '') +
-    (retry.maxAttempts > 1 && !c.config.errors?.retry && retry.errors?.length
-      ? `Code-specific retries: ${retry.errors.map((rule) => `HTTP ${rule.status} (${rule.codes.map((code) => '`' + cell(code) + '`').join(', ')})`).join('; ')}. `
-      : '') +
-    (replay === 'idempotency' && op.idempotency && !op.idempotency.auto
-      ? 'Without an optional idempotency key, mutations send once; required keys remain required. '
+      ? `Complete body and metadata: ${literal(op.method + 'WithResponse')}. See [response modes](RUNTIME.md#responses-and-errors).\n\n`
       : '') +
     (op.idempotency
-      ? `${requiresIdempotencyKey(op) ? 'Required idempotencyKey: save a key with the action before the first attempt and reuse it on retry. ' : ''}Supports idempotencyKey for the declared ${op.idempotency.header} header. Persist and reuse the key for the same business action. ${op.idempotency.auto ? 'When no key is supplied, the SDK generates one for this call; automatic keys cover one SDK call only. ' : ''}`
-      : 'idempotencyKey is not supported on this operation. ') +
+      ? `Idempotency: ${requiresIdempotencyKey(op) ? 'required key' : op.idempotency.auto ? 'automatic key when omitted' : 'optional key'}; header ${literal(op.idempotency.header)}; retention: ${op.idempotency.retention.replace(/[.!?]+$/, '')}; scope: ${op.idempotency.scope.replace(/[.!?]+$/, '')}.\n\n`
+      : '') +
+    (c.authentication
+      ? `Authentication modes: ${op.authModes?.map((mode) => literal(mode)).join(', ') || 'none (anonymous)'}. [Credential setup](RUNTIME.md#authentication).\n\n`
+      : '') +
     (op.conditional
-      ? `Use \`ifMatch\` to send the declared \`${op.conditional.header}\` header. `
-      : '');
-  return guidance.trimEnd() + '\n\n';
+      ? `Conditional header: ${literal(op.conditional.header)}, supplied through ifMatch.\n\n`
+      : '') +
+    (op.pagination
+      ? `Pagination: ${literal(op.method + 'Items')}, ${literal(op.method + 'Pages')}${op.response?.return === 'payload' ? ', ' + literal(op.method + 'PagesWithResponse') : ''}. [Canonical pagination example](RUNTIME.md#pagination-and-polling).\n\n`
+      : '') +
+    (op.polling
+      ? `Polling: ${literal(op.method + 'Wait')}${op.response?.return === 'payload' ? ', ' + literal(op.method + 'WaitWithResponse') : ''}; state ${literal(op.polling.state)}; success ${op.polling.success.map((v) => literal(v)).join(', ')}; failure ${op.polling.failure.map((v) => literal(v)).join(', ')}. [Polling deadlines](RUNTIME.md#pagination-and-polling).\n\n`
+      : '')
+  );
+}
+
+/** Show top-level response alternatives without traversing nested object fields. */
+export function responseReference(
+  schema: Schema,
+  definitions: Record<string, Schema>,
+  scope: string,
+  names?: ModelNames,
+): string {
+  const expand = (value: Schema, seen = new Set<string>()): Schema[] => {
+    const { allOf, ['x-sdk-ref']: ref, ...own } = value;
+    return [
+      own,
+      ...(allOf ?? []).flatMap((part) => expand(part, seen)),
+      ...(ref && definitions[ref] && !seen.has(ref)
+        ? expand(definitions[ref]!, new Set(seen).add(ref))
+        : []),
+    ];
+  };
+  const parts = expand(directionalSchema(schema, true));
+  const alternative = parts.find((part) => part.oneOf || part.anyOf);
+  const table = (value: Schema, label: string) => {
+    const shape = schemaFields(value, definitions, new Set(), true);
+    return fieldTable(
+      {
+        properties: Object.fromEntries(
+          Object.entries(shape.fields).filter(([, field]) => !field.writeOnly),
+        ),
+        required: [...shape.required],
+      },
+      definitions,
+      label,
+      false,
+      names,
+    );
+  };
+  if (!alternative) return table(schema, scope);
+  const common = parts.map(({ oneOf, anyOf, ...part }) => part);
+  return (alternative.oneOf ?? alternative.anyOf ?? [])
+    .map((variant, index) => {
+      const shape = schemaFields(
+        { allOf: [...common, directionalSchema(variant, true)] },
+        definitions,
+        new Set(),
+        true,
+      );
+      return (
+        `##### Response variant ${index + 1}\n\n${variant.description ?? ''}\n\n` +
+        (table(
+          { properties: shape.fields, required: [...shape.required] },
+          `${scope} variant ${index + 1}`,
+        ) || 'No top-level object fields in this variant.\n\n')
+      );
+    })
+    .join('');
 }

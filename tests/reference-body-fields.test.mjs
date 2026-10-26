@@ -1,3 +1,4 @@
+import { readReference } from './helpers/package-docs.mjs';
 import { replacePhpExampleAutoload } from './local-example.mjs';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -667,7 +668,7 @@ test('body references list inline variants, named models, field descriptions and
       },
     });
     for (const target of ['node', 'php']) {
-      const source = files.get(`${target}/REFERENCE.md`);
+      const source = readReference(files, target);
       assert.match(source, new RegExp(`${keyword} variant 1`));
       assert.match(source, new RegExp(`${keyword} variant 2`));
       assert.match(source, /\| `label` \| Required \| string \| Synthetic label description\./);
@@ -732,7 +733,7 @@ for (const keyword of ['oneOf', 'anyOf'])
         },
       });
       for (const target of ['node', 'php']) {
-        const reference = files.get(`${target}/REFERENCE.md`);
+        const reference = readReference(files, target);
         const first = reference
           .split(`#### api.createValue body ${keyword} variant 1 fields`)[1]
           ?.split('####')[0];
@@ -750,7 +751,7 @@ for (const keyword of ['oneOf', 'anyOf'])
           first,
           target === 'node'
             ? /\| `nested` \| Optional \| \[ChildInput\]\(MODELS\.md#childinput\) \|/
-            : /\| `nested` \| Optional \| \[Child\]\(MODELS\.md#child\) \|/,
+            : /\| `nested` \| Optional \| \[ChildInput\]\(MODELS\.md#childinput\) \|/,
         );
         assert.doesNotMatch(first, /responseOnly/);
         const second = reference
@@ -816,7 +817,7 @@ for (const keyword of ['oneOf', 'anyOf'])
           layout === 'reference' ? { Common: common, Choices: alternatives, Inner: inner } : {},
       });
       for (const target of ['node', 'php']) {
-        const reference = files.get(`${target}/REFERENCE.md`);
+        const reference = readReference(files, target);
         const commonTable = reference
           .split('#### api.createValue body fields')[1]
           ?.split('####')[0];
@@ -907,7 +908,7 @@ test('idempotency scope punctuation is joined once', () => {
     },
   });
   for (const target of ['node', 'php']) {
-    const source = files.get(`${target}/REFERENCE.md`);
+    const source = readReference(files, target);
     assert.match(source, /retention: 24 hours; scope: request parameters\./);
     assert.doesNotMatch(source, /request parameters\.\./);
   }

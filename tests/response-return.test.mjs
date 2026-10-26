@@ -1,3 +1,4 @@
+import { readReference } from './helpers/package-docs.mjs';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
@@ -620,13 +621,16 @@ ${
       throw new Error(error.stdout.toString() + error.stderr.toString());
     }
     for (const target of ['node', 'php']) {
-      const docs = f.read(`${target}/REFERENCE.md`);
+      const docs = readReference(f.output, target);
       assert.match(docs, /getItemPages/);
       if (mode !== 'result') {
         assert.match(docs, /getItemPagesWithResponse/);
         assert.match(docs, /getItemWaitWithResponse/);
-        assert.match(docs, /Iterate page payloads/);
-        assert.match(docs, /Returns the same payload as the base method/);
+        assert.match(
+          f.read(`${target}/RUNTIME.md`),
+          /Pagination Pages and polling Wait follow the base return mode/,
+        );
+        assert.match(docs, /Polling:/);
       }
     }
     const first = preview(f.contract, f.output);
@@ -800,6 +804,6 @@ test('payload-mode generated examples and README use the selected return shape',
       /p_1/,
     );
   }
-  assert.match(f.read('php/REFERENCE.md'), /getItemWithResponse/);
+  assert.match(readReference(f.output, 'php'), /getItemWithResponse/);
   assert.doesNotMatch(f.read('node/README.md'), /result\.data\.data/);
 });

@@ -370,7 +370,7 @@ export function splitNodeDeclarations(
     const memberRefs = refs(common, 'Client');
     put(
       `resources/${file(group)}.d.ts`,
-      `${exports.replaceAll("'./", "'../")}\n${headerFor([property, ...common])}\n${imports(new Set([...names, ...memberRefs]), '../declarations/')}\nexport interface ${resourceName} ${property.type.getText(source)}\nexport declare class Client {\n${common.map((m) => m.getFullText(source)).join('\n')}\nreadonly ${group}: ${resourceName};\n}\n`,
+      `${exports.replaceAll("'./", "'../")}\n${headerFor([property, ...common])}\n${imports(new Set([...names, ...memberRefs]), '../declarations/')}\nexport interface ${resourceName} ${property.type.getText(source)}\n/** API client; see README.md and RUNTIME.md#clientoptions. */\nexport declare class Client {\n${common.map((m) => m.getFullText(source)).join('\n')}\nreadonly ${group}: ${resourceName};\n}\n`,
     );
   }
   const rootExports: string[] = [exports];
@@ -428,7 +428,7 @@ export function splitNodeDeclarations(
     if (name === 'Client') {
       const common = client.members.filter((m) => !ts.isPropertyDeclaration(m));
       names = refs(common, name);
-      body = `export declare class Client {\n${common.map((m) => m.getFullText(source)).join('\n')}\n${groups.map((group) => `readonly ${group}: import('../resources/${file(group)}.js').${group[0]?.toUpperCase() + group.slice(1)}Resource;`).join('\n')}\n}`;
+      body = `/** API client; see README.md and RUNTIME.md#clientoptions. */\nexport declare class Client {\n${common.map((m) => m.getFullText(source)).join('\n')}\n${groups.map((group) => `readonly ${group}: import('../resources/${file(group)}.js').${group[0]?.toUpperCase() + group.slice(1)}Resource;`).join('\n')}\n}`;
     }
     // Internal helper types become module exports solely for sibling declarations.
     const first = nodes[0];

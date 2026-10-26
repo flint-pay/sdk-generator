@@ -1,3 +1,4 @@
+import { schemaNotes, schemaLiteral } from './schema-documentation.js';
 import {
   publicTypePlanner,
   publicTypeDeclarations,
@@ -225,6 +226,8 @@ export interface PhpModelPlan {
   constructorDoc: string;
   defaultObject: boolean;
   getters: { field: string; method: string; type: string; doc: string }[];
+  documentation?: Record<string, { description: string; markdown?: string; required: boolean }>;
+  description?: string;
   codec: CodecPlan;
   sharedCodec?: string;
   representation?: PhpRepresentation;
@@ -248,6 +251,7 @@ export function compilePhpModel(
   shared: ReadonlyMap<string, string>,
   declaration: Schema = schema,
   definitions: Readonly<Record<string, Schema>> = {},
+  includeExamples = true,
 ): PhpModelPlan {
   declaration = {
     ...phpDeclaration(declaration, schema['x-sdk-definitions'] ?? definitions),
@@ -258,12 +262,42 @@ export function compilePhpModel(
   return {
     name,
     response,
+    ...(declaration.description ? { description: declaration.description } : {}),
     constructorType: phpType(declaration, response),
     constructorDoc:
       declaration.type === 'object'
         ? phpShape(declaration, response)
         : phpDocType(declaration, response),
     defaultObject: declaration.type === 'object',
+    documentation: Object.fromEntries(
+      Object.entries(declaration.properties ?? {}).map(([field, child]) => {
+        const { example, examples, ...withoutExamples } = child;
+        return [
+          field,
+          {
+            required: declaration.required?.includes(field) ?? false,
+            markdown: [
+              schemaNotes(includeExamples ? child : withoutExamples, { literal: schemaLiteral }),
+              child.enum
+                ? 'Values: ' +
+                  child.enum.map((v) => schemaLiteral(JSON.stringify(v))).join(', ') +
+                  '.'
+                : '',
+            ]
+              .filter(Boolean)
+              .join(' '),
+            description: [
+              schemaNotes(includeExamples ? child : withoutExamples),
+              child.enum
+                ? 'Values: ' + child.enum.map((v) => JSON.stringify(v)).join(', ') + '.'
+                : '',
+            ]
+              .filter(Boolean)
+              .join(' '),
+          },
+        ];
+      }),
+    ),
     getters: Object.entries(declaration.properties ?? {})
       .filter(([, child]) => (response ? !child.writeOnly : !child.readOnly))
       .map(([field, child]) => {
@@ -382,7 +416,7 @@ function compileAuthentication(c: Contract): NodeAuthenticationPlan | undefined 
     )
     .join(
       '\n',
-    )}\n}\nexport type AuthMode = keyof Credentials;\nexport type RequestOptions<M extends AuthMode = AuthMode> = Omit<RuntimeRequestOptions, 'authMode' | 'credentials'> & ${requestShortcuts ? '{ ' + requestShortcuts + ' } & ' : ''}({ authMode?: undefined; credentials?: Credentials[M] } | { [K in M]: { authMode: K; credentials?: Credentials[K] } }[M]);\n`;
+    )}\n}\nexport type AuthMode = keyof Credentials;\n/** Per-call authentication and request overrides. See RUNTIME.md#requestoptions. */\nexport type RequestOptions<M extends AuthMode = AuthMode> = Omit<RuntimeRequestOptions, 'authMode' | 'credentials'> & ${requestShortcuts ? '{ ' + requestShortcuts + ' } & ' : ''}({ authMode?: undefined; credentials?: Credentials[M] } | { [K in M]: { authMode: K; credentials?: Credentials[K] } }[M]);\n`;
   return { declarations, modes };
 }
 
@@ -409,12 +443,12 @@ function operationOptions(
 function compileClientOptions(c: Contract): string {
   const baseUrl = `baseUrl${c.defaultBaseUrl !== undefined ? '?' : ''}: string;`;
   if (!c.authentication)
-    return `export type ClientOptions = Omit<RuntimeClientOptions, 'baseUrl'> & { ${baseUrl} };\n`;
+    return `/** Client configuration. See RUNTIME.md#clientoptions. */\nexport type ClientOptions = Omit<RuntimeClientOptions, 'baseUrl'> & { ${baseUrl} };\n`;
   const shortcuts = Object.keys(c.authShortcuts ?? {})
     .sort()
     .map((name) => `${JSON.stringify(name)}?: string | CredentialProvider;`)
     .join(' ');
-  return `export type ClientOptions = Omit<RuntimeClientOptions, 'baseUrl' | 'token' | 'authMode' | 'credentials'> & { ${baseUrl} ${shortcuts} authMode?: AuthMode; credentials?: Partial<Credentials> };\n`;
+  return `/** Client configuration. See RUNTIME.md#clientoptions. */\nexport type ClientOptions = Omit<RuntimeClientOptions, 'baseUrl' | 'token' | 'authMode' | 'credentials'> & { ${baseUrl} ${shortcuts} authMode?: AuthMode; credentials?: Partial<Credentials> };\n`;
 }
 
 const js = (v: unknown) => JSON.stringify(v, null, 2)?.replaceAll('"__proto__":', '["__proto__"]:');
@@ -1376,6 +1410,8 @@ export function compileSdkContract(source: Contract): {
         true,
         sharedNames,
         entity.declaration,
+        {},
+        false,
       );
       model.representation = entity.representation;
       const required = new Set(

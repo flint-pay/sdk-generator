@@ -1,8 +1,9 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 
-// Public examples stay HTTPS-only. Test copies opt in to our local HTTP server.
+// Older examples need an explicit local HTTP opt-in; current examples select it from the URL.
 export function localExampleSource(source, target) {
+  if (source.includes('allowInsecureHttp:')) return source;
   return target === 'php'
     ? source.replace(
         /^(\$[A-Za-z_][\w]* = new Client\(new ClientOptions\()/gm,

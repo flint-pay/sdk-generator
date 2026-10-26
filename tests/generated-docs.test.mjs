@@ -1,3 +1,4 @@
+import { readReference } from './helpers/package-docs.mjs';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
@@ -322,12 +323,12 @@ test('owning component hints retain request-body model links in both target refe
   const output = join(directory, 'out');
   generate(contract, output);
   for (const target of ['node', 'php']) {
-    const reference = readFileSync(join(output, target, 'REFERENCE.md'), 'utf8');
+    const reference = readReference(output, target);
     assert.match(
       reference,
       target === 'node'
         ? /Body model: \[CreateWidgetRequestInput\]\(MODELS\.md#createwidgetrequestinput\)/
-        : /Body model: \[CreateWidgetRequest\]\(MODELS\.md#createwidgetrequest\)/,
+        : /Body model: \[CreateWidgetRequestInput\]\(MODELS\.md#createwidgetrequestinput\)/,
     );
     const models = readFileSync(join(output, target, 'MODELS.md'), 'utf8');
     assert.match(models, /## CreateWidgetRequest/);

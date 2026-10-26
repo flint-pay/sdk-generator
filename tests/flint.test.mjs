@@ -124,7 +124,8 @@ test('Flint READMEs lead with SDK docs and include one quickstart and concise pa
     const docs =
       '[Flint Pay SDK documentation](https://developers.withflintpay.com/docs/guides/sdks)';
     assert.ok(readme.includes(docs));
-    assert.ok(!readme.includes('allowInsecureHttp'));
+    assert.ok(readme.includes('allowInsecureHttp'));
+    assert.match(readme, /Set API_BASE_URL to your sandbox or local mock URL/);
     assert.ok(!readme.includes('...(process.env.API_TOKEN'));
     assert.doesNotMatch(readme, /process\.env\.API_TOKEN \?\?|getenv\('API_TOKEN'\) \?:/);
     assert.match(readme, /Set API_TOKEN: this call requires a credential/);
@@ -155,7 +156,7 @@ test('Flint READMEs lead with SDK docs and include one quickstart and concise pa
       const path = `examples/${operation}.${extension}`;
       assert.ok(readme.includes(`[Run the standalone example](${path})`));
       const script = readFileSync(join(output, target, path), 'utf8');
-      assert.ok(!script.includes('allowInsecureHttp'));
+      assert.ok(script.includes('allowInsecureHttp'));
       if (index === 0) {
         assert.match(snippets[index], /catch \(/);
         assert.match(

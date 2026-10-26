@@ -916,7 +916,7 @@ test('--json preserves every command failure object and serialization', (t) => {
 test('human preview and generation summarize first generation and unchanged files', (t) => {
   const f = fixture(t, ['node', 'php']);
   const fresh = join(f.dir, 'new output');
-  const expected = `Files: 101 created (node 46, php 55); no previous generation\nCompatibility: not compared; no previous generation\n`;
+  const expected = `Files: 105 created (node 48, php 57); no previous generation\nCompatibility: not compared; no previous generation\n`;
   for (const flags of [[], ['--diff']]) {
     const result = run(['preview', f.api, f.sdk, fresh, ...flags]);
     assert.equal(result.status, 0, result.stderr);
@@ -934,7 +934,7 @@ test('human preview and generation summarize first generation and unchanged file
     assert.equal(result.status, 0, result.stderr);
     assert.equal(
       result.stdout,
-      `${command === 'preview' ? `Preview of ${fresh} (no files written)` : `Generated ${fresh}`}\nFiles: no changes (101 unchanged)\nCompatibility: no findings\n`,
+      `${command === 'preview' ? `Preview of ${fresh} (no files written)` : `Generated ${fresh}`}\nFiles: no changes (105 unchanged)\nCompatibility: no findings\n`,
     );
     assert.ok(Buffer.byteLength(result.stdout) < 1024);
   }
@@ -962,8 +962,8 @@ test('human regeneration lists sorted paths and every finding; --diff prints onl
   const plan = preview(contract, f.output);
   const plain = run(['preview', f.api, f.sdk, f.output]);
   assert.equal(plain.status, 0, plain.stderr);
-  assert.match(plain.stdout, /Files: 3 created, 13 modified, 58 removed, 30 unchanged\n/);
-  assert.match(plain.stdout, /Modified \(13\):\n  node\/README.md\n/);
+  assert.match(plain.stdout, /Files: 3 created, 14 modified, 60 removed, 31 unchanged\n/);
+  assert.match(plain.stdout, /Modified \(14\):\n  node\/README.md\n/);
   assert.match(plain.stdout, /\n  php\/README.md\n/);
   assert.match(plain.stdout, /Compatibility: 6 breaking, 2 review, 0 additive\n/);
   assert.match(
@@ -998,7 +998,7 @@ test('human regeneration lists sorted paths and every finding; --diff prints onl
   assert.ok(plain.stdout.endsWith('Use --diff to show modified-file diffs (also with --json).\n'));
   const diff = run(['preview', f.api, f.sdk, f.output, '--diff']);
   assert.equal(diff.status, 0, diff.stderr);
-  assert.match(diff.stdout, /Diffs \(13 modified files\):\n/);
+  assert.match(diff.stdout, /Diffs \(14 modified files\):\n/);
   const libraryDiffs = generate(contract, f.output, true)
     .changes.filter((c) => c.kind === 'modified')
     .sort((a, b) => (a.path < b.path ? -1 : 1));

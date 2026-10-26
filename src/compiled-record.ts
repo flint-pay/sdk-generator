@@ -263,6 +263,15 @@ export function assertCompiledSnapshot(value: unknown): asserts value is Compile
     if (!Array.isArray(model.getters)) throw new Error('Invalid PHP getters');
     for (const getter of model.getters)
       fields(object(getter, 'getter'), ['field', 'method', 'type', 'doc'], 'string', 'getter');
+    if (model.description !== undefined) fields(model, ['description'], 'string', 'php.model');
+    if (model.documentation !== undefined)
+      for (const value of Object.values(object(model.documentation, 'model.documentation'))) {
+        const entry = object(value, 'model.documentation.field');
+        fields(entry, ['description'], 'string', 'model.documentation.field');
+        fields(entry, ['required'], 'boolean', 'model.documentation.field');
+        if (entry.markdown !== undefined)
+          fields(entry, ['markdown'], 'string', 'model.documentation.field');
+      }
   }
   for (const [name, value] of Object.entries(object(php.operations, 'php.operations')))
     fields(object(value, name), ['output', 'items'], 'string', name);
