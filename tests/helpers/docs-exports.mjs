@@ -70,7 +70,9 @@ export function assertDocumentedModelExports(directory) {
     assert.ok(exports.has(name), `MODELS.md documents unexported ${name}`);
   for (const file of packageDocuments(directory)) {
     const document = readFileSync(file, 'utf8');
-    for (const match of document.matchAll(/^### (\w+)\.(\w+)$/gm)) {
+    for (const match of (file.includes('/reference/') ? document : '').matchAll(
+      /^### (\w+)\.(\w+)$/gm,
+    )) {
       const resource = checker.getPropertyOfType(client, match[1]);
       assert.ok(resource, `${file} documents unknown resource ${match[1]}`);
       const type = checker.getTypeOfSymbolAtLocation(

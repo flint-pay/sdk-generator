@@ -18,6 +18,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { createHmac } from 'node:crypto';
+import { assertCanonicalOperationDocumentation } from './helpers/canonical-docs.mjs';
 
 const fixture = resolve('tests/providers/flint');
 const api = join(fixture, 'full-openapi.json');
@@ -80,6 +81,16 @@ assert.deepEqual(preview(restored,${JSON.stringify(output)}).changes,[],'full ex
       run(process.execPath, [script]);
       assertDocumentedModelExports(join(output, 'node'));
       assertDocumentedPhpExports(join(output, 'php'));
+      const documentedContract = JSON.parse(
+        readFileSync(join(output, '.sdk-generator.json'), 'utf8'),
+      ).interface;
+      for (const target of ['node', 'php']) {
+        const coverage = assertCanonicalOperationDocumentation(
+          join(output, target),
+          documentedContract,
+        );
+        assert.ok(coverage.suppressed > 100, `${target}: full canonical operation coverage`);
+      }
       const summary = JSON.parse(readFileSync(join(dir, 'summary.json')));
       const inventory = JSON.parse(readFileSync(join(fixture, 'full-inventory.json')));
       assert.deepEqual(

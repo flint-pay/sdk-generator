@@ -121,7 +121,7 @@ test('numeric field docs agree with generated declarations and factories in both
       }
       assert.match(
         readFileSync(join(out, target, 'MODELS.md'), 'utf8'),
-        /Variant 1: ExactNumber input; exact numeric string response\.[\s\S]*Variant 2: string\./,
+        /variant 1[\s\S]*Value shape: ExactNumber input; exact numeric string response\.[\s\S]*variant 2[\s\S]*Value shape: string\./,
       );
     }
     const declarations = readFileSync(join(out, 'node/declarations/NumbersInput.d.ts'), 'utf8');

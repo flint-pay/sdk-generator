@@ -1,5 +1,5 @@
 import { schemaLiteral, enumNotes, type EnumLinks } from './schema-documentation.js';
-import { schemaVariants } from './sdk-documentation.js';
+import { documentationVariants, modelFieldReference } from './sdk-documentation.js';
 import type { Contract, Operation } from './contract.js';
 
 export const docAnchor = (name: string) =>
@@ -34,10 +34,15 @@ export function relocateDocument(
 }
 
 /** Keep small model references together; large ones use an index and one file per model. */
-export function modelDocuments(source: string): {
+export function modelDocuments(
+  source: string,
+  fieldAliases: ReadonlyMap<string, string> = new Map(),
+): {
   files: Map<string, string>;
   links: Map<string, string>;
   namedLinks: Map<string, string>;
+  fieldLinks: Map<string, string>;
+  namedFieldLinks: Map<string, string>;
 } {
   const sections = [...source.matchAll(/^## (\w+)\n([\s\S]*?)(?=^## |$(?![\s\S]))/gm)];
   const links = new Map<string, string>();
@@ -86,7 +91,18 @@ export function modelDocuments(source: string): {
   const namedLinks = new Map(
     sections.map((section) => [section[1]!, links.get(docAnchor(section[1]!))!]),
   );
-  return { files, links, namedLinks };
+  const namedFieldLinks = new Map(namedLinks);
+  for (const [name, canonical] of fieldAliases) {
+    let destination = canonical;
+    const seen = new Set([name]);
+    while (fieldAliases.has(destination) && !seen.has(destination)) {
+      seen.add(destination);
+      destination = fieldAliases.get(destination)!;
+    }
+    if (namedLinks.has(destination)) namedFieldLinks.set(name, namedLinks.get(destination)!);
+  }
+  const fieldLinks = new Map([...namedFieldLinks].map(([name, link]) => [docAnchor(name), link]));
+  return { files, links, namedLinks, fieldLinks, namedFieldLinks };
 }
 
 const errorRows = [
@@ -292,11 +308,24 @@ export function phpModelReference(
   c: Contract,
   plans: readonly import('./target-plan.js').PhpModelPlan[],
   enumLinks?: EnumLinks,
+  fieldAliases?: Map<string, string>,
 ): string {
   const selected = plans.filter(
     (plan) => plan.response || Object.hasOwn(c.models, plan.name.replace(/Input$/, '')),
   );
   const names = new Set(selected.map((plan) => plan.name));
+  const modelNames = (response: boolean) =>
+    Object.fromEntries(
+      Object.keys(c.models).flatMap((name) =>
+        response && names.has(name)
+          ? [[name, name]]
+          : names.has(name + 'Input')
+            ? [[name, name + 'Input']]
+            : [],
+      ),
+    );
+  const inputNames = modelNames(false),
+    outputNames = modelNames(true);
   const shapes = new Map<string, string>();
   const cell = (text: string) =>
     text
@@ -315,39 +344,51 @@ export function phpModelReference(
     `# ${c.title} models\n\n[API reference](REFERENCE.md) · [Runtime guide](RUNTIME.md)\n\nThese classes expose presence-aware getters. Omitted optional response fields return null; has() distinguishes omission from present-null. Input classes omit read-only fields, and responses omit write-only fields. int64/uint64 values use integer strings; decimal fields preserve exact numeric strings.\n\n` +
     selected
       .map((plan) => {
-        const schema = c.models[plan.name] ?? c.models[plan.name.replace(/Input$/, '')];
-        const identity = JSON.stringify([plan.getters, plan.documentation, plan.constructorDoc]);
+        const schema =
+          plan.documentationSchema ??
+          c.models[plan.name] ??
+          c.models[plan.name.replace(/Input$/, '')];
+        const definitions = c.definitions ?? c.models;
+        const names = plan.response ? outputNames : inputNames;
+        const variants =
+          schema &&
+          documentationVariants(schema, definitions).some((variant) => variant.conditions.length);
+        const fields = schema
+          ? modelFieldReference(
+              schema,
+              definitions,
+              plan.name,
+              names,
+              enumLinks,
+              plan.response,
+              Boolean(variants),
+            )
+          : '';
+        const identity = JSON.stringify([
+          plan.getters,
+          plan.documentation,
+          plan.constructorDoc,
+          fields ? schema : null,
+        ]);
         const previous = shapes.get(identity);
         if (!previous) shapes.set(identity, plan.name);
+        else fieldAliases?.set(plan.name, previous);
         return (
           `## ${plan.name}\n\n${plan.description ?? schema?.description ?? ''}\n\n${plan.response ? 'Response model.' : 'Request input.'}\n\n` +
-          (schema
-            ? schemaVariants(
-                schema,
-                c.definitions ?? c.models,
-                Object.fromEntries(
-                  Object.keys(c.models).flatMap((name) =>
-                    names.has(name)
-                      ? [[name, name]]
-                      : names.has(name + 'Input')
-                        ? [[name, name + 'Input']]
-                        : [],
-                  ),
-                ),
-              )
-            : '') +
           (previous
             ? `Fields, types, descriptions and enum values: [${previous}](MODELS.md#${docAnchor(previous)}).\n\n`
-            : plan.getters.length
-              ? '| Field | Presence | Type | Description |\n| --- | --- | --- | --- |\n' +
-                plan.getters
-                  .map(
-                    (getter) =>
-                      `| \`${getter.field}\` | ${plan.documentation?.[getter.field]?.required ? 'Required' : 'Optional'} | ${type(getter.doc)} | ${[cell(plan.documentation?.[getter.field]?.markdown ?? plan.documentation?.[getter.field]?.description ?? ''), enumNotes(plan.documentation?.[getter.field]?.enums ?? [], (value) => schemaLiteral(value, true), enumLinks)].filter(Boolean).join(' ')} |`,
-                  )
-                  .join('\n') +
-                '\n\n'
-              : `Value shape: ${type(plan.constructorDoc)}.\n\n`)
+            : variants
+              ? fields
+              : (plan.getters.length
+                  ? '| Field | Presence | Type | Description |\n| --- | --- | --- | --- |\n' +
+                    plan.getters
+                      .map(
+                        (getter) =>
+                          `| \`${getter.field}\` | ${plan.documentation?.[getter.field]?.required ? 'Required' : 'Optional'} | ${type(getter.doc)} | ${[cell(plan.documentation?.[getter.field]?.markdown ?? plan.documentation?.[getter.field]?.description ?? ''), enumNotes(plan.documentation?.[getter.field]?.enums ?? [], (value) => schemaLiteral(value, true), enumLinks)].filter(Boolean).join(' ')} |`,
+                      )
+                      .join('\n') +
+                    '\n\n'
+                  : `Value shape: ${type(plan.constructorDoc)}.\n\n`) + fields)
         );
       })
       .join('')

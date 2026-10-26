@@ -237,6 +237,8 @@ export interface PhpModelPlan {
     { description: string; markdown?: string; enums?: SchemaEnumValues[]; required: boolean }
   >;
   description?: string;
+  /** Source alternatives retained for documentation, before getter projection. */
+  documentationSchema?: Schema;
   codec: CodecPlan;
   sharedCodec?: string;
   representation?: PhpRepresentation;
@@ -262,6 +264,35 @@ export function compilePhpModel(
   definitions: Readonly<Record<string, Schema>> = {},
   includeExamples = true,
 ): PhpModelPlan {
+  const documentationView = (s: Schema): Schema => {
+    const { ['x-sdk-definitions']: _definitions, example, examples, ...view } = s;
+    return {
+      ...view,
+      ...(includeExamples
+        ? { ...(example !== undefined ? { example } : {}), ...(examples ? { examples } : {}) }
+        : {}),
+      ...(s.properties
+        ? {
+            properties: Object.fromEntries(
+              Object.entries(s.properties).map(([field, child]) => [
+                field,
+                documentationView(child),
+              ]),
+            ),
+          }
+        : {}),
+      ...(s.items ? { items: documentationView(s.items) } : {}),
+      ...(typeof s.additionalProperties === 'object'
+        ? { additionalProperties: documentationView(s.additionalProperties) }
+        : {}),
+      ...Object.fromEntries(
+        (['allOf', 'oneOf', 'anyOf'] as const).flatMap((keyword) =>
+          s[keyword] ? [[keyword, s[keyword]!.map(documentationView)]] : [],
+        ),
+      ),
+    };
+  };
+  const documentationSchema = documentationView(declaration);
   declaration = {
     ...phpDeclaration(declaration, schema['x-sdk-definitions'] ?? definitions),
     'x-sdk-definitions': { ...definitions },
@@ -271,6 +302,7 @@ export function compilePhpModel(
   return {
     name,
     response,
+    documentationSchema,
     ...(declaration.description ? { description: declaration.description } : {}),
     constructorType: phpType(declaration, response),
     constructorDoc:

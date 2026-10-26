@@ -524,6 +524,11 @@ export function compareCompiledContracts(
 /** Public API additions are compared above, separately from execution descriptors. */
 function executionDescriptors(target: CompiledSdkContract['node'] | CompiledSdkContract['php']) {
   const { errorClasses, webhookReasons, standaloneWebhook, ...execution } = target;
+  if ('runtime' in execution)
+    return {
+      ...execution,
+      models: execution.models.map(({ documentationSchema, ...model }) => model),
+    };
   return 'eventDeclarations' in execution
     ? {
         ...execution,

@@ -1938,9 +1938,10 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         Boolean(errorDocs.reference),
       ),
     );
-    const modelDocs = modelDocuments(
+    const fieldAliases = new Map<string, string>();
+    const modelSource =
       target === 'php'
-        ? phpModelReference(c, targetPlan.php.models, errorDocs.links)
+        ? phpModelReference(c, targetPlan.php.models, errorDocs.links, fieldAliases)
         : modelReference(
             {
               ...c,
@@ -1951,8 +1952,9 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
             target === 'node' ? modelExports : undefined,
             target,
             errorDocs.links,
-          ),
-    );
+            fieldAliases,
+          );
+    const modelDocs = modelDocuments(modelSource, fieldAliases);
     for (const [path, source] of modelDocs.files) files.set(`${target}/${path}`, source);
     const phpInputNames = Object.fromEntries(
       Object.keys(c.models).flatMap((name) =>
@@ -1980,7 +1982,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
           /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b[A-Za-z_$][\w$]*\b/g,
           (name) => {
             if (/^["'`]/.test(name)) return name;
-            const link = modelDocs.namedLinks.get(name);
+            const link = modelDocs.namedFieldLinks.get(name);
             return link ? `[${name}](${link})` : name;
           },
         );
@@ -2003,15 +2005,19 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       const responseFields = [
         ...new Map(outputs.map((schema) => [stable(schema), schema])).values(),
       ]
-        .map((schema) =>
-          responseReference(
+        .map((schema) => {
+          const source = modelName(schema, c.definitions ?? c.models);
+          const name = source && responseModelNames[source];
+          if (name && !linkedReturn.includes(`[${name}]`))
+            return `Declared response shape: [${name}](MODELS.md#${docAnchor(name)}).\n\n`;
+          return responseReference(
             schema,
             c.definitions ?? c.models,
             `${op.resource}.${op.method} response`,
             responseModelNames,
             errorDocs.links,
-          ),
-        )
+          );
+        })
         .filter(Boolean)
         .join('');
       const parts = operationCall(c, op, target);
@@ -2063,7 +2069,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
           .join('');
       files.set(
         `${target}/${resourceFile(group)}`,
-        relocateDocument(source, modelDocs.links, true),
+        relocateDocument(source, modelDocs.fieldLinks, true),
       );
     }
     files.set(

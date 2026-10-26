@@ -750,7 +750,7 @@ for (const keyword of ['oneOf', 'anyOf'])
         assert.match(
           first,
           target === 'node'
-            ? /\| `nested` \| Optional \| \[ChildInput\]\(MODELS\.md#childinput\) \|/
+            ? /\| `nested` \| Optional \| \[ChildInput\]\(MODELS\.md#child\) \|/
             : /\| `nested` \| Optional \| \[ChildInput\]\(MODELS\.md#childinput\) \|/,
         );
         assert.doesNotMatch(first, /responseOnly/);

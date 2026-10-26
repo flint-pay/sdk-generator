@@ -327,7 +327,7 @@ test('owning component hints retain request-body model links in both target refe
     assert.match(
       reference,
       target === 'node'
-        ? /Body model: \[CreateWidgetRequestInput\]\(MODELS\.md#createwidgetrequestinput\)/
+        ? /Body model: \[CreateWidgetRequestInput\]\(MODELS\.md#createwidgetrequest\)/
         : /Body model: \[CreateWidgetRequestInput\]\(MODELS\.md#createwidgetrequestinput\)/,
     );
     const models = readFileSync(join(output, target, 'MODELS.md'), 'utf8');
