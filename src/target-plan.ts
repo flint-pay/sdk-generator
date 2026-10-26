@@ -1099,9 +1099,10 @@ export function compileSdkContract(source: Contract): {
     },
   };
   const outputAliases = new Map<string, string>();
+  // Consume comments before literals: prose punctuation must not hide type references.
   const replaceOutputNames = (type: string): string =>
     type.replace(
-      /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|[A-Za-z_$][\w$]*/g,
+      /\/\*[\s\S]*?\*\/|\/\/[^\r\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|[A-Za-z_$][\w$]*/g,
       (token) => outputAliases.get(token) ?? token,
     );
   // Repeating after each grouping also collapses envelopes whose children became aliases.

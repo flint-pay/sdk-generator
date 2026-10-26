@@ -2203,6 +2203,15 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
     const out: Record<string, unknown> = Object.create(null);
     for (const [k, v] of Object.entries(entries)) {
       if (v === undefined && !response) continue;
+      if (s.propertyNames)
+        executeNode(k, s.propertyNames, {
+          mode: 'match',
+          direction: 'response',
+          path: `${path}[${JSON.stringify(k)}]`,
+          definitions,
+          depth: depth + 1,
+          validateConstraints: true,
+        });
       const child = Object.hasOwn(s.fields ?? {}, k) ? s.fields![k] : undefined;
       if (!response && child?.rejectInput) bad(`${path}.${k}`, 'readOnly fields cannot be sent');
       if (child)

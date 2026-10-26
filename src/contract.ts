@@ -49,6 +49,7 @@ export type Schema = {
   'x-sdk-definitions'?: Record<string, Schema>;
   type?: string | string[];
   properties?: Record<string, Schema>;
+  propertyNames?: Schema;
   required?: string[];
   items?: Schema;
   enum?: Json[];
@@ -554,6 +555,61 @@ function portablePattern(source: string, p: string): string {
 function schema(s: Schema, p: string, legacy = false, explicitNumbers = false): void {
   if (!s || typeof s !== 'object' || Array.isArray(s)) fail(p, 'expected a schema object');
   if (s['x-sdk-ref']) return;
+  if (!legacy && Array.isArray(s.type)) {
+    const types = s.type;
+    if (
+      !types.length ||
+      new Set(types).size !== types.length ||
+      types.some(
+        (type) =>
+          !['object', 'array', 'string', 'integer', 'number', 'boolean', 'null'].includes(type),
+      )
+    )
+      fail(p + '/type', 'expected supported unique JSON types');
+    if (types.length === 1) {
+      if (types[0] === 'null') s.type = 'null';
+    } else if (types.length !== 2 || !types.includes('null')) {
+      delete s.type;
+      const alternatives = {
+        anyOf: types.map((type) => ({ type, ...(s.format ? { format: s.format } : {}) })),
+      };
+      delete s.format;
+      if (s.anyOf) s.allOf = [...(s.allOf ?? []), alternatives];
+      else s.anyOf = alternatives.anyOf;
+    }
+  }
+  if (s.propertyNames !== undefined) {
+    const names = s.propertyNames;
+    const remedy =
+      'propertyNames supports only string type, minLength, maxLength, pattern, enum and const; express key constraints with these keywords';
+    if (!names || typeof names !== 'object' || Array.isArray(names))
+      fail(p + '/propertyNames', remedy);
+    for (const key of Object.keys(names))
+      if (
+        ![
+          'type',
+          'minLength',
+          'maxLength',
+          'pattern',
+          'enum',
+          'const',
+          'x-sdk-pattern-php',
+          // Raw reserved extensions are rejected before dereferencing/protection.
+          EXAMPLE_PROTECTION_MARKER,
+        ].includes(key)
+      )
+        fail(p + '/propertyNames/' + pointerSegment(key), remedy);
+    if (names.type !== undefined && names.type !== 'string')
+      fail(p + '/propertyNames/type', remedy);
+    if (
+      names.enum !== undefined &&
+      (!Array.isArray(names.enum) || names.enum.some((key) => typeof key !== 'string'))
+    )
+      fail(p + '/propertyNames/enum', remedy);
+    if (Object.hasOwn(names, 'const') && typeof names.const !== 'string')
+      fail(p + '/propertyNames/const', remedy);
+    schema(names, p + '/propertyNames', legacy, explicitNumbers);
+  }
   if (s.dependentRequired !== undefined) {
     const dependencies = s.dependentRequired;
     if (!dependencies || typeof dependencies !== 'object' || Array.isArray(dependencies))
@@ -624,6 +680,7 @@ function schema(s: Schema, p: string, legacy = false, explicitNumbers = false): 
     'else',
     'discriminator',
     'additionalProperties',
+    'propertyNames',
     'format',
     'minimum',
     'maximum',
@@ -961,6 +1018,35 @@ function checkRepresentations(s: Schema, p: string, explicitNumbers = false): vo
     }
     return false;
   };
+  // Each child has already passed schema validation. Keep fingerprints local:
+  // representation inference below mutates owned nodes and invalidates the cache.
+  let fingerprints = new WeakMap<object, string>();
+  const fingerprint = (shape: object): string => {
+    let identity = fingerprints.get(shape);
+    if (identity === undefined) {
+      const child = (value: unknown): unknown =>
+        value !== null && typeof value === 'object' ? { subtree: fingerprint(value) } : value;
+      // Hash child identities once instead of retaining/serializing each complete
+      // subtree in every comparison key. Tags distinguish arrays from objects.
+      identity = hash(
+        JSON.stringify(
+          Array.isArray(shape)
+            ? ['array', shape.map(child)]
+            : [
+                'object',
+                Object.entries(shape)
+                  .filter(([, value]) => value !== undefined)
+                  .sort(([a], [b]) => a.localeCompare(b, 'en'))
+                  .map(([key, value]) => [key, child(value)]),
+              ],
+        ),
+      );
+      fingerprints.set(shape, identity);
+    }
+    return identity;
+  };
+  const compared = new Set<string>();
+  let representationVersion = 0;
   const checkOverlap = (
     left: Schema[],
     right: Schema[],
@@ -968,6 +1054,20 @@ function checkRepresentations(s: Schema, p: string, explicitNumbers = false): vo
     relation: Relation = 'alternatives',
   ): void => {
     if (!left.length || !right.length) return;
+    // Cache only a completed comparison of this relation. Individually valid
+    // alternatives can still have incompatible cross-branch intersections.
+    const key = JSON.stringify([relation, left.map(fingerprint), right.map(fingerprint)]);
+    if (compared.has(key)) return;
+    const version = representationVersion;
+    compareOverlap(left, right, path, relation);
+    if (version === representationVersion) compared.add(key);
+  };
+  const compareOverlap = (
+    left: Schema[],
+    right: Schema[],
+    path: string,
+    relation: Relation,
+  ): void => {
     const originals = new Map<Schema, Schema>();
     const shallow = (shape: Schema): Schema => {
       const { allOf, ...copy } = shape;
@@ -1020,6 +1120,9 @@ function checkRepresentations(s: Schema, p: string, explicitNumbers = false): vo
           shape['x-sdk-number-input'] = 'explicit';
           const original = originals.get(shape);
           if (original) original['x-sdk-number-input'] = 'explicit';
+          fingerprints = new WeakMap();
+          compared.clear();
+          representationVersion++;
         }
       }
     }
@@ -1220,6 +1323,7 @@ function loadContractInput(
         [
           'items',
           'additionalProperties',
+          'propertyNames',
           'allOf',
           'anyOf',
           'oneOf',
@@ -2269,8 +2373,20 @@ function loadContractInput(
   );
   // Configured event schemas are already inline rather than dereferenced. Mark
   // their source locations before validation can normalize annotation wrappers.
-  const markConfiguredExamples = (value: unknown, sourcePath: string, context: Context): void => {
+  const markConfiguredExamples = (
+    value: unknown,
+    sourcePath: string,
+    context: Context,
+    propertyNames = false,
+  ): void => {
     if (context === 'literal' || !value || typeof value !== 'object') return;
+    // Resolved event configs already support reference metadata; guard new key
+    // schemas before adding their trusted publication markers.
+    if (propertyNames && Object.keys(value).some((key) => key.startsWith('x-sdk-')))
+      fail(
+        'config' + sourcePath,
+        'x-sdk-* extensions are reserved for resolved generator metadata',
+      );
     if (context === 'schema' && exampleProtection?.protects('config', sourcePath))
       Reflect.set(value, EXAMPLE_PROTECTION_MARKER, true);
     for (const [key, child] of Object.entries(value))
@@ -2279,6 +2395,7 @@ function loadContractInput(
           child,
           sourcePath + '/' + pointerSegment(key),
           Array.isArray(value) ? context : childContext(context, key),
+          context === 'schema' && key === 'propertyNames',
         );
   };
   for (const [event, value] of Object.entries(config.webhook?.events ?? {}))

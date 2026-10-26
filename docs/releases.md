@@ -16,6 +16,12 @@ Regenerate and review PHP consumers before upgrading:
 - Resource properties initialize on first access and remain read-only. Resources use PHPDoc-typed magic properties backed by a private cache instead of public readonly slots; code using reflection, `property_exists()` or `get_object_vars()` should use ordinary property access or `isset()` instead. Assignments raise a local `ValidationError`.
 - Positional identifier arguments accept scalar models; entity models now fail with a parameter-specific error instead of a generic codec failure.
 
+## Schema key constraints and type arrays
+
+Regenerated SDKs enforce newly declared `propertyNames` length, pattern, enum and constant constraints on every object key in requests and strict responses. Correct invalid keys instead of relying on response enum openness; value enums remain open. Tightening input key constraints is breaking under the existing release policy. Dictionary keys remain `string` in both targets. Key validation errors include the JSON-escaped offending key in brackets. Sensitive and write-only maps retain example publication protection.
+
+OpenAPI 3.1 type arrays now load as equivalent unions. Loaded `["null"]` schemas accept only null in both targets: Node callers that previously sent non-null values through that declaration must use null or correct their source schema. Dynamic schema-taking helpers still require explicit `anyOf` or `type: "null"`. Repeated unions inside intersections still require consistent numeric SDK representations across intersecting branches; correct incompatible numeric formats in the source or provider override.
+
 ## Contributor Node prerequisites
 
 The published generator continues to support Node.js 22+. Source-checkout contributor tests require Node.js 22.16+ for the SQLite examples, and the test runner reports a prerequisite error on earlier versions. Run `nvm use` before testing; `.nvmrc` and CI use the contributor minimum. No Node upgrade is required for existing generator installs. Generated SDK runtime requirements are unchanged. See the [support matrix](support-matrix.md) for consumer requirements.

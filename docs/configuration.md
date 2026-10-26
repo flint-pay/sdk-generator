@@ -625,6 +625,7 @@ Rules for both policies:
 
 - Alternative selection and known-variant guards use the full supported constraints, so they never choose an incompatible wire representation.
 - Responses keep values beyond business constraints but still check representable field shapes.
+- String `propertyNames` constraints (length, pattern, enum and const) check every object key under both policies and in strict responses. Other key-schema keywords fail loading; see the [supported subset](support-matrix.md#exact-openapi-subset).
 - Bounds and numeric enum membership use exact decimal comparison without floating-point coercion.
 - Integer formats int32/uint32/int64/uint64 enforce their request ranges; uint64 uses exact strings.
 - OpenAPI 3.0 exclusive booleans are normalized with their bounds.

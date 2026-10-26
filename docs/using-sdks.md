@@ -685,9 +685,10 @@ console.log(redact(model.toJSON(), schema)); // { value: '[REDACTED]' }
 
 - PHP provides the schema-taking base `Model` constructor, `Codec::normalize` and `Codec::redact`. `Codec::encode` writes normalized values as JSON.
 - Helpers run locally with the package's value rules. No generator installation or schema registry service is needed.
+- String `propertyNames` constraints validate object keys, including declared fields. Key enum/const constraints remain closed in strict responses; dictionary key types remain strings.
 - Generated declarations, docs, samples and compiled descriptors omit examples/defaults from sensitive, write-only and password locations, including shared reference targets and compositions. Samples use placeholders; replace them with your own values. Descriptions and wire behavior remain unchanged.
 - Node `Model.toJSON()` returns a defensive copy in which exact numbers are strings. Where a field allows both exact numbers and strings, a model rebuilt from that copy treats those strings as JSON strings. To edit an input, keep the original values, including `ExactNumber` instances, and build a new model; or restore `ExactNumber` explicitly at fields meant to be JSON numbers.
-- For a null-only schema, use `type: 'null'`. In Node, `type: ['null']` also permits non-null values; PHP rejects them. Nullable forms such as `type: ['string', 'null']` keep their non-null type in both targets.
+- For a null-only schema passed directly to these helpers, use `type: 'null'`. In Node helpers, `type: ['null']` also permits non-null values; PHP rejects them. Nullable forms such as `type: ['string', 'null']` keep their non-null type in both targets. Contract loading normalizes OpenAPI 3.1 type arrays before generating SDKs; use explicit `anyOf` for mixed types passed directly to helpers.
 
 ### SDK loading and selective Node imports
 

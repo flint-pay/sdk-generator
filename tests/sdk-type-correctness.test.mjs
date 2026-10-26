@@ -98,6 +98,50 @@ function phpstan(dir, output, source, succeeds = true) {
   return r.stdout + r.stderr;
 }
 
+test('canonical response names preserve documentation punctuation and literal values', (t) => {
+  const value = { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] };
+  const { contract, output } = fixture(t, {
+    components: {
+      schemas: {
+        A: value,
+        Duplicated: value,
+        Envelope: {
+          type: 'object',
+          properties: {
+            data: { ...ref('Duplicated'), description: "The buyer's Duplicated value." },
+            note: { type: 'string', description: "The seller's `Duplicated` note." },
+            tag: { type: 'string', const: 'Duplicated' },
+          },
+          required: ['data', 'tag'],
+        },
+      },
+    },
+    paths: {
+      '/envelope': {
+        get: { operationId: 'getEnvelope', responses: jsonResponse(ref('Envelope')) },
+      },
+      '/value': { get: { operationId: 'getValue', responses: jsonResponse(ref('A')) } },
+    },
+  });
+  const { plan } = compileSdkContract(contract);
+  assert.equal(plan.node.models.Duplicated.outputAlias, 'A');
+  const declaration = plan.node.models.Envelope.documentedOutput;
+  assert.match(declaration, /"data": A;/);
+  assert.ok(declaration.includes("The buyer's Duplicated value."));
+  assert.ok(declaration.includes("The seller's `Duplicated` note."));
+  assert.match(declaration, /"tag":.*"Duplicated"/);
+  const consumer = join(output, 'node/consumer.ts');
+  writeFileSync(
+    consumer,
+    `import type {Envelope} from './index.js';
+declare const value: Envelope;
+const id: string = value.data.id;
+const tag: string = value.tag;
+`,
+  );
+  typecheck(consumer);
+});
+
 test('identical response shapes share a canonical name while PHP identities remain stable', async (t) => {
   const result = { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] };
   const response = (name) => ({

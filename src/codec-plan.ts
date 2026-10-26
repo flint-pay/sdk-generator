@@ -33,6 +33,7 @@ export interface CodecPlan {
   readonly sensitive: boolean;
   readonly fields?: Readonly<Record<string, CodecPlan>>;
   readonly element?: CodecPlan;
+  readonly propertyNames?: CodecPlan;
   readonly extra?: boolean | CodecPlan;
   readonly members?: readonly Json[];
   /** JSON text preserves object/list identity through associative PHP plan loading. */
@@ -298,6 +299,15 @@ function compileNode(input: Schema, output: Schema, depth: number): CodecPlan {
           ),
         }
       : {}),
+    ...(input.propertyNames
+      ? {
+          propertyNames: compileNode(
+            { ...input.propertyNames, type: 'string' },
+            { ...input.propertyNames, type: 'string' },
+            depth + 1,
+          ),
+        }
+      : {}),
     ...(input.items ? { element: compileNode(input.items, input.items, depth + 1) } : {}),
     ...(input.additionalProperties !== undefined
       ? {
@@ -522,7 +532,7 @@ export function assertCodecPlan(
     for (const [index, child] of children.entries())
       assertCodecPlan(child, `${path}.${key}[${index}]`, depth + 1);
   }
-  for (const key of ['element', 'exclude', 'includes'])
+  for (const key of ['element', 'propertyNames', 'exclude', 'includes'])
     if (node[key] !== undefined) assertCodecPlan(node[key], path + '.' + key, depth + 1);
   if (node.when !== undefined) {
     if (!node.when || typeof node.when !== 'object' || Array.isArray(node.when))

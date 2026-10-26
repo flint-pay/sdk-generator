@@ -10,6 +10,7 @@ export interface SchemaPolicy {
   requiredKeys: string[];
   fields: Record<string, SchemaPolicy>;
   element?: SchemaPolicy;
+  propertyNames?: SchemaPolicy;
   extra?: boolean | SchemaPolicy;
   members?: Json[];
   literal?: string;
@@ -127,6 +128,7 @@ export function compileSchemaPolicy(
     'properties',
     'items',
     'additionalProperties',
+    'propertyNames',
     'enum',
     'const',
     'oneOf',
@@ -158,6 +160,9 @@ export function compileSchemaPolicy(
     fields: Object.fromEntries(
       Object.entries(schema.properties ?? {}).map(([name, child]) => [name, compile(child)]),
     ),
+    ...(schema.propertyNames
+      ? { propertyNames: compile({ ...schema.propertyNames, type: 'string' }) }
+      : {}),
     ...(schema.items ? { element: compile(schema.items) } : {}),
     ...(schema.additionalProperties !== undefined
       ? {

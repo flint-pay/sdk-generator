@@ -69,6 +69,7 @@ final class DescriptorSource
                 [
                     'fields',
                     'element',
+                    'propertyNames',
                     'extra',
                     'every',
                     'some',

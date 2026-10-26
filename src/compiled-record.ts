@@ -70,6 +70,8 @@ function assertPolicy(value: unknown, path: string, depth = 0): void {
   for (const [name, child] of Object.entries(object(policy.fields, path + '.fields')))
     assertPolicy(child, path + '.' + name, depth + 1);
   if (policy.element !== undefined) assertPolicy(policy.element, path + '.element', depth + 1);
+  if (policy.propertyNames !== undefined)
+    assertPolicy(policy.propertyNames, path + '.propertyNames', depth + 1);
   if (policy.extra !== undefined && typeof policy.extra !== 'boolean')
     assertPolicy(policy.extra, path + '.extra', depth + 1);
   if (policy.members !== undefined && !Array.isArray(policy.members))

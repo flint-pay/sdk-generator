@@ -33,6 +33,7 @@ export function sourceExampleProtection(
   const childKeywords = [
     'properties',
     'additionalProperties',
+    'propertyNames',
     'patternProperties',
     'items',
     'prefixItems',
@@ -275,6 +276,7 @@ function contractSchemas(
       'items',
       'contains',
       'additionalProperties',
+      'propertyNames',
     ] as const) {
       const nested = schema[keyword];
       if (object(nested)) child(nested, '/' + keyword);

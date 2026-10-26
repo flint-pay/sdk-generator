@@ -17,7 +17,16 @@ export function publicInventory(document) {
       });
     for (const [name, child] of Object.entries(value.properties ?? {}).sort())
       schema(child, path + '/properties/' + pointer(name));
-    for (const key of ['items', 'additionalProperties', 'not', 'if', 'then', 'else', 'contains'])
+    for (const key of [
+      'items',
+      'additionalProperties',
+      'not',
+      'if',
+      'then',
+      'else',
+      'contains',
+      'propertyNames',
+    ])
       schema(value[key], path + '/' + key);
     for (const key of ['allOf', 'anyOf', 'oneOf'])
       value[key]?.forEach((child, index) => schema(child, path + '/' + key + '/' + index));

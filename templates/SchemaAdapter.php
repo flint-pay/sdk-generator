@@ -357,6 +357,10 @@ final class SchemaAdapter
                 $plan['fields'][$key] = self::node($child, $child, $depth + 1);
             }
         }
+        if (isset($input['propertyNames'])) {
+            $names = array_replace($input['propertyNames'], ['type' => 'string']);
+            $plan['propertyNames'] = self::node($names, $names, $depth + 1);
+        }
         if (isset($input['items'])) {
             $plan['element'] = self::node($input['items'], $input['items'], $depth + 1);
         }

@@ -120,6 +120,26 @@ export function comparePolicies(
       `${direction} enum changed; ${direction === 'input' ? (narrowed ? 'replace removed input values with provider-supported values.' : 'additional input values are accepted; existing values remain supported.') : 'retain unknown-value handling and review newly documented states; do not infer success.'}`,
     );
   }
+  if (stable(before.propertyNames) !== stable(after.propertyNames))
+    changes.push(
+      ...comparePolicies(
+        before.propertyNames ?? compileSchemaPolicy({ type: 'string' }, direction),
+        after.propertyNames ?? compileSchemaPolicy({ type: 'string' }, direction),
+        `${subject}{key}`,
+        direction,
+        context,
+      ),
+    );
+  if (
+    direction === 'input' &&
+    after.propertyNames?.literal !== undefined &&
+    before.propertyNames?.literal !== after.propertyNames.literal
+  )
+    changes.push({
+      severity: 'breaking',
+      subject: `${subject}{key}`,
+      message: 'Input key const changed; existing object keys may no longer be accepted.',
+    });
   const oldProperties = before.fields ?? {};
   const newProperties = after.fields ?? {};
   for (const key of new Set([

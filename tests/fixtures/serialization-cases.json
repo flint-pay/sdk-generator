@@ -169,5 +169,110 @@
     },
     "value": 0.3,
     "error": true
+  },
+  {
+    "name": "key names Unicode bounds",
+    "schema": {
+      "type": "object",
+      "propertyNames": {
+        "minLength": 2,
+        "maxLength": 2
+      }
+    },
+    "value": {
+      "éé": "x"
+    },
+    "wire": "{\"éé\":\"x\"}"
+  },
+  {
+    "name": "key names too short",
+    "schema": {
+      "type": "object",
+      "propertyNames": {
+        "minLength": 2
+      }
+    },
+    "value": {
+      "é": "x"
+    },
+    "error": true
+  },
+  {
+    "name": "key names too long",
+    "schema": {
+      "type": "object",
+      "propertyNames": {
+        "maxLength": 2
+      }
+    },
+    "value": {
+      "abc": "x"
+    },
+    "error": true
+  },
+  {
+    "name": "key names pattern",
+    "schema": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z]+$"
+      }
+    },
+    "value": {
+      "ABC": "x"
+    },
+    "error": true
+  },
+  {
+    "name": "key names enum",
+    "schema": {
+      "type": "object",
+      "propertyNames": {
+        "enum": ["alpha", "beta"]
+      }
+    },
+    "value": {
+      "alpha": "x"
+    },
+    "wire": "{\"alpha\":\"x\"}"
+  },
+  {
+    "name": "key names enum rejects future",
+    "schema": {
+      "type": "object",
+      "propertyNames": {
+        "enum": ["alpha"]
+      }
+    },
+    "value": {
+      "future": "x"
+    },
+    "error": true
+  },
+  {
+    "name": "key names const",
+    "schema": {
+      "type": "object",
+      "propertyNames": {
+        "const": "only"
+      }
+    },
+    "value": {
+      "only": "x"
+    },
+    "wire": "{\"only\":\"x\"}"
+  },
+  {
+    "name": "key names const rejects other",
+    "schema": {
+      "type": "object",
+      "propertyNames": {
+        "const": "only"
+      }
+    },
+    "value": {
+      "other": "x"
+    },
+    "error": true
   }
 ]

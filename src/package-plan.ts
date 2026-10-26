@@ -21,6 +21,7 @@ export function codecReferences(value: unknown): string[] {
           [
             'fields',
             'element',
+            'propertyNames',
             'extra',
             'every',
             'some',
