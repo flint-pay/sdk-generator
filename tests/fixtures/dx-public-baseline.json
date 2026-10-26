@@ -27,8 +27,8 @@
       "name": "risk",
       "api": "tests/providers/flint/risk-openapi.json",
       "config": "tests/providers/flint/risk-sdk.json",
-      "nodeDeclarationsSha256": "74d9255135dc20a652f8f448aafbca9edd6cc48df7aa4875d5f5df63aca7e64c",
-      "phpDeclarationsSha256": "2cfd0fed1f3e6f6141a8242c7e85bc1714ab8ce2a011511b453bac74a44bc4e5"
+      "nodeDeclarationsSha256": "2b607062bb996a41ea56f2f7c385cc404ac65abcc3b5020e01434ec08023affc",
+      "phpDeclarationsSha256": "73f372c16f7bab5cb06da114c4b70a708ab9d50694d74b12d65a260d2d98721e"
     }
   ]
 }

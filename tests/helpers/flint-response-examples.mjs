@@ -65,7 +65,6 @@ export function responseExamples(source) {
   for (const [path, item] of Object.entries(source.paths)) {
     for (const [method, operation] of Object.entries(item)) {
       for (const [status, response] of Object.entries(operation.responses ?? {})) {
-        if (!/^2\d\d$/.test(status)) continue;
         for (const [media, content] of Object.entries(response.content ?? {})) {
           const location = `/paths/${pointer(path)}/${method}/responses/${status}/content/${pointer(media)}`;
           const examples = Object.entries(content.examples ?? {}).map(([name, example]) => {
@@ -88,9 +87,20 @@ export function responseExamples(source) {
                 location: location + '/' + name,
                 json: JSON.stringify(value),
               };
-              // Request flows are excluded, but their documented JSON responses
-              // still use response-only compiled plans and both strict decoders.
-              if (formOperations.has(record.operation))
+              // Hidden form successes retain their response-only audit plans.
+              // Their errors have no generated operation codec; record each
+              // exclusion explicitly instead of excluding other error statuses.
+              if (formOperations.has(record.operation) && !/^2\d\d$/.test(status))
+                omitted.push({
+                  operation: record.operation,
+                  status,
+                  media,
+                  exampleName: name,
+                  location: record.location,
+                  reason:
+                    'CLI device/OAuth form operation is outside the SDK surface; no generated error response codec.',
+                });
+              else if (formOperations.has(record.operation))
                 schemas.push({ ...record, schemaRef: '#' + location + '/schema' });
               else routes.push(record);
             }
@@ -124,13 +134,14 @@ export async function checkResponseExamples(output, sourceFile, casesFile) {
   assert.equal(expected.size, expectedFailures.length, 'duplicate expected failure');
   const observed = new Set();
   const audit = responseExamples(source);
-  assert.equal(audit.routes.length, 424, 'review changed media-level example coverage');
+  assert.equal(audit.routes.length, 6363, 'review changed media-level example coverage');
   assert.equal(
     audit.schemas.length,
-    413,
+    414,
     'review changed nested/hidden-operation example coverage',
   );
-  assert.equal(audit.omitted.length, 2, 'only explicit unsupported-media exclusions are permitted');
+  assert.equal(audit.omitted.length, 25, 'review explicit media/hidden-form exclusions');
+  assert.equal(audit.omitted.filter((example) => formOperations.has(example.operation)).length, 23);
   // Compile each source schema without a request body or profile corrections.
   // This covers nested annotations and hidden form routes without relaxing them
   // or exposing test operations in the SDK. The actual generated executors below
@@ -264,8 +275,8 @@ export async function checkResponseExamples(output, sourceFile, casesFile) {
   return {
     inspected: audit.routes.length + schemas.length,
     expectedFailures: expectedFailures.length,
-    mediaExamples: audit.routes.length + 4,
-    schemaExamples: schemas.length - 4,
+    mediaExamples: audit.routes.length + schemas.filter((example) => example.operation).length,
+    schemaExamples: schemas.filter((example) => !example.operation).length,
     omitted: audit.omitted,
   };
 }

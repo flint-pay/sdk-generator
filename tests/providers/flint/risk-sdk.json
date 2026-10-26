@@ -15,7 +15,7 @@
   "operations": {
     "createRiskListItems": {
       "resource": "riskLists",
-      "method": "createItems",
+      "method": "addItems",
       "example": {
         "risk_list_id": "rl_replace_with_sandbox_id",
         "body": {

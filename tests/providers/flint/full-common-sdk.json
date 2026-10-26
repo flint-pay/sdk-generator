@@ -1078,7 +1078,7 @@
     },
     "listAPIRequestLogs": {
       "resource": "developer",
-      "method": "listAPIRequestLogs",
+      "method": "listCurrentAPIKeyRequestLogs",
       "response": {
         "payloadPath": null
       },
@@ -1087,7 +1087,7 @@
     },
     "getAPIRequestLog": {
       "resource": "developer",
-      "method": "getAPIRequestLog",
+      "method": "getCurrentAPIKeyRequestLog",
       "idempotency": false,
       "retry": false,
       "pagination": false
@@ -1906,7 +1906,7 @@
     },
     "createInvoiceLateFee": {
       "resource": "invoices",
-      "method": "createLateFee",
+      "method": "assessLateFee",
       "pagination": false
     },
     "waiveInvoiceLateFee": {
@@ -1925,7 +1925,7 @@
     },
     "createInvoiceManualPayment": {
       "resource": "invoices",
-      "method": "createManualPayment",
+      "method": "recordManualPayment",
       "pagination": false,
       "example": {
         "invoice_id": "example",
@@ -2317,7 +2317,7 @@
     },
     "createMePaymentMethod": {
       "resource": "me",
-      "method": "createPaymentMethod",
+      "method": "savePaymentMethod",
       "pagination": false
     },
     "deleteMePaymentMethod": {
@@ -2779,7 +2779,7 @@
     },
     "createOrderCharge": {
       "resource": "orders",
-      "method": "createCharge",
+      "method": "addCharge",
       "pagination": false,
       "example": {
         "order_id": "example",
@@ -2854,7 +2854,7 @@
     },
     "createOrderLineItems": {
       "resource": "orders",
-      "method": "createLineItems",
+      "method": "addLineItems",
       "pagination": false
     },
     "deleteOrderLineItem": {
@@ -2960,7 +2960,7 @@
     },
     "removeOrganizationMembership": {
       "resource": "organizations",
-      "method": "removeMembership",
+      "method": "revokeMembership",
       "pagination": false
     },
     "listPackages": {
@@ -3184,7 +3184,7 @@
     },
     "createPaymentMethod": {
       "resource": "paymentMethods",
-      "method": "create",
+      "method": "save",
       "pagination": false
     },
     "deletePaymentMethod": {
@@ -3619,7 +3619,7 @@
     },
     "createReturnPolicyRevision": {
       "resource": "returnPolicies",
-      "method": "createRevision",
+      "method": "publishRevision",
       "pagination": false
     },
     "getReturnPolicyRevision": {
@@ -3822,7 +3822,7 @@
     },
     "createReturnLineItem": {
       "resource": "returns",
-      "method": "createLineItem",
+      "method": "addLineItem",
       "pagination": false
     },
     "deleteReturnLineItem": {
@@ -3849,12 +3849,12 @@
     },
     "waiveReturnLineItemInspection": {
       "resource": "returns",
-      "method": "waiveLineItemInspection",
+      "method": "waiveLineInspection",
       "pagination": false
     },
     "processReturn": {
       "resource": "returns",
-      "method": "process",
+      "method": "processExisting",
       "pagination": false
     },
     "createReturnReceipt": {
@@ -3926,7 +3926,7 @@
     },
     "createRiskListItems": {
       "resource": "riskLists",
-      "method": "createItems",
+      "method": "addItems",
       "pagination": false,
       "example": {
         "risk_list_id": "example",
@@ -3986,7 +3986,7 @@
     },
     "getRiskRuleAttributes": {
       "resource": "riskRules",
-      "method": "getAttributes",
+      "method": "getAttributeRegistry",
       "idempotency": false,
       "retry": false,
       "pagination": false
@@ -4357,7 +4357,7 @@
     },
     "rotateWebhookEndpointSecret": {
       "resource": "webhookEndpoints",
-      "method": "rotateSecret",
+      "method": "rotateWebhookSecret",
       "pagination": false
     },
     "createWebhookTestEvent": {

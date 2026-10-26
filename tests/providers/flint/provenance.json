@@ -450,11 +450,11 @@
         "basis": "createReport describes polling; Report declares pending, succeeded and failed states."
       },
       "excludedOperations": {
-        "listCLIContexts": "CLI device/OAuth form flows are intentionally outside the SDK surface; only form-encoded request bodies are published. JSON response examples remain covered by the strict example audit.",
-        "authorizeCLIDevice": "CLI device/OAuth form flows are intentionally outside the SDK surface; only form-encoded request bodies are published. JSON response examples remain covered by the strict example audit.",
-        "reauthorizeCLIDevice": "CLI device/OAuth form flows are intentionally outside the SDK surface; only form-encoded request bodies are published. JSON response examples remain covered by the strict example audit.",
-        "revokeOAuthToken": "CLI device/OAuth form flows are intentionally outside the SDK surface; only form-encoded request bodies are published. JSON response examples remain covered by the strict example audit.",
-        "exchangeOAuthToken": "CLI device/OAuth form flows are intentionally outside the SDK surface; only form-encoded request bodies are published. JSON response examples remain covered by the strict example audit."
+        "listCLIContexts": "CLI device/OAuth form flows are intentionally outside the SDK surface; only form-encoded request bodies are published. Success JSON examples remain covered by response-only audit plans; their 23 error examples are explicitly excluded because no generated operation error codec exists.",
+        "authorizeCLIDevice": "CLI device/OAuth form flows are intentionally outside the SDK surface; only form-encoded request bodies are published. Success JSON examples remain covered by response-only audit plans; their 23 error examples are explicitly excluded because no generated operation error codec exists.",
+        "reauthorizeCLIDevice": "CLI device/OAuth form flows are intentionally outside the SDK surface; only form-encoded request bodies are published. Success JSON examples remain covered by response-only audit plans; their 23 error examples are explicitly excluded because no generated operation error codec exists.",
+        "revokeOAuthToken": "CLI device/OAuth form flows are intentionally outside the SDK surface; only form-encoded request bodies are published. Success JSON examples remain covered by response-only audit plans; their 23 error examples are explicitly excluded because no generated operation error codec exists.",
+        "exchangeOAuthToken": "CLI device/OAuth form flows are intentionally outside the SDK surface; only form-encoded request bodies are published. Success JSON examples remain covered by response-only audit plans; their 23 error examples are explicitly excluded because no generated operation error codec exists."
       },
       "packageVersion": "2.0.0",
       "releasePolicy": "semver",
@@ -515,14 +515,132 @@
     "riskErrors": "risk-sdk.json now declares the error envelope code/message/details paths, matching the full/payment profiles and the documented ErrorEnvelope; this preserves provider error codes on the server-side unknown-field rejection.",
     "capabilityReview": "Reviewed header and page_token declarations for every selected operation. Enable automatic keys on the 333 declared Idempotency-Key operations only; writes without that header and session create/refresh retain a single attempt. Enable cursor helpers only on the 124 page_token list routes; three other lists retain complete unpaginated bodies. Preserve report polling on data.status. Security bindings use complete source alternatives, including anonymous OAuth consent entry.",
     "responseExamples": {
-      "inspected": 837,
-      "mediaExamples": 428,
-      "schemaExamples": 409,
+      "inspected": 6777,
+      "mediaExamples": 6367,
+      "schemaExamples": 410,
       "unsupportedMediaExamples": 2,
       "expectedFailures": "response-example-failures.json",
-      "basis": "All documented 2xx JSON media examples and recursively reachable schema-level examples are decoded by the actual generated Node/PHP strict executors, including JSON responses of hidden form operations. The single upstream defect must fail for exactly the recorded reason in both targets; an unexpected pass, changed reason, missing example or any other failure fails the suite."
+      "basis": "All documented JSON response media examples across every status and recursively reachable schema-level examples, including error-only annotations, are decoded by the actual generated Node/PHP strict executors. Four hidden-form success responses use response-only audit plans; 23 hidden CLI/OAuth form error examples are explicitly excluded because those operations are outside the SDK surface and have no generated operation codec. Two SSE wire-text examples remain excluded. The single upstream defect (FLI-586) must fail for exactly the recorded reason in both targets; an unexpected pass, changed reason, missing example or any other failure fails the suite.",
+      "hiddenFormErrorExamples": 23
     },
     "webhookAmounts": "Reachable webhook amount declarations now share eight int64 schema locations, with zero plain-integer amount declarations (previously 108 plain integer and two int64 locations). Preserve exact integer strings in both targets. Webhook resource and delivery envelopes now use data.object.",
-    "modelFixtureRefresh": "ReturnLineDecision/ReturnProcessDecision no longer declare decision_basis, selected_resolution_type or their old containment rules. Exercise current decline/override reason dependencies, nullable automatic_resolution_type, closed input enums and quantity minimums. ReturnPolicyRevisionInput replaces obsolete refund_timing with release_timing, required for allowed refund/store_credit through its published if/contains/then constraint. No profile correction is needed."
+    "modelFixtureRefresh": "ReturnLineDecision/ReturnProcessDecision no longer declare decision_basis, selected_resolution_type or their old containment rules. Exercise current decline/override reason dependencies, nullable automatic_resolution_type, closed input enums and quantity minimums. ReturnPolicyRevisionInput replaces obsolete refund_timing with release_timing, required for allowed refund/store_credit through its published if/contains/then constraint. No profile correction is needed.",
+    "previousSdkMethods": {
+      "listCurrentAPIKeyRequestLogs": {
+        "path": "/v1/developer/request-logs",
+        "httpMethod": "GET",
+        "resource": "developer",
+        "method": "listCurrentAPIKeyRequestLogs"
+      },
+      "getCurrentAPIKeyRequestLog": {
+        "path": "/v1/developer/request-logs/{api_request_log_id}",
+        "httpMethod": "GET",
+        "resource": "developer",
+        "method": "getCurrentAPIKeyRequestLog"
+      },
+      "assessInvoiceLateFee": {
+        "path": "/v1/invoices/{invoice_id}/late-fees",
+        "httpMethod": "POST",
+        "resource": "invoices",
+        "method": "assessLateFee"
+      },
+      "recordManualInvoicePayment": {
+        "path": "/v1/invoices/{invoice_id}/manual-payments",
+        "httpMethod": "POST",
+        "resource": "invoices",
+        "method": "recordManualPayment"
+      },
+      "saveMePaymentMethod": {
+        "path": "/v1/me/payment-methods",
+        "httpMethod": "POST",
+        "resource": "me",
+        "method": "savePaymentMethod"
+      },
+      "removeMePaymentMethod": {
+        "path": "/v1/me/payment-methods/{payment_method_id}",
+        "httpMethod": "DELETE",
+        "resource": "me",
+        "method": "removePaymentMethod"
+      },
+      "addOrderCharge": {
+        "path": "/v1/orders/{order_id}/charges",
+        "httpMethod": "POST",
+        "resource": "orders",
+        "method": "addCharge"
+      },
+      "addOrderLineItems": {
+        "path": "/v1/orders/{order_id}/line-items",
+        "httpMethod": "POST",
+        "resource": "orders",
+        "method": "addLineItems"
+      },
+      "revokeOrganizationMembership": {
+        "path": "/v1/organizations/{organization_id}/memberships/{user_id}",
+        "httpMethod": "DELETE",
+        "resource": "organizations",
+        "method": "revokeMembership"
+      },
+      "savePaymentMethod": {
+        "path": "/v1/payment-methods",
+        "httpMethod": "POST",
+        "resource": "paymentMethods",
+        "method": "save"
+      },
+      "removePaymentMethod": {
+        "path": "/v1/payment-methods/{payment_method_id}",
+        "httpMethod": "DELETE",
+        "resource": "paymentMethods",
+        "method": "remove"
+      },
+      "publishReturnPolicyRevision": {
+        "path": "/v1/return-policies/{return_policy_id}/revisions",
+        "httpMethod": "POST",
+        "resource": "returnPolicies",
+        "method": "publishRevision"
+      },
+      "addReturnLineItem": {
+        "path": "/v1/returns/{return_id}/line-items",
+        "httpMethod": "POST",
+        "resource": "returns",
+        "method": "addLineItem"
+      },
+      "waiveReturnLineInspection": {
+        "path": "/v1/returns/{return_id}/line-items/{return_line_item_id}/waive-inspection",
+        "httpMethod": "POST",
+        "resource": "returns",
+        "method": "waiveLineInspection"
+      },
+      "processExistingReturn": {
+        "path": "/v1/returns/{return_id}/process",
+        "httpMethod": "POST",
+        "resource": "returns",
+        "method": "processExisting"
+      },
+      "addRiskListItems": {
+        "path": "/v1/risk-lists/{risk_list_id}/items",
+        "httpMethod": "POST",
+        "resource": "riskLists",
+        "method": "addItems"
+      },
+      "getRiskRuleAttributeRegistry": {
+        "path": "/v1/risk-rules/attributes",
+        "httpMethod": "GET",
+        "resource": "riskRules",
+        "method": "getAttributeRegistry"
+      },
+      "rotateWebhookSecret": {
+        "path": "/v1/webhook-endpoints/{webhook_endpoint_id}/rotate-secret",
+        "httpMethod": "POST",
+        "resource": "webhookEndpoints",
+        "method": "rotateWebhookSecret"
+      }
+    },
+    "methodCompatibility": "Preserve the previous public resource/method for every same-route operation-ID rename, including the small risk profile. The 18 exposed renamed operations retain their prior methods (16 restored and two already unchanged); no behavior-based naming exceptions. Two renamed form flows remain hidden under the approved CLI/OAuth surface exclusion. Canonical component-derived input/result names follow the new source and may still change.",
+    "previousSdkMethodsSource": {
+      "repository": "flint-pay/sdk-generator",
+      "revision": "cef00c06cab92b8c7189ed980a55ee417219c8d2",
+      "path": "tests/providers/flint/full-common-sdk.json",
+      "sha256": "908c57c1ec4f43e8f39e798edba3a2ee130fb853c493c51dd61d102718dcad70"
+    }
   }
 }
