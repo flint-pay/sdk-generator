@@ -372,6 +372,20 @@ test('caller reserved extensions stay rejected before publication markers are in
   }
 });
 
+test('resolved webhook config remains reusable when customizing unrelated settings', () => {
+  const original = loadContract(
+    'tests/fixtures/payment-api.json',
+    'tests/fixtures/payment-sdk.json',
+  );
+  const customized = structuredClone(original.config);
+  customized.version = '2.0.0';
+  const path = join(dir, 'customized-resolved.json');
+  writeFileSync(path, JSON.stringify(customized));
+  const reloaded = loadContract('tests/fixtures/payment-api.json', path);
+  assert.equal(reloaded.config.version, '2.0.0');
+  assert.deepEqual(reloaded.config.webhook.events, original.config.webhook.events);
+});
+
 test('key constraint failures identify and escape the offending key in both generated executors', async () => {
   const codec = compileCodec({
     type: 'object',

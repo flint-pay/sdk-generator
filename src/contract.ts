@@ -2357,9 +2357,16 @@ function loadContractInput(
   );
   // Configured event schemas are already inline rather than dereferenced. Mark
   // their source locations before validation can normalize annotation wrappers.
-  const markConfiguredExamples = (value: unknown, sourcePath: string, context: Context): void => {
+  const markConfiguredExamples = (
+    value: unknown,
+    sourcePath: string,
+    context: Context,
+    propertyNames = false,
+  ): void => {
     if (context === 'literal' || !value || typeof value !== 'object') return;
-    if (context === 'schema' && Object.keys(value).some((key) => key.startsWith('x-sdk-')))
+    // Resolved event configs already support reference metadata; guard new key
+    // schemas before adding their trusted publication markers.
+    if (propertyNames && Object.keys(value).some((key) => key.startsWith('x-sdk-')))
       fail(
         'config' + sourcePath,
         'x-sdk-* extensions are reserved for resolved generator metadata',
@@ -2372,6 +2379,7 @@ function loadContractInput(
           child,
           sourcePath + '/' + pointerSegment(key),
           Array.isArray(value) ? context : childContext(context, key),
+          context === 'schema' && key === 'propertyNames',
         );
   };
   for (const [event, value] of Object.entries(config.webhook?.events ?? {}))
