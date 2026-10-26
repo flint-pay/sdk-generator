@@ -14,6 +14,8 @@ const semantic = new Set([
   'schema-usage',
   'schema-intersections',
   'target-types',
+  'public-type-plan',
+  'type-certificate',
   'php-types',
   'php-representation',
   'php-value-plan',
@@ -64,6 +66,8 @@ test('semantic modules have effect-free dependencies and no implementation cycle
         )
           return;
         const dependency = node.moduleSpecifier.text.replace(/^\.\//, '').replace(/\.js$/, '');
+        // TypeScript's syntax parser is a pure compiler dependency; no program host or I/O.
+        if (name === 'public-type-plan' && dependency === 'typescript') return;
         // Source-use proof uses deterministic hashing, without random or I/O APIs.
         if (name === 'schema-usage' && dependency === 'node:crypto') {
           assert(bindings && ts.isNamedImports(bindings));
@@ -81,6 +85,16 @@ test('semantic modules have effect-free dependencies and no implementation cycle
         edges.push(dependency);
       }
       if (ts.isCallExpression(node)) {
+        if (
+          name === 'public-type-plan' &&
+          ts.isPropertyAccessExpression(node.expression) &&
+          node.expression.expression.getText(file) === 'ts'
+        )
+          assert.ok(
+            node.expression.name.text === 'createSourceFile' ||
+              /^is[A-Z]/.test(node.expression.name.text),
+            'Public type planning uses only TypeScript syntax APIs',
+          );
         assert.notEqual(
           node.expression.kind,
           ts.SyntaxKind.ImportKeyword,

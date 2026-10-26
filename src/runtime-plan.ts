@@ -1,3 +1,4 @@
+import { assertTypeCertificate, type TypeCertificate } from './type-certificate.js';
 import { stable } from './canonical.js';
 import { requestOption, REQUEST_OPTIONS } from './request-options.js';
 import { assertPhpRepresentation, type PhpRepresentation } from './php-value-plan.js';
@@ -153,6 +154,11 @@ export interface CompiledOperation
   retry: Retry;
   replay: 'safe' | 'idempotency';
   streamEventCodecs?: Record<string, CodecPlan>;
+  /** Node payload unions must decode to one of their declared projected shapes. */
+  payloadCodecs?: CodecPlan[];
+  outputCertificate?: TypeCertificate;
+  payloadCertificate?: TypeCertificate;
+  itemCertificate?: TypeCertificate;
   parameters: (Omit<Operation['parameters'][number], 'schema'> & {
     codec: CodecPlan;
     /** Absent in historical descriptors and for ordinary input parameters. */
@@ -175,6 +181,7 @@ export interface CompiledOperation
 
 export interface CompiledRuntimePlan
   extends Omit<RuntimeContract, 'operations' | 'definitions' | 'webhook' | 'incoming'> {
+  errorDetailsCertificate?: TypeCertificate;
   format: typeof CODEC_FORMAT;
   semantics: string;
   retrySemantics?: typeof RETRY_SEMANTICS | 'budgets-1';
@@ -182,6 +189,7 @@ export interface CompiledRuntimePlan
   incoming?: (Omit<IncomingWebhook, 'schema'> & { codec: CodecPlan })[];
   definitions?: Record<string, CodecPlan>;
   webhook?: Omit<Webhook, 'events'> & {
+    certificate?: TypeCertificate;
     events: Record<string, CodecPlan>;
     eventModels?: Record<string, string>;
   };
@@ -374,6 +382,8 @@ export function assertRuntimePlan(
     return value as Record<string, unknown>;
   }
   const plan = record(value, 'runtime');
+  if (plan.errorDetailsCertificate !== undefined)
+    assertTypeCertificate(plan.errorDetailsCertificate);
   if (plan.defaultBaseUrl !== undefined && !isDefaultBaseUrl(plan.defaultBaseUrl))
     throw new Error('Invalid defaultBaseUrl in compiled runtime');
   if (plan.format !== CODEC_FORMAT || typeof plan.semantics !== 'string')
@@ -556,6 +566,15 @@ export function assertRuntimePlan(
       assertCodecPlan(field.codec, `${op.id}.parameter.${field.name}`);
     }
     if (op.body !== undefined) assertCodecPlan(op.body, `${op.id}.body`);
+    for (const key of ['outputCertificate', 'payloadCertificate', 'itemCertificate'])
+      if (op[key] !== undefined) assertTypeCertificate(op[key]);
+    if (op.payloadCodecs !== undefined) {
+      if (!Array.isArray(op.payloadCodecs) || !op.payloadCodecs.length)
+        throw new Error(`${op.id}: invalid payload codecs`);
+      op.payloadCodecs.forEach((codec, index) =>
+        assertCodecPlan(codec, `${op.id}.payloadCodecs.${index}`),
+      );
+    }
     if (op.streamEventSchemas !== undefined)
       throw new Error('Raw stream schemas in compiled operation');
     if (op.streamEventCodecs !== undefined)
@@ -585,6 +604,7 @@ export function assertRuntimePlan(
     }
     for (const [status, response] of Object.entries(responses)) {
       const result = record(response, `${op.id}.responses.${status}`);
+
       if (
         result.bodyKind !== undefined &&
         !['empty', 'json', 'binary', 'sse'].includes(String(result.bodyKind))
@@ -628,6 +648,8 @@ export function assertRuntimePlan(
   if (plan.definitions !== undefined)
     for (const [name, codec] of Object.entries(record(plan.definitions, 'definitions')))
       assertCodecPlan(codec, 'definitions.' + name);
+  if (plan.webhook !== undefined && record(plan.webhook, 'webhook').certificate !== undefined)
+    assertTypeCertificate(record(plan.webhook, 'webhook').certificate);
   if (plan.webhook !== undefined)
     for (const [name, codec] of Object.entries(
       record(record(plan.webhook, 'webhook').events, 'webhook.events'),

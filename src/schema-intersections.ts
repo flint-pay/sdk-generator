@@ -52,7 +52,7 @@ export function numericEnumDeclaration(
       const reference = s['x-sdk-ref'];
       if (reference && Object.hasOwn(definitions, reference) && !seen.has(reference))
         return scalarView(definitions[reference]!, new Set([...seen, reference]));
-      const { properties, items, additionalProperties, ...view } = s;
+      const { properties, items, additionalProperties, 'x-sdk-type-name': _typeName, ...view } = s;
       // Keep array declarations structurally complete for the type renderer;
       // their element graph is irrelevant to the enclosing scalar enum.
       if (items) view.items = {};
@@ -68,7 +68,8 @@ export function numericEnumDeclaration(
   for (const [index, part] of parts.entries()) {
     const keyword = part.oneOf ? 'oneOf' : part.anyOf ? 'anyOf' : undefined;
     if (!keyword) continue;
-    const { [keyword]: branches, ...base } = part;
+    // A projected scalar/union view is no longer the complete named component.
+    const { [keyword]: branches, 'x-sdk-type-name': _typeName, ...base } = part;
     const siblings = [...parts.slice(0, index), base, ...parts.slice(index + 1)];
     if (!siblings.some(hasEnum) && !(hasEnum(part) && siblings.some(hasShape))) continue;
     // Both union keywords are TypeScript unions. Keep keyword scope in the

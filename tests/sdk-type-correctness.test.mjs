@@ -12,7 +12,12 @@ import { assertRuntimePlan, compileRuntimePlan } from '../dist/runtime-plan.js';
 import { compileSchemaPolicy } from '../dist/schema-policy.js';
 import { typescriptType } from '../dist/target-types.js';
 import { storeCompiledSnapshot, restoreCompiledSnapshot } from '../dist/compiled-record.js';
-import { splitNodeDeclarations } from '../dist/package-render.js';
+import {
+  splitNodeDeclarations,
+  compactNodeDeclarations,
+  formatNodeDeclaration,
+} from '../dist/package-render.js';
+import { compareCompiledContracts } from '../dist/compiled-compatibility.js';
 
 function fixture(t, api, config = {}) {
   mkdirSync('.generated', { recursive: true });
@@ -53,7 +58,7 @@ function ok(command, args) {
   assert.equal(r.status, 0, r.stdout + r.stderr);
   return r.stdout;
 }
-function typecheck(path) {
+function typecheck(path, options = []) {
   ok(process.execPath, [
     'node_modules/typescript/bin/tsc',
     '--strict',
@@ -66,6 +71,7 @@ function typecheck(path) {
     'ES2022',
     '--typeRoots',
     resolve('node_modules/@types'),
+    ...options,
     path,
   ]);
 }
@@ -92,7 +98,7 @@ function phpstan(dir, output, source, succeeds = true) {
   return r.stdout + r.stderr;
 }
 
-test('structurally shared results retain source component names, exported shapes and PHP identities', async (t) => {
+test('identical response shapes share a canonical name while PHP identities remain stable', async (t) => {
   const result = { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] };
   const response = (name) => ({
     type: 'object',
@@ -135,9 +141,9 @@ test('structurally shared results retain source component names, exported shapes
   const a = compileSdkContract(f.contract);
   assert.deepEqual(a, compileSdkContract(f.contract));
   assert.deepEqual(f.contract, before);
-  assert.equal(a.plan.node.operations.createAlpha.output, 'AlphaResponse');
+  assert.equal(a.plan.node.operations.createAlpha.output, 'BetaResponse');
   assert.equal(a.plan.node.operations.createBeta.output, 'BetaResponse');
-  assert.equal(a.plan.node.operations.getAlpha.output, 'AlphaResult');
+  assert.equal(a.plan.node.operations.getAlpha.output, 'BetaResult');
   // Codec identity remains shared, independently of the public Node name.
   assert.equal(
     a.plan.runtime.operations[0].responses['200'].codec.fields.data.reference,
@@ -147,13 +153,17 @@ test('structurally shared results retain source component names, exported shapes
     a.plan.runtime.operations[1].responses['200'].codec.fields.data.reference,
     'BetaResult',
   );
-  assert.match(
-    readFileSync(join(f.output, 'node/declarations/AlphaResult.d.ts'), 'utf8'),
-    /export type AlphaResult = \{ "id": string; \};/,
+  assert.equal(a.plan.node.models.AlphaResult.outputAlias, 'BetaResult');
+  assert.equal(a.plan.responseReturns.createAlpha.nodeDocumentation, 'BetaResult');
+  assert.equal(a.plan.responseReturns.createBeta.nodeDocumentation, 'BetaResult');
+  assert.equal(a.plan.documentation.getAlpha.nodeOutput, 'BetaResult');
+  assert.doesNotMatch(
+    readFileSync(join(f.output, 'node/REFERENCE.md'), 'utf8'),
+    /(?:Returned payload|Response):[^\n]*AlphaResult/,
   );
   assert.match(
     readFileSync(join(f.output, 'node/declarations/BetaResult.d.ts'), 'utf8'),
-    /export interface BetaResult extends AlphaResult \{\}/,
+    /export type BetaResult = \{\s*"id": string;\s*\};/,
   );
   const consumer = join(f.output, 'node/consumer.ts');
   const constrained = typescriptType(
@@ -165,18 +175,18 @@ test('structurally shared results retain source component names, exported shapes
   );
   writeFileSync(
     consumer,
-    `import {Client, type AlphaResult, type BetaResult, type AlphaResponse} from './index.js';
+    `import {Client, type BetaResult, type BetaResponse} from './index.js';
 const c = new Client({baseUrl:'https://example.invalid'});
 const alpha = c.alpha.create();
 const beta = c.beta.create();
 const direct = c.alpha.get();
-const existingAlpha: Promise<AlphaResult> = alpha;
+const existingAlpha: Promise<BetaResult> = alpha;
 const existingBeta: Promise<BetaResult> = beta;
-const response: Promise<AlphaResponse> = c.alpha.createWithResponse().then(r => r.body);
-import {Client as ScopedClient, type AlphaResult as ScopedResult, type BetaResult as PreviousScopedResult} from './resources/alpha.js';
+const response: Promise<BetaResponse> = c.alpha.createWithResponse().then(r => r.body);
+import {Client as ScopedClient, type BetaResult as ScopedResult, type BetaResult as PreviousScopedResult} from './resources/alpha.js';
 const scoped: Promise<ScopedResult> = new ScopedClient({baseUrl:'https://example.invalid'}).alpha.create();
 const previousScoped: Promise<PreviousScopedResult> = scoped;
-type OwnedNullable = AlphaResult | null;
+type OwnedNullable = BetaResult | null;
 type SharedNullable = BetaResult | null;
 type Constrained = ${constrained};
 const nullableControl: OwnedNullable = null;
@@ -201,10 +211,10 @@ const constrainedNull: Constrained = null;
     ts.forEachChild(node, visit);
   }
   visit(program.getSourceFile(consumer));
-  assert.equal(names.get('alpha'), 'AlphaResult');
+  assert.equal(names.get('alpha'), 'BetaResult');
   assert.equal(names.get('beta'), 'BetaResult');
-  assert.equal(names.get('direct'), 'AlphaResult');
-  assert.equal(names.get('scoped'), 'AlphaResult');
+  assert.equal(names.get('direct'), 'BetaResult');
+  assert.equal(names.get('scoped'), 'BetaResult');
   const sdk = await import(pathToFileURL(join(f.output, 'node/index.js')));
   const c = new sdk.Client({
     baseUrl: 'https://example.invalid',
@@ -233,8 +243,8 @@ foreach ([$c->alpha->create(), $c->beta->create()] as $value) {
   delete record.baseline;
   const snapshot = restoreCompiledSnapshot(record.compiled);
   const previous = structuredClone(snapshot.plan);
-  previous.node.operations.createAlpha.output = previous.node.operations.createBeta.output;
-  previous.responseReturns.createAlpha.node = previous.responseReturns.createBeta.node;
+  previous.node.operations.createAlpha.output = 'AlphaResponse';
+  previous.responseReturns.createAlpha.node = 'AlphaResult';
   record.compiled = storeCompiledSnapshot({ ...snapshot, plan: previous });
   writeFileSync(recordPath, JSON.stringify(record));
   assert.ok(
@@ -1207,4 +1217,1073 @@ if(count($seen)!==1||$seen[0]['x-request-id']!=='caller'||$seen[0]['idempotency-
 `,
     join(f.output, 'php'),
   ]);
+});
+
+test('Node consumers get canonical payload names, closed inputs, integer strings and request-only factories', async (t) => {
+  const thing = {
+    type: 'object',
+    properties: {
+      id: { type: 'string' },
+      amount: { type: 'integer', format: 'int64' },
+      status: { type: 'string', enum: ['pending', 'succeeded'] },
+    },
+    required: ['id', 'amount', 'status'],
+  };
+  const input = {
+    type: 'object',
+    properties: {
+      amount: { type: 'integer', format: 'int64' },
+      status: { type: 'string', enum: ['pending', 'succeeded'] },
+      child: ref('InputChild'),
+      ambiguous: { oneOf: [{ type: 'integer', format: 'int64' }, { type: 'string' }] },
+      fixed: { type: 'integer', format: 'int64', const: 7 },
+      allowed: { type: 'integer', format: 'int64', enum: [7, 8] },
+    },
+    required: ['amount', 'status'],
+  };
+  const envelope = (name) => ({
+    type: 'object',
+    properties: { data: ref(name) },
+    required: ['data'],
+  });
+  const error = { type: 'object', properties: { error: ref('ErrorObject') }, required: ['error'] };
+  const f = fixture(
+    t,
+    {
+      components: {
+        schemas: {
+          Thing: thing,
+          GetThingResult: thing,
+          NoInputs: { type: 'object', properties: {}, required: [], additionalProperties: false },
+          ThingResponse: envelope('Thing'),
+          GetThingResponse: envelope('GetThingResult'),
+          DistinctThing: { ...thing, required: ['id'] },
+          UpdateThingRequest: input,
+          CancelUnrelatedRequest: input,
+          InputChild: {
+            type: 'object',
+            properties: { enabled: { type: 'boolean' } },
+            required: ['enabled'],
+          },
+          ErrorObject: {
+            type: 'object',
+            properties: {
+              code: { type: 'string', enum: ['INVALID_AMOUNT', 'NOT_READY'] },
+              message: { type: 'string' },
+              field: { type: 'string' },
+            },
+            required: ['code', 'message'],
+          },
+          LookupRequest: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              name: { type: 'string' },
+              expected_version: { type: 'integer', format: 'int64' },
+            },
+            oneOf: [
+              { required: ['id'], not: { required: ['name'] } },
+              { required: ['name'], not: { required: ['id'] } },
+            ],
+          },
+        },
+      },
+      paths: {
+        '/thing': {
+          post: {
+            operationId: 'updateThing',
+            requestBody: {
+              required: true,
+              content: { 'application/json': { schema: ref('UpdateThingRequest') } },
+            },
+            responses: {
+              ...jsonResponse(ref('GetThingResponse')),
+              400: { description: 'Invalid', content: { 'application/json': { schema: error } } },
+            },
+          },
+        },
+        '/lookup': {
+          post: {
+            operationId: 'lookupThing',
+            requestBody: {
+              required: true,
+              content: { 'application/json': { schema: ref('LookupRequest') } },
+            },
+            responses: jsonResponse(ref('GetThingResponse')),
+          },
+        },
+        '/empty': {
+          get: { operationId: 'readEmpty', responses: jsonResponse(envelope('NoInputs')) },
+        },
+        '/choice': {
+          get: {
+            operationId: 'chooseThing',
+            responses: jsonResponse({ oneOf: [envelope('Thing'), envelope('DistinctThing')] }),
+          },
+        },
+      },
+    },
+    {
+      responses: { return: 'payload', payloadPath: 'data' },
+      errors: { codePath: 'error.code', messagePath: 'error.message', detailsPath: 'error' },
+      operations: {
+        updateThing: { resource: 'things', method: 'update' },
+        lookupThing: { resource: 'things', method: 'lookup' },
+        chooseThing: { resource: 'things', method: 'choose' },
+        readEmpty: { resource: 'things', method: 'readEmpty' },
+      },
+    },
+  );
+  const { plan } = compileSdkContract(f.contract);
+  assert.equal(plan.responseReturns.updateThing.node, 'Thing');
+  assert.equal(plan.node.models.GetThingResult.outputAlias, 'Thing');
+  assert.equal(plan.node.models.DistinctThing.outputAlias, undefined);
+  assert.equal(plan.node.models.Thing.inputReachable, false);
+  assert.equal(plan.node.models.NoInputs.inputReachable, false);
+  assert.equal(plan.node.models.InputChild.inputReachable, true);
+  const historical = structuredClone(plan);
+  delete historical.node.models.GetThingResult.outputAlias;
+  delete historical.node.models.Thing.inputReachable;
+  delete historical.node.operations.updateThing.responseType;
+  const breaking = compareCompiledContracts(historical, plan).filter(
+    (finding) => finding.severity === 'breaking',
+  );
+  for (const name of ['GetThingResult', 'Thing']) {
+    assert.ok(
+      breaking.some(
+        (finding) => finding.subject === 'models.' + name && /removed/.test(finding.message),
+      ),
+    );
+  }
+  assert.ok(
+    breaking.some(
+      (finding) =>
+        finding.subject === 'updateThing.responseType' &&
+        /ThingsUpdateResponse was removed; use/.test(finding.message),
+    ),
+    JSON.stringify(breaking),
+  );
+  assert.ok(
+    breaking.some((finding) => /GetThingResult was removed; use Thing/.test(finding.message)),
+  );
+  assert.match(plan.node.operations.updateThing.input, /UpdateThingRequestInput/);
+  assert.doesNotMatch(plan.responseReturns.chooseThing.node, /unknown|_SdkPayloadAt/);
+  assert.match(plan.responseReturns.chooseThing.node, /Thing.*DistinctThing/);
+  for (const corrupt of [
+    (runtime) => {
+      runtime.errorDetailsCertificate = { type: { kind: 'invalid' }, definitions: {} };
+    },
+    (runtime) => {
+      runtime.operations[0].payloadCodecs = [];
+    },
+    (runtime) => {
+      runtime.operations[0].payloadCodecs = [{ value: { kind: 'invalid' } }];
+    },
+  ]) {
+    const runtime = structuredClone(plan.runtime);
+    corrupt(runtime);
+    assert.throws(() => assertRuntimePlan(runtime));
+  }
+  const snapshot = structuredClone(
+    restoreCompiledSnapshot(
+      JSON.parse(readFileSync(join(f.output, '.sdk-generator.json'), 'utf8')).compiled,
+    ),
+  );
+  snapshot.plan.responseReturns.chooseThing.validate = false;
+  assert.throws(() => restoreCompiledSnapshot(snapshot), /payload validation/);
+  const source = join(f.output, 'node/consumer.ts');
+  writeFileSync(
+    source,
+    `import {Client, SdkError, errors, makeUpdateThingRequest, makeInputChild, type Thing, type DistinctThing, type InputValue} from './index.js';
+const c = new Client({baseUrl:'https://example.invalid'});
+const request = makeUpdateThingRequest({amount:9007199254740993n, status:'pending', child:makeInputChild({enabled:true})});
+const value: Promise<Thing> = c.things.update({body:request});
+c.things.update({body:{amount:'50',status:'succeeded',ambiguous:9007199254740993n,fixed:7n,allowed:8n}});
+// @ts-expect-error decimal currency values are not integer minor units
+c.things.update({body:{amount:'50.00',status:'pending'}});
+// @ts-expect-error formatted currency is not an integer string
+c.things.update({body:{amount:'$50',status:'pending'}});
+// @ts-expect-error enum inputs are closed
+c.things.update({body:{amount:'50',status:'succeded'}});
+declare const response: Thing;
+const futureComparison = response.status === 'succeded';
+const amount: \`\${bigint}\` = response.amount;
+// @ts-expect-error exact response strings do not have a fractional part
+const fractional: Thing['amount'] = '50.00';
+const choice: Promise<Thing | DistinctThing> = c.things.choose();
+c.things.lookup({body:{id:'one',expected_version:2n}});
+c.things.lookup({body:{name:'one'}});
+// @ts-expect-error oneOf fields are mutually exclusive
+c.things.lookup({body:{id:'one',name:'one'}});
+// @ts-expect-error one alternative is required
+c.things.lookup({body:{}});
+// @ts-expect-error the declared version retains its integer type
+c.things.lookup({body:{id:'one',expected_version:'2.5'}});
+declare const error: SdkError;
+const code: 'INVALID_AMOUNT' | 'NOT_READY' | (string & {}) | undefined = error.code;
+if (error.details && 'field' in error.details) { const field: string | undefined = error.details.field; }
+if (error instanceof errors.ValidationError && error.details && 'message' in error.details) { const message: string | undefined = error.details.message; }
+// @ts-expect-error response-only factories are absent
+import {makeThing} from './index.js';
+// @ts-expect-error redundant result names are absent
+import type {GetThingResult} from './index.js';
+// @ts-expect-error redundant operation response aliases are absent
+import type {ThingsUpdateResponse} from './index.js';
+const omitted: InputValue<undefined> = undefined;
+`,
+  );
+  typecheck(source);
+  const { readdirSync } = await import('node:fs');
+  for (const name of readdirSync(join(f.output, 'node/declarations'))) {
+    const declaration = readFileSync(join(f.output, 'node/declarations', name), 'utf8');
+    assert.doesNotMatch(declaration, /_SdkPayloadAt|InputValue<undefined>/);
+    assert.ok(
+      declaration.split('\n').every((line) => line.length < 500),
+      name,
+    );
+  }
+  const sdk = await import(pathToFileURL(join(f.output, 'node/index.js')));
+  assert.equal(sdk.makeThing, undefined);
+  const bodies = [];
+  let failed = false;
+  let malformed = false;
+  let unknownPayload = false;
+  const client = new sdk.Client({
+    baseUrl: 'https://example.invalid',
+    transport: async (_url, request) => {
+      bodies.push(request.body);
+      if (failed)
+        return new Response(
+          JSON.stringify({
+            error: malformed
+              ? { code: 'NOT_READY', message: 42 }
+              : { code: 'INVALID_AMOUNT', message: 'Invalid amount', field: 'amount' },
+          }),
+          { status: 400 },
+        );
+      if (unknownPayload) return new Response('{"data":{"future":true}}');
+      return new Response('{"data":{"id":"one","amount":9007199254740993,"status":"future"}}');
+    },
+  });
+  assert.deepEqual(
+    { ...(await client.things.update({ body: { amount: 9007199254740993n, status: 'pending' } })) },
+    { id: 'one', amount: '9007199254740993', status: 'future' },
+  );
+  assert.equal(bodies[0], '{"amount":9007199254740993,"status":"pending"}');
+  await client.things.update({
+    body: { amount: 1n, status: 'pending', ambiguous: 9007199254740993n, fixed: 7n, allowed: 8n },
+  });
+  assert.equal(
+    bodies[1],
+    '{"amount":1,"status":"pending","ambiguous":9007199254740993,"fixed":7,"allowed":8}',
+  );
+  for (const amount of [
+    '50.00',
+    '5e3',
+    '50\n',
+    '50\r',
+    '50\u2028',
+    '01',
+    '+50',
+    ' 50',
+    new sdk.ExactNumber('50.00'),
+    new sdk.ExactNumber('5e3'),
+  ])
+    await assert.rejects(
+      client.things.update({ body: { amount, status: 'pending' } }),
+      /integer string/,
+    );
+  // Match the independently expected PHP integer spellings, including explicit wrappers.
+  for (const amount of ['0', '-0', '50', '-50', new sdk.ExactNumber('50')]) {
+    await client.things.update({ body: { amount, status: 'pending' } });
+    assert.equal(
+      bodies.at(-1),
+      `{"amount":${amount instanceof sdk.ExactNumber ? amount.value : amount},"status":"pending"}`,
+    );
+  }
+  await assert.rejects(
+    client.things.lookup({ body: {} }),
+    (e) =>
+      /alternative 1:.*id.*required/.test(e.message) &&
+      /alternative 2:.*name.*required/.test(e.message),
+  );
+  assert.deepEqual(
+    { ...(await client.things.choose()) },
+    { id: 'one', amount: '9007199254740993', status: 'future' },
+  );
+  await assert.rejects(
+    client.things.update({ body: { amount: 1n, status: 'pending', fixed: 8n } }),
+    { kind: 'validation' },
+  );
+  unknownPayload = true;
+  await assert.rejects(
+    client.things.choose(),
+    (error) =>
+      error.kind === 'protocol' && error.meta.status === 200 && error.raw.includes('future'),
+  );
+  assert.deepEqual(
+    { ...(await client.things.chooseWithResponse()).body },
+    { data: { future: true } },
+  );
+  unknownPayload = false;
+  failed = true;
+  await assert.rejects(
+    client.things.update({ body: { amount: 1n, status: 'pending' } }),
+    (e) => e instanceof sdk.SdkError && e.code === 'INVALID_AMOUNT' && e.details.field === 'amount',
+  );
+  malformed = true;
+  await assert.rejects(
+    client.things.update({ body: { amount: 1n, status: 'pending' } }),
+    (e) => e.details === undefined && e.raw.includes('42'),
+  );
+});
+
+test('compacted declarations retain inline error-detail references and readable imports', (t) => {
+  const dir = mkdtempSync(resolve('.generated/compacted-types-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const files = new Map();
+  const names = Array.from({ length: 130 }, (_, i) => 'SyntheticModel' + i);
+  for (const name of names)
+    files.set(`node/declarations/${name}.d.ts`, `export interface ${name} { field?: string }`);
+  files.set(
+    'node/runtime.d.ts',
+    `export type SdkErrorDetails = import('./declarations/SyntheticModel0.js').SyntheticModel0;`,
+  );
+  files.set(
+    'node/declarations/Client.d.ts',
+    `export declare class Client { details: import('./SyntheticModel0.js').SyntheticModel0; }`,
+  );
+  files.set(
+    'node/index.d.ts',
+    names.map((name) => `export type { ${name} } from './declarations/${name}.js';`).join('\n') +
+      `\nexport type { SdkErrorDetails } from './runtime.js';\nexport { Client } from './declarations/Client.js';`,
+  );
+  compactNodeDeclarations(files, 'node/');
+  assert.match(files.get('node/runtime.d.ts'), /import\(["']\.\/declarations\/types-0\.js["']\)/);
+  assert.match(files.get('node/declarations/Client.d.ts'), /import\(["']\.\/types-0\.js["']\)/);
+  for (const [path, text] of files) {
+    const formatted = formatNodeDeclaration(text);
+    assert.ok(
+      formatted.split('\n').every((line) => line.length < 500),
+      path,
+    );
+    mkdirSync(join(dir, path, '..'), { recursive: true });
+    writeFileSync(join(dir, path), formatted);
+  }
+  writeFileSync(join(dir, 'package.json'), '{"type":"module"}');
+  typecheck(join(dir, 'node/index.d.ts'));
+});
+
+for (const nesting of ['direct', 'object', 'array', 'nullable']) {
+  test(`projected ${nesting} errors and payloads certify the types used by consumers`, async (t) => {
+    const object = (properties) => ({
+      type: 'object',
+      properties,
+      required: Object.keys(properties),
+    });
+    const wrapSchema = (schema) =>
+      nesting === 'array'
+        ? { type: 'array', items: schema }
+        : nesting === 'object'
+          ? object({ content: schema })
+          : nesting === 'nullable'
+            ? { oneOf: [schema, { type: 'null' }] }
+            : schema;
+    const wrap = (value) =>
+      nesting === 'array' ? [value] : nesting === 'object' ? { content: value } : value;
+    const unwrap = (value) =>
+      nesting === 'array' ? value[0] : nesting === 'object' ? value.content : value;
+    const access = nesting === 'array' ? '[0]' : nesting === 'object' ? '.content' : '';
+    const errorAccess =
+      nesting === 'array'
+        ? 'Array.isArray(error.details) && error.details[0]'
+        : nesting === 'object'
+          ? "error.details && 'content' in error.details && error.details.content"
+          : 'error.details';
+    const alternatives = (key) => ({
+      oneOf: [object({ [key]: ref('FirstDetail') }), object({ [key]: ref('SecondDetail') })],
+    });
+    const f = fixture(
+      t,
+      {
+        components: {
+          schemas: {
+            FirstDetail: wrapSchema(
+              object({ kind: { type: 'string', enum: ['a'] }, foo: { type: 'string' } }),
+            ),
+            SecondDetail: wrapSchema(
+              object({ kind: { type: 'string', enum: ['b'] }, bar: { type: 'number' } }),
+            ),
+          },
+        },
+        paths: {
+          '/choice': {
+            get: {
+              operationId: 'choose',
+              responses: {
+                ...jsonResponse(alternatives('data')),
+                400: {
+                  description: 'Invalid',
+                  content: { 'application/json': { schema: alternatives('error') } },
+                },
+              },
+            },
+          },
+        },
+      },
+      {
+        responses: { return: 'payload', payloadPath: 'data' },
+        errors: { detailsPath: 'error' },
+        operations: { choose: { resource: 'choices', method: 'get' } },
+      },
+    );
+    const source = join(f.output, 'node/consumer.ts');
+    writeFileSync(
+      source,
+      `import {SdkError, type Client} from './index.js';
+export function inspectError(error: SdkError) {
+  const details = ${errorAccess};
+  if (details && 'foo' in details) return details.foo.toUpperCase();
+  if (details && 'bar' in details) return details.bar.toFixed(1);
+}
+export function inspectPayload(value: Awaited<ReturnType<Client['choices']['get']>>) {
+  if (!value) return;
+  const data = value${access};
+  if ('foo' in data) return data.foo.toUpperCase();
+  return data.bar.toFixed(1);
+}
+`,
+    );
+    typecheck(source, ['--exactOptionalPropertyTypes']);
+    writeFileSync(
+      join(f.output, 'node/consumer.js'),
+      ts.transpileModule(readFileSync(source, 'utf8'), {
+        compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+      }).outputText,
+    );
+    const consumer = await import(pathToFileURL(join(f.output, 'node/consumer.js')));
+    const sdk = await import(pathToFileURL(join(f.output, 'node/index.js')));
+    let status = 400;
+    let value;
+    const client = new sdk.Client({
+      baseUrl: 'https://example.invalid',
+      transport: async () =>
+        new Response(JSON.stringify({ [status === 400 ? 'error' : 'data']: value }), { status }),
+    });
+    for (const [body, expected] of [
+      [{ kind: 'future', foo: 42 }, undefined],
+      [{ kind: 'a', foo: 42 }, undefined],
+      [{ kind: 'future', bar: 'invalid' }, undefined],
+      [{ kind: 'future', foo: 42, bar: 1 }, undefined],
+      [{ kind: 'future', foo: 'safe', bar: 'invalid' }, undefined],
+      [{ kind: 'future' }, undefined],
+      [{ kind: 'future', foo: 'safe' }, 'SAFE'],
+      [{ kind: 'future', foo: 'safe', future: true }, 'SAFE'],
+      [{ kind: 'future', bar: 42 }, '42.0'],
+    ]) {
+      value = wrap(body);
+      await assert.rejects(client.choices.get(), (error) => {
+        assert.ok(error instanceof sdk.SdkError);
+        assert.equal(consumer.inspectError(error), expected);
+        if (expected === undefined) {
+          assert.equal(error.details, undefined);
+          assert.deepEqual(JSON.parse(error.raw).error, value);
+        } else assert.equal(unwrap(error.details).kind, 'future');
+        return true;
+      });
+      status = 200;
+      if (expected === undefined)
+        await assert.rejects(client.choices.get(), (error) => {
+          assert.equal(error.kind, 'protocol');
+          assert.deepEqual(JSON.parse(error.raw).data, value);
+          return true;
+        });
+      else assert.equal(consumer.inspectPayload(await client.choices.get()), expected);
+      status = 400;
+    }
+    if (nesting === 'nullable') {
+      // Null fits both envelope branches, so the oneOf envelope is ambiguous.
+      value = null;
+      await assert.rejects(client.choices.get(), (error) => {
+        assert.equal(error.details, undefined);
+        assert.equal(JSON.parse(error.raw).error, null);
+        assert.equal(consumer.inspectError(error), undefined);
+        return true;
+      });
+      status = 200;
+      await assert.rejects(client.choices.get(), { kind: 'protocol' });
+    }
+    const { plan } = compileSdkContract(f.contract);
+    assert.equal(plan.php.runtime.errorDetailsCertificate, undefined);
+    for (const invalid of [[], [{}]]) {
+      const runtime = structuredClone(plan.runtime);
+      runtime.errorDetailsCertificate = invalid;
+      assert.throws(() => assertRuntimePlan(runtime), /certificate/i);
+    }
+  });
+}
+
+test('nested future alternatives retain uncertainty through property guards on every response surface', async (t) => {
+  const object = (properties) => ({
+    type: 'object',
+    properties,
+    required: Object.keys(properties),
+  });
+  const content = {
+    oneOf: [
+      object({ kind: { type: 'string', enum: ['a'] }, foo: { type: 'string' } }),
+      object({ kind: { type: 'string', enum: ['b'] }, bar: { type: 'number' } }),
+    ],
+  };
+  for (const outer of [false, true]) {
+    const payload = object({ content });
+    const schema = outer
+      ? {
+          oneOf: [
+            object({ data: payload }),
+            object({ data: object({ other: { type: 'string' } }) }),
+          ],
+        }
+      : object({ data: payload });
+    const f = fixture(
+      t,
+      {
+        paths: {
+          '/nested': {
+            get: {
+              operationId: 'read',
+              responses: {
+                ...jsonResponse(schema),
+                400: {
+                  description: 'Invalid',
+                  content: { 'application/json': { schema: object({ error: payload }) } },
+                },
+              },
+            },
+          },
+        },
+      },
+      {
+        responses: { return: 'payload', payloadPath: 'data' },
+        errors: { detailsPath: 'error' },
+        operations: { read: { resource: 'api', method: 'read' } },
+      },
+    );
+    const source = join(f.output, 'node/nested.ts');
+    writeFileSync(
+      source,
+      `import {SdkError, type Client} from './index.js';
+export function error(e:SdkError) {
+ if(e.details && 'content' in e.details && 'foo' in e.details.content) {
+  // @ts-expect-error future nested alternatives keep foo unknown
+  e.details.content.foo.toUpperCase();
+ }
+}
+export function payload(v:Awaited<ReturnType<Client['api']['read']>>) {
+ if('content' in v && 'foo' in v.content) {
+  // @ts-expect-error future nested alternatives keep foo unknown
+  v.content.foo.toUpperCase();
+ }
+}
+export async function full(c:Client) {
+ const v=(await c.api.readWithResponse()).body;
+ if('data' in v && v.data && typeof v.data==='object' && 'content' in v.data && v.data.content && typeof v.data.content==='object' && 'foo' in v.data.content) {
+  // @ts-expect-error full response alternatives also keep foo unknown
+  v.data.content.foo.toUpperCase();
+ }
+}`,
+    );
+    typecheck(source, ['--exactOptionalPropertyTypes']);
+    const { Client } = await import(pathToFileURL(join(f.output, 'node/index.js')));
+    let status = 200;
+    const value = { content: { kind: 'future', foo: 42 } };
+    const client = new Client({
+      baseUrl: 'https://example.invalid',
+      transport: async () =>
+        new Response(JSON.stringify({ [status === 200 ? 'data' : 'error']: value }), { status }),
+    });
+    assert.deepEqual(JSON.parse(JSON.stringify(await client.api.read())), value);
+    status = 400;
+    await assert.rejects(client.api.read(), (e) => {
+      assert.deepEqual(e.details, value);
+      assert.ok(e.raw.includes('42'));
+      return true;
+    });
+  }
+});
+
+test('error certification includes other statuses, operations and built-in detail keys', async (t) => {
+  const object = (properties) => ({
+    type: 'object',
+    properties,
+    required: Object.keys(properties),
+  });
+  const response = (detail) => ({
+    description: 'Invalid',
+    content: { 'application/json': { schema: object({ error: detail }) } },
+  });
+  const f = fixture(
+    t,
+    {
+      components: { schemas: { RuntimeErrorDetails: object({ foo: { type: 'string' } }) } },
+      paths: {
+        '/first': {
+          get: {
+            operationId: 'first',
+            responses: {
+              ...jsonResponse({ type: 'string' }),
+              400: response(ref('RuntimeErrorDetails')),
+              422: response(object({ bar: { type: 'number' } })),
+            },
+          },
+        },
+        '/second': {
+          get: {
+            operationId: 'second',
+            responses: {
+              ...jsonResponse({ type: 'string' }),
+              400: response(object({ baz: { type: 'string' } })),
+            },
+          },
+        },
+      },
+    },
+    {
+      errors: { detailsPath: 'error' },
+      operations: {
+        first: { resource: 'api', method: 'first' },
+        second: { resource: 'api', method: 'second' },
+      },
+    },
+  );
+  const source = join(f.output, 'node/error-union.ts');
+  writeFileSync(
+    source,
+    `import {SdkError} from './index.js';
+export function inspect(e:SdkError) {
+ const v=e.details;
+ if(!v) return;
+ if('foo' in v) v.foo.toUpperCase();
+ if('bar' in v) v.bar.toFixed();
+ if('baz' in v) v.baz.toUpperCase();
+ if('transportCode' in v && v.transportCode!==null) v.transportCode.toUpperCase();
+ if('eventId' in v) v.eventId.toUpperCase();
+ if('position' in v) v.position.toFixed();
+ if('reason' in v) v.reason.toUpperCase();
+}`,
+  );
+  typecheck(source, ['--exactOptionalPropertyTypes']);
+  writeFileSync(
+    source.replace('.ts', '.js'),
+    ts.transpileModule(readFileSync(source, 'utf8'), {
+      compilerOptions: { module: ts.ModuleKind.ESNext },
+    }).outputText,
+  );
+  const consumer = await import(pathToFileURL(source.replace('.ts', '.js')));
+  const sdk = await import(pathToFileURL(join(f.output, 'node/index.js')));
+  let detail;
+  const client = new sdk.Client({
+    baseUrl: 'https://example.invalid',
+    transport: async () => new Response(JSON.stringify({ error: detail }), { status: 400 }),
+  });
+  for (const extra of [
+    { bar: 'invalid' },
+    { baz: 42 },
+    { transportCode: 42 },
+    { eventId: 42 },
+    { position: 'invalid' },
+    { reason: 42 },
+    { reason: 'valid key, missing required runtime companions' },
+  ]) {
+    detail = { foo: 'safe', ...extra };
+    await assert.rejects(client.api.first(), (e) => {
+      assert.equal(e.details, undefined);
+      assert.deepEqual(JSON.parse(e.raw).error, detail);
+      assert.doesNotThrow(() => consumer.inspect(e));
+      return true;
+    });
+  }
+  detail = { foo: 'safe', future: true };
+  await assert.rejects(client.api.first(), (e) => {
+    assert.equal(e.details.foo, 'safe');
+    assert.doesNotThrow(() => consumer.inspect(e));
+    return true;
+  });
+  for (const detail of [
+    { transportCode: 'ETIMEDOUT' },
+    { eventId: 'evt_synthetic', position: 1 },
+  ]) {
+    const e = new sdk.SdkError(
+      'transport',
+      'Synthetic',
+      'unknown',
+      false,
+      undefined,
+      undefined,
+      detail,
+    );
+    assert.deepEqual(e.details, detail);
+    assert.doesNotThrow(() => consumer.inspect(e));
+  }
+  const { plan } = compileSdkContract(f.contract);
+  for (const certificate of [
+    plan.runtime.errorDetailsCertificate,
+    plan.runtime.operations[0].outputCertificate,
+  ]) {
+    assert.ok(certificate);
+    const runtime = structuredClone(plan.runtime);
+    runtime.errorDetailsCertificate = { ...certificate, type: { kind: 'unsupported' } };
+    assert.throws(() => assertRuntimePlan(runtime), /certificate/);
+    runtime.errorDetailsCertificate = {
+      ...certificate,
+      type: { kind: 'reference', name: 'Missing' },
+    };
+    assert.throws(() => assertRuntimePlan(runtime), /certificate/);
+  }
+});
+
+test('the public type certifier also protects pagination, known predicates and known webhook envelopes', async (t) => {
+  const object = (properties) => ({
+    type: 'object',
+    properties,
+    required: Object.keys(properties),
+  });
+  const a = object({ kind: { type: 'string', enum: ['a'] }, foo: { type: 'string' } });
+  const b = object({ kind: { type: 'string', enum: ['b'] }, bar: { type: 'number' } });
+  const envelope = (data) => object({ data, next: { type: ['string', 'null'] } });
+  const schema = {
+    oneOf: [envelope({ type: 'array', items: a }), envelope({ type: 'array', items: b })],
+  };
+  const event = {
+    oneOf: [
+      object({ type: { type: 'string', enum: ['updated'] }, data: a }),
+      object({ type: { type: 'string', enum: ['updated'] }, data: b }),
+    ],
+  };
+  const f = fixture(
+    t,
+    {
+      paths: {
+        '/page': {
+          get: {
+            operationId: 'read',
+            parameters: [{ in: 'query', name: 'cursor', schema: { type: 'string' } }],
+            responses: jsonResponse(schema),
+          },
+        },
+      },
+    },
+    {
+      responses: { return: 'payload', payloadPath: 'data' },
+      operations: {
+        read: {
+          resource: 'api',
+          method: 'read',
+          pagination: { kind: 'cursor', items: 'data', next: 'next', parameter: 'cursor' },
+        },
+      },
+      webhook: {
+        algorithm: 'hmac-sha256',
+        header: 'X-Signature',
+        timestampHeader: 'X-Timestamp',
+        separator: '.',
+        toleranceSeconds: 300,
+        typeField: 'type',
+        events: { updated: event },
+      },
+    },
+  );
+  const source = join(f.output, 'node/surfaces.ts');
+  writeFileSync(
+    source,
+    `import {isApiReadResponseKnown,type Client,type VerifiedWebhook} from './index.js';
+type Item=ReturnType<Client['api']['readItems']> extends AsyncGenerator<infer I>?I:never;
+export function item(v:Item){if('foo' in v)return v.foo.toUpperCase();return v.bar.toFixed();}
+export function known(v:Awaited<ReturnType<Client['api']['readWithResponse']>>){if(isApiReadResponseKnown(v.body))for(const i of v.body.data)item(i);}
+export function webhook(v:VerifiedWebhook){if(v.known){if('foo' in v.event.data)return v.event.data.foo.toUpperCase();return v.event.data.bar.toFixed();}}
+`,
+  );
+  typecheck(source, ['--exactOptionalPropertyTypes']);
+  writeFileSync(
+    source.replace('.ts', '.js'),
+    ts.transpileModule(readFileSync(source, 'utf8'), {
+      compilerOptions: { module: ts.ModuleKind.ESNext },
+    }).outputText,
+  );
+  const consumer = await import(pathToFileURL(source.replace('.ts', '.js')));
+  const sdk = await import(pathToFileURL(join(f.output, 'node/index.js')));
+  const scoped = await import(pathToFileURL(join(f.output, 'node/predicates/ApiReadResponse.js')));
+  let value;
+  const client = new sdk.Client({
+    baseUrl: 'https://example.invalid',
+    transport: async () => new Response(JSON.stringify({ data: [value], next: null })),
+  });
+  for (const body of [
+    { kind: 'future', foo: 42 },
+    { kind: 'a', foo: 'safe', bar: 'invalid' },
+    { kind: 'a', foo: 'safe' },
+  ]) {
+    value = body;
+    const valid = body.foo === 'safe' && !Object.hasOwn(body, 'bar');
+    const full = await client.api.readWithResponse();
+    assert.equal(sdk.isApiReadResponseKnown(full.body), valid);
+    assert.equal(scoped.isApiReadResponseKnown(full.body), valid);
+    assert.doesNotThrow(() => consumer.known(full));
+    if (valid)
+      assert.deepEqual(await Array.fromAsync(client.api.readItems(), consumer.item), ['SAFE']);
+    else
+      await assert.rejects(Array.fromAsync(client.api.readItems()), (e) => {
+        assert.equal(e.kind, 'protocol');
+        assert.deepEqual(JSON.parse(e.raw).data, [body]);
+        return true;
+      });
+    const raw = Buffer.from(JSON.stringify({ type: 'updated', data: body }));
+    const signature = createHmac('sha256', 'synthetic').update('1000.').update(raw).digest('hex');
+    const verified = sdk.verifyWebhook(
+      raw,
+      { 'X-Signature': signature, 'X-Timestamp': '1000' },
+      'synthetic',
+      1000,
+    );
+    assert.equal(verified.known, valid);
+    assert.doesNotThrow(() => consumer.webhook(verified));
+    if (!valid) assert.equal(verified.reason, 'unmatched_envelope');
+  }
+});
+
+for (const extra of [true, { type: 'string' }]) {
+  test(`open union payloads and error details retain valid index-signature fields (${JSON.stringify(extra)})`, async (t) => {
+    const object = (properties) => ({
+      type: 'object',
+      properties,
+      required: Object.keys(properties),
+    });
+    const alternatives = (key) => ({
+      oneOf: [object({ [key]: ref('OpenDetail') }), object({ [key]: ref('ClosedDetail') })],
+    });
+    const f = fixture(
+      t,
+      {
+        components: {
+          schemas: {
+            OpenDetail: {
+              ...object({ kind: { type: 'string', enum: ['a'] }, foo: { type: 'string' } }),
+              additionalProperties: extra,
+            },
+            ClosedDetail: object({
+              kind: { type: 'string', enum: ['b'] },
+              bar: { type: 'number' },
+            }),
+          },
+        },
+        paths: {
+          '/choice': {
+            get: {
+              operationId: 'choose',
+              responses: {
+                ...jsonResponse(alternatives('data')),
+                400: {
+                  description: 'Invalid',
+                  content: { 'application/json': { schema: alternatives('error') } },
+                },
+              },
+            },
+          },
+        },
+      },
+      {
+        responses: { return: 'payload', payloadPath: 'data' },
+        errors: { detailsPath: 'error' },
+        operations: { choose: { resource: 'choices', method: 'get' } },
+      },
+    );
+    const source = join(f.output, 'node/open.ts');
+    writeFileSync(
+      source,
+      `import {SdkError,type Client} from './index.js';
+export function inspect(v: Awaited<ReturnType<Client['choices']['get']>>) {
+ if ('bar' in v) {
+ // @ts-expect-error an open member admits bar without promising a number
+ v.bar.toFixed();
+ }
+ if ('bar' in v && typeof v.bar === 'number') return v.bar.toFixed();
+}
+export function inspectFuture(v: Awaited<ReturnType<Client['choices']['get']>>) {
+ if ('future' in v) return v.foo.toUpperCase();
+}
+export function inspectError(e:SdkError) {
+ if(e.details && 'transportCode' in e.details) {
+ // @ts-expect-error open API details retain unknown index-signature values
+ e.details.transportCode.toUpperCase();
+ }
+}
+`,
+    );
+    typecheck(source, ['--exactOptionalPropertyTypes']);
+    const js = source.replace('.ts', '.js');
+    writeFileSync(
+      js,
+      ts.transpileModule(readFileSync(source, 'utf8'), {
+        compilerOptions: { module: ts.ModuleKind.ESNext },
+      }).outputText,
+    );
+    const consumer = await import(pathToFileURL(js));
+    const sdk = await import(pathToFileURL(join(f.output, 'node/index.js')));
+    let status = 200,
+      value;
+    const client = new sdk.Client({
+      baseUrl: 'https://example.invalid',
+      transport: async () =>
+        new Response(JSON.stringify({ [status === 200 ? 'data' : 'error']: value }), { status }),
+    });
+    for (const fields of [
+      { bar: 'allowed-extra' },
+      { future: 'allowed-extra' },
+      { transportCode: 'allowed-extra' },
+      ...(extra === true ? [{ bar: 42 }, { transportCode: 42 }] : []),
+    ]) {
+      value = { kind: 'a', foo: 'safe', ...fields };
+      status = 200;
+      const decoded = await client.choices.get();
+      assert.deepEqual({ ...decoded }, value);
+      assert.doesNotThrow(() => consumer.inspectFuture(decoded));
+      status = 400;
+      await assert.rejects(client.choices.get(), (error) => {
+        assert.deepEqual({ ...error.details }, value);
+        return true;
+      });
+    }
+    // This known closed alternative also fits the open public member, including
+    // the required field promised after an arbitrary-key guard.
+    status = 200;
+    value = { kind: 'b', bar: 42, foo: 'safe', future: true };
+    const indexed = await client.choices.get();
+    assert.equal(consumer.inspectFuture(indexed), 'SAFE');
+    // A closed valid alternative remains accepted; a known malformed field must fail.
+    status = 200;
+    value = { kind: 'b', bar: 42 };
+    assert.deepEqual({ ...(await client.choices.get()) }, value);
+    for (const bad of [
+      { kind: 'a', foo: 42 },
+      { kind: 'b', bar: 'invalid' },
+      { kind: 'b', bar: 42, future: true },
+    ]) {
+      value = bad;
+      status = 200;
+      await assert.rejects(client.choices.get(), { kind: 'protocol' });
+      status = 400;
+      await assert.rejects(client.choices.get(), (error) => {
+        assert.equal(error.details, undefined);
+        assert.deepEqual(JSON.parse(error.raw).error, value);
+        return true;
+      });
+    }
+  });
+}
+
+test('canonical integer strings uphold bigint template types in projected responses and future errors', async (t) => {
+  const object = (properties) => ({
+    type: 'object',
+    properties,
+    required: Object.keys(properties),
+  });
+  const alternatives = (key) => ({
+    oneOf: [object({ [key]: ref('IntegerDetail') }), object({ [key]: ref('OtherDetail') })],
+  });
+  const f = fixture(
+    t,
+    {
+      components: {
+        schemas: {
+          IntegerDetail: object({
+            kind: { type: 'string', enum: ['a'] },
+            amount: { type: 'integer', format: 'int64' },
+          }),
+          OtherDetail: object({ kind: { type: 'string', enum: ['b'] }, bar: { type: 'number' } }),
+        },
+      },
+      paths: {
+        '/choice': {
+          get: {
+            operationId: 'choose',
+            responses: {
+              ...jsonResponse(alternatives('data')),
+              400: {
+                description: 'Invalid',
+                content: { 'application/json': { schema: alternatives('error') } },
+              },
+            },
+          },
+        },
+      },
+    },
+    {
+      responses: { return: 'payload', payloadPath: 'data' },
+      errors: { detailsPath: 'error' },
+      operations: { choose: { resource: 'choices', method: 'get' } },
+    },
+  );
+  const source = join(f.output, 'node/integer.ts');
+  writeFileSync(
+    source,
+    `import {SdkError,type Client} from './index.js';
+export function inspect(e:SdkError): \`\${bigint}\`|undefined {
+ if(e.details && 'amount' in e.details) return e.details.amount;
+}
+export function payload(v:Awaited<ReturnType<Client['choices']['get']>>): \`\${bigint}\`|undefined {
+ if('amount' in v) return v.amount;
+}
+const canonical: \`\${bigint}\`[]=['0','-0','1','-1','9007199254740993'];
+// @ts-expect-error noncanonical integer spelling
+const plus: \`\${bigint}\`='+1';
+// @ts-expect-error noncanonical integer spelling
+const leading: \`\${bigint}\`='01';
+// @ts-expect-error noncanonical integer spelling
+const negative: \`\${bigint}\`='-01';
+// @ts-expect-error trailing newline
+const newline: \`\${bigint}\`='1\\n';
+`,
+  );
+  typecheck(source, ['--exactOptionalPropertyTypes']);
+  const sdk = await import(pathToFileURL(join(f.output, 'node/index.js')));
+  let amount,
+    status = 200,
+    kind = 'future';
+  const client = new sdk.Client({
+    baseUrl: 'https://example.invalid',
+    transport: async () =>
+      new Response(JSON.stringify({ [status === 200 ? 'data' : 'error']: { kind, amount } }), {
+        status,
+      }),
+  });
+  for (const spelling of ['0', '-0', '1', '-1', '9007199254740993']) {
+    amount = spelling;
+    status = 200;
+    assert.equal((await client.choices.get()).amount, spelling);
+    status = 400;
+    await assert.rejects(client.choices.get(), (e) => {
+      assert.equal(e.details.amount, spelling);
+      return true;
+    });
+  }
+  for (const spelling of ['+1', '01', '-01', '1\n', '1.0', '$50']) {
+    amount = spelling;
+    status = 200;
+    await assert.rejects(client.choices.get(), (e) => {
+      assert.equal(e.kind, 'protocol');
+      assert.equal(JSON.parse(e.raw).data.amount, spelling);
+      return true;
+    });
+    status = 400;
+    await assert.rejects(client.choices.get(), (e) => {
+      assert.equal(e.details, undefined);
+      assert.equal(JSON.parse(e.raw).error.amount, spelling);
+      return true;
+    });
+  }
+  // JSON number tokens still decode to canonical exact decimal strings.
+  kind = 'a';
+  amount = 42;
+  status = 200;
+  assert.equal((await client.choices.get()).amount, '42');
 });

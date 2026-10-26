@@ -377,7 +377,7 @@ test('diagnosis rejects reserved model names and accepts model-renaming recovery
     const consumer = join(i.dir, 'consumer.mts');
     writeFileSync(
       consumer,
-      `import { Client, type ${mapped}, make${mapped} } from './sdk/node/index.js'; const value: ${mapped} = {}; make${mapped}(value); new Client({baseUrl:'https://example.invalid'}).api.export();\n`,
+      `import { Client, type ${mapped} } from './sdk/node/index.js'; const value: ${mapped} = {}; new Client({baseUrl:'https://example.invalid'}).api.export();\n`,
     );
     const compiled = spawnSync(
       process.execPath,

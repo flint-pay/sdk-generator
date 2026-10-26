@@ -517,10 +517,7 @@ test('ValidationError, ApiError and Errors models coexist with error namespaces 
     expected,
   );
   for (const [name, value] of Object.entries(expected).slice(1)) {
-    const model = sdk['make' + name](value);
-    assert.ok(model instanceof sdk.Model);
-    assert.ok(!(model instanceof sdk.SdkError));
-    assert.deepEqual(JSON.parse(JSON.stringify(model)), value);
+    assert.equal(sdk['make' + name], undefined, 'response-only models have no input factory');
     assert.ok(existsSync(join(f.output, 'node/declarations', name + '.d.ts')));
     assert.ok(existsSync(join(f.output, 'php/src/classes', name + '.php')));
   }
@@ -599,13 +596,11 @@ test('Webhooks model keeps its name and client verification when the PHP standal
   const plan = compileSdkContract(f.contract).plan;
   assert.equal(plan.node.standaloneWebhook, true);
   assert.equal(plan.php.standaloneWebhook, undefined);
-  const { Client, makeWebhooks, Model, verifyWebhook } = await import(
+  const { Client, makeWebhooks, verifyWebhook } = await import(
     pathToFileURL(join(f.output, 'node/index.js'))
   );
   assert.ok(existsSync(join(f.output, 'node/declarations/Webhooks.d.ts')));
-  const model = makeWebhooks({ id: 'model_fixture' });
-  assert.ok(model instanceof Model);
-  assert.deepEqual(JSON.parse(JSON.stringify(model)), { id: 'model_fixture' });
+  assert.equal(makeWebhooks, undefined, 'response-only models have no input factory');
   const now = 1700000000;
   const secret = 'synthetic-webhook-secret';
   const body = '{"type":"value.updated","id":"value_fixture"}';

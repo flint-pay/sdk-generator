@@ -1,8 +1,14 @@
+import {
+  publicTypePlanner,
+  publicTypeDeclarations,
+  RUNTIME_ERROR_DETAILS,
+} from './public-type-plan.js';
+import type { TypeCertificate } from './type-certificate.js';
 import { REQUEST_OPTIONS } from './request-options.js';
 import { responseOnlyModels } from './schema-usage.js';
 import { omitProtectedExamples } from './example-protection.js';
 import { reservePublicSymbols } from './public-symbols.js';
-import { pascalWords, webhookEventTypeName } from './naming.js';
+import { pascalWords, webhookEventTypeName, isReservedTypeName } from './naming.js';
 import {
   phpRepresentations,
   phpRepresentationType,
@@ -81,25 +87,14 @@ export function inputSchema(
   }
   return { type: 'object', properties, required, additionalProperties: false };
 }
-const modelIndexes = new WeakMap<Record<string, Schema>, Map<string, string>>();
 export function namedType(
   s: Schema,
   models: Record<string, Schema>,
   response = false,
   documentation = false,
 ): string {
-  if (response && s['x-sdk-type-name']) return s['x-sdk-type-name'];
-  const identity = stable(s);
-  const indexed = modelIndexes.get(models);
-  const name = indexed?.get(identity);
-  const match = indexed
-    ? name
-      ? [name]
-      : undefined
-    : Object.entries(models).find(([, value]) => stable(value) === identity);
-  return match
-    ? match[0] + (response ? '' : 'Input')
-    : typescriptType(s, response, undefined, false, undefined, undefined, models, documentation);
+  if (s['x-sdk-type-name']) return s['x-sdk-type-name'] + (response ? '' : 'Input');
+  return typescriptType(s, response, undefined, false, undefined, undefined, models, documentation);
 }
 export function operationInputType(
   op: Operation,
@@ -135,7 +130,7 @@ export function resultType(op: Operation, models: Record<string, Schema> = {}): 
     ),
   ].join(' | ');
 }
-export function itemSchemas(op: Operation): Schema[] {
+export function itemSchemas(op: Operation, definitions: Record<string, Schema> = {}): Schema[] {
   const intersect = (left: Schema[], right: Schema[]): Schema[] =>
     left.flatMap((a) =>
       right.map((b) => {
@@ -144,23 +139,30 @@ export function itemSchemas(op: Operation): Schema[] {
         return { allOf: [a, b] };
       }),
     );
-  const descend = (s: Schema, parts: string[]): Schema[] | undefined => {
+  const descend = (s: Schema, parts: string[], seen = new Set<string>()): Schema[] | undefined => {
+    const reference = s['x-sdk-ref'];
+    const registry = s['x-sdk-definitions'] ?? definitions;
+    const edge = reference + ':' + parts.join('.');
+    if (reference && Object.hasOwn(registry, reference) && !seen.has(edge)) {
+      const { 'x-sdk-ref': _reference, ...siblings } = s;
+      return descend({ allOf: [registry[reference]!, siblings] }, parts, new Set([...seen, edge]));
+    }
     const child = s.properties?.[parts[0]!];
     const own = !parts.length
       ? s.items
         ? [s.items]
         : undefined
       : child
-        ? descend(child, parts.slice(1))
+        ? descend(child, parts.slice(1), seen)
         : undefined;
     const constraints = own ? [own] : [];
     for (const branch of s.allOf ?? []) {
-      const projected = descend(branch, parts);
+      const projected = descend(branch, parts, seen);
       if (projected) constraints.push(projected);
     }
     for (const branches of [s.oneOf, s.anyOf]) {
       if (!branches) continue;
-      const alternatives = branches.map((branch) => descend(branch, parts));
+      const alternatives = branches.map((branch) => descend(branch, parts, seen));
       if (alternatives.some((projection) => projection !== undefined))
         constraints.push(alternatives.flatMap((projection) => projection ?? [{}]));
     }
@@ -540,6 +542,7 @@ export interface CompiledSdkContract {
       phpNative: string;
       /** Absent in saved plans whose Pages/Wait helpers returned Results. */
       helperReturn?: 'payload';
+      validate?: true;
     }
   >;
   format: 1;
@@ -555,6 +558,7 @@ export interface CompiledSdkContract {
     authentication?: NodeAuthenticationPlan;
     clientOptions?: { declaration: string; optional: boolean };
     responseReturnDeclarations?: string;
+    errorTypes?: { code: string; details: string };
     models: Record<
       string,
       {
@@ -563,6 +567,10 @@ export interface CompiledSdkContract {
         documentedInput?: string;
         documentedOutput?: string;
         objectFactory: boolean;
+        /** Absent in historical plans, which emitted factories for every model. */
+        inputReachable?: boolean;
+        /** Identical public response declarations share one canonical symbol. */
+        outputAlias?: string;
         codec: CodecPlan;
         sharedCodec?: string;
       }
@@ -575,12 +583,13 @@ export interface CompiledSdkContract {
         documentedInput?: string;
         documentedOutput?: string;
         inputRequired: boolean;
+        responseType?: string;
         requestOptions?: string;
         idempotencyKey?: boolean;
         idempotencyKeyRequired?: boolean;
         authModes?: string[];
         items: string;
-        known?: { type: string; codecs: CodecPlan[] };
+        known?: { type: string; codecs: CodecPlan[]; certificate?: TypeCertificate };
       }
     >;
     eventType: string;
@@ -673,10 +682,16 @@ function webhookDeclarations(
   const close = (schema: Schema, conjunct = false): Schema => {
     // Keep event roots and alternatives structural: referring to a complete
     // payload model makes TypeScript flatten its event-name enum into hovers.
-    const model = schema['x-sdk-ref'] ?? modelNames.get(stable(schema));
+    const model =
+      schema['x-sdk-ref'] ?? schema['x-sdk-type-name'] ?? modelNames.get(stable(schema));
     // Retain contextual type facts for the structural parent. Rendering the
     // conjunct itself stops at the reference, including inside alternatives.
-    if (conjunct && model && unchanged(model)) return { ...schema, 'x-sdk-ref': model };
+    if (conjunct && model) {
+      if (unchanged(model)) return { ...schema, 'x-sdk-ref': model };
+      const target = models[model];
+      if (!target) throw new Error('Missing webhook declaration reference ' + model);
+      return { 'x-sdk-ref': alias(target) };
+    }
     const ref = schema['x-sdk-ref'];
     if (ref) {
       const target = models[ref];
@@ -742,22 +757,44 @@ export function compileSdkContract(source: Contract): {
       }
     }
   const models = modelsUsed(c);
-  if (c.config.webhook)
-    reservePublicSymbols(
-      c,
-      Object.keys(models),
-      new Set(
-        c.operations
-          .filter((op) => Object.values(op.responses).some((response) => response.schema?.oneOf))
-          .map((op) => op.id),
+  const inputModels = new Set<string>();
+  const visitInput = (schema: Schema): void => {
+    const name = schema['x-sdk-type-name'] ?? schema['x-sdk-ref'];
+    if (name && models[name] && !inputModels.has(name)) {
+      inputModels.add(name);
+      visitInput(models[name]!);
+    }
+    for (const child of [
+      ...Object.values(schema.properties ?? {}).filter((field) => !field.readOnly),
+      ...(schema.items ? [schema.items] : []),
+      ...(typeof schema.additionalProperties === 'object' ? [schema.additionalProperties] : []),
+      ...(schema.allOf ?? []),
+      ...(schema.oneOf ?? []),
+      ...(schema.anyOf ?? []),
+      ...(schema.not ? [schema.not] : []),
+      ...(schema.contains ? [schema.contains] : []),
+      ...[schema.if, schema.then, schema.else].filter(
+        (value): value is Schema => value !== undefined,
       ),
-    );
-  const index = new Map<string, string>();
-  for (const [name, schema] of Object.entries(models)) {
-    const key = stable(schema);
-    if (!index.has(key)) index.set(key, name);
-  }
-  modelIndexes.set(models, index);
+    ])
+      visitInput(child);
+  };
+  for (const op of c.operations) visitInput(inputSchema(op, c.config.apiVersion, c));
+  for (const name of Object.keys(models))
+    if ((!c.config.targets || c.config.targets.includes('node')) && isReservedTypeName(name))
+      throw new Diagnostic(
+        'config/models/' + name,
+        'model name is a TypeScript reserved word; customize it with config.models',
+      );
+  reservePublicSymbols(
+    c,
+    Object.keys(models),
+    new Set(
+      c.operations
+        .filter((op) => Object.values(op.responses).some((response) => response.schema?.oneOf))
+        .map((op) => op.id),
+    ),
+  );
   const runtime = compileRuntimePlan(runtimeContract(c));
   const phpRuntime = structuredClone(runtime);
   const responseModels: PhpModelPlan[] = [];
@@ -848,6 +885,7 @@ export function compileSdkContract(source: Contract): {
         Object.entries(models).map(([name, s]) => [
           name,
           {
+            inputReachable: inputModels.has(name),
             input: typescriptType(s, false, undefined, false, undefined, undefined, models),
             documentedInput: typescriptType(
               s,
@@ -897,9 +935,11 @@ export function compileSdkContract(source: Contract): {
               idempotencyKeyRequired: requiresIdempotencyKey(op),
               ...(authentication ? { authModes: op.authModes?.slice().sort() ?? [] } : {}),
               items: op.pagination
-                ? [...new Set(itemSchemas(op).map((s) => namedType(s, models, true)))].join(
-                    ' | ',
-                  ) || 'never'
+                ? [
+                    ...new Set(
+                      itemSchemas(op, c.definitions).map((s) => namedType(s, models, true)),
+                    ),
+                  ].join(' | ') || 'never'
                 : 'never',
               ...(known.length
                 ? {
@@ -1058,26 +1098,117 @@ export function compileSdkContract(source: Contract): {
       ),
     },
   };
+  const outputAliases = new Map<string, string>();
+  const replaceOutputNames = (type: string): string =>
+    type.replace(
+      /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|[A-Za-z_$][\w$]*/g,
+      (token) => outputAliases.get(token) ?? token,
+    );
+  // Repeating after each grouping also collapses envelopes whose children became aliases.
+  for (;;) {
+    const shapes = new Map<string, string>();
+    let changed = false;
+    for (const name of Object.keys(plan.node.models).sort(
+      (a, b) => a.length - b.length || a.localeCompare(b, 'en'),
+    )) {
+      if (outputAliases.has(name)) continue;
+      const model = plan.node.models[name]!;
+      const shape = replaceOutputNames(model.output);
+      const existing = shapes.get(shape);
+      if (existing) {
+        outputAliases.set(name, existing);
+        changed = true;
+      } else shapes.set(shape, name);
+    }
+    if (!changed) break;
+    for (const [name, target] of outputAliases)
+      outputAliases.set(name, outputAliases.get(target) ?? target);
+  }
+  for (const [name, model] of Object.entries(plan.node.models)) {
+    const alias = outputAliases.get(name);
+    if (alias) model.outputAlias = alias;
+    model.output = replaceOutputNames(model.output);
+    if (model.documentedOutput) model.documentedOutput = replaceOutputNames(model.documentedOutput);
+  }
+  for (const [id, operation] of Object.entries(plan.node.operations)) {
+    operation.output = replaceOutputNames(operation.output);
+    const source = c.operations.find((op) => op.id === id)!;
+    operation.responseType = Object.hasOwn(plan.node.models, operation.output)
+      ? operation.output
+      : pascal(source.resource) + pascal(source.method) + 'Response';
+    operation.items = replaceOutputNames(operation.items);
+    if (operation.known) operation.known.type = replaceOutputNames(operation.known.type);
+  }
+  if (c.config.errors) {
+    const project = (schema: Schema, path: string[]): Schema[] => {
+      if (!path.length) return [schema];
+      return valueScopes(schema, c.definitions).flatMap((shape) => {
+        const child = shape.properties?.[path[0]!];
+        return child ? project(child, path.slice(1)) : [];
+      });
+    };
+    const errors = c.operations.flatMap((op) =>
+      Object.entries(op.responses).flatMap(([status, response]) =>
+        (Number(status) >= 400 || status === 'default') && response.schema ? [response.schema] : [],
+      ),
+    );
+    const type = (path: string | undefined): string => {
+      const shapes = errors.flatMap((schema) => project(schema, path?.split('.') ?? []));
+      return (
+        [
+          ...new Set(shapes.map((schema) => replaceOutputNames(namedType(schema, models, true)))),
+        ].join(' | ') || 'unknown'
+      );
+    };
+    plan.node.errorTypes = {
+      code: [
+        ...new Set(
+          errors
+            .flatMap((schema) => project(schema, (c.config.errors!.codePath ?? 'code').split('.')))
+            .flatMap((schema) => valueScopes(schema, c.definitions))
+            .flatMap(
+              (schema) => schema.enum ?? (typeof schema.const === 'string' ? [schema.const] : []),
+            )
+            .filter((value): value is string => typeof value === 'string'),
+        ),
+      ]
+        .map((value) => JSON.stringify(value))
+        .concat('(string & {})')
+        .join(' | '),
+      details: type(c.config.errors.detailsPath),
+    };
+  }
+  if (plan.node.eventDeclarations)
+    plan.node.eventDeclarations = replaceOutputNames(plan.node.eventDeclarations);
   const responseReturns = Object.fromEntries(
     c.operations
       .filter((op) => op.response?.return === 'payload')
       .map((op) => {
         const projected = payloadSchemas(op, c.definitions);
         const uncertain = payloadHasAlternatives(op, c.definitions);
+        if (uncertain && projected.length) {
+          const runtimeOperation = plan.runtime.operations.find(
+            (operation) => operation.id === op.id,
+          )!;
+          runtimeOperation.payloadCodecs = projected.map(compileCodec);
+        }
         const nativeTypes = [...new Set(projected.flatMap((s) => phpType(s, true).split('|')))];
         return [
           op.id,
           {
             path: op.response?.payloadPath?.split('.') ?? [],
+            ...(uncertain && projected.length ? { validate: true as const } : {}),
             ...(op.pagination || op.polling ? { helperReturn: 'payload' as const } : {}),
             node: projected.length
-              ? `_SdkPayloadAt<${plan.node.operations[op.id]!.output}, ${JSON.stringify(op.response!.payloadPath!.split('.'))}>`
+              ? replaceOutputNames(
+                  [...new Set(projected.map((s) => namedType(s, models, true)))].join(' | '),
+                )
               : plan.node.operations[op.id]!.output,
-            nodeDocumentation: uncertain
-              ? 'unknown'
-              : projected.length
+            nodeDocumentation: replaceOutputNames(
+              projected.length
                 ? projected.map((s) => typescriptType(s, true)).join(' | ')
                 : plan.documentation[op.id]!.nodeOutput,
+            ),
             php: uncertain
               ? 'mixed'
               : projected.length
@@ -1096,7 +1227,38 @@ export function compileSdkContract(source: Contract): {
   );
   if (Object.keys(responseReturns).length) {
     plan.responseReturns = responseReturns;
-    plan.node.responseReturnDeclarations = `type _SdkPayloadAt<T, P extends readonly string[]> = P extends readonly [infer K extends string, ...infer R extends string[]] ? T extends Record<K, infer V> ? _SdkPayloadAt<V, R> : unknown : T;\nexport interface SdkResponse<T> { body: T; meta: Result<T>['meta']; raw: Result<T>['raw']; }\n`;
+    plan.node.responseReturnDeclarations = `export interface SdkResponse<T> { body: T; meta: Result<T>['meta']; raw: Result<T>['raw']; }\n`;
+  }
+  if (plan.targets.includes('node')) {
+    // The finalized declaration expressions are the sole source of certification.
+    // Parse their TypeScript syntax rather than interpreting source schemas again.
+    const certificate = publicTypePlanner({
+      ...Object.fromEntries(
+        Object.entries(plan.node.models).map(([name, model]) => [
+          name,
+          model.outputAlias ?? model.output,
+        ]),
+      ),
+      ...publicTypeDeclarations(plan.node.eventDeclarations ?? ''),
+    });
+    if (plan.node.errorTypes) {
+      const typed = plan.node.errorTypes.details !== 'unknown';
+      plan.node.errorTypes.details += ' | (' + RUNTIME_ERROR_DETAILS + ')';
+      if (typed) plan.runtime.errorDetailsCertificate = certificate(plan.node.errorTypes.details);
+    }
+    for (const operation of plan.runtime.operations) {
+      const node = plan.node.operations[operation.id]!;
+      plan.documentation[operation.id]!.nodeOutput = replaceOutputNames(
+        plan.documentation[operation.id]!.nodeOutput,
+      );
+      operation.outputCertificate = certificate(node.output);
+      if (operation.pagination) operation.itemCertificate = certificate(node.items);
+      const payload = responseReturns[operation.id];
+      if (payload) operation.payloadCertificate = certificate(payload.node);
+      if (node.known) node.known.certificate = certificate(node.known.type);
+    }
+    if (plan.runtime.webhook && plan.node.eventDeclarations)
+      plan.runtime.webhook.certificate = certificate('KnownWebhookEvent');
   }
   if (plan.targets.includes('php')) {
     // Examples/defaults historically participate in PHP entity identity and

@@ -121,3 +121,13 @@ export function modelNames(originals: string[], overrides: Record<string, string
   }
   return names;
 }
+
+// TypeScript keywords are case-sensitive and can still be property names.
+const reservedTypeNames = new Set(
+  'debugger export import in super this typeof with package arguments keyof infer unique'.split(
+    ' ',
+  ),
+);
+export function isReservedTypeName(value: string): boolean {
+  return reservedTypeNames.has(value);
+}

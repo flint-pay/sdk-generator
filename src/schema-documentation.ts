@@ -41,5 +41,5 @@ export function schemaNotes(
 }
 export function schemaComment(s: Schema): string {
   const notes = schemaNotes(s);
-  return notes ? '/** ' + notes.replaceAll('*/', '* /').replace(/[\r\n]+/g, ' ') + ' */ ' : '';
+  return notes ? '\n/** ' + notes.replaceAll('*/', '* /').replace(/[\r\n]+/g, ' ') + ' */\n' : '';
 }

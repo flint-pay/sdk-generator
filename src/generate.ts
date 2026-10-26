@@ -1,3 +1,4 @@
+import { RUNTIME_ERROR_DETAILS } from './public-type-plan.js';
 import { substituteTemplate } from './template.js';
 import {
   withGenerationRecovery,
@@ -10,6 +11,7 @@ import {
 import { removesPublishedExamples } from './example-protection.js';
 import { reservePublicSymbols } from './public-symbols.js';
 import {
+  formatNodeDeclaration,
   nodeDescriptors,
   scopedNodeClients,
   splitNodeDeclarations,
@@ -130,7 +132,7 @@ function runtimeIdentity(
         stable(
           [...files].filter(([name]) =>
             target === 'node'
-              ? /^node\/(runtime|codec-plan|runtime-plan|request-options|descriptor-source|package-plan|response|request)\.js$/.test(
+              ? /^node\/(runtime|type-certificate|codec-plan|runtime-plan|request-options|descriptor-source|package-plan|response|request)\.js$/.test(
                   name,
                 )
               : /^php\/src\/(SchemaAdapter|classes\/(?:Runtime|Codec|Model|SdkError|Result|RequestOptions|ClientOptions|AmbientCredentialProvider|Credential|CredentialProvider|EventStream|ServerSentEvent|Cancellation|ByteStream|CurlByteStream|RawNumber|ParsedNumber|ExactNumber|SdkResponse|Errors\/\w+|Internal\/DescriptorSource))\.php$/.test(
@@ -1218,6 +1220,20 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
   const targets = c.config.targets ?? ['node', 'php'];
   const groups = [...new Set(c.operations.map((o) => o.resource))].sort();
   const models = targetPlan.node.models;
+  const modelExports = Object.fromEntries(
+    Object.entries(models).map(([name, model]) => [
+      name,
+      {
+        output: model.outputAlias ?? name,
+        ...(model.inputReachable !== false ? { input: name + 'Input' } : {}),
+      },
+    ]),
+  );
+  const inputModelNames = Object.fromEntries(
+    Object.entries(modelExports).flatMap(([name, entry]) =>
+      entry.input ? [[name, entry.input]] : [],
+    ),
+  );
   const payloadReturns = targetPlan.responseReturns ?? {};
   const hasPayloadReturns = Object.keys(payloadReturns).length > 0;
   const reserve = reservePublicSymbols(
@@ -1303,13 +1319,43 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     );
     put(
       'runtime.js',
-      readFileSync(join(here, 'runtime.js'), 'utf8').replace(
-        /\n\/\/# sourceMappingURL=.*\n?$/,
-        '\n',
-      ),
+      readFileSync(join(here, 'runtime.js'), 'utf8')
+        .replace(/\n\/\/# sourceMappingURL=.*\n?$/, '\n')
+        .replace(
+          'const publicErrorDetailsCertificate = undefined;',
+          `const publicErrorDetailsCertificate = ${js(targetPlan.runtime.errorDetailsCertificate)};`,
+        ),
     );
-    put('runtime.d.ts', readFileSync(join(here, 'runtime.d.ts'), 'utf8'));
+    let runtimeDeclarations = readFileSync(join(here, 'runtime.d.ts'), 'utf8').replace(
+      /export type RuntimeErrorDetails = [\s\S]*?;\nexport declare class SdkError/,
+      `export type RuntimeErrorDetails = ${RUNTIME_ERROR_DETAILS};\nexport declare class SdkError`,
+    );
+    if (targetPlan.node.errorTypes) {
+      const { code, details } = targetPlan.node.errorTypes;
+      const qualify = (type: string) =>
+        type.replace(
+          /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|[A-Za-z_$][\w$]*/g,
+          (token) =>
+            Object.hasOwn(models, token) ? `import('./declarations/${token}.js').${token}` : token,
+        );
+      // Specialize only the SDK error class; transport cause codes keep their own declaration.
+      const start = runtimeDeclarations.indexOf('export declare class SdkError ');
+      const end = runtimeDeclarations.indexOf('\ndeclare const BaseSdkError', start);
+      runtimeDeclarations =
+        runtimeDeclarations.slice(0, start) +
+        runtimeDeclarations
+          .slice(start, end)
+          .replaceAll('code?: string', 'code?: SdkErrorCode')
+          .replaceAll('details?: unknown', 'details?: SdkErrorDetails')
+          .replaceAll('\n        code: string', '\n        code: SdkErrorCode')
+          .replaceAll('        details: unknown', '        details: SdkErrorDetails | undefined') +
+        runtimeDeclarations.slice(end) +
+        `\nexport type SdkErrorCode = (${qualify(code)}) & string;\nexport type SdkErrorDetails = ${qualify(details)};\n`;
+    }
+    put('runtime.d.ts', runtimeDeclarations);
     for (const name of [
+      'type-certificate.js',
+      'type-certificate.d.ts',
       'descriptor-source.js',
       'descriptor-source.d.ts',
       'package-plan.js',
@@ -1354,6 +1400,8 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       code = "import { requestInput as _sdkRequestInput } from './request.js';\n" + code;
     }
     let declarations = `import type { ${c.authentication ? 'ClientOptions as RuntimeClientOptions, RequestOptions as RuntimeRequestOptions' : 'ClientOptions as RuntimeClientOptions, RequestOptions'}, Result, InputValue, CredentialProvider${defaultCredentials ? ', WorkloadIdentityOptions' : ''}${c.config.webhook ? ', WebhookHeaders as _SdkWebhookHeaders' : ''} } from './runtime.js';\nimport { Model${extraValues} } from './runtime.js';\nexport { SdkError, errors, Model${extraValues}, serialize, parseExact, redact } from './runtime.js';\nexport type { ${c.authentication ? '' : 'RequestOptions, '}Result, Metadata, ErrorKind, DiagnosticEvent, InputValue, CredentialProvider${streamTypes ? ', ServerSentEvent' : ''} } from './runtime.js';\n`;
+    if (targetPlan.node.errorTypes)
+      declarations += "export type { SdkErrorCode, SdkErrorDetails } from './runtime.js';\n";
     if (defaultCredentials)
       declarations += `export type { WorkloadIdentityOptions, WorkloadIdentitySource } from './runtime.js';\nexport declare function defaultCredentials(): CredentialProvider;\nexport declare function workloadIdentityCredentials(options: WorkloadIdentityOptions): CredentialProvider;\n`;
     if (c.operations.some((op) => !op.idempotency))
@@ -1374,7 +1422,10 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     }
 
     for (const [name, model] of Object.entries(models)) {
-      declarations += `${schemaComment(c.models[name]!)}export type ${name} = ${model.documentedOutput ?? model.output};\n${schemaComment(c.models[name]!)}export type ${name}Input = ${model.documentedInput ?? model.input};\n`;
+      if (!model.outputAlias)
+        declarations += `${schemaComment(c.models[name]!)}export type ${name} = ${model.documentedOutput ?? model.output};\n`;
+      if (model.inputReachable === false) continue;
+      declarations += `${schemaComment(c.models[name]!)}export type ${name}Input = ${model.documentedInput ?? model.input};\n`;
       // Preserve the validated object branch when a model also permits
       // nonobjects, so its factory can nest inside an object-constrained field.
       if (model.objectFactory) {
@@ -1383,8 +1434,13 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       }
       declarations += `export declare function make${name}(value: InputValue<${name}Input>): Model<${name}Input>;\n`;
     }
-    for (const op of c.operations)
-      declarations += `export type ${pascal(op.resource)}${pascal(op.method)}Input = ${targetPlan.node.operations[op.id]!.documentedInput ?? targetPlan.node.operations[op.id]!.input};\nexport type ${pascal(op.resource)}${pascal(op.method)}Response = ${targetPlan.node.operations[op.id]!.output};\n`;
+    const responseType = (op: Operation): string =>
+      targetPlan.node.operations[op.id]!.responseType!;
+    for (const op of c.operations) {
+      declarations += `export type ${pascal(op.resource)}${pascal(op.method)}Input = ${targetPlan.node.operations[op.id]!.documentedInput ?? targetPlan.node.operations[op.id]!.input};\n`;
+      if (responseType(op) !== targetPlan.node.operations[op.id]!.output)
+        declarations += `export type ${responseType(op)} = ${targetPlan.node.operations[op.id]!.output};\n`;
+    }
     declarations += `export declare class Client {\n  constructor(options${targetPlan.node.clientOptions?.optional ? '?' : ''}: ClientOptions);\n`;
     for (const group of groups) {
       code += `    this.${group} = Object.freeze({\n`;
@@ -1395,14 +1451,17 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         const requestOptionsType =
           targetPlan.node.operations[op.id]!.requestOptions ?? 'RequestOptions';
         const payload = payloadReturns[op.id];
+        const decodePayload = payload
+          ? `, (result, path) => this.#runtime.decodePayload(${js(op.id)}, result, path)`
+          : '';
         const call = callPlan(op, targetPlan, requestOptionsType);
         for (const method of [op.method, ...(op.aliases ?? [])]) {
           const request = `this.#runtime.request(${js(op.id)}, ${call.nodeInput}, options)`;
-          code += `      ${method}: ${positional(op) ? 'async ' : ''}(${call.nodeArgs}) => ${request}${payload ? `.then(result => _sdkPayload(result, ${js(payload.path)}))` : ''},\n`;
-          declarations += `    ${methodDoc(op, method, definitions)}    ${method}(${call.nodeSignature}): Promise<${payload ? payload.node : `Result<${prefix}Response>`}>;\n`;
+          code += `      ${method}: ${positional(op) ? 'async ' : ''}(${call.nodeArgs}) => ${request}${payload ? `.then(result => _sdkPayload(result, ${js(payload.path)}${decodePayload}))` : ''},\n`;
+          declarations += `    ${methodDoc(op, method, definitions)}    ${method}(${call.nodeSignature}): Promise<${payload ? payload.node : `Result<${responseType(op)}>`}>;\n`;
           if (payload) {
             code += `      ${method}WithResponse: ${positional(op) ? 'async ' : ''}(${call.nodeArgs}) => ${request}.then(_sdkResponse),\n`;
-            declarations += `    /** Complete decoded body and HTTP metadata, without payload unwrapping. */\n    ${method}WithResponse(${call.nodeSignature}): Promise<SdkResponse<${prefix}Response>>;\n`;
+            declarations += `    /** Complete decoded body and HTTP metadata, without payload unwrapping. */\n    ${method}WithResponse(${call.nodeSignature}): Promise<SdkResponse<${responseType(op)}>>;\n`;
           }
         }
         if (op.pagination)
@@ -1410,25 +1469,25 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
             [
               'Pages',
               'pages',
-              payload?.helperReturn === 'payload' ? payload.node : `Result<${prefix}Response>`,
+              payload?.helperReturn === 'payload' ? payload.node : `Result<${responseType(op)}>`,
             ],
             ['Items', 'items', targetPlan.node.operations[op.id]!.items],
           ]) {
             const request = `this.#runtime.${runtime}(${js(op.id)}, ${call.nodeInput}, options)`;
-            code += `      ${op.method}${suffix}: (${call.nodeArgs}) => ${suffix === 'Pages' && payload?.helperReturn === 'payload' ? `_sdkPayloadPages(${request}, ${js(payload.path)})` : request},\n`;
+            code += `      ${op.method}${suffix}: (${call.nodeArgs}) => ${suffix === 'Pages' && payload?.helperReturn === 'payload' ? `_sdkPayloadPages(${request}, ${js(payload.path)}${decodePayload})` : request},\n`;
             declarations += `    ${op.method}${suffix}(${call.nodeSignature}): AsyncGenerator<${returnType}>;\n`;
             if (suffix === 'Pages' && payload?.helperReturn === 'payload') {
               code += `      ${op.method}PagesWithResponse: (${call.nodeArgs}) => _sdkResponsePages(${request}),\n`;
-              declarations += `    ${op.method}PagesWithResponse(${call.nodeSignature}): AsyncGenerator<SdkResponse<${prefix}Response>>;\n`;
+              declarations += `    ${op.method}PagesWithResponse(${call.nodeSignature}): AsyncGenerator<SdkResponse<${responseType(op)}>>;\n`;
             }
           }
         if (op.polling) {
           const request = `this.#runtime.wait(${js(op.id)}, ${call.nodeInput}, options)`;
-          code += `      ${op.method}Wait: (${call.nodeArgs}) => ${request}${payload?.helperReturn === 'payload' ? `.then(result => _sdkPayload(result, ${js(payload.path)}))` : ''},\n`;
-          declarations += `    ${op.method}Wait(${payload?.helperReturn === 'payload' || positional(op) ? call.nodeSignature : `input: ${prefix}Input, options?: ${requestOptionsType}`}): Promise<${payload?.helperReturn === 'payload' ? payload.node : `Result<${prefix}Response>`}>;\n`;
+          code += `      ${op.method}Wait: (${call.nodeArgs}) => ${request}${payload?.helperReturn === 'payload' ? `.then(result => _sdkPayload(result, ${js(payload.path)}${decodePayload}))` : ''},\n`;
+          declarations += `    ${op.method}Wait(${payload?.helperReturn === 'payload' || positional(op) ? call.nodeSignature : `input: ${prefix}Input, options?: ${requestOptionsType}`}): Promise<${payload?.helperReturn === 'payload' ? payload.node : `Result<${responseType(op)}>`}>;\n`;
           if (payload?.helperReturn === 'payload') {
             code += `      ${op.method}WaitWithResponse: (${call.nodeArgs}) => ${request}.then(_sdkResponse),\n`;
-            declarations += `    ${op.method}WaitWithResponse(${call.nodeSignature}): Promise<SdkResponse<${prefix}Response>>;\n`;
+            declarations += `    ${op.method}WaitWithResponse(${call.nodeSignature}): Promise<SdkResponse<${responseType(op)}>>;\n`;
           }
         }
       }
@@ -1449,7 +1508,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     if (c.config.money) {
       code += '  money(...args) { return this.#runtime.money(...args); }\n';
       declarations +=
-        '  money(currency: string, major: string): { currency: string; amount: string };\n';
+        '  money(currency: string, major: string): { currency: string; amount: `${bigint}` };\n';
     }
     code += '}\n';
     declarations += '}\n';
@@ -1463,16 +1522,18 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       const known = targetPlan.node.operations[op.id]!.known;
       if (!known) continue;
       const prefix = pascal(op.resource) + pascal(op.method) + 'Response';
-      declarations += `export type ${prefix}Known = ${known.type};\nexport declare function is${prefix}Known(value: ${prefix}): value is ${prefix}Known;\n`;
+      declarations += `export type ${prefix}Known = ${known.type};\nexport declare function is${prefix}Known(value: ${responseType(op)}): value is ${prefix}Known;\n`;
       const knownCode = descriptorOutput.codec(prefix, { ...known.codecs[0]!, some: known.codecs });
+      const certificateName = '_sdk' + prefix + 'Certificate';
       put(
         `predicates/${prefix}.js`,
         knownCode +
-          `import { isKnownCodec } from '../runtime.js';\nexport function is${prefix}Known(value) { const prepared = codec(); return prepared.some.some(item => isKnownCodec(value, {...item, definitions: prepared.definitions})); }\n`,
+          `import { isKnownCodec } from '../runtime.js';\nconst certificate = ${js(known.certificate)};\nexport function is${prefix}Known(value) { const prepared = codec(); return prepared.some.some(item => isKnownCodec(value, {...item, definitions: prepared.definitions}, certificate)); }\n`,
       );
-      code += `export function is${prefix}Known(value) { const prepared = _sdkModelCodec(${js(prefix)}); return prepared.some.some(codec => isKnownCodec(value, {...codec, definitions: prepared.definitions})); }\n`;
+      code += `const ${certificateName} = ${js(known.certificate)};\nexport function is${prefix}Known(value) { const prepared = _sdkModelCodec(${js(prefix)}); return prepared.some.some(codec => isKnownCodec(value, {...codec, definitions: prepared.definitions}, ${certificateName})); }\n`;
     }
     for (const [name, model] of Object.entries(targetPlan.node.models)) {
+      if (model.inputReachable === false) continue;
       put(
         `models/${name}.js`,
         descriptorOutput.codec(name, model.codec, model.sharedCodec) +
@@ -1504,8 +1565,16 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       declarations,
       groups,
       put,
-      new Set(Object.keys(targetPlan.node.models)),
-      new Map(Object.entries(targetPlan.node.models).map(([name, model]) => [name, model.codec])),
+      new Set(
+        Object.entries(models)
+          .filter(([, model]) => !model.outputAlias)
+          .map(([name]) => name),
+      ),
+      new Map(
+        Object.entries(models)
+          .filter(([, model]) => !model.outputAlias)
+          .map(([name, model]) => [name, model.codec]),
+      ),
       new Set(c.config.webhook ? [...webhookTypes, 'KnownWebhookEvent', 'VerifiedWebhook'] : []),
     );
     const scopedClient = scopedNodeClients(code);
@@ -1513,8 +1582,11 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       const header = code
         .slice(0, code.indexOf(descriptorOutput.source(groups, './', true)))
         .replaceAll("'./", "'../");
-      const factories = [...(selectiveTypes.get(group) ?? [])].filter((name) =>
-        Object.hasOwn(targetPlan.node.models, name),
+      const selected = selectiveTypes.get(group) ?? new Set<string>();
+      const factories = Object.keys(models).filter(
+        (name) =>
+          (selected.has(name) || selected.has(name + 'Input')) &&
+          models[name]!.inputReachable !== false,
       );
       const predicates = c.operations
         .filter((op) => op.resource === group && targetPlan.node.operations[op.id]!.known)
@@ -1906,10 +1978,13 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     );
     files.set(
       `${target}/MODELS.md`,
-      modelReference({
-        ...c,
-        models: Object.fromEntries(Object.keys(models).map((name) => [name, c.models[name]!])),
-      }),
+      modelReference(
+        {
+          ...c,
+          models: Object.fromEntries(Object.keys(models).map((name) => [name, c.models[name]!])),
+        },
+        target === 'node' ? modelExports : undefined,
+      ),
     );
     files.set(
       `${target}/REFERENCE.md`,
@@ -1926,7 +2001,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
                         .join(', ') || 'none'
                     }. Params contain flat body fields and query/header fields.\n\n`
                   : ''
-              }${referenceType(positional(op) ? 'Canonical input schema (for configuration examples and HTTP fixtures)' : 'Input', target === 'php' ? targetPlan.documentation[op.id]!.phpInput : targetPlan.documentation[op.id]!.nodeInput, target)}${referenceType(payloadReturns[op.id] ? 'Returned payload' : 'Response body (inside Result.data)', target === 'php' ? (payloadReturns[op.id]?.php ?? targetPlan.documentation[op.id]!.phpOutput) : (payloadReturns[op.id]?.nodeDocumentation ?? targetPlan.documentation[op.id]!.nodeOutput), target)}${fieldTable(inputSchema(op, c.config.apiVersion, c), c.definitions ?? c.models, `${op.resource}.${op.method} input`)}${bodyReference(op, c.definitions ?? c.models)}${operationGuidance(c, op)}${op.idempotency ? `Idempotency header: ${op.idempotency.header}; retention: ${op.idempotency.retention.replace(/[.!?]+$/, '')}; scope: ${op.idempotency.scope.replace(/[.!?]+$/, '')}.\n\n` : ''}${op.aliases?.length ? `Deprecated aliases: ${op.aliases.join(', ')} (same wire operation).\n\n` : ''}[Example](examples/${op.resource}-${op.method}.${target === 'node' ? 'mjs' : 'php'})\n\n${convenienceReference(c, op, target)}`,
+              }${referenceType(positional(op) ? 'Canonical input schema (for configuration examples and HTTP fixtures)' : 'Input', target === 'php' ? targetPlan.documentation[op.id]!.phpInput : targetPlan.documentation[op.id]!.nodeInput, target)}${referenceType(payloadReturns[op.id] ? 'Returned payload' : 'Response body (inside Result.data)', target === 'php' ? (payloadReturns[op.id]?.php ?? targetPlan.documentation[op.id]!.phpOutput) : (payloadReturns[op.id]?.nodeDocumentation ?? targetPlan.documentation[op.id]!.nodeOutput), target)}${fieldTable(inputSchema(op, c.config.apiVersion, c), c.definitions ?? c.models, `${op.resource}.${op.method} input`, true, target === 'node' ? inputModelNames : undefined)}${bodyReference(op, c.definitions ?? c.models, target === 'node' ? inputModelNames : undefined)}${operationGuidance(c, op)}${op.idempotency ? `Idempotency header: ${op.idempotency.header}; retention: ${op.idempotency.retention.replace(/[.!?]+$/, '')}; scope: ${op.idempotency.scope.replace(/[.!?]+$/, '')}.\n\n` : ''}${op.aliases?.length ? `Deprecated aliases: ${op.aliases.join(', ')} (same wire operation).\n\n` : ''}[Example](examples/${op.resource}-${op.method}.${target === 'node' ? 'mjs' : 'php'})\n\n${convenienceReference(c, op, target)}`,
           )
           .join('\n'),
     );
@@ -1995,6 +2070,9 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         ),
       );
     }
+  for (const [path, value] of files)
+    if (path.startsWith('node/') && path.endsWith('.d.ts'))
+      files.set(path, formatNodeDeclaration(value));
   return files;
 }
 const resultStatus = (status: string) => successStatus(status) || status === 'default';
@@ -3466,7 +3544,10 @@ function runtimeGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: bo
           ]),
       'outcome is not_sent, response or unknown. Reconcile an unknown mutation outcome with the provider and the original persisted idempotency key before resubmitting.',
       'Per-attempt timeouts use kind timeout (TimeoutError); overall deadlines use deadline (DeadlineError) with retryAllowed false. Connection refusal and DNS lookup failures use transport (ConnectionError), outcome not_sent and machine-readable codes. Node details.transportCode and PHP details[curlCode]/details[curlError] identify the underlying transport failure without including request URLs.',
-      'HTTP 404 uses kind not_found; HTTP 500–599 uses server. Status is undefined in Node or null in PHP when no response is available. Provider-specific details remain unknown in TypeScript.',
+      'HTTP 404 uses kind not_found; HTTP 500–599 uses server. Status is undefined in Node or null in PHP when no response is available.' +
+        (node
+          ? ' Provider details use their declared TypeScript type when available. Incompatible details, including collisions with other error or runtime-detail shapes, become undefined; raw retains the original body.'
+          : ' Provider-specific details remain unknown in TypeScript.'),
       'The configured errors.messagePath selects the message (default message); missing, blank or non-string values fall back to API returned HTTP followed by the status code. Error paths traverse JSON objects and array indices; scalar values have no child fields.',
       'Server messages and provider codes require original JSON strings; JSON numeric tokens never match string retry codes. Parsed details retain their usual exact numeric representation.',
     ]) +
@@ -3552,7 +3633,9 @@ function runtimeGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: bo
     `\n### Objects, optional fields and unknown values\n\n` +
     bullets([
       'Shaped TypeScript objects have no implicit index signature: misspelled input literals and response fields are errors. Explicitly open objects and dictionaries remain open; variables can still carry extra keys under structural typing.',
-      'Runtime request rules are unchanged and unknown response fields are preserved, requiring explicit narrowing or a dictionary assertion to inspect them. Unknown object variants require a known-variant guard.',
+      node
+        ? 'Runtime request rules are unchanged and unknown response fields are preserved, requiring explicit narrowing or a dictionary assertion to inspect them. Unknown object variants retain Record<string, unknown> through property guards and require a known-variant guard or field validation. Public response values and projections are certified recursively; incompatible successes raise protocol errors with raw recovery.'
+        : 'Runtime request rules are unchanged and unknown response fields are preserved, requiring explicit narrowing or a dictionary assertion to inspect them. Unknown object variants require a known-variant guard.',
       'Simple nullable wrappers preserve the known branch or null: TypeScript permits optional field access and PHP getters hydrate the existing named entity.',
       'Unknown response fields, enum members, and tagged variants are retained; malformed known values fail response decoding.',
       'Optional properties distinguish omission from null.',

@@ -134,20 +134,21 @@ test('numeric hover and model reference guidance follow the declared value repre
   }
   const input = readFileSync(join(out, 'node/declarations/ValueInput.d.ts'), 'utf8');
   assert.match(input, /"latitude"\?: number;/);
-  assert.match(input, /\/\*\* Format: float\. \*\/ "float_number"\?: number;/);
-  assert.match(input, /\/\*\* Format: double\. \*\/ "change_percent"\?: number;/);
+  assert.match(input, /\/\*\* Format: float\. \*\/\s*"float_number"\?: number;/);
+  assert.match(input, /\/\*\* Format: double\. \*\/\s*"change_percent"\?: number;/);
   assert.match(input, /"nullable_number"\?: number \| null;/);
   assert.doesNotMatch(
     input,
-    /\/\*\* [^*]*exact numeric[^*]*\*\/ "(?:latitude|float_number|change_percent|nullable_number)"/,
+    /\/\*\* [^*]*exact numeric[^*]*\*\/\s*"(?:latitude|float_number|change_percent|nullable_number)"/,
   );
   for (const field of ['decimal', 'large', 'unsigned', 'nullable_decimal'])
     assert.match(
       input,
       new RegExp(
-        '/\\*\\* Use an exact numeric string, not a floating-point number\\.[^*]*\\*/ "' +
+        '/\\*\\* Use an exact numeric string, not a floating-point number\\.[^*]*\\*/\\s*"' +
           field +
-          '"\\?: string',
+          '"\\?: ' +
+          (['large', 'unsigned'].includes(field) ? '`\\$\\{bigint\\}`' : 'string'),
       ),
     );
   for (const target of ['node', 'php']) {

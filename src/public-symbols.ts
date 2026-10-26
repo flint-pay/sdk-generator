@@ -20,6 +20,7 @@ export function reservePublicSymbols(
       'Model',
       'Result',
       'SdkError',
+      ...(c.config.errors && targets.includes('node') ? ['SdkErrorCode', 'SdkErrorDetails'] : []),
       'Codec',
       'RawNumber',
       'ExactNumber',

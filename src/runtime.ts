@@ -1,3 +1,4 @@
+import { certifies, type TypeCertificate } from './type-certificate.js';
 import type { RequestOptionValues } from './request-options.js';
 import { DescriptorSource } from './descriptor-source.js';
 import type { DefaultCredentials } from './contract.js';
@@ -46,6 +47,20 @@ export interface Result<T> {
   raw: T extends Uint8Array ? Uint8Array : string;
 }
 const errorCauses = new WeakMap<SdkError, unknown>();
+const publicErrorDetailsCertificate: TypeCertificate | undefined = undefined;
+
+export type RuntimeErrorDetails =
+  | { transportCode: string | null }
+  | { eventId: string; position: number }
+  | {
+      reason: string;
+      source: string;
+      workloadIdentityId: string;
+      iss: string;
+      sub: string;
+      aud: string;
+      error_description: string;
+    };
 
 export class SdkError extends Error {
   idempotencyKey?: string;
@@ -62,6 +77,8 @@ export class SdkError extends Error {
     public raw?: string,
   ) {
     super(message);
+    if (publicErrorDetailsCertificate && !certifies(details, publicErrorDetailsCertificate))
+      this.details = undefined;
     // Native error formatting bypasses custom inspection. An own accessor keeps recovery
     // access without evaluating the private cause during rendering, including Node 22.
     if (options && 'cause' in options) errorCauses.set(this, options.cause);
@@ -977,7 +994,8 @@ const bad = (path: string, reason: string): never => {
   validationFailures.set(error, message);
   throw error;
 };
-const exactInteger = /^-?(?:0|[1-9]\d*)$/;
+// Unlike $, the lookahead requires the true end, including after line terminators.
+const exactInteger = /^-?(?:0|[1-9]\d*)(?![\s\S])/;
 const exactDecimal = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
 class RawNumber {
   constructor(readonly value: string) {}
@@ -1335,13 +1353,19 @@ function selectAlternatives(
   tag: string | undefined,
   nullableAlternative: 0 | 1 | undefined,
   context: CodecContext,
-  matches: (branch: CodecPlan, allowUnknownFields: boolean) => boolean,
+  matches: (branch: CodecPlan, allowUnknownFields: boolean) => boolean | string,
 ): { selected: readonly CodecPlan[]; tolerateUnknownFields: boolean } {
   const response = (context.direction ?? context.mode) === 'response';
   const matching = context.mode === 'match';
   const path = context.path ?? 'input';
   let tolerateUnknownFields = context.allowUnknownResponseFields ?? false;
   let selected: readonly CodecPlan[];
+  const failures = new Map<CodecPlan, string>();
+  const match = (branch: CodecPlan, allowUnknownFields: boolean): boolean => {
+    const result = matches(branch, allowUnknownFields);
+    if (typeof result === 'string') failures.set(branch, result);
+    return result === true;
+  };
   if (nullableAlternative !== undefined && response && !matching) {
     const branch = branches[value === null ? 1 - nullableAlternative : nullableAlternative];
     if (!branch) throw new Error('Invalid nullable alternative policy');
@@ -1367,11 +1391,11 @@ function selectAlternatives(
     selected =
       !oneOf && response && (!matching || tolerateUnknownFields)
         ? []
-        : branches.filter((branch) => matches(branch, false));
+        : branches.filter((branch) => match(branch, false));
     // Prefer closed oneOf matches before tolerating new response fields. anyOf
     // retains every compatible branch's declared numeric representations.
     if ((!oneOf || !selected.length) && response && (!matching || tolerateUnknownFields)) {
-      const compatible = branches.filter((branch) => matches(branch, true));
+      const compatible = branches.filter((branch) => match(branch, true));
       if (!oneOf || compatible.length === 1) {
         selected = compatible;
         tolerateUnknownFields = true;
@@ -1388,7 +1412,16 @@ function selectAlternatives(
     bad(
       path,
       oneOf
-        ? 'value must match exactly one alternative'
+        ? 'value must match exactly one alternative' +
+            ': ' +
+            branches
+              .slice(0, 8)
+              .map(
+                (branch, index) =>
+                  `alternative ${index + 1}: ${selected.includes(branch) ? 'matched' : (failures.get(branch) ?? 'discriminator did not match').slice(0, 180)}`,
+              )
+              .join('; ') +
+            (branches.length > 8 ? '; additional alternatives omitted' : '')
         : 'value must match at least one alternative',
     );
   }
@@ -1436,6 +1469,7 @@ function jointNumericView(
   const convertible = (child: unknown, depth = 0): boolean => {
     if (depth > 256)
       bad(context.path ?? 'input', 'value exceeds supported nesting depth or contains a cycle');
+    if (typeof child === 'bigint') return true;
     if (typeof child === 'string') return exactDecimal.test(child);
     if (child instanceof ParsedNumber || child instanceof RawNumber) return false;
     if (child instanceof CompiledModel) child = modelInputs.get(child) ?? child.toJSON();
@@ -1529,7 +1563,7 @@ function jointNumericView(
               executeNode(candidate, branch, { ...branchContext, allowUnknownResponseFields });
               return true;
             } catch (error) {
-              if (error instanceof SdkError && error.kind === 'validation') return false;
+              if (error instanceof SdkError && error.kind === 'validation') return error.message;
               throw error;
             }
           },
@@ -1648,7 +1682,7 @@ function assertNumericSources(
               });
               return true;
             } catch (error) {
-              if (error instanceof SdkError && error.kind === 'validation') return false;
+              if (error instanceof SdkError && error.kind === 'validation') return error.message;
               throw error;
             }
           },
@@ -1714,6 +1748,12 @@ function numericView(
   if (depth > 256) bad(path, 'value exceeds the supported nesting depth (256) or contains a cycle');
   if (value instanceof CompiledModel) value = modelInputs.get(value) ?? value.toJSON();
   const shapes = codecShapes(scopes, path, depth);
+  if (
+    typeof value === 'bigint' &&
+    (context.direction ?? context.mode) !== 'response' &&
+    shapes.some(({ codec }) => codec.value.kind === 'exact-integer')
+  )
+    value = new ParsedNumber(value.toString());
   if (
     value instanceof Date &&
     (context.direction ?? context.mode) !== 'response' &&
@@ -1819,7 +1859,7 @@ function numericView(
               candidates.set(branch, candidate);
               return true;
             } catch (error) {
-              if (error instanceof SdkError && error.kind === 'validation') return false;
+              if (error instanceof SdkError && error.kind === 'validation') return error.message;
               throw error;
             }
           },
@@ -1975,7 +2015,7 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
     // the work at every value depth. Ordinary decoding/encoding still runs in
     // its own mode, whose enum, bound and unknown-field policies differ.
     const matched = new Map<CodecPlan, Map<boolean, unknown>>();
-    const matches = (branch: CodecPlan, allowUnknownFields: boolean): boolean => {
+    const matches = (branch: CodecPlan, allowUnknownFields: boolean): boolean | string => {
       try {
         const result = executeNode(value, branch, {
           ...codecMode(response, true),
@@ -1991,11 +2031,11 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
         matched.set(branch, results);
         return true;
       } catch (error) {
-        if (error instanceof SdkError && error.kind === 'validation') return false;
+        if (error instanceof SdkError && error.kind === 'validation') return error.message;
         throw error;
       }
     };
-    if (not && matches(not, false)) bad(path, 'value matches a forbidden combination');
+    if (not && matches(not, false) === true) bad(path, 'value matches a forbidden combination');
     const conditional = conditionalBranch(value, { codec: s, definitions }, context);
     for (const branch of [...(allOf ?? []), ...(conditional ? [conditional] : [])])
       result = combine(
@@ -2077,6 +2117,13 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
     typeof value === 'string'
   )
     return bad(path, `expected ${type}; received a JSON string`);
+  if (
+    !response &&
+    type === 'integer' &&
+    value instanceof ExactNumber &&
+    !exactInteger.test(value.value)
+  )
+    return bad(path, 'expected an integer string');
   const numberToken = value instanceof ParsedNumber ? value.value : undefined;
   if (value instanceof ParsedNumber) {
     if (type === undefined) {
@@ -2121,7 +2168,10 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
         typeof token !== 'string' ||
         !(type === 'integer' ? exactInteger : exactDecimal).test(token)
       )
-        return bad(path, 'expected an exact numeric string');
+        return bad(
+          path,
+          type === 'integer' ? 'expected an integer string' : 'expected an exact numeric string',
+        );
       if (!response || matching)
         numericConstraints(token, s, path, validateConstraints || matching);
       return response ? token : new RawNumber(token);
@@ -2262,7 +2312,12 @@ export function serialize(value: unknown, schema: Schema): string {
 export function isKnownVariant(value: unknown, schema: Schema): boolean {
   return isKnownCodec(value, compileCodec(schema));
 }
-export function isKnownCodec(value: unknown, codec: CodecPlan): boolean {
+export function isKnownCodec(
+  value: unknown,
+  codec: CodecPlan,
+  certificate?: TypeCertificate,
+): boolean {
+  if (certificate && !certifies(value, certificate)) return false;
   try {
     let definitions = codec.definitions ?? {};
     for (let depth = 0; codec.reference; depth++) {
@@ -2350,6 +2405,7 @@ export function redactCodec(
         : [];
   const schemas = shapes(schema);
   if (schemas.some((s) => s.sensitive)) return '[REDACTED]';
+  if (value instanceof ParsedNumber) return value;
   if (Array.isArray(value))
     return value.map((v) =>
       redactCodec(
@@ -2387,16 +2443,18 @@ export function redactCodec(
   return value;
 }
 /** Plain inputs and validated model factories may be composed at any depth. */
-export type InputValue<T> =
-  | T
-  | Model<T>
-  | (T extends Date
-      ? never
-      : T extends readonly (infer Item)[]
-        ? InputValue<Item>[]
-        : T extends object
-          ? { [Key in keyof T]: InputValue<T[Key]> }
-          : never);
+export type InputValue<T> = [T] extends [undefined]
+  ? T
+  :
+      | T
+      | Model<T>
+      | (T extends Date
+          ? never
+          : T extends readonly (infer Item)[]
+            ? InputValue<Item>[]
+            : T extends object
+              ? { [Key in keyof T]: InputValue<T[Key]> }
+              : never);
 const modelInputs = new WeakMap<object, unknown>();
 class CompiledModel<T = unknown> {
   private readonly value: T;
@@ -2806,7 +2864,7 @@ export function verifyWebhookFromPlan(
         path: 'event',
         allowUnknownResponseFields: true,
       });
-      known = true;
+      known = !w.certificate || certifies(plainNumbers(structuredClone(decoded)), w.certificate);
     } catch (error) {
       if (!(error instanceof SdkError) || error.kind !== 'validation') throw error;
     }
@@ -2904,6 +2962,52 @@ class CompiledRuntime {
   }
   private decode(value: unknown, codec: CodecPlan, context: CodecContext): unknown {
     return executeCodec(value, codec, { ...context, definitions: this.definitions() });
+  }
+  private decodeProjection(value: unknown, codecs: readonly CodecPlan[], path: string): unknown {
+    let failure: unknown;
+    for (const codec of codecs) {
+      try {
+        const decoded = this.decode(value, codec, {
+          mode: 'response',
+          path,
+          redactFields: this.options.redactFields ?? [],
+        });
+        return plainNumbers(decoded);
+      } catch (cause) {
+        if (!(cause instanceof SdkError && cause.kind === 'validation')) throw cause;
+        failure ??= cause;
+      }
+    }
+    if (!failure) throw new Error('Missing compiled projection codecs');
+    throw failure;
+  }
+  decodePayload(id: string, result: Result<unknown>, path: string[]): unknown {
+    const codecs = this.operation(id)?.payloadCodecs;
+    const certificate = this.operation(id)?.payloadCertificate;
+    let value: unknown =
+      codecs?.length && typeof result.raw === 'string' ? parseJson(result.raw, true) : result.data;
+    for (const key of path) value = field(value, key);
+    try {
+      const decoded = codecs?.length
+        ? this.decodeProjection(value, codecs, 'response.' + path.join('.'))
+        : value;
+      if (!certificate || !certifies(decoded, certificate))
+        bad('response', 'payload does not fit its public type');
+      return decoded;
+    } catch (cause) {
+      if (!(cause instanceof SdkError && cause.kind === 'validation')) throw cause;
+      throw createSdkError(
+        'protocol',
+        'Response payload does not match a declared alternative',
+        'response',
+        false,
+        result.meta,
+        undefined,
+        undefined,
+        { cause },
+        typeof result.raw === 'string' ? result.raw : undefined,
+      );
+    }
   }
   private validateHeaderValue(value: string, codec: CodecPlan, path: string): void {
     // Simple headers carry scalars or comma-separated scalar arrays. Validate
@@ -3531,6 +3635,8 @@ class CompiledRuntime {
                 }),
               );
             } else if (raw) throw new Error('Unexpected body for an empty response');
+            if (op.outputCertificate && !certifies(data, op.outputCertificate))
+              throw new Error('Response does not fit its public type');
           } catch (cause) {
             throw createSdkError(
               'protocol',
@@ -3594,13 +3700,30 @@ class CompiledRuntime {
           data,
           this.contract.errors?.messagePath ?? 'message',
         );
-        // Text fields use their wire kinds; public details keep exact numeric tokens as strings.
-        const redacted = redactCodec(
-          plainNumbers(data),
-          (op.responses[String(response.status)] ?? op.responses.default)?.codec,
-          this.options.redactFields,
-          this.definitions(),
-        );
+        const errorResponse = op.responses[String(response.status)] ?? op.responses.default;
+        const codec = errorResponse?.codec;
+        const safeBody = redactCodec(data, codec, this.options.redactFields, this.definitions());
+        const detailsValue = this.contract.errors?.detailsPath
+          ? field(safeBody, this.contract.errors.detailsPath)
+          : safeBody;
+        let details: unknown;
+        if (this.contract.errorDetailsCertificate) {
+          try {
+            const decodedBody = codec
+              ? this.decode(safeBody, codec, { mode: 'response', path: 'error' })
+              : safeBody;
+            const decoded = plainNumbers(
+              this.contract.errors?.detailsPath
+                ? field(decodedBody, this.contract.errors.detailsPath)
+                : decodedBody,
+            );
+            if (certifies(decoded, this.contract.errorDetailsCertificate))
+              details = structuredClone(decoded);
+          } catch (cause) {
+            if (!(cause instanceof SdkError && cause.kind === 'validation')) throw cause;
+          }
+        } else details = plainNumbers(detailsValue);
+        const redacted = plainNumbers(safeBody);
         const publicCode: unknown = field(redacted, this.contract.errors?.codePath ?? 'code');
         const message: unknown = field(redacted, this.contract.errors?.messagePath ?? 'message');
         const signal = this.contract.errors?.retry;
@@ -3628,9 +3751,7 @@ class CompiledRuntime {
           response.status !== 401 && eligible,
           meta,
           typeof code === 'string' && typeof publicCode === 'string' ? publicCode : undefined,
-          this.contract.errors?.detailsPath
-            ? field(redacted, this.contract.errors.detailsPath)
-            : redacted,
+          details,
           undefined,
           raw,
         );
@@ -3800,6 +3921,19 @@ class CompiledRuntime {
         throw createSdkError('protocol', 'Pagination items field is not an array', 'response');
       for (const value of values) {
         stopped(options.signal);
+        const certificate = this.operation(id)?.itemCertificate;
+        if (certificate && !certifies(value, certificate))
+          throw createSdkError(
+            'protocol',
+            'Pagination item does not fit its public type',
+            'response',
+            false,
+            page.meta,
+            undefined,
+            undefined,
+            undefined,
+            typeof page.raw === 'string' ? page.raw : undefined,
+          );
         yield value as T;
         if (++count >= limit) return;
       }

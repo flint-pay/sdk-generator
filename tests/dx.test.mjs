@@ -127,7 +127,7 @@ test('hover and standalone mutation examples send a fresh idempotency key and va
 test('reference explains response envelopes, numeric units, models and every convenience method', () => {
   assert.match(
     declarations(join(output, 'node')),
-    /\/\*\* Amount in the currency's minor unit[^\n]+\*\/ "amount": string/,
+    /Amount in the currency's minor unit[\s\S]*?\*\/\s*"amount": `\$\{bigint\}`/,
   );
   assert.match(read('node/MODELS.md'), /minor unit/);
   assert.match(read('node/MODELS.md'), /Example: `100`/);

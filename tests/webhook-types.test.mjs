@@ -449,6 +449,59 @@ test('shared allOf envelopes keep many-name enums out of webhook-owned declarati
   assert.equal(measured.diagnostics, 0);
 });
 
+test('source component hints keep referenced webhook envelopes shared', () => {
+  const events = Array.from({ length: 20 }, (_, index) => 'payment.event' + index);
+  const base = {
+    ...envelope,
+    properties: { ...envelope.properties, type: { type: 'string', enum: events } },
+  };
+  const f = fixture({
+    model: 'Envelope',
+    schemas: { Envelope: base, Payment: payment },
+    events: {},
+  });
+  const api = JSON.parse(readFileSync(f.api));
+  api.webhooks = Object.fromEntries(
+    events.map((event, index) => [
+      event,
+      {
+        post: {
+          requestBody: {
+            content: {
+              'application/json': {
+                schema: {
+                  allOf: [
+                    index % 2 ? { $ref: '#/components/schemas/Envelope' } : base,
+                    {
+                      properties: { type: { const: event }, channel: { type: 'string' } },
+                      required: ['type', 'channel'],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    ]),
+  );
+  writeFileSync(f.api, JSON.stringify(api));
+  const config = JSON.parse(readFileSync(f.config));
+  config.schemaSharing = 'named';
+  writeFileSync(f.config, JSON.stringify(config));
+  const c = f.load();
+  generate(c, f.output);
+  const plan = compileSdkContract(c).plan;
+  const measured = measureWebhookTypes(
+    join(f.output, 'node'),
+    plan.node.eventTypes,
+    plan.php.eventModels,
+    'type',
+  );
+  assert.equal(measured.events, 20);
+  assert.equal(measured.diagnostics, 0);
+});
+
 test('shared conjuncts inside oneOf preserve typeless payload constraints', () => {
   const names = Array.from({ length: 20 }, (_, index) => 'payment.event' + index);
   const base = {

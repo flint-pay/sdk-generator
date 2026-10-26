@@ -11,6 +11,7 @@ import ts from 'typescript';
 import { loadContract, generate } from '../dist/index.js';
 import { fieldTable, modelReference, referenceType } from '../dist/sdk-documentation.js';
 import { schemaNotes, schemaComment } from '../dist/schema-documentation.js';
+import { assertDocumentedModelExports } from './helpers/docs-exports.mjs';
 import { localExampleSource } from './local-example.mjs';
 
 const exec = promisify(execFile);
@@ -49,7 +50,7 @@ test('Markdown schema constraints and sample values remain literal while prose l
     schemaNotes(child),
     `${description} pattern: ${pattern}. Example: ${JSON.stringify(example)}.`,
   );
-  assert.equal(schemaComment(child), `/** ${schemaNotes(child)} */ `);
+  assert.equal(schemaComment(child).trim(), `/** ${schemaNotes(child)} */`);
 });
 
 test('long type expressions become readable code blocks without changing their TypeScript syntax', () => {
@@ -271,4 +272,132 @@ test('download scripts, quickstarts and runtime recipes save exact bytes and ins
       new Promise((done) => destination.close(done)),
     ]);
   }
+});
+
+test('owning component hints retain request-body model links in both target references', () => {
+  const directory = join(root, 'body-model-links');
+  mkdirSync(directory);
+  writeFileSync(
+    join(directory, 'api.json'),
+    JSON.stringify({
+      openapi: '3.1.0',
+      info: { title: 'Body model links', version: '1' },
+      components: {
+        schemas: {
+          CreateWidgetRequest: {
+            type: 'object',
+            properties: { name: { type: 'string' } },
+            required: ['name'],
+          },
+        },
+      },
+      paths: {
+        '/widgets': {
+          post: {
+            operationId: 'createWidget',
+            requestBody: {
+              required: true,
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/CreateWidgetRequest' },
+                },
+              },
+            },
+            responses: { 204: { description: 'Created' } },
+          },
+        },
+      },
+    }),
+  );
+  writeFileSync(
+    join(directory, 'sdk.json'),
+    JSON.stringify({
+      version: '1.0.0',
+      npm: { name: '@example/body-model-links' },
+      composer: { name: 'example/body-model-links', namespace: 'Example\\BodyModelLinks' },
+    }),
+  );
+  const contract = loadContract(join(directory, 'api.json'), join(directory, 'sdk.json'));
+  assert.equal(contract.operations[0].body['x-sdk-type-name'], 'CreateWidgetRequest');
+  const output = join(directory, 'out');
+  generate(contract, output);
+  for (const target of ['node', 'php']) {
+    const reference = readFileSync(join(output, target, 'REFERENCE.md'), 'utf8');
+    assert.match(
+      reference,
+      target === 'node'
+        ? /Body model: \[CreateWidgetRequestInput\]\(MODELS\.md#createwidgetrequestinput\)/
+        : /Body model: \[CreateWidgetRequest\]\(MODELS\.md#createwidgetrequest\)/,
+    );
+    const models = readFileSync(join(output, target, 'MODELS.md'), 'utf8');
+    assert.match(models, /## CreateWidgetRequest/);
+  }
+});
+
+test('model documentation uses canonical exports and preserves owning input names', () => {
+  const directory = join(root, 'canonical-model-docs');
+  mkdirSync(directory);
+  const shape = { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] };
+  writeFileSync(
+    join(directory, 'api.json'),
+    JSON.stringify({
+      openapi: '3.1.0',
+      info: { title: 'Canonical docs', version: '1' },
+      components: {
+        schemas: {
+          Alpha: shape,
+          Payload: shape,
+          Box: {
+            type: 'object',
+            properties: { payload: { $ref: '#/components/schemas/Payload' } },
+            required: ['payload'],
+          },
+        },
+      },
+      paths: {
+        '/alpha': {
+          get: {
+            operationId: 'getAlpha',
+            responses: {
+              200: {
+                description: 'OK',
+                content: { 'application/json': { schema: { $ref: '#/components/schemas/Alpha' } } },
+              },
+            },
+          },
+        },
+        '/box': {
+          post: {
+            operationId: 'createBox',
+            requestBody: {
+              required: true,
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/Payload' } } },
+            },
+            responses: {
+              200: {
+                description: 'OK',
+                content: { 'application/json': { schema: { $ref: '#/components/schemas/Box' } } },
+              },
+            },
+          },
+        },
+      },
+    }),
+  );
+  writeFileSync(
+    join(directory, 'sdk.json'),
+    JSON.stringify({
+      version: '1.0.0',
+      targets: ['node'],
+      npm: { name: '@example/canonical-docs' },
+    }),
+  );
+  const output = join(directory, 'out');
+  generate(loadContract(join(directory, 'api.json'), join(directory, 'sdk.json')), output);
+  assertDocumentedModelExports(join(output, 'node'));
+  const models = readFileSync(join(output, 'node/MODELS.md'), 'utf8');
+  assert.doesNotMatch(models, /^## Payload$/m);
+  assert.match(models, /^## PayloadInput$/m);
+  assert.match(models, /Response: \[Alpha\]\(MODELS\.md#alpha\)/);
+  assert.match(models, /\| `payload` \| Required \| \[Alpha\]/);
 });

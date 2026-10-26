@@ -1,3 +1,4 @@
+import { assertDocumentedModelExports } from './helpers/docs-exports.mjs';
 import { npmPackResult } from '../dist/distribution.js';
 import { measureSdkWeight } from './helpers/sdk-weight.mjs';
 import { measureWebhookTypes } from './helpers/webhook-types.mjs';
@@ -74,6 +75,7 @@ assert.deepEqual(preview(restored,${JSON.stringify(output)}).changes,[],'full ex
 `,
       );
       run(process.execPath, [script]);
+      assertDocumentedModelExports(join(output, 'node'));
       const summary = JSON.parse(readFileSync(join(dir, 'summary.json')));
       const inventory = JSON.parse(readFileSync(join(fixture, 'full-inventory.json')));
       assert.deepEqual(
@@ -274,7 +276,7 @@ for(const {resource,method,payload,pagination,polling} of methods) {
 }
 assert.ok(Object.keys(c).length > 1);
 assert.equal(typeof c.paymentIntents.create,'function');
-for(const incoming of ${JSON.stringify(summary.incoming)}) assert.equal(typeof sdk['make'+incoming.model],'function',incoming.name);
+for(const incoming of ${JSON.stringify(summary.incoming)}) assert.equal(sdk['make'+incoming.model],undefined,'response-only webhook: '+incoming.name);
 const verified=c.verifyWebhook(Buffer.from(${JSON.stringify(raw)}),${JSON.stringify(headers)},[${JSON.stringify(encodedSecret)}],${timestamp});
 assert.equal(verified.known,true);
 assert.equal(verified.event.data.amount_money.amount,'9007199254740993');

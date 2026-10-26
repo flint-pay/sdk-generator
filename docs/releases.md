@@ -245,6 +245,420 @@ Replace references to generated `.ts` operation examples with the corresponding 
 
 PHP packages no longer include `src/schema-definitions.json` or `SchemaRegistry::definitions()`. Applications using raw schemas must keep their own schemas and pass them to the existing dynamic schema helpers. `SchemaRegistry::contract()` and `codecs()` still expose the complete compiled plan; compiled codecs are not raw JSON Schemas. Generated PHP classes retain individual files for Composer autoloading and editor indexing.
 
+### TypeScript consumer types
+
+- Future object alternatives now include `Record<string, unknown>` rather than `object`. An `in` check alone no longer certifies a known variant's field type; use the generated known-variant predicate or check the field value. This also applies to nested alternatives and `WithResponse` envelopes. Responses, projected payloads and pagination items are checked recursively against their emitted public types. Incompatible successes fail with a protocol error and retain `raw`. Referenced pagination arrays now expose their actual element type instead of `never`.
+- Error details are certified against the complete `SdkErrorDetails` union across statuses, operations and built-in runtime details. A known key from a different member can select that member in TypeScript; incompatible combinations therefore yield `details === undefined`, with `raw` retained. Treat details as optional even for declared error statuses. Known-response predicates return false and webhook verification returns `known: false` when retained fields violate the corresponding public union.
+
+Regeneration changes the Node type surface. PHP representations and wire behavior remain unchanged.
+
+- Use `${bigint}` for int64/uint64 strings; bigint inputs serialize without precision loss. Replace broad `string` variables with validated integer strings or bigint. Decimal schemas retain `string`, since `${number}` accepts invalid exact-decimal spellings. Integer inputs, including `ExactNumber` wrappers, reject decimal/exponent spellings and trailing line breaks in both runtimes. Narrowed Node integer-string responses also require canonical spelling (`^-?(0|[1-9][0-9]*)$`, without trailing whitespace): `+1`, `01` and `-01` cause a protocol error, or undefined API error details, with `raw` retained. JSON number tokens still normalize to canonical exact decimal strings. Runtime format/range validation still applies.
+- Request enums stay closed; response enums retain an open string alternative. Correct input typos instead of asserting them into an enum.
+- Import the canonical response name shown below. Equal declarations share the shortest name, then alphabetical order. The comparison uses effective response declarations after directional and profile rules; different shapes retain separate types. Payload methods use named types or unions. `WithResponse` uses the envelope type and includes HTTP metadata. Unmatched projected alternatives now raise a protocol error; use `WithResponse` when handling future envelope variants explicitly.
+- Request bodies use the referenced component’s `NameInput`; anonymous request bodies stay in the owning operation’s input type. Replace unrelated structural aliases with the operation’s input type, for example `Parameters<typeof client.paymentIntents.cancel>[0]`.
+- Remove response-only `NameInput` and `makeName` imports. Use the response type for reading, or the owning operation’s input type when preparing a request. Models reachable through nested request fields retain their input types and factories.
+- Narrow `SdkError.details` before reading fields. It combines schema-derived API details with runtime failure details; malformed API details and incompatible redacted details are `undefined`. Projected details are checked independently of a future envelope alternative. Projected unions reject fields belonging to a different member so property guards remain safe; success payloads report a protocol error for these incompatible shapes. Explicit `raw` access retains the original response. `SdkError.code` provides known code completions and accepts future strings.
+
+Representative Flint replacements from the pinned public fixture:
+
+| Previous type                                                                                                                    | Replacement                     |
+| -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| `CreateOrderPaymentIntentResult`                                                                                                 | `CreatePaymentIntentResult`     |
+| `CreateOrderPaymentIntentResponse`                                                                                               | `CreatePaymentIntentResponse`   |
+| `StripePaymentIntentClientAction`                                                                                                | `StripeSetupIntentClientAction` |
+| `PaymentIntentsGetResponse`                                                                                                      | `GetPaymentIntentResponse`      |
+| `PaymentIntentsCancelResponse`, `PaymentIntentsCaptureResponse`, `PaymentIntentsConfirmResponse`, `PaymentIntentsUpdateResponse` | `PaymentIntentResponse`         |
+
+`PaymentIntent`, `GetPaymentIntentResult` and `CreatePaymentIntentResult` remain distinct. The pinned `PaymentIntent` requires `risk` and `last_payment_error`; the get result makes them optional and the profile additionally makes them nullable. `CreatePaymentIntentResult` instead contains `payment_intent` and `payment_collection`. Their envelopes (`PaymentIntentResponse`, `GetPaymentIntentResponse`, `CreatePaymentIntentResponse`) therefore also remain distinct. `paymentIntents.get()` returns `GetPaymentIntentResult`. No fixture/profile correction is included; the later provider repin/profile correction must resolve the upstream drift (FLI-577).
+
+The full pinned fixture removes 420 equivalent component aliases and 493 redundant operation response aliases. Input names are tracked independently and may remain where request-reachable. The lists below map removed response names to retained names; they do not rename provider schema components or change runtime codecs.
+
+<details>
+<summary>Component response alias replacements</summary>
+
+- `PostalAddress` → `Address`
+- `InvoiceCheckoutSessionRequest` → `AssessInvoiceLateFeeRequest`
+- `CancelOrderPaymentAttemptRequest` → `CancelPaymentIntentRequest`
+- `DeletePayoutDestinationRequest` → `CancelPayoutRequest`
+- `CancelReturnResolutionRequest` → `CancelReturnRequest`
+- `PendingPaymentActionSetupPaymentSourceSubject` → `ChangeSubscriptionPaymentMethodRequest`
+- `CheckoutCustomTextWriteConfig` → `CheckoutCustomTextConfig`
+- `CheckoutSavedPaymentDetailsSettings` → `CheckoutTaxConfig`
+- `CloseCheckoutSessionRequest`, `ResendWebhookDeliveryRequest`, `ResolveOrderInventoryExceptionRequest` → `CloseOrderRequest`
+- `CreateInlineModifierGroupRequest` → `CreateModifierGroupRequest`
+- `ApplyDiscountRequest` → `CreateOrderDiscount`
+- `CreateOrderPaymentIntentResponse` → `CreatePaymentIntentResponse`
+- `CreateOrderPaymentIntentResult` → `CreatePaymentIntentResult`
+- `DeliveryBuyerLocationResource` → `DeliveryBuyerLocationRequest`
+- `DeliveryCalculatedPricingStrategyRequest` → `DeliveryCalculatedPricingStrategy`
+- `DeliveryDistanceUnitPriceRequest` → `DeliveryDistanceUnitPrice`
+- `DeliveryFixedPricingStrategyRequest` → `DeliveryFixedPricingStrategy`
+- `DeliveryPricingTierBandRequest` → `DeliveryPricingTierBand`
+- `DeliveryPickupAvailabilityQuantityResource` → `DeliveryQuoteLineItemResource`
+- `DeliverySelectionRecipientRequest` → `DeliveryRecipientResource`
+- `DeliveryLocalDeliveryDetails` → `DeliveryShipmentDetails`
+- `DeliveryCountryCondition` → `DeliveryStateCondition`
+- `DeliveryTieredPricingStrategyRequest` → `DeliveryTieredPricingStrategy`
+- `DeliveryWeightUnitPriceRequest` → `DeliveryWeightUnitPrice`
+- `DeliveryWindowResource` → `DeliveryWindowRequest`
+- `LineItemFulfillmentSizeRequest` → `Dimensions`
+- `CancelReturnDispositionResponse`, `CreateReturnDispositionResponse`, `RetryReturnDispositionResponse` → `GetReturnDispositionResponse`
+- `CreateReturnInspectionResponse`, `DecideReturnInspectionLineItemResponse` → `GetReturnInspectionResponse`
+- `CreateReturnPolicyResponse`, `DeleteReturnPolicyResponse`, `PublishReturnPolicyRevisionResponse`, `UpdateReturnPolicyResponse` → `GetReturnPolicyResponse`
+- `CreateReturnReasonResponse`, `DeleteReturnReasonResponse`, `UpdateReturnReasonResponse` → `GetReturnReasonResponse`
+- `CreateReturnReceiptResponse`, `VerifyReturnReceiptLineItemResponse` → `GetReturnReceiptResponse`
+- `CancelReturnResolutionResponse`, `ConfirmReturnResolutionResponse`, `CreateReturnResolutionResponse`, `ReleaseReturnResolutionResponse`, `RetryReturnResolutionResponse`, `UpdateReturnResolutionResponse` → `GetReturnResolutionResponse`
+- `AddReturnLineItemResponse`, `CancelReturnLineItemResponse`, `CancelReturnResponse`, `CompleteReturnResponse`, `CreateReturnResponse`, `DecideReturnResponse`, `DeleteReturnLineItemResponse`, `ReopenReturnResponse`, `UpdateReturnLineItemResponse`, `UpdateReturnResponse`, `WaiveReturnLineInspectionResponse` → `GetReturnResponse`
+- `IncomingWebhook498370f9652cPayload`, `IncomingWebhook66f11b3fe6a8Payload`, `IncomingWebhook8d0ecb37ce13Payload`, `IncomingWebhookb887d4b2753cPayload`, `IncomingWebhookbd445ea5b01aPayload`, `IncomingWebhookd5c9a344b9b1Payload`, `IncomingWebhooke3b79e3983d2Payload` → `IncomingWebhook04494e8bd1b3Payload`
+- `IncomingWebhook3e1e165872bePayload`, `IncomingWebhook7253fff5f748Payload`, `IncomingWebhookbca943d8a28aPayload`, `IncomingWebhookdb74c29bf1ffPayload`, `IncomingWebhookefe153a00c42Payload` → `IncomingWebhook0480be55a902Payload`
+- `IncomingWebhook1eb1077dc5faPayload`, `IncomingWebhook2111a23e6e7cPayload`, `IncomingWebhook22d72673a8cdPayload`, `IncomingWebhook25a1d8aaa819Payload`, `IncomingWebhook2873f18b6724Payload`, `IncomingWebhook28c5dc1777e5Payload`, `IncomingWebhook2b16597f72aaPayload`, `IncomingWebhook2c03ad91f156Payload`, `IncomingWebhook33ee5571b4b4Payload`, `IncomingWebhook3ae537b058b5Payload`, `IncomingWebhook46209f173440Payload`, `IncomingWebhook5552ddfae579Payload`, `IncomingWebhook58b33e47adbePayload`, `IncomingWebhook64406eae7092Payload`, `IncomingWebhook647f08b314c3Payload`, `IncomingWebhook701c073b0a0cPayload`, `IncomingWebhook7216a23a3dddPayload`, `IncomingWebhook7730424c8474Payload`, `IncomingWebhook7adf7ff33e7aPayload`, `IncomingWebhook7cb66beed654Payload`, `IncomingWebhook7dc0310d3669Payload`, `IncomingWebhook8172dd26545fPayload`, `IncomingWebhook96ad40704e72Payload`, `IncomingWebhook9ae0cd21c3dbPayload`, `IncomingWebhook9b7963c3e444Payload`, `IncomingWebhook9f970012f914Payload`, `IncomingWebhookb5e016d3aecaPayload`, `IncomingWebhookbfe731fc8c52Payload`, `IncomingWebhookc823e4336c4aPayload`, `IncomingWebhookc82943441c1dPayload`, `IncomingWebhookc8cb35576c0fPayload`, `IncomingWebhookcfa0fc3e7b61Payload`, `IncomingWebhookd5308faf7210Payload`, `IncomingWebhookd61edf29f9d2Payload`, `IncomingWebhookd7ae2aa49927Payload`, `IncomingWebhookd8d5a73039b9Payload`, `IncomingWebhookdc2332579846Payload`, `IncomingWebhooke24aaa50d5c2Payload`, `IncomingWebhookea0ef7d1c212Payload`, `IncomingWebhookeab48bfd0932Payload`, `IncomingWebhooked8e7a89077ePayload`, `IncomingWebhookf5b72c2a310ePayload`, `IncomingWebhookf9640e80dd75Payload`, `IncomingWebhookfd258d9a47caPayload`, `IncomingWebhookff9afffd27c6Payload` → `IncomingWebhook0caa82ed1aafPayload`
+- `IncomingWebhookd7a01fed3e2fPayload` → `IncomingWebhook0d891c599afbPayload`
+- `IncomingWebhook3b80f4a3f54aPayload` → `IncomingWebhook0d9fec82cba8Payload`
+- `IncomingWebhook88c91570cbe0Payload`, `IncomingWebhookad7368dbf165Payload`, `IncomingWebhookcbaf05798f54Payload` → `IncomingWebhook10de2029f92ePayload`
+- `IncomingWebhook2525f823ec7cPayload`, `IncomingWebhook3573c4463034Payload`, `IncomingWebhook38eda7a4e990Payload`, `IncomingWebhook54f21d035575Payload`, `IncomingWebhook72368f2647acPayload`, `IncomingWebhookbb439dd961a8Payload`, `IncomingWebhookfce7e0c4eba0Payload` → `IncomingWebhook1255f92e9f23Payload`
+- `IncomingWebhook68e5035f44d1Payload` → `IncomingWebhook14d267be17f3Payload`
+- `IncomingWebhook2786e5956695Payload`, `IncomingWebhook566155358f70Payload`, `IncomingWebhook67cf9ddb98ebPayload`, `IncomingWebhook6a2a6e17495ePayload`, `IncomingWebhook8364247aa322Payload`, `IncomingWebhook96bb47deea93Payload`, `IncomingWebhookc71d9380e0c9Payload`, `IncomingWebhookce317e37a514Payload`, `IncomingWebhookdd77f0f69512Payload` → `IncomingWebhook155e0b06aa8fPayload`
+- `IncomingWebhook1a6523f8bf80Payload`, `IncomingWebhook2410dfed959ePayload`, `IncomingWebhook26154f9b0abbPayload`, `IncomingWebhook31bad37575e1Payload`, `IncomingWebhook335ccd991b2bPayload`, `IncomingWebhook35b36170e2ebPayload`, `IncomingWebhook3dbc0a577678Payload`, `IncomingWebhook60391de8320bPayload`, `IncomingWebhook6f55e77725f4Payload`, `IncomingWebhook90b44f6ab93dPayload`, `IncomingWebhook9a3120a73ba6Payload`, `IncomingWebhookb1a3cccf875cPayload`, `IncomingWebhookb85f38361fb8Payload`, `IncomingWebhookbec68ec6ef2ePayload`, `IncomingWebhookc6907837bb30Payload`, `IncomingWebhookdb9dd209977aPayload` → `IncomingWebhook1824a72a4c81Payload`
+- `IncomingWebhook2100acf09455Payload`, `IncomingWebhook8061fc32f027Payload`, `IncomingWebhook8b9272735b74Payload`, `IncomingWebhookfcf5fa4b1850Payload` → `IncomingWebhook18deb3ad40c4Payload`
+- `IncomingWebhook43a17bfb8144Payload`, `IncomingWebhook6d96c0c875cdPayload`, `IncomingWebhook9f2c64cbfcafPayload` → `IncomingWebhook2841a4070c41Payload`
+- `IncomingWebhook3b618fd743f5Payload`, `IncomingWebhooka9876afe4b94Payload` → `IncomingWebhook28eb66b9f1a5Payload`
+- `IncomingWebhooka9d01c88ec13Payload`, `IncomingWebhookc8e851ec1b62Payload` → `IncomingWebhook290918a8af6ePayload`
+- `IncomingWebhookac68e02edc21Payload` → `IncomingWebhook30ac14eea065Payload`
+- `IncomingWebhook88596065c1b9Payload`, `IncomingWebhookb9b1da5ab933Payload`, `IncomingWebhookc3ebf1cf7ec9Payload`, `IncomingWebhookd429a10e7388Payload`, `IncomingWebhookd5a6f520dad7Payload` → `IncomingWebhook358012160ab8Payload`
+- `IncomingWebhook527f9bd2c39dPayload`, `IncomingWebhook7d17f7f10156Payload`, `IncomingWebhook7dd2b7d6ef54Payload` → `IncomingWebhook44e6923a1369Payload`
+- `IncomingWebhook78590778ef68Payload` → `IncomingWebhook607f05b24d65Payload`
+- `IncomingWebhook769913a11504Payload` → `IncomingWebhook72eec85cad89Payload`
+- `IncomingWebhookcf769e4fa54cPayload` → `IncomingWebhook89b737dd7119Payload`
+- `IncomingWebhook90c487338917Payload` → `IncomingWebhook8c8f435e6e23Payload`
+- `IncomingWebhooke807fdb62367Payload` → `IncomingWebhooka532d2deefcaPayload`
+- `IncomingWebhooke22691fcc424Payload` → `IncomingWebhookd2d184df8ba4Payload`
+- `IncomingWebhookf6f719ba2af4Payload` → `IncomingWebhookf2be10231857Payload`
+- `InventoryTransferProvenanceRequest` → `InventoryReservationProvenance`
+- `OrderInventoryRoutingSourceRequest` → `InventoryRoutingSource`
+- `CheckoutLegalConfig` → `LegalSettings`
+- `DeliveryAddressRequest`, `DeliveryAddressResource` → `LocationAddress`
+- `SignedMoney` → `MoneyValue`
+- `OrderDraftLineItemTaxRequest` → `OrderCalculatedLineItemTax`
+- `FulfillmentTransitionRequestMarkPacked` → `PackageTransitionRequestMarkPacked`
+- `CancelOrderPaymentAttemptResponse` → `PayOrderResponse`
+- `CancelOrderPaymentAttemptResult` → `PayOrderResult`
+- `CreditNoteRefundListResponse` → `RefundListResponse`
+- `CheckoutSessionLaunchResponse`, `GetOrCreateReturnResolutionCheckoutSessionResponse` → `ResolvePaymentLinkResponse`
+- `ConfirmReturnResolutionRequest`, `InventoryCountTransitionRequest` → `ResourceVersionRequest`
+- `ReturnHandoffRequirementLineItem`, `ReturnShipmentLineItemAllocation` → `ReturnResolutionLineItemRequest`
+- `StripePaymentIntentClientAction` → `StripeSetupIntentClientAction`
+- `OrderDraftLineItemTaxCalculationRequest` → `TaxCalculationRequest`
+- `OrderDraftTaxComponentRequest` → `TaxComponentRequest`
+- `TaxIdentityRequest` → `TaxIdentityPatch`
+- `OrderDraftTaxJurisdictionRequest` → `TaxJurisdiction`
+- `AvailableTextModifierConfig` → `TextModifierConfig`
+- `PublicResolvedTextModifier` → `TextModifierConfigRequest`
+- `ResolvePaymentLinkTextModifierRequest` → `TextModifierRequest`
+- `UpdateReturnPolicyRequest` → `UpdateLocationRequest`
+- `OrderDeliveryDestinationRecipient` → `UpdateMeRequest`
+- `UpdatePayoutDestinationRequest` → `UpdateRefundRequest`
+- `VoidShipmentRequest` → `VoidPackageRequest`
+- `Webhook_balance_transaction_updated_merchant` → `Webhook_balance_transaction_created_merchant`
+- `Webhook_credit_note_allocation_reversed_installed_merchants` → `Webhook_credit_note_allocation_created_installed_merchants`
+- `Webhook_credit_note_allocation_reversed_merchant` → `Webhook_credit_note_allocation_created_merchant`
+- `Webhook_credit_note_created_installed_merchants`, `Webhook_credit_note_updated_installed_merchants`, `Webhook_credit_note_voided_installed_merchants` → `Webhook_credit_note_issued_installed_merchants`
+- `Webhook_credit_note_created_merchant`, `Webhook_credit_note_updated_merchant`, `Webhook_credit_note_voided_merchant` → `Webhook_credit_note_issued_merchant`
+- `Webhook_customer_updated_installed_merchants` → `Webhook_customer_created_installed_merchants`
+- `Webhook_customer_updated_merchant` → `Webhook_customer_created_merchant`
+- `Webhook_dispute_closed_merchant`, `Webhook_dispute_created_merchant`, `Webhook_dispute_lost_merchant`, `Webhook_dispute_needs_response_merchant`, `Webhook_dispute_prevented_merchant`, `Webhook_dispute_updated_merchant`, `Webhook_dispute_warning_closed_merchant` → `Webhook_dispute_won_merchant`
+- `Webhook_fraud_warning_updated_installed_merchants` → `Webhook_fraud_warning_created_installed_merchants`
+- `Webhook_fraud_warning_updated_merchant` → `Webhook_fraud_warning_created_merchant`
+- `Webhook_invoice_updated_installed_merchants` → `Webhook_invoice_created_installed_merchants`
+- `Webhook_invoice_updated_merchant` → `Webhook_invoice_created_merchant`
+- `Webhook_invoice_late_fee_assessed_installed_merchants` → `Webhook_invoice_late_fee_waived_installed_merchants`
+- `Webhook_invoice_late_fee_assessed_merchant` → `Webhook_invoice_late_fee_waived_merchant`
+- `Webhook_invoice_delivery_failed_installed_merchants`, `Webhook_invoice_delivery_succeeded_installed_merchants`, `Webhook_invoice_manual_payment_recorded_installed_merchants`, `Webhook_invoice_manual_payment_reversed_installed_merchants`, `Webhook_invoice_partially_paid_installed_merchants`, `Webhook_invoice_partially_refunded_installed_merchants`, `Webhook_invoice_refunded_installed_merchants`, `Webhook_invoice_sent_installed_merchants`, `Webhook_invoice_voided_installed_merchants` → `Webhook_invoice_paid_installed_merchants`
+- `Webhook_invoice_delivery_failed_merchant`, `Webhook_invoice_delivery_succeeded_merchant`, `Webhook_invoice_manual_payment_recorded_merchant`, `Webhook_invoice_manual_payment_reversed_merchant`, `Webhook_invoice_partially_paid_merchant`, `Webhook_invoice_partially_refunded_merchant`, `Webhook_invoice_refunded_merchant`, `Webhook_invoice_sent_merchant`, `Webhook_invoice_voided_merchant` → `Webhook_invoice_paid_merchant`
+- `Webhook_merchant_subscription_invoice_updated_merchant` → `Webhook_merchant_subscription_invoice_issued_merchant`
+- `Webhook_order_updated_installed_merchants` → `Webhook_order_closed_installed_merchants`
+- `Webhook_order_updated_merchant` → `Webhook_order_closed_merchant`
+- `Webhook_order_fulfillment_completed_installed_merchants`, `Webhook_order_fulfillment_updated_installed_merchants` → `Webhook_order_fulfillment_created_installed_merchants`
+- `Webhook_order_fulfillment_completed_merchant`, `Webhook_order_fulfillment_updated_merchant` → `Webhook_order_fulfillment_created_merchant`
+- `Webhook_order_payment_authorization_canceled_installed_merchants`, `Webhook_order_payment_authorization_expired_installed_merchants`, `Webhook_order_payment_authorized_installed_merchants`, `Webhook_order_payment_captured_installed_merchants` → `Webhook_order_refunded_installed_merchants`
+- `Webhook_order_inventory_action_required_merchant`, `Webhook_order_payment_authorization_canceled_merchant`, `Webhook_order_payment_authorization_expired_merchant`, `Webhook_order_payment_authorized_merchant`, `Webhook_order_payment_captured_merchant` → `Webhook_order_refunded_merchant`
+- `Webhook_partner_app_install_permissions_updated_partner_app`, `Webhook_partner_app_install_revoked_partner_app`, `Webhook_partner_app_install_updated_partner_app` → `Webhook_partner_app_install_created_partner_app`
+- `Webhook_partner_app_install_environment_grant_revoked_partner_app` → `Webhook_partner_app_install_environment_grant_created_partner_app`
+- `Webhook_payment_intent_payment_failed_installed_merchants`, `Webhook_payment_intent_processing_installed_merchants`, `Webhook_payment_intent_requires_action_installed_merchants`, `Webhook_payment_intent_requires_capture_installed_merchants`, `Webhook_payment_intent_succeeded_installed_merchants` → `Webhook_payment_intent_canceled_installed_merchants`
+- `Webhook_payment_intent_payment_failed_merchant`, `Webhook_payment_intent_processing_merchant`, `Webhook_payment_intent_requires_action_merchant`, `Webhook_payment_intent_requires_capture_merchant`, `Webhook_payment_intent_succeeded_merchant` → `Webhook_payment_intent_canceled_merchant`
+- `Webhook_payout_destination_deleted_merchant`, `Webhook_payout_destination_disabled_merchant`, `Webhook_payout_destination_updated_merchant` → `Webhook_payout_destination_created_merchant`
+- `Webhook_payout_canceled_merchant`, `Webhook_payout_created_merchant`, `Webhook_payout_failed_merchant`, `Webhook_payout_reversed_merchant`, `Webhook_payout_updated_merchant` → `Webhook_payout_paid_merchant`
+- `Webhook_refund_created_installed_merchants`, `Webhook_refund_updated_installed_merchants` → `Webhook_refund_failed_installed_merchants`
+- `Webhook_refund_created_merchant`, `Webhook_refund_updated_merchant` → `Webhook_refund_failed_merchant`
+- `Webhook_report_succeeded_installed_merchants` → `Webhook_report_failed_installed_merchants`
+- `Webhook_report_succeeded_merchant` → `Webhook_report_failed_merchant`
+- `Webhook_delivery_location_set_activated_installed_merchants`, `Webhook_delivery_location_set_archived_installed_merchants`, `Webhook_delivery_location_set_created_installed_merchants`, `Webhook_delivery_location_set_deactivated_installed_merchants`, `Webhook_delivery_location_set_updated_installed_merchants`, `Webhook_delivery_method_activated_installed_merchants`, `Webhook_delivery_method_archived_installed_merchants`, `Webhook_delivery_method_created_installed_merchants`, `Webhook_delivery_method_deactivated_installed_merchants`, `Webhook_delivery_method_updated_installed_merchants`, `Webhook_delivery_profile_activated_installed_merchants`, `Webhook_delivery_profile_archived_installed_merchants`, `Webhook_delivery_profile_created_installed_merchants`, `Webhook_delivery_profile_deactivated_installed_merchants`, `Webhook_delivery_profile_updated_installed_merchants`, `Webhook_delivery_rate_archived_installed_merchants`, `Webhook_delivery_rate_callback_activated_installed_merchants`, `Webhook_delivery_rate_callback_archived_installed_merchants`, `Webhook_delivery_rate_callback_created_installed_merchants`, `Webhook_delivery_rate_callback_deactivated_installed_merchants`, `Webhook_delivery_rate_callback_updated_installed_merchants`, `Webhook_delivery_rate_created_installed_merchants`, `Webhook_delivery_rate_updated_installed_merchants`, `Webhook_delivery_revocation_created_installed_merchants`, `Webhook_delivery_selection_committed_installed_merchants`, `Webhook_delivery_zone_activated_installed_merchants`, `Webhook_delivery_zone_archived_installed_merchants`, `Webhook_delivery_zone_created_installed_merchants`, `Webhook_delivery_zone_deactivated_installed_merchants`, `Webhook_delivery_zone_updated_installed_merchants`, `Webhook_return_canceled_installed_merchants`, `Webhook_return_completed_installed_merchants`, `Webhook_return_decision_recorded_installed_merchants`, `Webhook_return_disposition_created_installed_merchants`, `Webhook_return_disposition_updated_installed_merchants`, `Webhook_return_inspection_acceptance_decided_installed_merchants`, `Webhook_return_inspection_created_installed_merchants`, `Webhook_return_inspection_superseded_installed_merchants`, `Webhook_return_receipt_created_installed_merchants`, `Webhook_return_receipt_superseded_installed_merchants`, `Webhook_return_receipt_verified_installed_merchants`, `Webhook_return_reopened_installed_merchants`, `Webhook_return_resolution_created_installed_merchants`, `Webhook_return_resolution_updated_installed_merchants`, `Webhook_return_updated_installed_merchants` → `Webhook_return_created_installed_merchants`
+- `Webhook_delivery_location_set_activated_merchant`, `Webhook_delivery_location_set_archived_merchant`, `Webhook_delivery_location_set_created_merchant`, `Webhook_delivery_location_set_deactivated_merchant`, `Webhook_delivery_location_set_updated_merchant`, `Webhook_delivery_method_activated_merchant`, `Webhook_delivery_method_archived_merchant`, `Webhook_delivery_method_created_merchant`, `Webhook_delivery_method_deactivated_merchant`, `Webhook_delivery_method_updated_merchant`, `Webhook_delivery_profile_activated_merchant`, `Webhook_delivery_profile_archived_merchant`, `Webhook_delivery_profile_created_merchant`, `Webhook_delivery_profile_deactivated_merchant`, `Webhook_delivery_profile_updated_merchant`, `Webhook_delivery_rate_archived_merchant`, `Webhook_delivery_rate_callback_activated_merchant`, `Webhook_delivery_rate_callback_archived_merchant`, `Webhook_delivery_rate_callback_created_merchant`, `Webhook_delivery_rate_callback_deactivated_merchant`, `Webhook_delivery_rate_callback_updated_merchant`, `Webhook_delivery_rate_created_merchant`, `Webhook_delivery_rate_updated_merchant`, `Webhook_delivery_revocation_created_merchant`, `Webhook_delivery_selection_committed_merchant`, `Webhook_delivery_zone_activated_merchant`, `Webhook_delivery_zone_archived_merchant`, `Webhook_delivery_zone_created_merchant`, `Webhook_delivery_zone_deactivated_merchant`, `Webhook_delivery_zone_updated_merchant`, `Webhook_inventory_action_required_merchant`, `Webhook_inventory_count_applied_merchant`, `Webhook_inventory_level_updated_merchant`, `Webhook_inventory_receipt_created_merchant`, `Webhook_inventory_reservation_at_risk_merchant`, `Webhook_inventory_reservation_closed_merchant`, `Webhook_inventory_reservation_committed_merchant`, `Webhook_inventory_reservation_consumed_merchant`, `Webhook_inventory_reservation_created_merchant`, `Webhook_inventory_reservation_hold_expired_merchant`, `Webhook_inventory_reservation_released_merchant`, `Webhook_inventory_shortage_detected_merchant`, `Webhook_inventory_transfer_closed_merchant`, `Webhook_inventory_transfer_departed_merchant`, `Webhook_inventory_transfer_lost_merchant`, `Webhook_inventory_transfer_received_merchant`, `Webhook_inventory_transfer_returned_merchant`, `Webhook_return_canceled_merchant`, `Webhook_return_completed_merchant`, `Webhook_return_decision_recorded_merchant`, `Webhook_return_disposition_created_merchant`, `Webhook_return_disposition_updated_merchant`, `Webhook_return_inspection_acceptance_decided_merchant`, `Webhook_return_inspection_created_merchant`, `Webhook_return_inspection_superseded_merchant`, `Webhook_return_receipt_created_merchant`, `Webhook_return_receipt_superseded_merchant`, `Webhook_return_receipt_verified_merchant`, `Webhook_return_reopened_merchant`, `Webhook_return_resolution_created_merchant`, `Webhook_return_resolution_updated_merchant`, `Webhook_return_updated_merchant` → `Webhook_return_created_merchant`
+- `Webhook_review_opened_installed_merchants` → `Webhook_review_closed_installed_merchants`
+- `Webhook_review_opened_merchant` → `Webhook_review_closed_merchant`
+- `Webhook_subscription_activated_installed_merchants`, `Webhook_subscription_canceled_installed_merchants`, `Webhook_subscription_created_installed_merchants`, `Webhook_subscription_past_due_installed_merchants`, `Webhook_subscription_payment_succeeded_installed_merchants`, `Webhook_subscription_resumed_installed_merchants`, `Webhook_subscription_trial_ending_installed_merchants` → `Webhook_subscription_paused_installed_merchants`
+- `Webhook_subscription_activated_merchant`, `Webhook_subscription_canceled_merchant`, `Webhook_subscription_created_merchant`, `Webhook_subscription_past_due_merchant`, `Webhook_subscription_payment_succeeded_merchant`, `Webhook_subscription_resumed_merchant`, `Webhook_subscription_trial_ending_merchant` → `Webhook_subscription_paused_merchant`
+- `LineItemFulfillmentWeightRequest` → `Weight`
+
+</details>
+
+<details>
+<summary>Operation response alias replacements</summary>
+
+- `ApiKeysListResponse` → `APIKeyListResponse`
+- `ApiKeysGetResponse`, `ApiKeysRevokeResponse`, `ApiKeysUpdateResponse` → `APIKeyResponse`
+- `DeveloperGetCurrentAPIKeyRequestLogResponse` → `APIRequestLogDetailResponse`
+- `DeveloperListCurrentAPIKeyRequestLogsResponse` → `APIRequestLogListResponse`
+- `CustomersDeleteAddressResponse`, `MeDeleteAddressResponse`, `MeRemovePaymentMethodResponse`, `MeResendOrderReceiptResponse`, `OrdersResendReceiptResponse`, `PaymentMethodsRemoveResponse`, `WebhookEndpointsRemoveResponse` → `ActionResponse`
+- `AnalyticsGetOverviewResponse` → `AnalyticsOverviewResponse`
+- `BalancesListResponse` → `BalanceListResponse`
+- `BalanceTransactionsListResponse` → `BalanceTransactionListResponse`
+- `BalanceTransactionsGetResponse` → `BalanceTransactionResponse`
+- `BundlesListComponentsResponse` → `BundleComponentListResponse`
+- `BundlesListResponse` → `BundleListResponse`
+- `BundlesCreateResponse`, `BundlesGetResponse`, `BundlesRemoveResponse`, `BundlesUpdateResponse` → `BundleResponse`
+- `MeListCreditNotesResponse` → `BuyerCreditNoteListResponse`
+- `MeGetCreditNoteResponse` → `BuyerCreditNoteResponse`
+- `MeListInvoicesResponse` → `BuyerInvoiceListResponse`
+- `MeGetInvoiceResponse` → `BuyerInvoiceResponse`
+- `MeCancelSubscriptionResponse`, `SubscriptionsCancelResponse` → `CancelSubscriptionResponse`
+- `CapabilitiesListResponse` → `CapabilityListResponse`
+- `CategoriesListResponse` → `CategoryListResponse`
+- `CategoriesCreateResponse`, `CategoriesGetResponse`, `CategoriesRemoveResponse`, `CategoriesUpdateResponse` → `CategoryResponse`
+- `CheckoutSessionsConfirmCustomerVerificationResponse` → `CheckoutCustomerVerificationConfirmationResponse`
+- `CheckoutSessionsCreateCustomerVerificationResponse` → `CheckoutCustomerVerificationResponse`
+- `CheckoutSessionsCreateDeliveryQuoteResponse`, `CheckoutSessionsGetDeliveryQuoteResponse` → `CheckoutDeliveryQuoteResponse`
+- `CheckoutSessionsCreateDeliverySelectionResponse`, `CheckoutSessionsDeleteCurrentDeliverySelectionResponse` → `CheckoutDeliverySelectionResultResponse`
+- `CheckoutSessionsGetCurrentDeliverySelectionResponse` → `CheckoutEffectiveDeliverySelectionResponse`
+- `CheckoutSessionsListResponse` → `CheckoutSessionListResponse`
+- `CheckoutSessionsCloseSessionResponse`, `CheckoutSessionsGetResponse`, `CheckoutSessionsUpdateResponse` → `CheckoutSessionResponse`
+- `InvoicesCollectResponse` → `CollectInvoiceResponse`
+- `ApiKeysCreateResponse`, `DeveloperIssueSandboxTestKeyResponse`, `OnboardingCreateAPIKeyResponse` → `CreateAPIKeyResponse`
+- `DevicesCreateResponse` → `CreateDeviceResponse`
+- `OrdersCreateFulfillmentResponse` → `CreateFulfillmentResponse`
+- `ShipmentsCreatePackageResponse` → `CreatePackageResponse`
+- `DeveloperCreatePartnerAppResponse` → `CreatePartnerAppResponse`
+- `OrdersCreatePaymentIntentResponse`, `PaymentIntentsCreateResponse` → `CreatePaymentIntentResponse`
+- `MeCreateReturnPreviewResponse`, `ReturnPreviewsCreateResponse` → `CreateReturnPreviewResponse`
+- `FulfillmentsCreateShipmentResponse` → `CreateShipmentResponse`
+- `CreditNotesListAllocationsResponse` → `CreditNoteAllocationListResponse`
+- `CreditNotesGetAllocationResponse` → `CreditNoteAllocationResponse`
+- `CreditNotesCreateAllocationResponse`, `CreditNotesReverseAllocationResponse` → `CreditNoteAllocationResultResponse`
+- `CreditNotesListResponse` → `CreditNoteListResponse`
+- `CreditNotesCreateResponse`, `CreditNotesGetResponse`, `CreditNotesUpdateResponse`, `CreditNotesVoidResourceResponse` → `CreditNoteResponse`
+- `CustomersListAddressesResponse`, `MeListAddressesResponse` → `CustomerAddressListResponse`
+- `CustomersCreateAddressResponse`, `CustomersGetAddressResponse`, `CustomersSetDefaultAddressResponse`, `CustomersUpdateAddressResponse`, `MeCreateAddressResponse`, `MeGetAddressResponse`, `MeSetDefaultAddressResponse`, `MeUpdateAddressResponse` → `CustomerAddressResponse`
+- `CustomerDeletionRequestsListResponse` → `CustomerDeletionRequestListResponse`
+- `CustomerDeletionRequestsResolveResponse`, `CustomersCreateDeletionRequestResponse`, `CustomersGetDeletionRequestResponse`, `MeCreateDeletionRequestResponse`, `MeGetDeletionRequestResponse` → `CustomerDeletionRequestResponse`
+- `CustomersListResponse` → `CustomerListResponse`
+- `CustomersCreateResponse`, `CustomersGetResponse`, `CustomersUpdateResponse`, `MeGetResponse`, `MeUpdateResponse` → `CustomerResponse`
+- `CustomerSessionsCreateResponse`, `CustomerSessionsRefreshResponse` → `CustomerSessionResponse`
+- `CustomerSessionsRevokeResponse` → `CustomerSessionRevocationResponse`
+- `CustomersRevokeSessionsResponse` → `CustomerSessionsRevocationResponse`
+- `DeliveryLocationSetsListResponse` → `DeliveryLocationSetListResponse`
+- `DeliveryLocationSetsCreateResponse`, `DeliveryLocationSetsGetResponse`, `DeliveryLocationSetsRemoveResponse`, `DeliveryLocationSetsUpdateResponse` → `DeliveryLocationSetResponse`
+- `DeliveryMethodsListResponse` → `DeliveryMethodListResponse`
+- `DeliveryMethodsCreateResponse`, `DeliveryMethodsGetResponse`, `DeliveryMethodsRemoveResponse`, `DeliveryMethodsUpdateResponse` → `DeliveryMethodResponse`
+- `CheckoutSessionsQueryPickupAvailabilityResponse` → `DeliveryPickupAvailabilityResponse`
+- `DeliveryPreviewsCreateResponse` → `DeliveryPreviewResponse`
+- `DeliveryProfilesAssignToUnconfiguredResponse` → `DeliveryProfileAssignmentResponse`
+- `DeliveryProfilesListResponse` → `DeliveryProfileListResponse`
+- `DeliveryProfilesCreateResponse`, `DeliveryProfilesGetResponse`, `DeliveryProfilesRemoveResponse`, `DeliveryProfilesUpdateResponse` → `DeliveryProfileResponse`
+- `DeliveryQuotesListResponse` → `DeliveryQuoteListResponse`
+- `DeliveryRateCallbacksCheckConnectionResponse` → `DeliveryRateCallbackConnectionCheckResponse`
+- `DeliveryRateCallbacksListResponse` → `DeliveryRateCallbackListResponse`
+- `DeliveryRateCallbacksCreateResponse`, `DeliveryRateCallbacksGetResponse`, `DeliveryRateCallbacksRemoveResponse`, `DeliveryRateCallbacksUpdateResponse` → `DeliveryRateCallbackResponse`
+- `DeliveryRateCallbacksRotateSigningKeyResponse` → `DeliveryRateCallbackSigningKeyRotationResponse`
+- `DeliveryRateCallbacksCreateTestDeliveryResponse` → `DeliveryRateCallbackTestDeliveryResponse`
+- `DeliveryRevocationsGetResponse`, `DeliveryRevocationsRevokeDeliveryDependencyResponse` → `DeliveryRevocationResponse`
+- `CheckoutSessionsGetDeliverySelectionHistoryResponse`, `OrdersGetCurrentDeliverySelectionResponse` → `DeliverySelectionResponse`
+- `DeliveryZonesListResponse` → `DeliveryZoneListResponse`
+- `DeliveryZonesCreateResponse`, `DeliveryZonesGetResponse`, `DeliveryZonesRemoveResponse`, `DeliveryZonesUpdateResponse` → `DeliveryZoneResponse`
+- `DemoSessionsCreateResponse`, `DemoSessionsResetResponse` → `DemoSessionResponse`
+- `DeveloperGetAuthContextResponse` → `DeveloperAuthContextResponse`
+- `DevicesListResponse` → `DeviceListResponse`
+- `DevicesGetResponse`, `DevicesRemoveResponse`, `DevicesUpdateResponse` → `DeviceResponse`
+- `OrdersPreviewDiscountsResponse` → `DiscountPreviewResponse`
+- `DisputesListResponse` → `DisputeListResponse`
+- `DisputesGetResponse` → `DisputeResponse`
+- `MeConfirmEmailChangeRequestResponse`, `MeCreateEmailChangeRequestResponse` → `EmailChangeRequestResponse`
+- `FeedbackReportsListResponse` → `FeedbackReportListResponse`
+- `FeedbackReportsCreateResponse`, `FeedbackReportsGetResponse` → `FeedbackReportResponse`
+- `FraudWarningsListResponse` → `FraudWarningListResponse`
+- `FraudWarningsGetResponse` → `FraudWarningResponse`
+- `FulfillmentsTransitionResponse` → `FulfillmentCommandResponse`
+- `FulfillmentEventsListResponse` → `FulfillmentEventListResponse`
+- `FulfillmentEventsGetResponse` → `FulfillmentEventResourceResponse`
+- `FulfillmentsCreateEventResponse` → `FulfillmentEventResponse`
+- `FulfillmentsListResponse`, `MeListFulfillmentsResponse` → `FulfillmentListResponse`
+- `FulfillmentNotificationsListResponse` → `FulfillmentNotificationListResponse`
+- `FulfillmentNotificationsGetResponse` → `FulfillmentNotificationResponse`
+- `FulfillmentsGetResponse` → `FulfillmentResponse`
+- `PaymentIntentsGetResponse` → `GetPaymentIntentResponse`
+- `ReturnDispositionsCancelResponse`, `ReturnDispositionsGetResponse`, `ReturnDispositionsRetryResponse`, `ReturnsCreateDispositionResponse` → `GetReturnDispositionResponse`
+- `ReturnInspectionsDecideLineItemResponse`, `ReturnInspectionsGetResponse`, `ReturnsCreateInspectionResponse` → `GetReturnInspectionResponse`
+- `ReturnsGetLineItemResponse` → `GetReturnLineItemResponse`
+- `ReturnPoliciesCreateResponse`, `ReturnPoliciesGetResponse`, `ReturnPoliciesPublishRevisionResponse`, `ReturnPoliciesRemoveResponse`, `ReturnPoliciesUpdateResponse` → `GetReturnPolicyResponse`
+- `ReturnPoliciesGetRevisionResponse` → `GetReturnPolicyRevisionResponse`
+- `ReturnReasonsCreateResponse`, `ReturnReasonsGetResponse`, `ReturnReasonsRemoveResponse`, `ReturnReasonsUpdateResponse` → `GetReturnReasonResponse`
+- `ReturnReceiptsGetResponse`, `ReturnReceiptsVerifyLineItemResponse`, `ReturnsCreateReceiptResponse` → `GetReturnReceiptResponse`
+- `ReturnResolutionsCancelResponse`, `ReturnResolutionsConfirmResponse`, `ReturnResolutionsGetResponse`, `ReturnResolutionsReleaseResponse`, `ReturnResolutionsRetryResponse`, `ReturnResolutionsUpdateResponse`, `ReturnsCreateResolutionResponse` → `GetReturnResolutionResponse`
+- `MeCancelReturnResponse`, `MeCreateReturnResponse`, `MeGetReturnResponse`, `ReturnsAddLineItemResponse`, `ReturnsCancelLineItemResponse`, `ReturnsCancelResponse`, `ReturnsCompleteResponse`, `ReturnsCreateResponse`, `ReturnsDecideResponse`, `ReturnsDeleteLineItemResponse`, `ReturnsGetResponse`, `ReturnsReopenResponse`, `ReturnsUpdateLineItemResponse`, `ReturnsUpdateResponse`, `ReturnsWaiveLineInspectionResponse` → `GetReturnResponse`
+- `InventoryAdjustmentsListResponse` → `InventoryAdjustmentListResponse`
+- `InventoryAdjustmentsCreateResponse` → `InventoryAdjustmentResultResponse`
+- `InventoryAllocationPoliciesListResponse` → `InventoryAllocationPolicyListResponse`
+- `InventoryAllocationPoliciesCreateResponse`, `InventoryAllocationPoliciesRemoveResponse`, `InventoryAllocationPoliciesUpdateResponse` → `InventoryAllocationPolicyResponse`
+- `InventoryCountsListResponse` → `InventoryCountListResponse`
+- `InventoryCountsCreateResponse`, `InventoryCountsUpdateResponse` → `InventoryCountResponse`
+- `InventoryCountsApplyResponse`, `InventoryCountsCancelResponse` → `InventoryCountResultResponse`
+- `InventoryItemsListResponse` → `InventoryItemListResponse`
+- `InventoryItemsCreateResponse`, `InventoryItemsRemoveResponse`, `InventoryItemsUpdateResponse` → `InventoryItemResponse`
+- `InventoryLevelsListResponse` → `InventoryLevelListResponse`
+- `InventoryLevelsUpdateResponse` → `InventoryLevelUpdateResultResponse`
+- `InventoryMovementsListResponse` → `InventoryMovementListResponse`
+- `InventoryReceiptsListResponse` → `InventoryReceiptListResponse`
+- `InventoryReceiptsCreateResponse` → `InventoryReceiptResultResponse`
+- `InventoryReservationsListResponse` → `InventoryReservationListResponse`
+- `InventoryReservationsCommitResponse`, `InventoryReservationsConsumeResponse`, `InventoryReservationsCreateResponse`, `InventoryReservationsReleaseResponse` → `InventoryReservationResultResponse`
+- `InventoryTransfersListResponse` → `InventoryTransferListResponse`
+- `InventoryTransfersCreateResponse`, `InventoryTransfersUpdateResponse` → `InventoryTransferResponse`
+- `InventoryTransfersTransitionResponse` → `InventoryTransferResultResponse`
+- `InvoicesGetOrCreateCheckoutSessionResponse`, `MeCreateInvoiceCheckoutSessionResponse` → `InvoiceCheckoutSessionResponse`
+- `InvoicesListDeliveryAttemptsResponse` → `InvoiceDeliveryAttemptListResponse`
+- `InvoicesListEventsResponse` → `InvoiceEventListResponse`
+- `InvoicesListResponse` → `InvoiceListResponse`
+- `InvoicesListPaymentAttemptsResponse` → `InvoicePaymentAttemptListResponse`
+- `InvoicesCancelPaymentAttemptResponse`, `InvoicesGetPaymentAttemptResponse` → `InvoicePaymentAttemptResponse`
+- `InvoicePaymentTermsListResponse` → `InvoicePaymentTermListResponse`
+- `InvoicePaymentTermsCreateResponse`, `InvoicePaymentTermsGetResponse`, `InvoicePaymentTermsRemoveResponse`, `InvoicePaymentTermsUpdateResponse` → `InvoicePaymentTermResponse`
+- `InvoicesAssessLateFeeResponse`, `InvoicesCreateResponse`, `InvoicesGetResponse`, `InvoicesMarkUncollectibleResponse`, `InvoicesPauseRemindersResponse`, `InvoicesRecordManualPaymentResponse`, `InvoicesResumeRemindersResponse`, `InvoicesReverseManualPaymentResponse`, `InvoicesUpdateResponse`, `InvoicesVoidResourceResponse`, `InvoicesWaiveLateFeeResponse` → `InvoiceResponse`
+- `CreditNotesIssueResponse` → `IssueCreditNoteResponse`
+- `InvoicesIssueResponse`, `InvoicesSendReminderResponse` → `IssueInvoiceResponse`
+- `ReturnDispositionsListResponse` → `ListReturnDispositionsResponse`
+- `ReturnInspectionsListResponse` → `ListReturnInspectionsResponse`
+- `ReturnsListLineItemsResponse` → `ListReturnLineItemsResponse`
+- `ReturnPoliciesListResponse` → `ListReturnPoliciesResponse`
+- `ReturnPoliciesListRevisionsResponse` → `ListReturnPolicyRevisionsResponse`
+- `ReturnReasonsListResponse` → `ListReturnReasonsResponse`
+- `ReturnReceiptsListResponse` → `ListReturnReceiptsResponse`
+- `ReturnResolutionsListResponse` → `ListReturnResolutionsResponse`
+- `MeListReturnsResponse`, `ReturnsListResponse` → `ListReturnsResponse`
+- `LocationsUpdateInventoryResponse` → `LocationInventoryResponse`
+- `LocationsListResponse` → `LocationListResponse`
+- `LocationsCreateResponse`, `LocationsGetResponse`, `LocationsPublishGeographyResponse`, `LocationsRemoveResponse`, `LocationsUpdateResponse` → `LocationResponse`
+- `MerchantAccountSessionsCreateResponse`, `MerchantAccountSessionsRefreshResponse` → `MerchantAccountSessionResponse`
+- `MerchantBillingBalancesListResponse` → `MerchantBillingBalanceListResponse`
+- `MerchantBillingBalancesGetResponse` → `MerchantBillingBalanceResponse`
+- `MerchantsGetResponse`, `MerchantsUpdateResponse` → `MerchantResponse`
+- `MerchantSubscriptionInvoicesListResponse` → `MerchantSubscriptionInvoiceListResponse`
+- `MerchantSubscriptionInvoicesGetResponse` → `MerchantSubscriptionInvoiceResponse`
+- `ModifierGroupsListResponse` → `ModifierGroupListResponse`
+- `ModifierGroupsCreateResponse`, `ModifierGroupsGetResponse`, `ModifierGroupsRemoveResponse`, `ModifierGroupsUpdateResponse` → `ModifierGroupResponse`
+- `ModifierSetsListResponse` → `ModifierSetListResponse`
+- `ModifierSetsCreateResponse`, `ModifierSetsGetResponse`, `ModifierSetsRemoveResponse`, `ModifierSetsUpdateResponse` → `ModifierSetResponse`
+- `OnboardingStartFlowResponse` → `OnboardingStartResponse`
+- `OnboardingAdvanceResponse`, `OnboardingGetStateResponse` → `OnboardingStateResponse`
+- `OnboardingVerifyEmailCodeResponse` → `OnboardingVerifyEmailResponse`
+- `MeListOrderActivitiesResponse`, `OrdersListActivitiesResponse` → `OrderActivityListResponse`
+- `MeListOrdersResponse`, `OrdersListResponse` → `OrderListResponse`
+- `OrdersListPaymentAttemptsResponse` → `OrderPaymentAttemptListResponse`
+- `OrdersGetPaymentAttemptResponse` → `OrderPaymentAttemptResponse`
+- `OrdersCancelPaymentResponse`, `OrdersCapturePaymentResponse` → `OrderPaymentLifecycleResponse`
+- `FulfillmentsUpdateResponse`, `MeGetOrderResponse`, `OrdersAddChargeResponse`, `OrdersAddLineItemsResponse`, `OrdersApplyDiscountResponse`, `OrdersCloseSessionResponse`, `OrdersCreateResponse`, `OrdersDeleteChargeResponse`, `OrdersDeleteLineItemResponse`, `OrdersGetResponse`, `OrdersRemoveDiscountsResponse`, `OrdersRepriceDiscountsResponse`, `OrdersResolveInventoryExceptionResponse`, `OrdersUpdateChargeResponse`, `OrdersUpdateResponse` → `OrderResponse`
+- `OrganizationsListResponse` → `OrganizationListResponse`
+- `OrganizationsListMembershipsResponse` → `OrganizationMembershipListResponse`
+- `OrganizationsGrantMembershipResponse` → `OrganizationMembershipResponse`
+- `OrganizationsCreateResponse`, `OrganizationsGetResponse`, `OrganizationsRemoveResponse`, `OrganizationsUpdateResponse` → `OrganizationResponse`
+- `PackagesListPackageItemsResponse` → `PackageItemListResponse`
+- `PackagesCreateItemResponse`, `PackagesDeleteItemResponse`, `PackagesGetItemResponse`, `PackagesUpdateItemResponse` → `PackageItemResponse`
+- `MeListPackagesResponse`, `PackagesListResponse` → `PackageListResponse`
+- `PackagesGetResponse` → `PackageResponse`
+- `PackagesTransitionResponse` → `PackageStatusUpdateResponse`
+- `DeveloperListPartnerAppInstallsResponse` → `PartnerAppInstallListResponse`
+- `DeveloperGetPartnerAppInstallResponse`, `DeveloperRevokePartnerAppInstallResponse`, `DeveloperRevokePartnerEnvironmentGrantResponse` → `PartnerAppInstallResponse`
+- `DeveloperListPartnerAppsResponse` → `PartnerAppListResponse`
+- `DeveloperGetPartnerAppResponse`, `DeveloperUpdatePartnerAppResponse` → `PartnerAppResponse`
+- `OauthPreviewPartnerInstallAuthorizationResponse` → `PartnerAuthorizePreviewResponse`
+- `OrdersCancelPaymentAttemptResponse`, `OrdersPayResponse` → `PayOrderResponse`
+- `MeListPaymentsResponse`, `PaymentIntentsListResponse` → `PaymentIntentListResponse`
+- `PaymentIntentsCancelResponse`, `PaymentIntentsCaptureResponse`, `PaymentIntentsConfirmResponse`, `PaymentIntentsUpdateResponse` → `PaymentIntentResponse`
+- `PaymentLinksListResponse` → `PaymentLinkListResponse`
+- `PaymentLinksCreateResponse`, `PaymentLinksGetResponse`, `PaymentLinksUpdateResponse` → `PaymentLinkResponse`
+- `PaymentMethodDomainsListResponse` → `PaymentMethodDomainListResponse`
+- `PaymentMethodDomainsCreateResponse`, `PaymentMethodDomainsGetResponse`, `PaymentMethodDomainsUpdateResponse` → `PaymentMethodDomainResponse`
+- `MeListPaymentMethodsResponse`, `PaymentMethodsListResponse` → `PaymentMethodListResponse`
+- `MeSetDefaultPaymentMethodResponse`, `PaymentMethodsGetResponse`, `PaymentMethodsSetDefaultResponse` → `PaymentMethodResponse`
+- `AnalyticsGetPaymentVolumeTimeseriesResponse` → `PaymentVolumeTimeseriesResponse`
+- `PayoutSettingsListPayoutDestinationsResponse` → `PayoutDestinationListResponse`
+- `PayoutSettingsDeletePayoutDestinationResponse`, `PayoutSettingsGetPayoutDestinationResponse`, `PayoutSettingsUpdatePayoutDestinationResponse` → `PayoutDestinationResponse`
+- `PayoutsListEntriesResponse` → `PayoutEntryListResponse`
+- `PayoutsListResponse` → `PayoutListResponse`
+- `PayoutsCancelResponse`, `PayoutsCreateResponse`, `PayoutsGetResponse` → `PayoutResponse`
+- `PayoutSettingsGetResponse`, `PayoutSettingsUpdateResponse` → `PayoutSettingsResponse`
+- `ReturnsProcessExistingResponse` → `ProcessExistingReturnResponse`
+- `ProductsListResponse` → `ProductListResponse`
+- `ProductsListOptionsResponse` → `ProductOptionListResponse`
+- `ProductsGetOptionResponse` → `ProductOptionResponse`
+- `ProductsCreateResponse`, `ProductsGetResponse`, `ProductsRemoveResponse`, `ProductsUpdateResponse` → `ProductResponse`
+- `ProductsListVariantsResponse` → `ProductVariantListResponse`
+- `ProductsCreateVariantResponse`, `ProductsDeleteVariantResponse`, `ProductsGetVariantResponse`, `ProductsUpdateVariantResponse` → `ProductVariantResponse`
+- `PromotionsListCodesResponse` → `PromotionCodeListResponse`
+- `PromotionsResolveCodeResponse` → `PromotionCodeResolutionResponse`
+- `PromotionsCreateCodeResponse`, `PromotionsDeleteCodeResponse`, `PromotionsUpdateCodeResponse` → `PromotionCodeResponse`
+- `PromotionsListResponse` → `PromotionListResponse`
+- `PromotionsCreateResponse`, `PromotionsGetResponse`, `PromotionsRemoveResponse`, `PromotionsUpdateResponse` → `PromotionResponse`
+- `PaymentLinksGetPublicResponse` → `PublicPaymentLinkResponse`
+- `CreditNotesListRefundsResponse`, `MeListRefundsResponse`, `RefundsListResponse` → `RefundListResponse`
+- `CreditNotesCreateRefundResponse`, `RefundsCreateResponse`, `RefundsGetResponse`, `RefundsUpdateResponse` → `RefundResponse`
+- `InvoicesRegeneratePublicLinkResponse` → `RegenerateInvoiceLinkResponse`
+- `ReportsListResponse` → `ReportListResponse`
+- `ReportsCreateResponse`, `ReportsGetResponse` → `ReportResponse`
+- `CheckoutSessionsCreateResponse`, `MeCreateReturnResolutionCheckoutSessionResponse`, `PaymentLinksResolveResponse`, `ReturnResolutionsGetOrCreateCheckoutSessionResponse` → `ResolvePaymentLinkResponse`
+- `DeveloperGetResourceTimelineResponse` → `ResourceTimelineResponse`
+- `ReviewsListResponse` → `ReviewListResponse`
+- `ReviewsApproveResponse`, `ReviewsDeclineResponse`, `ReviewsGetResponse` → `ReviewResponse`
+- `OrganizationsRevokeMembershipResponse` → `RevokeOrganizationMembershipResponse`
+- `RiskListsListRiskListItemsResponse` → `RiskListItemListResponse`
+- `RiskListsDeleteItemResponse`, `RiskListsGetItemResponse` → `RiskListItemResponse`
+- `RiskListsAddItemsResponse` → `RiskListItemResultsResponse`
+- `RiskListsListResponse` → `RiskListListResponse`
+- `RiskListsCreateResponse`, `RiskListsGetResponse`, `RiskListsRemoveResponse`, `RiskListsUpdateResponse` → `RiskListResourceResponse`
+- `RiskRulesGetAttributeRegistryResponse` → `RiskRuleAttributeRegistryResponse`
+- `RiskRulesListResponse` → `RiskRuleListResponse`
+- `RiskRulesCreateResponse`, `RiskRulesGetResponse`, `RiskRulesRemoveResponse`, `RiskRulesUpdateResponse` → `RiskRuleResponse`
+- `RiskPreviewsCreateResponse` → `RiskRuleValidationResponse`
+- `DeveloperRotatePartnerAppSecretResponse` → `RotatePartnerAppSecretResponse`
+- `DeveloperListSandboxesResponse` → `SandboxListResponse`
+- `DeveloperDeleteSandboxResponse`, `DeveloperGetSandboxResponse`, `DeveloperResetSandboxResponse` → `SandboxResponse`
+- `DeveloperCreateSandboxResponse` → `SandboxWithAPIKeyResponse`
+- `MeSavePaymentMethodResponse`, `PaymentMethodsSaveResponse` → `SavePaymentMethodResponse`
+- `SettingsGetEffectiveResponse`, `SettingsGetResponse`, `SettingsUpdateResponse` → `SettingsResponse`
+- `MeListShipmentsResponse`, `ShipmentsListResponse` → `ShipmentListResponse`
+- `ShipmentsGetResponse` → `ShipmentResponse`
+- `AnalyticsGetSubscriptionResponse` → `SubscriptionAnalyticsResponse`
+- `MeListSubscriptionsResponse`, `SubscriptionsListResponse` → `SubscriptionListResponse`
+- `SubscriptionsListPaymentRetriesResponse` → `SubscriptionPaymentRetryListResponse`
+- `SubscriptionsCreatePaymentRetryResponse`, `SubscriptionsGetPaymentRetryResponse` → `SubscriptionPaymentRetryResponse`
+- `SubscriptionPlansListResponse` → `SubscriptionPlanListResponse`
+- `SubscriptionPlansCreateResponse`, `SubscriptionPlansGetResponse`, `SubscriptionPlansRemoveResponse`, `SubscriptionPlansUpdateResponse` → `SubscriptionPlanResponse`
+- `MeChangeSubscriptionPaymentMethodResponse`, `MeGetSubscriptionResponse`, `MePauseSubscriptionResponse`, `MeReactivateSubscriptionResponse`, `MeResumeSubscriptionResponse`, `SubscriptionsChangePaymentMethodResponse`, `SubscriptionsCreateResponse`, `SubscriptionsGetResponse`, `SubscriptionsPauseResponse`, `SubscriptionsReactivateResponse`, `SubscriptionsResumeResponse`, `SubscriptionsSkipCycleResponse`, `SubscriptionsUpdateBillingScheduleResponse`, `SubscriptionsUpdateResponse` → `SubscriptionResponse`
+- `OrganizationsTransferOwnershipResponse` → `TransferOrganizationOwnershipResponse`
+- `PackagesUpdateResponse` → `UpdatePackageResponse`
+- `ShipmentsUpdateResponse` → `UpdateShipmentResponse`
+- `PackagesVoidResourceResponse` → `VoidPackageResponse`
+- `ShipmentsVoidResourceResponse` → `VoidShipmentResponse`
+- `WebhookDeliveriesResendResponse`, `WebhookEndpointsCreateWebhookTestEventResponse` → `WebhookDeliveryActionResponse`
+- `WebhookDeliveriesListAttemptsResponse` → `WebhookDeliveryAttemptListResponse`
+- `WebhookEventsListWebhookDeliveriesResponse` → `WebhookDeliveryListResponse`
+- `WebhookDeliveriesGetResponse` → `WebhookDeliveryResponse`
+- `WebhookEndpointsListResponse` → `WebhookEndpointListResponse`
+- `WebhookEndpointsCreateResponse`, `WebhookEndpointsGetResponse`, `WebhookEndpointsUpdateResponse` → `WebhookEndpointResponse`
+- `WebhookEventsListResponse` → `WebhookEventListResponse`
+- `WebhookEventsGetResponse` → `WebhookEventResponse`
+- `WebhookEventTypesListResponse` → `WebhookEventTypeListResponse`
+- `WebhookEndpointsRotateWebhookSecretResponse` → `WebhookSecretRotationResponse`
+
+</details>
+
 ### Migrating PHP entity representations
 
 PHP response models expose declared nested objects as generated entities, lists of typed entities, and PHP arrays for dictionaries. Node wire behavior is unaffected.

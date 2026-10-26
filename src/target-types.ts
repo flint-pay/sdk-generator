@@ -159,13 +159,19 @@ export function typescriptType(
       if (typeof value === 'number') {
         const representations = shapes.flatMap((shape) => {
           const types = Array.isArray(shape.type) ? shape.type : [shape.type];
-          return types.flatMap((type) =>
-            exactValue(valueInstruction(type, shape.format))
-              ? [shape['x-sdk-number-input'] === 'explicit' ? 'ExactNumber' : 'string']
-              : type === 'integer' || type === 'number'
-                ? [JSON.stringify(value)]
-                : [],
-          );
+          return types.flatMap((type) => {
+            const instruction = valueInstruction(type, shape.format);
+            if (instruction.kind === 'exact-integer')
+              return response
+                ? ['`${bigint}`']
+                : [
+                    shape['x-sdk-number-input'] === 'explicit' ? 'ExactNumber' : '`${bigint}`',
+                    'bigint',
+                  ];
+            if (exactValue(instruction))
+              return [shape['x-sdk-number-input'] === 'explicit' ? 'ExactNumber' : 'string'];
+            return type === 'integer' || type === 'number' ? [JSON.stringify(value)] : [];
+          });
         });
         if (representations.length) return '(' + [...new Set(representations)].join(' | ') + ')';
       }
@@ -180,8 +186,16 @@ export function typescriptType(
       ')';
     return hasDateInput(s, definitions) ? `(${declaration}) | globalThis.Date` : declaration;
   }
-  const typeName = response && !known ? s['x-sdk-type-name'] : undefined;
+  const typeName =
+    !known && s['x-sdk-type-name'] ? s['x-sdk-type-name'] + (response ? '' : 'Input') : undefined;
   if (typeName || s['x-sdk-ref']) {
+    if (arrayContext) {
+      // A named typeless component may admit nonarrays. Its items still constrain
+      // an enclosing array conjunct, so render that view rather than the alias.
+      const target = definitions[s['x-sdk-ref'] ?? s['x-sdk-type-name']!] ?? s;
+      const { 'x-sdk-ref': _reference, 'x-sdk-type-name': _name, ...shape } = target;
+      return render(shape, response, discriminator, known, objectContext, arrayContext);
+    }
     const reference = typeName ?? s['x-sdk-ref'] + (response ? '' : 'Input');
     if (!objectContext) return reference;
     // A recursive alias may also admit nonobjects. Filter it at this use site
@@ -191,6 +205,45 @@ export function typescriptType(
   }
   s = directionalSchema(s, response);
   if (!response && (s.allOf || s.oneOf || s.anyOf)) s = numericEnumDeclaration(s, definitions);
+  if (
+    !response &&
+    s.type === 'object' &&
+    s.properties &&
+    s.oneOf &&
+    !s.allOf &&
+    !s.anyOf &&
+    !s.not
+  ) {
+    const forbidden = (branch: Schema): string[] | undefined => {
+      if (Object.keys(branch).some((key) => !['required', 'not'].includes(key))) return undefined;
+      if (!branch.not) return [];
+      return Object.keys(branch.not).length === 1 && branch.not.required?.length === 1
+        ? branch.not.required
+        : undefined;
+    };
+    const excluded = s.oneOf.map(forbidden);
+    if (excluded.every((keys) => keys !== undefined)) {
+      return s.oneOf
+        .map((branch, index) => {
+          const required = new Set([...(s.required ?? []), ...(branch.required ?? [])]);
+          const absent = new Set(excluded[index]);
+          if ([...required].some((key) => absent.has(key))) return 'never';
+          const fields = objectDeclaration({ ...s, required: [...required] }, false).fields;
+          return (
+            '{ ' +
+            fields
+              .map(
+                ([key, child]) =>
+                  `${documentation ? schemaComment(child) : ''}${JSON.stringify(key)}${required.has(key) ? '' : '?'}: ${absent.has(key) || child.readOnly ? 'never' : render(child)};`,
+              )
+              .join(' ') +
+            (objectDeclaration(s, false).open ? ' [key: string]: unknown;' : '') +
+            ' }'
+          );
+        })
+        .join(' | ');
+    }
+  }
   // Composition branches constrain the same value. Object keywords alone do
   // not exclude scalars, null or arrays, but an enclosing object type does.
   const inheritedObjectContext = objectContext !== undefined;
@@ -202,7 +255,41 @@ export function typescriptType(
   const array = arrayConstraint(s);
   arrayContext = arrayContext === 'array' || array === 'array' ? 'array' : (arrayContext ?? array);
   if (s.oneOf || s.anyOf || s.allOf || s.not) {
-    const { oneOf, anyOf, allOf, not, discriminator: tag, ...base } = s;
+    const fields = new Map<string, Schema[]>();
+    const collect = (shape: Schema): void => {
+      for (const [key, child] of Object.entries(shape.properties ?? {}))
+        fields.set(key, [...(fields.get(key) ?? []), child]);
+      for (const child of shape.allOf ?? []) collect(child);
+    };
+    collect(s);
+    const specialize = (shape: Schema): Schema => {
+      const missing = (shape.required ?? []).filter(
+        (key) => !shape.properties?.[key] && fields.has(key),
+      );
+      return {
+        ...shape,
+        ...(missing.length
+          ? {
+              properties: {
+                ...shape.properties,
+                ...Object.fromEntries(
+                  missing.map((key) => {
+                    const declarations = fields.get(key)!;
+                    return [
+                      key,
+                      declarations.length === 1 ? declarations[0]! : { allOf: declarations },
+                    ];
+                  }),
+                ),
+              },
+            }
+          : {}),
+        ...(shape.allOf ? { allOf: shape.allOf.map(specialize) } : {}),
+        ...(shape.oneOf ? { oneOf: shape.oneOf.map(specialize) } : {}),
+        ...(shape.anyOf ? { anyOf: shape.anyOf.map(specialize) } : {}),
+      };
+    };
+    const { oneOf, anyOf, allOf, not, discriminator: tag, ...base } = specialize(s);
     const parts = [render(base, response, discriminator, known, objectContext, arrayContext)];
     for (const branch of allOf ?? [])
       parts.push(render(branch, response, discriminator, known, objectContext, arrayContext));
@@ -214,7 +301,7 @@ export function typescriptType(
         if (response && !known && nullableAlternative(s) === undefined)
           alternatives.push(
             objectContext === 'object' || branches.every((v) => v.type === 'object')
-              ? 'object'
+              ? 'Record<string, unknown>'
               : 'unknown',
           );
         parts.push(alternatives.map((v) => '(' + v + ')').join(' | '));
@@ -268,8 +355,15 @@ export function typescriptType(
     s['x-sdk-number-input'] === 'explicit' &&
     exactValue(valueInstruction(types[0], s.format))
   )
-    return 'ExactNumber';
-  if (s.enum && exactValue(valueInstruction(types[0], s.format))) return 'string';
+    return valueInstruction(types[0], s.format).kind === 'exact-integer'
+      ? 'ExactNumber | bigint'
+      : 'ExactNumber';
+  if (s.enum && exactValue(valueInstruction(types[0], s.format)))
+    return valueInstruction(types[0], s.format).kind === 'exact-integer'
+      ? response
+        ? '`${bigint}`'
+        : '`${bigint}` | bigint'
+      : 'string';
   if (s.enum && !response)
     return (
       (s.enum
@@ -303,7 +397,11 @@ export function typescriptType(
     case 'number':
       return exactValue(valueInstruction('number', s.format)) ? 'string' : 'number';
     case 'integer':
-      return exactValue(valueInstruction('integer', s.format)) ? 'string' : 'number';
+      return exactValue(valueInstruction('integer', s.format))
+        ? response
+          ? '`${bigint}`'
+          : '`${bigint}` | bigint'
+        : 'number';
     case 'array':
       return `Array<${render(s.items!, response)}>`;
     case undefined:

@@ -102,13 +102,16 @@ test('optional response model fields permit a stable minor release in both targe
   const plan = prepareRelease(f.output, join(f.dir, 'minor'));
   assert.equal(plan.previousVersion, '1.0.0');
   assert(!plan.compatibility.some((c) => c.severity === 'breaking'));
-  // Public factories and PHP getters preserve an existing consumer's omitted field.
+  // Response clients and PHP getters preserve an existing consumer's omitted field.
   const node = await import(new URL('file://' + join(f.output, 'node/index.js')));
-  assert.deepEqual(JSON.parse(JSON.stringify(node.makeValue({ id: 'v' }))), { id: 'v' });
-  assert.deepEqual(JSON.parse(JSON.stringify(node.makeValue({ id: 'v', label: 'new' }))), {
-    id: 'v',
-    label: 'new',
-  });
+  assert.equal(node.makeValue, undefined, 'response-only models have no input factory');
+  for (const value of [{ id: 'v' }, { id: 'v', label: 'new' }]) {
+    const client = new node.Client({
+      baseUrl: 'https://example.invalid',
+      transport: async () => new Response(JSON.stringify(value)),
+    });
+    assert.deepEqual(JSON.parse(JSON.stringify((await client.api.one()).data)), value);
+  }
   const php = spawnSync(
     'php',
     [

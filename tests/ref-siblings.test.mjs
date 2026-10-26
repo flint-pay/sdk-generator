@@ -157,7 +157,9 @@ test('description siblings retain named identity despite structurally identical 
   for (const target of ['node', 'php']) {
     assert.match(
       files.get(target + '/MODELS.md'),
-      /\| `annotated` \| Required \| \[SecondRecord\]\(MODELS.md#secondrecord\) \| Record at this field\./,
+      target === 'node'
+        ? /\| `annotated` \| Required \| \[FirstRecord\]\(MODELS.md#firstrecord\) \| Record at this field\./
+        : /\| `annotated` \| Required \| \[SecondRecord\]\(MODELS.md#secondrecord\) \| Record at this field\./,
     );
     assert.match(
       files.get(target + '/MODELS.md'),
@@ -172,7 +174,8 @@ test('description siblings retain named identity despite structurally identical 
     files.get('php/src/classes/ApiSendValueResponse200.php'),
     /getOther\(\): FirstRecord/,
   );
-  assert.match(renderedDeclarations(files), /"annotated": SecondRecord/);
+  assert.match(renderedDeclarations(files), /"annotated": FirstRecord;/);
+  assert.match(renderedDeclarations(files), /"annotated": SecondRecordInput;/);
   const value = { plain: { id: 'plain' }, annotated: { id: 'field' }, other: { id: 'other' } };
   await fixtures(i, [
     accepted('named records', value),
@@ -2429,7 +2432,7 @@ test('pagination item declarations intersect sibling constraints while retaining
     file,
     `import {Client} from './index.js';
 const c = new Client({baseUrl:'https://example.invalid'});
-${itemVariants.map((_, n) => `for await(const item of c.api.listValues${n}Items({})){const value:string=item;}`).join('\n')}
+${itemVariants.map((_, n) => `type Item${n} = ReturnType<Client['api']['listValues${n}Items']> extends AsyncGenerator<infer I> ? I : never; const control${n}:Item${n}='ab'; for await(const item of c.api.listValues${n}Items({})){const value:string=item;}`).join('\n')}
 for await(const item of c.api.listObjectsItems({})){const id:string=item.id;const name:string=item.name;}
 for await(const item of c.api.listChoicesItems({})){const value:string|boolean=item;
 // @ts-expect-error Boolean alternatives must not be lost.

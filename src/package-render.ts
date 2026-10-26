@@ -2,9 +2,68 @@ import ts from 'typescript';
 import { codecClosure, packagePlan } from './package-plan.js';
 import type { CompiledRuntimePlan } from './runtime-plan.js';
 import type { CodecPlan } from './codec-plan.js';
+import type { TypeCertificate } from './type-certificate.js';
 import { stable } from './canonical.js';
 
 export type Put = (path: string, value: string) => void;
+
+/** Use the pinned TypeScript printer, then wrap long unions at syntax boundaries. */
+export function formatNodeDeclaration(text: string): string {
+  const parse = (value: string) =>
+    ts.createSourceFile('sdk.d.ts', value, ts.ScriptTarget.Latest, true);
+  const printed = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed }).printFile(parse(text));
+  const source = parse(printed);
+  const breaks = new Map<number, string>();
+  const visit = (node: ts.Node): void => {
+    if (
+      (ts.isUnionTypeNode(node) || ts.isIntersectionTypeNode(node)) &&
+      node.getWidth(source) > 100
+    ) {
+      const line = printed.lastIndexOf('\n', node.getStart(source)) + 1;
+      const indent = printed.slice(line).match(/^\s*/)?.[0].replaceAll('\n', '') ?? '';
+      for (let i = 1; i < node.types.length; i++) {
+        const previous = node.types[i - 1]!;
+        const next = node.types[i]!;
+        const between = printed.slice(previous.end, next.getStart(source));
+        const offset = between.search(/[|&]/);
+        if (offset >= 0) breaks.set(previous.end + offset, '\n' + indent + '    ');
+      }
+    }
+    if ((ts.isNamedImports(node) || ts.isNamedExports(node)) && node.getWidth(source) > 100) {
+      const line = printed.lastIndexOf('\n', node.getStart(source)) + 1;
+      const indent = printed.slice(line).match(/^\s*/)?.[0].replaceAll('\n', '') ?? '';
+      for (const element of node.elements)
+        breaks.set(element.getStart(source), '\n' + indent + '    ');
+      breaks.set(node.end - 1, '\n' + indent);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  let result = printed;
+  for (const [position, prefix] of [...breaks].sort(([a], [b]) => b - a))
+    result = result.slice(0, position).trimEnd() + prefix + result.slice(position);
+  return result
+    .split('\n')
+    .map((line) => {
+      const single = line.match(/^(\s*)\/\*\* (.*) \*\/$/);
+      const comment = single ?? line.match(/^(\s*) \* (.*)$/);
+      if (!comment || line.length <= 100) return line;
+      const indent = comment[1]!;
+      const lines = single ? [indent + '/**'] : [];
+      let current = indent + ' *';
+      for (const word of comment[2]!.split(/\s+/)) {
+        if (current.length + word.length > 98 && current !== indent + ' *') {
+          lines.push(current);
+          current = indent + ' *';
+        }
+        current += ' ' + word;
+      }
+      lines.push(current);
+      if (single) lines.push(indent + ' */');
+      return lines.join('\n');
+    })
+    .join('\n');
+}
 const json = (value: unknown) => JSON.stringify(value);
 const literal = (value: unknown) => json(value).replaceAll('"__proto__":', '["__proto__"]:');
 const file = (name: string) => encodeURIComponent(name);
@@ -66,14 +125,47 @@ export function nodeDescriptors(runtime: CompiledRuntimePlan, put: Put) {
     ),
     object: `{${names.map((name, index) => `[${json(name)}]:c${index}()`).join(',')}}`,
   });
+  // Public type definitions are interned across certificates, independently of
+  // codec identity. Each resource loads only its reachable declaration graph.
+  const resourceTypes: Record<string, string[]> = {};
+  const typeData = new Map<string, { raw: string; signature: string }>();
+  const certificateKeys = ['outputCertificate', 'payloadCertificate', 'itemCertificate'] as const;
   const loaders: string[] = [];
   for (const [name, group] of Object.entries(plan.resources)) {
+    const types = new Set<string>();
+    const strip = (certificate: TypeCertificate): TypeCertificate => {
+      for (const [name, declaration] of Object.entries(certificate.definitions)) {
+        types.add(name);
+        const signature = stable(declaration);
+        const previous = typeData.get(name);
+        if (previous && previous.signature !== signature)
+          throw new Error('Conflicting public type ' + name);
+        if (!previous) typeData.set(name, { raw: data(declaration), signature });
+      }
+      return { ...certificate, definitions: {} };
+    };
+    const operations = group.operations.map((operation) => {
+      const result = { ...operation };
+      for (const key of certificateKeys) {
+        const certificate = result[key];
+        if (certificate) result[key] = strip(certificate);
+      }
+      return result;
+    });
+    const names = [...types].sort();
+    resourceTypes[name] = names;
+    const typeImports = dataImports(
+      names.map((name, index) => [typeData.get(name)!.raw, 't' + index]),
+      '../../',
+    );
+    const typeDefinitions = `{${names.map((name, index) => `[${json(name)}]:JSON.parse(t${index})`).join(',')}}`;
+
     const deps = dependencies(group.dependencies, '../../');
-    const raw = data(group.operations, false, `data/resource-${file(name)}.js`);
+    const raw = data(operations, false, `data/resource-${file(name)}.js`);
     resourceData.set(name, raw);
     put(
       `descriptors/resources/${file(name)}.js`,
-      `${deps.imports}\n${dataImports([[raw, raw]], '../../')}\nimport settings from '../settings.js';\nlet value;\nexport default function load() { return value ??= {...settings, operations: JSON.parse(${raw}), definitions:${deps.object}}; }\n`,
+      `${deps.imports}\n${typeImports}\n${dataImports([[raw, raw]], '../../')}\nimport settings from '../settings.js';\nimport { withTypeDefinitions } from '../../type-certificate.js';\nlet value;\nexport default function load() { return value ??= {...settings, operations:withTypeDefinitions(JSON.parse(${raw}), ${typeDefinitions}), definitions:${deps.object}}; }\n`,
     );
     loaders.push(name);
   }
@@ -129,13 +221,18 @@ export function nodeDescriptors(runtime: CompiledRuntimePlan, put: Put) {
       `import * as data from './data.js';
 import settings from './settings.js';
 import { lazyCodec, preparedCodec } from '../descriptor-source.js';
+import { withTypeDefinitions } from '../type-certificate.js';
+const publicTypeKeys = ${literal(Object.fromEntries([...typeData].map(([name, entry]) => [name, entry.raw])))};
+const publicTypeDependencies = ${literal(resourceTypes)};
+const publicTypes = new Map();
+function publicDefinitions(names) { return Object.fromEntries(names.map(name => { if (!publicTypes.has(name)) publicTypes.set(name, JSON.parse(data[publicTypeKeys[name]])); return [name, publicTypes.get(name)]; })); }
 const codecKeys = ${literal(Object.fromEntries(codecData))};
 const resourceKeys = ${literal(Object.fromEntries(resourceData))};
 const dependencies = ${literal(Object.fromEntries(Object.entries(plan.resources).map(([name, group]) => [name, group.dependencies])))};
 const factories = ${literal(Object.fromEntries(factoryData))};
 const codecs = new Map(), resources = new Map(), models = new Map();
 function definitions(names) { return Object.fromEntries(names.map(name => { if (!codecs.has(name)) codecs.set(name, data[codecKeys[name]]()); return [name, codecs.get(name)]; })); }
-export function resource(name) { if (!resources.has(name)) resources.set(name, {...settings, operations:JSON.parse(data[resourceKeys[name]]), definitions:definitions(dependencies[name])}); return resources.get(name); }
+export function resource(name) { if (!resources.has(name)) resources.set(name, {...settings, operations:withTypeDefinitions(JSON.parse(data[resourceKeys[name]]), publicDefinitions(publicTypeDependencies[name])), definitions:definitions(dependencies[name])}); return resources.get(name); }
 export function modelCodec(name) { if (!models.has(name)) { const entry=factories[name]; models.set(name, preparedCodec(data[entry.data](), definitions(entry.dependencies))); } return models.get(name); }
 let events;
 export function webhook() { return events ??= ${plan.webhook ? `{...settings, webhook:JSON.parse(data.${webhookData}), definitions:definitions(${json(plan.webhook.dependencies)})}` : 'undefined'}; }
@@ -403,12 +500,55 @@ export function compactNodeDeclarations(files: Map<string, string>, prefix: stri
   const groups = new Map<string, string[]>();
   for (const [path, destination] of destinations)
     groups.set(destination, [...(groups.get(destination) ?? []), path]);
+  const moduleTarget = (module: string, path: string, destination: string) => {
+    const base =
+      module.startsWith('../declarations/') || module.startsWith('./declarations/')
+        ? directory
+        : path.startsWith(directory) && module.startsWith('./')
+          ? directory
+          : undefined;
+    const target = base
+      ? base + module.slice(module.lastIndexOf('/') + 1).replace(/\.js$/, '.d.ts')
+      : undefined;
+    const mapped = target ? destinations.get(target) : undefined;
+    const specifier = mapped
+      ? (destination.startsWith(directory)
+          ? './'
+          : destination.slice(prefix.length).includes('/')
+            ? '../declarations/'
+            : './declarations/') + mapped.slice(directory.length).replace(/\.d\.ts$/, '.js')
+      : module;
+    return { mapped, specifier };
+  };
   const rewrite = (paths: string[], destination: string): string => {
     const imports = new Map<string, Map<string, string>>();
     const exports = new Map<string, { module: string; typeOnly: boolean; names: Set<string> }>();
     const bodies: string[] = [];
     for (const path of paths) {
-      const source = ts.createSourceFile(path, files.get(path)!, ts.ScriptTarget.Latest, true);
+      let text = files.get(path)!;
+      const parsed = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
+      const replacements: { start: number; end: number; value: string }[] = [];
+      const visit = (node: ts.Node): void => {
+        if (
+          ts.isImportTypeNode(node) &&
+          ts.isLiteralTypeNode(node.argument) &&
+          ts.isStringLiteral(node.argument.literal)
+        ) {
+          const literal = node.argument.literal;
+          const { specifier } = moduleTarget(literal.text, path, destination);
+          if (specifier !== literal.text)
+            replacements.push({
+              start: literal.getStart(parsed),
+              end: literal.end,
+              value: JSON.stringify(specifier),
+            });
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(parsed);
+      for (const replacement of replacements.sort((a, b) => b.start - a.start))
+        text = text.slice(0, replacement.start) + replacement.value + text.slice(replacement.end);
+      const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
       for (const statement of source.statements) {
         if (
           (ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)) &&
@@ -416,23 +556,7 @@ export function compactNodeDeclarations(files: Map<string, string>, prefix: stri
           ts.isStringLiteral(statement.moduleSpecifier)
         ) {
           const module = statement.moduleSpecifier.text;
-          const base =
-            module.startsWith('../declarations/') || module.startsWith('./declarations/')
-              ? directory
-              : path.startsWith(directory) && module.startsWith('./')
-                ? directory
-                : undefined;
-          const target = base
-            ? base + module.slice(module.lastIndexOf('/') + 1).replace(/\.js$/, '.d.ts')
-            : undefined;
-          const mapped = target ? destinations.get(target) : undefined;
-          const specifier = mapped
-            ? (destination.startsWith(directory)
-                ? './'
-                : destination.slice(prefix.length).includes('/')
-                  ? '../declarations/'
-                  : './declarations/') + mapped.slice(directory.length).replace(/\.d\.ts$/, '.js')
-            : module;
+          const { mapped, specifier } = moduleTarget(module, path, destination);
           if (mapped === destination && ts.isImportDeclaration(statement)) continue;
           if (ts.isImportDeclaration(statement)) {
             const bindings = statement.importClause?.namedBindings;
@@ -485,7 +609,7 @@ export function compactNodeDeclarations(files: Map<string, string>, prefix: stri
       path.endsWith('.d.ts') &&
       !destinations.has(path) &&
       (path === directory + 'Client.d.ts' ||
-        /from ['\"]\.\.?\/declarations\//.test(files.get(path)!))
+        /(?:from |import\()['\"]\.\.?\/declarations\//.test(files.get(path)!))
     )
       updates.set(path, rewrite([path], path));
   for (const path of destinations.keys()) files.delete(path);
