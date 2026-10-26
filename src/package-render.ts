@@ -2,6 +2,7 @@ import ts from 'typescript';
 import { codecClosure, packagePlan } from './package-plan.js';
 import type { CompiledRuntimePlan } from './runtime-plan.js';
 import type { CodecPlan } from './codec-plan.js';
+import type { TypeCertificate } from './type-certificate.js';
 import { stable } from './canonical.js';
 
 export type Put = (path: string, value: string) => void;
@@ -124,14 +125,47 @@ export function nodeDescriptors(runtime: CompiledRuntimePlan, put: Put) {
     ),
     object: `{${names.map((name, index) => `[${json(name)}]:c${index}()`).join(',')}}`,
   });
+  // Public type definitions are interned across certificates, independently of
+  // codec identity. Each resource loads only its reachable declaration graph.
+  const resourceTypes: Record<string, string[]> = {};
+  const typeData = new Map<string, { raw: string; signature: string }>();
+  const certificateKeys = ['outputCertificate', 'payloadCertificate', 'itemCertificate'] as const;
   const loaders: string[] = [];
   for (const [name, group] of Object.entries(plan.resources)) {
+    const types = new Set<string>();
+    const strip = (certificate: TypeCertificate): TypeCertificate => {
+      for (const [name, declaration] of Object.entries(certificate.definitions)) {
+        types.add(name);
+        const signature = stable(declaration);
+        const previous = typeData.get(name);
+        if (previous && previous.signature !== signature)
+          throw new Error('Conflicting public type ' + name);
+        if (!previous) typeData.set(name, { raw: data(declaration), signature });
+      }
+      return { ...certificate, definitions: {} };
+    };
+    const operations = group.operations.map((operation) => {
+      const result = { ...operation };
+      for (const key of certificateKeys) {
+        const certificate = result[key];
+        if (certificate) result[key] = strip(certificate);
+      }
+      return result;
+    });
+    const names = [...types].sort();
+    resourceTypes[name] = names;
+    const typeImports = dataImports(
+      names.map((name, index) => [typeData.get(name)!.raw, 't' + index]),
+      '../../',
+    );
+    const typeDefinitions = `{${names.map((name, index) => `[${json(name)}]:JSON.parse(t${index})`).join(',')}}`;
+
     const deps = dependencies(group.dependencies, '../../');
-    const raw = data(group.operations, false, `data/resource-${file(name)}.js`);
+    const raw = data(operations, false, `data/resource-${file(name)}.js`);
     resourceData.set(name, raw);
     put(
       `descriptors/resources/${file(name)}.js`,
-      `${deps.imports}\n${dataImports([[raw, raw]], '../../')}\nimport settings from '../settings.js';\nlet value;\nexport default function load() { return value ??= {...settings, operations: JSON.parse(${raw}), definitions:${deps.object}}; }\n`,
+      `${deps.imports}\n${typeImports}\n${dataImports([[raw, raw]], '../../')}\nimport settings from '../settings.js';\nimport { withTypeDefinitions } from '../../type-certificate.js';\nlet value;\nexport default function load() { return value ??= {...settings, operations:withTypeDefinitions(JSON.parse(${raw}), ${typeDefinitions}), definitions:${deps.object}}; }\n`,
     );
     loaders.push(name);
   }
@@ -187,13 +221,18 @@ export function nodeDescriptors(runtime: CompiledRuntimePlan, put: Put) {
       `import * as data from './data.js';
 import settings from './settings.js';
 import { lazyCodec, preparedCodec } from '../descriptor-source.js';
+import { withTypeDefinitions } from '../type-certificate.js';
+const publicTypeKeys = ${literal(Object.fromEntries([...typeData].map(([name, entry]) => [name, entry.raw])))};
+const publicTypeDependencies = ${literal(resourceTypes)};
+const publicTypes = new Map();
+function publicDefinitions(names) { return Object.fromEntries(names.map(name => { if (!publicTypes.has(name)) publicTypes.set(name, JSON.parse(data[publicTypeKeys[name]])); return [name, publicTypes.get(name)]; })); }
 const codecKeys = ${literal(Object.fromEntries(codecData))};
 const resourceKeys = ${literal(Object.fromEntries(resourceData))};
 const dependencies = ${literal(Object.fromEntries(Object.entries(plan.resources).map(([name, group]) => [name, group.dependencies])))};
 const factories = ${literal(Object.fromEntries(factoryData))};
 const codecs = new Map(), resources = new Map(), models = new Map();
 function definitions(names) { return Object.fromEntries(names.map(name => { if (!codecs.has(name)) codecs.set(name, data[codecKeys[name]]()); return [name, codecs.get(name)]; })); }
-export function resource(name) { if (!resources.has(name)) resources.set(name, {...settings, operations:JSON.parse(data[resourceKeys[name]]), definitions:definitions(dependencies[name])}); return resources.get(name); }
+export function resource(name) { if (!resources.has(name)) resources.set(name, {...settings, operations:withTypeDefinitions(JSON.parse(data[resourceKeys[name]]), publicDefinitions(publicTypeDependencies[name])), definitions:definitions(dependencies[name])}); return resources.get(name); }
 export function modelCodec(name) { if (!models.has(name)) { const entry=factories[name]; models.set(name, preparedCodec(data[entry.data](), definitions(entry.dependencies))); } return models.get(name); }
 let events;
 export function webhook() { return events ??= ${plan.webhook ? `{...settings, webhook:JSON.parse(data.${webhookData}), definitions:definitions(${json(plan.webhook.dependencies)})}` : 'undefined'}; }

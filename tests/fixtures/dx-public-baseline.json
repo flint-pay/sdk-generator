@@ -20,14 +20,14 @@
       "name": "flint",
       "api": "tests/providers/flint/openapi.json",
       "config": "tests/providers/flint/sdk.json",
-      "nodeDeclarationsSha256": "fee20bb2ee6a73d4e8c96e8ecd00182395a63b01e9f65cfe7319e854ffe52eb5",
+      "nodeDeclarationsSha256": "b8a08d0c3ffa167b132d9c3db99a6661eef7a8c3831e01a197a4063f6762442d",
       "phpDeclarationsSha256": "07b58f9d42ff22dd7b5a960601d76af01db1284767e7be979fd7b95afa16c927"
     },
     {
       "name": "risk",
       "api": "tests/providers/flint/risk-openapi.json",
       "config": "tests/providers/flint/risk-sdk.json",
-      "nodeDeclarationsSha256": "e5bd9c4c009ab1bcf237fdcf70c3c1a8de121d756bc470ad3552d1e8a7d20210",
+      "nodeDeclarationsSha256": "370e77fea5452bc8e46850fb7e10447e154166da0773fdde903d4ad1251e2acf",
       "phpDeclarationsSha256": "a28d3352104effef3fba124db6af53f4b6fa8ca6eb374811768ace85cf21123b"
     }
   ]

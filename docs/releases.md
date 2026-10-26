@@ -247,6 +247,9 @@ PHP packages no longer include `src/schema-definitions.json` or `SchemaRegistry:
 
 ### TypeScript consumer types
 
+- Future object alternatives now include `Record<string, unknown>` rather than `object`. An `in` check alone no longer certifies a known variant's field type; use the generated known-variant predicate or check the field value. This also applies to nested alternatives and `WithResponse` envelopes. Responses, projected payloads and pagination items are checked recursively against their emitted public types. Incompatible successes fail with a protocol error and retain `raw`. Referenced pagination arrays now expose their actual element type instead of `never`.
+- Error details are certified against the complete `SdkErrorDetails` union across statuses, operations and built-in runtime details. A known key from a different member can select that member in TypeScript; incompatible combinations therefore yield `details === undefined`, with `raw` retained. Treat details as optional even for declared error statuses. Known-response predicates return false and webhook verification returns `known: false` when retained fields violate the corresponding public union.
+
 Regeneration changes the Node type surface. PHP representations and wire behavior remain unchanged.
 
 - Use `${bigint}` for int64/uint64 strings; bigint inputs serialize without precision loss. Replace broad `string` variables with validated integer strings or bigint. Decimal schemas retain `string`, since `${number}` accepts invalid exact-decimal spellings. Integer inputs, including `ExactNumber` wrappers, reject decimal/exponent spellings and trailing line breaks in both runtimes. Runtime format/range validation still applies.

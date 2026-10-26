@@ -301,7 +301,7 @@ export function typescriptType(
         if (response && !known && nullableAlternative(s) === undefined)
           alternatives.push(
             objectContext === 'object' || branches.every((v) => v.type === 'object')
-              ? 'object'
+              ? 'Record<string, unknown>'
               : 'unknown',
           );
         parts.push(alternatives.map((v) => '(' + v + ')').join(' | '));

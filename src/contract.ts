@@ -1,3 +1,4 @@
+import { isReservedTypeName } from './naming.js';
 import { locateDiagnostic } from './input-diagnostics.js';
 import { requestOption } from './request-options.js';
 import { validateRequestStyle, validatePositional, type RequestStyle } from './request-style.js';
@@ -282,19 +283,13 @@ export const hash = (value: string): string => createHash('sha256').update(value
 const fail = (p: string, m: string): never => {
   throw new Diagnostic(p, m);
 };
-// TypeScript keywords are case-sensitive and may still be valid property names.
-const reservedTypeNames = new Set(
-  'debugger export import in super this typeof with package arguments keyof infer unique'.split(
-    ' ',
-  ),
-);
 function modelName(
   value: unknown,
   path: string,
   targets: Config['targets'],
 ): asserts value is string {
   name(value, path);
-  if ((!targets || targets.includes('node')) && reservedTypeNames.has(value))
+  if ((!targets || targets.includes('node')) && isReservedTypeName(value))
     fail(path, 'model name is a TypeScript reserved word; customize it with config.models');
 }
 function name(value: unknown, path: string, method = false): asserts value is string {

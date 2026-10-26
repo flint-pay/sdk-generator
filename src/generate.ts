@@ -1,3 +1,4 @@
+import { RUNTIME_ERROR_DETAILS } from './public-type-plan.js';
 import { substituteTemplate } from './template.js';
 import {
   withGenerationRecovery,
@@ -131,7 +132,7 @@ function runtimeIdentity(
         stable(
           [...files].filter(([name]) =>
             target === 'node'
-              ? /^node\/(runtime|codec-plan|runtime-plan|request-options|descriptor-source|package-plan|response|request)\.js$/.test(
+              ? /^node\/(runtime|type-certificate|codec-plan|runtime-plan|request-options|descriptor-source|package-plan|response|request)\.js$/.test(
                   name,
                 )
               : /^php\/src\/(SchemaAdapter|classes\/(?:Runtime|Codec|Model|SdkError|Result|RequestOptions|ClientOptions|AmbientCredentialProvider|Credential|CredentialProvider|EventStream|ServerSentEvent|Cancellation|ByteStream|CurlByteStream|RawNumber|ParsedNumber|ExactNumber|SdkResponse|Errors\/\w+|Internal\/DescriptorSource))\.php$/.test(
@@ -1304,12 +1305,17 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     );
     put(
       'runtime.js',
-      readFileSync(join(here, 'runtime.js'), 'utf8').replace(
-        /\n\/\/# sourceMappingURL=.*\n?$/,
-        '\n',
-      ),
+      readFileSync(join(here, 'runtime.js'), 'utf8')
+        .replace(/\n\/\/# sourceMappingURL=.*\n?$/, '\n')
+        .replace(
+          'const publicErrorDetailsCertificate = undefined;',
+          `const publicErrorDetailsCertificate = ${js(targetPlan.runtime.errorDetailsCertificate)};`,
+        ),
     );
-    let runtimeDeclarations = readFileSync(join(here, 'runtime.d.ts'), 'utf8');
+    let runtimeDeclarations = readFileSync(join(here, 'runtime.d.ts'), 'utf8').replace(
+      /export type RuntimeErrorDetails = [\s\S]*?;\nexport declare class SdkError/,
+      `export type RuntimeErrorDetails = ${RUNTIME_ERROR_DETAILS};\nexport declare class SdkError`,
+    );
     if (targetPlan.node.errorTypes) {
       const { code, details } = targetPlan.node.errorTypes;
       const qualify = (type: string) =>
@@ -1330,10 +1336,12 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
           .replaceAll('\n        code: string', '\n        code: SdkErrorCode')
           .replaceAll('        details: unknown', '        details: SdkErrorDetails | undefined') +
         runtimeDeclarations.slice(end) +
-        `\nexport type SdkErrorCode = (${qualify(code)}) & string;\nexport type SdkErrorDetails = ${qualify(details)} | RuntimeErrorDetails;\n`;
+        `\nexport type SdkErrorCode = (${qualify(code)}) & string;\nexport type SdkErrorDetails = ${qualify(details)};\n`;
     }
     put('runtime.d.ts', runtimeDeclarations);
     for (const name of [
+      'type-certificate.js',
+      'type-certificate.d.ts',
       'descriptor-source.js',
       'descriptor-source.d.ts',
       'package-plan.js',
@@ -1429,7 +1437,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         const requestOptionsType =
           targetPlan.node.operations[op.id]!.requestOptions ?? 'RequestOptions';
         const payload = payloadReturns[op.id];
-        const decodePayload = payload?.validate
+        const decodePayload = payload
           ? `, (result, path) => this.#runtime.decodePayload(${js(op.id)}, result, path)`
           : '';
         const call = callPlan(op, targetPlan, requestOptionsType);
@@ -1505,9 +1513,9 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       put(
         `predicates/${prefix}.js`,
         knownCode +
-          `import { isKnownCodec } from '../runtime.js';\nexport function is${prefix}Known(value) { const prepared = codec(); return prepared.some.some(item => isKnownCodec(value, {...item, definitions: prepared.definitions})); }\n`,
+          `import { isKnownCodec } from '../runtime.js';\nexport function is${prefix}Known(value) { const prepared = codec(); return prepared.some.some(item => isKnownCodec(value, {...item, definitions: prepared.definitions}, ${js(known.certificate)})); }\n`,
       );
-      code += `export function is${prefix}Known(value) { const prepared = _sdkModelCodec(${js(prefix)}); return prepared.some.some(codec => isKnownCodec(value, {...codec, definitions: prepared.definitions})); }\n`;
+      code += `export function is${prefix}Known(value) { const prepared = _sdkModelCodec(${js(prefix)}); return prepared.some.some(codec => isKnownCodec(value, {...codec, definitions: prepared.definitions}, ${js(known.certificate)})); }\n`;
     }
     for (const [name, model] of Object.entries(targetPlan.node.models)) {
       if (model.inputReachable === false) continue;
@@ -3518,7 +3526,10 @@ function runtimeGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: bo
           ]),
       'outcome is not_sent, response or unknown. Reconcile an unknown mutation outcome with the provider and the original persisted idempotency key before resubmitting.',
       'Per-attempt timeouts use kind timeout (TimeoutError); overall deadlines use deadline (DeadlineError) with retryAllowed false. Connection refusal and DNS lookup failures use transport (ConnectionError), outcome not_sent and machine-readable codes. Node details.transportCode and PHP details[curlCode]/details[curlError] identify the underlying transport failure without including request URLs.',
-      'HTTP 404 uses kind not_found; HTTP 500–599 uses server. Status is undefined in Node or null in PHP when no response is available. Provider-specific details remain unknown in TypeScript.',
+      'HTTP 404 uses kind not_found; HTTP 500–599 uses server. Status is undefined in Node or null in PHP when no response is available.' +
+        (node
+          ? ' Provider details use their declared TypeScript type when available. Incompatible details, including collisions with other error or runtime-detail shapes, become undefined; raw retains the original body.'
+          : ' Provider-specific details remain unknown in TypeScript.'),
       'The configured errors.messagePath selects the message (default message); missing, blank or non-string values fall back to API returned HTTP followed by the status code. Error paths traverse JSON objects and array indices; scalar values have no child fields.',
       'Server messages and provider codes require original JSON strings; JSON numeric tokens never match string retry codes. Parsed details retain their usual exact numeric representation.',
     ]) +
@@ -3604,7 +3615,9 @@ function runtimeGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: bo
     `\n### Objects, optional fields and unknown values\n\n` +
     bullets([
       'Shaped TypeScript objects have no implicit index signature: misspelled input literals and response fields are errors. Explicitly open objects and dictionaries remain open; variables can still carry extra keys under structural typing.',
-      'Runtime request rules are unchanged and unknown response fields are preserved, requiring explicit narrowing or a dictionary assertion to inspect them. Unknown object variants require a known-variant guard.',
+      node
+        ? 'Runtime request rules are unchanged and unknown response fields are preserved, requiring explicit narrowing or a dictionary assertion to inspect them. Unknown object variants retain Record<string, unknown> through property guards and require a known-variant guard or field validation. Public response values and projections are certified recursively; incompatible successes raise protocol errors with raw recovery.'
+        : 'Runtime request rules are unchanged and unknown response fields are preserved, requiring explicit narrowing or a dictionary assertion to inspect them. Unknown object variants require a known-variant guard.',
       'Simple nullable wrappers preserve the known branch or null: TypeScript permits optional field access and PHP getters hydrate the existing named entity.',
       'Unknown response fields, enum members, and tagged variants are retained; malformed known values fail response decoding.',
       'Optional properties distinguish omission from null.',

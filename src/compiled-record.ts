@@ -1,3 +1,4 @@
+import { assertTypeCertificate } from './type-certificate.js';
 import { assertPhpRepresentation } from './php-value-plan.js';
 import type { CompiledSdkContract } from './target-plan.js';
 import { assertCodecPlan } from './codec-plan.js';
@@ -243,6 +244,7 @@ export function assertCompiledSnapshot(value: unknown): asserts value is Compile
     fields(op, ['inputRequired'], 'boolean', name);
     if (op.known !== undefined) {
       const known = object(op.known, name + '.known');
+      if (known.certificate !== undefined) assertTypeCertificate(known.certificate);
       fields(known, ['type'], 'string', name);
       if (!Array.isArray(known.codecs)) throw new Error(name + ': invalid known codecs');
       known.codecs.forEach((codec, index) => assertCodecPlan(codec, name + '.known.' + index));

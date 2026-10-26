@@ -154,6 +154,13 @@ test('identical response shapes share a canonical name while PHP identities rema
     'BetaResult',
   );
   assert.equal(a.plan.node.models.AlphaResult.outputAlias, 'BetaResult');
+  assert.equal(a.plan.responseReturns.createAlpha.nodeDocumentation, 'BetaResult');
+  assert.equal(a.plan.responseReturns.createBeta.nodeDocumentation, 'BetaResult');
+  assert.equal(a.plan.documentation.getAlpha.nodeOutput, 'BetaResult');
+  assert.doesNotMatch(
+    readFileSync(join(f.output, 'node/REFERENCE.md'), 'utf8'),
+    /(?:Returned payload|Response):[^\n]*AlphaResult/,
+  );
   assert.match(
     readFileSync(join(f.output, 'node/declarations/BetaResult.d.ts'), 'utf8'),
     /export type BetaResult = \{\s*"id": string;\s*\};/,
@@ -1364,7 +1371,7 @@ test('Node consumers get canonical payload names, closed inputs, integer strings
   assert.match(plan.responseReturns.chooseThing.node, /Thing.*DistinctThing/);
   for (const corrupt of [
     (runtime) => {
-      runtime.typedErrorDetails = false;
+      runtime.errorDetailsCertificate = { type: { kind: 'invalid' }, definitions: {} };
     },
     (runtime) => {
       runtime.operations[0].payloadCodecs = [];
@@ -1707,11 +1714,339 @@ export function inspectPayload(value: Awaited<ReturnType<Client['choices']['get'
       await assert.rejects(client.choices.get(), { kind: 'protocol' });
     }
     const { plan } = compileSdkContract(f.contract);
-    assert.equal(plan.php.runtime.operations[0].responses['400'].errorDetailsCodecs, undefined);
+    assert.equal(plan.php.runtime.errorDetailsCertificate, undefined);
     for (const invalid of [[], [{}]]) {
       const runtime = structuredClone(plan.runtime);
-      runtime.operations[0].responses['400'].errorDetailsCodecs = invalid;
-      assert.throws(() => assertRuntimePlan(runtime), /codec/i);
+      runtime.errorDetailsCertificate = invalid;
+      assert.throws(() => assertRuntimePlan(runtime), /certificate/i);
     }
   });
 }
+
+test('nested future alternatives retain uncertainty through property guards on every response surface', async (t) => {
+  const object = (properties) => ({
+    type: 'object',
+    properties,
+    required: Object.keys(properties),
+  });
+  const content = {
+    oneOf: [
+      object({ kind: { type: 'string', enum: ['a'] }, foo: { type: 'string' } }),
+      object({ kind: { type: 'string', enum: ['b'] }, bar: { type: 'number' } }),
+    ],
+  };
+  for (const outer of [false, true]) {
+    const payload = object({ content });
+    const schema = outer
+      ? {
+          oneOf: [
+            object({ data: payload }),
+            object({ data: object({ other: { type: 'string' } }) }),
+          ],
+        }
+      : object({ data: payload });
+    const f = fixture(
+      t,
+      {
+        paths: {
+          '/nested': {
+            get: {
+              operationId: 'read',
+              responses: {
+                ...jsonResponse(schema),
+                400: {
+                  description: 'Invalid',
+                  content: { 'application/json': { schema: object({ error: payload }) } },
+                },
+              },
+            },
+          },
+        },
+      },
+      {
+        responses: { return: 'payload', payloadPath: 'data' },
+        errors: { detailsPath: 'error' },
+        operations: { read: { resource: 'api', method: 'read' } },
+      },
+    );
+    const source = join(f.output, 'node/nested.ts');
+    writeFileSync(
+      source,
+      `import {SdkError, type Client} from './index.js';
+export function error(e:SdkError) {
+ if(e.details && 'content' in e.details && 'foo' in e.details.content) {
+  // @ts-expect-error future nested alternatives keep foo unknown
+  e.details.content.foo.toUpperCase();
+ }
+}
+export function payload(v:Awaited<ReturnType<Client['api']['read']>>) {
+ if('content' in v && 'foo' in v.content) {
+  // @ts-expect-error future nested alternatives keep foo unknown
+  v.content.foo.toUpperCase();
+ }
+}
+export async function full(c:Client) {
+ const v=(await c.api.readWithResponse()).body;
+ if('data' in v && v.data && typeof v.data==='object' && 'content' in v.data && v.data.content && typeof v.data.content==='object' && 'foo' in v.data.content) {
+  // @ts-expect-error full response alternatives also keep foo unknown
+  v.data.content.foo.toUpperCase();
+ }
+}`,
+    );
+    typecheck(source, ['--exactOptionalPropertyTypes']);
+    const { Client } = await import(pathToFileURL(join(f.output, 'node/index.js')));
+    let status = 200;
+    const value = { content: { kind: 'future', foo: 42 } };
+    const client = new Client({
+      baseUrl: 'https://example.invalid',
+      transport: async () =>
+        new Response(JSON.stringify({ [status === 200 ? 'data' : 'error']: value }), { status }),
+    });
+    assert.deepEqual(JSON.parse(JSON.stringify(await client.api.read())), value);
+    status = 400;
+    await assert.rejects(client.api.read(), (e) => {
+      assert.deepEqual(e.details, value);
+      assert.ok(e.raw.includes('42'));
+      return true;
+    });
+  }
+});
+
+test('error certification includes other statuses, operations and built-in detail keys', async (t) => {
+  const object = (properties) => ({
+    type: 'object',
+    properties,
+    required: Object.keys(properties),
+  });
+  const response = (detail) => ({
+    description: 'Invalid',
+    content: { 'application/json': { schema: object({ error: detail }) } },
+  });
+  const f = fixture(
+    t,
+    {
+      components: { schemas: { RuntimeErrorDetails: object({ foo: { type: 'string' } }) } },
+      paths: {
+        '/first': {
+          get: {
+            operationId: 'first',
+            responses: {
+              ...jsonResponse({ type: 'string' }),
+              400: response(ref('RuntimeErrorDetails')),
+              422: response(object({ bar: { type: 'number' } })),
+            },
+          },
+        },
+        '/second': {
+          get: {
+            operationId: 'second',
+            responses: {
+              ...jsonResponse({ type: 'string' }),
+              400: response(object({ baz: { type: 'string' } })),
+            },
+          },
+        },
+      },
+    },
+    {
+      errors: { detailsPath: 'error' },
+      operations: {
+        first: { resource: 'api', method: 'first' },
+        second: { resource: 'api', method: 'second' },
+      },
+    },
+  );
+  const source = join(f.output, 'node/error-union.ts');
+  writeFileSync(
+    source,
+    `import {SdkError} from './index.js';
+export function inspect(e:SdkError) {
+ const v=e.details;
+ if(!v) return;
+ if('foo' in v) v.foo.toUpperCase();
+ if('bar' in v) v.bar.toFixed();
+ if('baz' in v) v.baz.toUpperCase();
+ if('transportCode' in v && v.transportCode!==null) v.transportCode.toUpperCase();
+ if('eventId' in v) v.eventId.toUpperCase();
+ if('position' in v) v.position.toFixed();
+ if('reason' in v) v.reason.toUpperCase();
+}`,
+  );
+  typecheck(source, ['--exactOptionalPropertyTypes']);
+  writeFileSync(
+    source.replace('.ts', '.js'),
+    ts.transpileModule(readFileSync(source, 'utf8'), {
+      compilerOptions: { module: ts.ModuleKind.ESNext },
+    }).outputText,
+  );
+  const consumer = await import(pathToFileURL(source.replace('.ts', '.js')));
+  const sdk = await import(pathToFileURL(join(f.output, 'node/index.js')));
+  let detail;
+  const client = new sdk.Client({
+    baseUrl: 'https://example.invalid',
+    transport: async () => new Response(JSON.stringify({ error: detail }), { status: 400 }),
+  });
+  for (const extra of [
+    { bar: 'invalid' },
+    { baz: 42 },
+    { transportCode: 42 },
+    { eventId: 42 },
+    { position: 'invalid' },
+    { reason: 42 },
+    { reason: 'valid key, missing required runtime companions' },
+  ]) {
+    detail = { foo: 'safe', ...extra };
+    await assert.rejects(client.api.first(), (e) => {
+      assert.equal(e.details, undefined);
+      assert.deepEqual(JSON.parse(e.raw).error, detail);
+      assert.doesNotThrow(() => consumer.inspect(e));
+      return true;
+    });
+  }
+  detail = { foo: 'safe', future: true };
+  await assert.rejects(client.api.first(), (e) => {
+    assert.equal(e.details.foo, 'safe');
+    assert.doesNotThrow(() => consumer.inspect(e));
+    return true;
+  });
+  for (const detail of [
+    { transportCode: 'ETIMEDOUT' },
+    { eventId: 'evt_synthetic', position: 1 },
+  ]) {
+    const e = new sdk.SdkError(
+      'transport',
+      'Synthetic',
+      'unknown',
+      false,
+      undefined,
+      undefined,
+      detail,
+    );
+    assert.deepEqual(e.details, detail);
+    assert.doesNotThrow(() => consumer.inspect(e));
+  }
+  const { plan } = compileSdkContract(f.contract);
+  for (const certificate of [
+    plan.runtime.errorDetailsCertificate,
+    plan.runtime.operations[0].outputCertificate,
+  ]) {
+    assert.ok(certificate);
+    const runtime = structuredClone(plan.runtime);
+    runtime.errorDetailsCertificate = { ...certificate, type: { kind: 'unsupported' } };
+    assert.throws(() => assertRuntimePlan(runtime), /certificate/);
+    runtime.errorDetailsCertificate = {
+      ...certificate,
+      type: { kind: 'reference', name: 'Missing' },
+    };
+    assert.throws(() => assertRuntimePlan(runtime), /certificate/);
+  }
+});
+
+test('the public type certifier also protects pagination, known predicates and known webhook envelopes', async (t) => {
+  const object = (properties) => ({
+    type: 'object',
+    properties,
+    required: Object.keys(properties),
+  });
+  const a = object({ kind: { type: 'string', enum: ['a'] }, foo: { type: 'string' } });
+  const b = object({ kind: { type: 'string', enum: ['b'] }, bar: { type: 'number' } });
+  const envelope = (data) => object({ data, next: { type: ['string', 'null'] } });
+  const schema = {
+    oneOf: [envelope({ type: 'array', items: a }), envelope({ type: 'array', items: b })],
+  };
+  const event = {
+    oneOf: [
+      object({ type: { type: 'string', enum: ['updated'] }, data: a }),
+      object({ type: { type: 'string', enum: ['updated'] }, data: b }),
+    ],
+  };
+  const f = fixture(
+    t,
+    {
+      paths: {
+        '/page': {
+          get: {
+            operationId: 'read',
+            parameters: [{ in: 'query', name: 'cursor', schema: { type: 'string' } }],
+            responses: jsonResponse(schema),
+          },
+        },
+      },
+    },
+    {
+      responses: { return: 'payload', payloadPath: 'data' },
+      operations: {
+        read: {
+          resource: 'api',
+          method: 'read',
+          pagination: { kind: 'cursor', items: 'data', next: 'next', parameter: 'cursor' },
+        },
+      },
+      webhook: {
+        algorithm: 'hmac-sha256',
+        header: 'X-Signature',
+        timestampHeader: 'X-Timestamp',
+        separator: '.',
+        toleranceSeconds: 300,
+        typeField: 'type',
+        events: { updated: event },
+      },
+    },
+  );
+  const source = join(f.output, 'node/surfaces.ts');
+  writeFileSync(
+    source,
+    `import {isApiReadResponseKnown,type Client,type VerifiedWebhook} from './index.js';
+type Item=ReturnType<Client['api']['readItems']> extends AsyncGenerator<infer I>?I:never;
+export function item(v:Item){if('foo' in v)return v.foo.toUpperCase();return v.bar.toFixed();}
+export function known(v:Awaited<ReturnType<Client['api']['readWithResponse']>>){if(isApiReadResponseKnown(v.body))for(const i of v.body.data)item(i);}
+export function webhook(v:VerifiedWebhook){if(v.known){if('foo' in v.event.data)return v.event.data.foo.toUpperCase();return v.event.data.bar.toFixed();}}
+`,
+  );
+  typecheck(source, ['--exactOptionalPropertyTypes']);
+  writeFileSync(
+    source.replace('.ts', '.js'),
+    ts.transpileModule(readFileSync(source, 'utf8'), {
+      compilerOptions: { module: ts.ModuleKind.ESNext },
+    }).outputText,
+  );
+  const consumer = await import(pathToFileURL(source.replace('.ts', '.js')));
+  const sdk = await import(pathToFileURL(join(f.output, 'node/index.js')));
+  const scoped = await import(pathToFileURL(join(f.output, 'node/predicates/ApiReadResponse.js')));
+  let value;
+  const client = new sdk.Client({
+    baseUrl: 'https://example.invalid',
+    transport: async () => new Response(JSON.stringify({ data: [value], next: null })),
+  });
+  for (const body of [
+    { kind: 'future', foo: 42 },
+    { kind: 'a', foo: 'safe', bar: 'invalid' },
+    { kind: 'a', foo: 'safe' },
+  ]) {
+    value = body;
+    const valid = body.foo === 'safe' && !Object.hasOwn(body, 'bar');
+    const full = await client.api.readWithResponse();
+    assert.equal(sdk.isApiReadResponseKnown(full.body), valid);
+    assert.equal(scoped.isApiReadResponseKnown(full.body), valid);
+    assert.doesNotThrow(() => consumer.known(full));
+    if (valid)
+      assert.deepEqual(await Array.fromAsync(client.api.readItems(), consumer.item), ['SAFE']);
+    else
+      await assert.rejects(Array.fromAsync(client.api.readItems()), (e) => {
+        assert.equal(e.kind, 'protocol');
+        assert.deepEqual(JSON.parse(e.raw).data, [body]);
+        return true;
+      });
+    const raw = Buffer.from(JSON.stringify({ type: 'updated', data: body }));
+    const signature = createHmac('sha256', 'synthetic').update('1000.').update(raw).digest('hex');
+    const verified = sdk.verifyWebhook(
+      raw,
+      { 'X-Signature': signature, 'X-Timestamp': '1000' },
+      'synthetic',
+      1000,
+    );
+    assert.equal(verified.known, valid);
+    assert.doesNotThrow(() => consumer.webhook(verified));
+    if (!valid) assert.equal(verified.reason, 'unmatched_envelope');
+  }
+});

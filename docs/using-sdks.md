@@ -318,7 +318,7 @@ Messages and codes:
 - Messages and provider codes must be JSON strings. Numeric tokens, including decimal, exponent and large-integer values, never become messages or codes and never match string retry codes. Parsed details keep their exact numeric representation.
 - Public codes are redacted; code-based retry matching uses the original string at `errors.codePath`.
 - Malformed or non-JSON error bodies keep status, metadata and explicit `raw` access.
-- Provider `details` use the declared schema type when available, otherwise `unknown` in TypeScript. Narrow details before reading their fields.
+- Provider `details` use the declared schema type when available, otherwise `unknown` in TypeScript. Details are optional: incompatible fields, including collisions with other declared error or runtime-detail shapes, produce `undefined`; `raw` retains the body. Narrow details before reading their fields.
 
 | `outcome`  | Meaning for recovery                                                                                                                                      |
 | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -641,7 +641,7 @@ Response types use the referenced component name, with structurally identical de
 - Fresh object literals with undeclared properties, and misspelled response fields, are type errors. Explicitly open objects and dictionaries accept arbitrary keys.
 - Structural typing can still accept extra keys through existing variables; runtime request rules follow the schema.
 - Unknown response fields stay present. Read them with an explicit dictionary assertion or narrowing.
-- Unknown response object variants need a generated known-variant guard before you read declared fields.
+- Unknown response object variants retain `Record<string, unknown>` through property guards, including nested variants and `WithResponse` envelopes. Use a generated known-variant guard or validate individual values before reading declared fields. Successful payloads and pagination items that cannot satisfy their public types fail with a protocol error and retain `raw`.
 - `Object.keys()` and `Object.values()` can include undeclared fields. Validate values when iterating preserved extras.
 - Optional fields named like inherited `Object` members (such as `toString`) include the inherited signature, so you can omit them. Explicit own values are validated, functions are never serialized as strings, and the runtime reads only own request properties.
 - An OpenAPI 3.1 schema with `properties` or `required` but no `type` does not require an object. Its type keeps the permitted nonobject values; narrow before reading fields. An enclosing object constraint in an `allOf` still applies.

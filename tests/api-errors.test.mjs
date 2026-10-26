@@ -276,7 +276,7 @@ test('message extraction and debug output honor schema and consumer redaction in
       privateDetail: 'hidden-detail',
       customField: 'hidden-custom',
       token: 'hidden-token',
-      reason: 'Missing payment',
+      note: 'Missing payment',
     },
   });
   const client = new Client({

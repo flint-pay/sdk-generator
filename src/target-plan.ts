@@ -1,8 +1,14 @@
+import {
+  publicTypePlanner,
+  publicTypeDeclarations,
+  RUNTIME_ERROR_DETAILS,
+} from './public-type-plan.js';
+import type { TypeCertificate } from './type-certificate.js';
 import { REQUEST_OPTIONS } from './request-options.js';
 import { responseOnlyModels } from './schema-usage.js';
 import { omitProtectedExamples } from './example-protection.js';
 import { reservePublicSymbols } from './public-symbols.js';
-import { pascalWords, webhookEventTypeName } from './naming.js';
+import { pascalWords, webhookEventTypeName, isReservedTypeName } from './naming.js';
 import {
   phpRepresentations,
   phpRepresentationType,
@@ -124,7 +130,7 @@ export function resultType(op: Operation, models: Record<string, Schema> = {}): 
     ),
   ].join(' | ');
 }
-export function itemSchemas(op: Operation): Schema[] {
+export function itemSchemas(op: Operation, definitions: Record<string, Schema> = {}): Schema[] {
   const intersect = (left: Schema[], right: Schema[]): Schema[] =>
     left.flatMap((a) =>
       right.map((b) => {
@@ -133,23 +139,30 @@ export function itemSchemas(op: Operation): Schema[] {
         return { allOf: [a, b] };
       }),
     );
-  const descend = (s: Schema, parts: string[]): Schema[] | undefined => {
+  const descend = (s: Schema, parts: string[], seen = new Set<string>()): Schema[] | undefined => {
+    const reference = s['x-sdk-ref'];
+    const registry = s['x-sdk-definitions'] ?? definitions;
+    const edge = reference + ':' + parts.join('.');
+    if (reference && Object.hasOwn(registry, reference) && !seen.has(edge)) {
+      const { 'x-sdk-ref': _reference, ...siblings } = s;
+      return descend({ allOf: [registry[reference]!, siblings] }, parts, new Set([...seen, edge]));
+    }
     const child = s.properties?.[parts[0]!];
     const own = !parts.length
       ? s.items
         ? [s.items]
         : undefined
       : child
-        ? descend(child, parts.slice(1))
+        ? descend(child, parts.slice(1), seen)
         : undefined;
     const constraints = own ? [own] : [];
     for (const branch of s.allOf ?? []) {
-      const projected = descend(branch, parts);
+      const projected = descend(branch, parts, seen);
       if (projected) constraints.push(projected);
     }
     for (const branches of [s.oneOf, s.anyOf]) {
       if (!branches) continue;
-      const alternatives = branches.map((branch) => descend(branch, parts));
+      const alternatives = branches.map((branch) => descend(branch, parts, seen));
       if (alternatives.some((projection) => projection !== undefined))
         constraints.push(alternatives.flatMap((projection) => projection ?? [{}]));
     }
@@ -576,7 +589,7 @@ export interface CompiledSdkContract {
         idempotencyKeyRequired?: boolean;
         authModes?: string[];
         items: string;
-        known?: { type: string; codecs: CodecPlan[] };
+        known?: { type: string; codecs: CodecPlan[]; certificate?: TypeCertificate };
       }
     >;
     eventType: string;
@@ -767,16 +780,21 @@ export function compileSdkContract(source: Contract): {
       visitInput(child);
   };
   for (const op of c.operations) visitInput(inputSchema(op, c.config.apiVersion, c));
-  if (c.config.webhook)
-    reservePublicSymbols(
-      c,
-      Object.keys(models),
-      new Set(
-        c.operations
-          .filter((op) => Object.values(op.responses).some((response) => response.schema?.oneOf))
-          .map((op) => op.id),
-      ),
-    );
+  for (const name of Object.keys(models))
+    if ((!c.config.targets || c.config.targets.includes('node')) && isReservedTypeName(name))
+      throw new Diagnostic(
+        'config/models/' + name,
+        'model name is a TypeScript reserved word; customize it with config.models',
+      );
+  reservePublicSymbols(
+    c,
+    Object.keys(models),
+    new Set(
+      c.operations
+        .filter((op) => Object.values(op.responses).some((response) => response.schema?.oneOf))
+        .map((op) => op.id),
+    ),
+  );
   const runtime = compileRuntimePlan(runtimeContract(c));
   const phpRuntime = structuredClone(runtime);
   const responseModels: PhpModelPlan[] = [];
@@ -917,9 +935,11 @@ export function compileSdkContract(source: Contract): {
               idempotencyKeyRequired: requiresIdempotencyKey(op),
               ...(authentication ? { authModes: op.authModes?.slice().sort() ?? [] } : {}),
               items: op.pagination
-                ? [...new Set(itemSchemas(op).map((s) => namedType(s, models, true)))].join(
-                    ' | ',
-                  ) || 'never'
+                ? [
+                    ...new Set(
+                      itemSchemas(op, c.definitions).map((s) => namedType(s, models, true)),
+                    ),
+                  ].join(' | ') || 'never'
                 : 'never',
               ...(known.length
                 ? {
@@ -1157,18 +1177,6 @@ export function compileSdkContract(source: Contract): {
         .join(' | '),
       details: type(c.config.errors.detailsPath),
     };
-    if (plan.node.errorTypes.details !== 'unknown') {
-      plan.runtime.typedErrorDetails = true;
-      for (const operation of c.operations) {
-        const runtimeOperation = plan.runtime.operations.find((op) => op.id === operation.id)!;
-        for (const [status, response] of Object.entries(operation.responses)) {
-          if (!(Number(status) >= 400 || status === 'default') || !response.schema) continue;
-          const shapes = project(response.schema, c.config.errors.detailsPath?.split('.') ?? []);
-          if (shapes.length)
-            runtimeOperation.responses[status]!.errorDetailsCodecs = shapes.map(compileCodec);
-        }
-      }
-    }
   }
   if (plan.node.eventDeclarations)
     plan.node.eventDeclarations = replaceOutputNames(plan.node.eventDeclarations);
@@ -1196,11 +1204,11 @@ export function compileSdkContract(source: Contract): {
                   [...new Set(projected.map((s) => namedType(s, models, true)))].join(' | '),
                 )
               : plan.node.operations[op.id]!.output,
-            nodeDocumentation: uncertain
-              ? 'unknown'
-              : projected.length
+            nodeDocumentation: replaceOutputNames(
+              projected.length
                 ? projected.map((s) => typescriptType(s, true)).join(' | ')
                 : plan.documentation[op.id]!.nodeOutput,
+            ),
             php: uncertain
               ? 'mixed'
               : projected.length
@@ -1220,6 +1228,37 @@ export function compileSdkContract(source: Contract): {
   if (Object.keys(responseReturns).length) {
     plan.responseReturns = responseReturns;
     plan.node.responseReturnDeclarations = `export interface SdkResponse<T> { body: T; meta: Result<T>['meta']; raw: Result<T>['raw']; }\n`;
+  }
+  if (plan.targets.includes('node')) {
+    // The finalized declaration expressions are the sole source of certification.
+    // Parse their TypeScript syntax rather than interpreting source schemas again.
+    const certificate = publicTypePlanner({
+      ...Object.fromEntries(
+        Object.entries(plan.node.models).map(([name, model]) => [
+          name,
+          model.outputAlias ?? model.output,
+        ]),
+      ),
+      ...publicTypeDeclarations(plan.node.eventDeclarations ?? ''),
+    });
+    if (plan.node.errorTypes) {
+      const typed = plan.node.errorTypes.details !== 'unknown';
+      plan.node.errorTypes.details += ' | (' + RUNTIME_ERROR_DETAILS + ')';
+      if (typed) plan.runtime.errorDetailsCertificate = certificate(plan.node.errorTypes.details);
+    }
+    for (const operation of plan.runtime.operations) {
+      const node = plan.node.operations[operation.id]!;
+      plan.documentation[operation.id]!.nodeOutput = replaceOutputNames(
+        plan.documentation[operation.id]!.nodeOutput,
+      );
+      operation.outputCertificate = certificate(node.output);
+      if (operation.pagination) operation.itemCertificate = certificate(node.items);
+      const payload = responseReturns[operation.id];
+      if (payload) operation.payloadCertificate = certificate(payload.node);
+      if (node.known) node.known.certificate = certificate(node.known.type);
+    }
+    if (plan.runtime.webhook && plan.node.eventDeclarations)
+      plan.runtime.webhook.certificate = certificate('KnownWebhookEvent');
   }
   if (plan.targets.includes('php')) {
     // Examples/defaults historically participate in PHP entity identity and

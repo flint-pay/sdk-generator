@@ -2429,7 +2429,7 @@ test('pagination item declarations intersect sibling constraints while retaining
     file,
     `import {Client} from './index.js';
 const c = new Client({baseUrl:'https://example.invalid'});
-${itemVariants.map((_, n) => `for await(const item of c.api.listValues${n}Items({})){const value:string=item;}`).join('\n')}
+${itemVariants.map((_, n) => `type Item${n} = ReturnType<Client['api']['listValues${n}Items']> extends AsyncGenerator<infer I> ? I : never; const control${n}:Item${n}='ab'; for await(const item of c.api.listValues${n}Items({})){const value:string=item;}`).join('\n')}
 for await(const item of c.api.listObjectsItems({})){const id:string=item.id;const name:string=item.name;}
 for await(const item of c.api.listChoicesItems({})){const value:string|boolean=item;
 // @ts-expect-error Boolean alternatives must not be lost.

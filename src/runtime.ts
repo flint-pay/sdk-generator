@@ -1,3 +1,4 @@
+import { certifies, type TypeCertificate } from './type-certificate.js';
 import type { RequestOptionValues } from './request-options.js';
 import { DescriptorSource } from './descriptor-source.js';
 import type { DefaultCredentials } from './contract.js';
@@ -46,6 +47,7 @@ export interface Result<T> {
   raw: T extends Uint8Array ? Uint8Array : string;
 }
 const errorCauses = new WeakMap<SdkError, unknown>();
+const publicErrorDetailsCertificate: TypeCertificate | undefined = undefined;
 
 export type RuntimeErrorDetails =
   | { transportCode: string | null }
@@ -75,6 +77,8 @@ export class SdkError extends Error {
     public raw?: string,
   ) {
     super(message);
+    if (publicErrorDetailsCertificate && !certifies(details, publicErrorDetailsCertificate))
+      this.details = undefined;
     // Native error formatting bypasses custom inspection. An own accessor keeps recovery
     // access without evaluating the private cause during rendering, including Node 22.
     if (options && 'cause' in options) errorCauses.set(this, options.cause);
@@ -2308,7 +2312,12 @@ export function serialize(value: unknown, schema: Schema): string {
 export function isKnownVariant(value: unknown, schema: Schema): boolean {
   return isKnownCodec(value, compileCodec(schema));
 }
-export function isKnownCodec(value: unknown, codec: CodecPlan): boolean {
+export function isKnownCodec(
+  value: unknown,
+  codec: CodecPlan,
+  certificate?: TypeCertificate,
+): boolean {
+  if (certificate && !certifies(value, certificate)) return false;
   try {
     let definitions = codec.definitions ?? {};
     for (let depth = 0; codec.reference; depth++) {
@@ -2855,7 +2864,7 @@ export function verifyWebhookFromPlan(
         path: 'event',
         allowUnknownResponseFields: true,
       });
-      known = true;
+      known = !w.certificate || certifies(plainNumbers(structuredClone(decoded)), w.certificate);
     } catch (error) {
       if (!(error instanceof SdkError) || error.kind !== 'validation') throw error;
     }
@@ -2954,69 +2963,6 @@ class CompiledRuntime {
   private decode(value: unknown, codec: CodecPlan, context: CodecContext): unknown {
     return executeCodec(value, codec, { ...context, definitions: this.definitions() });
   }
-  private projectionShape(codecs: readonly CodecPlan[]) {
-    const fields = new Map<string, CodecPlan[]>();
-    const elements: CodecPlan[] = [];
-    const visit = (
-      codec: CodecPlan,
-      definitions: Readonly<Record<string, CodecPlan>>,
-      seen: Set<string>,
-    ): void => {
-      definitions = codec.definitions ?? definitions;
-      const scoped = (child: CodecPlan): CodecPlan => ({ ...child, definitions });
-      if (codec.reference) {
-        const target = Object.hasOwn(definitions, codec.reference)
-          ? definitions[codec.reference]
-          : undefined;
-        if (target && !seen.has(codec.reference))
-          visit(target, definitions, new Set([...seen, codec.reference]));
-        return;
-      }
-      for (const [key, child] of Object.entries(codec.fields ?? {})) {
-        if (child.hiddenOutput) continue;
-        fields.set(key, [...(fields.get(key) ?? []), scoped(child)]);
-      }
-      if (codec.element) elements.push(scoped(codec.element));
-      for (const child of codec.every ?? []) visit(child, definitions, seen);
-      if (codec.nullableAlternative !== undefined) {
-        const concrete = (codec.exactlyOne ?? codec.some)?.[codec.nullableAlternative];
-        if (concrete) visit(concrete, definitions, seen);
-      }
-      // Nested alternatives retain their public object/unknown fallback. Only
-      // unconditional and simple nullable fields can narrow by property presence.
-    };
-    for (const codec of codecs) visit(codec, this.definitions(), new Set());
-    return { fields, elements };
-  }
-  private assertProjectionShape(
-    value: unknown,
-    selected: readonly CodecPlan[],
-    alternatives: readonly CodecPlan[],
-    path: string,
-  ): void {
-    if (alternatives.length < 2 || !value || typeof value !== 'object') return;
-    const own = this.projectionShape(selected);
-    const union = this.projectionShape(alternatives);
-    if (Array.isArray(value)) {
-      for (const [index, child] of value.entries())
-        this.assertProjectionShape(child, own.elements, union.elements, `${path}.${index}`);
-      return;
-    }
-    for (const [key, children] of union.fields) {
-      if (!Object.hasOwn(value, key)) continue;
-      const declared = own.fields.get(key);
-      // A foreign known key would let an `in` guard narrow to the wrong member.
-      // Unrelated future fields remain available as ordinary response extras.
-      if (!declared)
-        return bad(`${path}.${key}`, 'field belongs to a different response alternative');
-      this.assertProjectionShape(
-        (value as Record<string, unknown>)[key],
-        declared,
-        children,
-        `${path}.${key}`,
-      );
-    }
-  }
   private decodeProjection(value: unknown, codecs: readonly CodecPlan[], path: string): unknown {
     let failure: unknown;
     for (const codec of codecs) {
@@ -3026,7 +2972,6 @@ class CompiledRuntime {
           path,
           redactFields: this.options.redactFields ?? [],
         });
-        this.assertProjectionShape(value, [codec], codecs, path);
         return plainNumbers(decoded);
       } catch (cause) {
         if (!(cause instanceof SdkError && cause.kind === 'validation')) throw cause;
@@ -3038,11 +2983,17 @@ class CompiledRuntime {
   }
   decodePayload(id: string, result: Result<unknown>, path: string[]): unknown {
     const codecs = this.operation(id)?.payloadCodecs;
-    if (!codecs?.length) throw new Error('Missing compiled payload codecs for ' + id);
-    let value: unknown = typeof result.raw === 'string' ? parseJson(result.raw, true) : result.data;
+    const certificate = this.operation(id)?.payloadCertificate;
+    let value: unknown =
+      codecs?.length && typeof result.raw === 'string' ? parseJson(result.raw, true) : result.data;
     for (const key of path) value = field(value, key);
     try {
-      return this.decodeProjection(value, codecs, 'response.' + path.join('.'));
+      const decoded = codecs?.length
+        ? this.decodeProjection(value, codecs, 'response.' + path.join('.'))
+        : value;
+      if (!certificate || !certifies(decoded, certificate))
+        bad('response', 'payload does not fit its public type');
+      return decoded;
     } catch (cause) {
       if (!(cause instanceof SdkError && cause.kind === 'validation')) throw cause;
       throw createSdkError(
@@ -3684,6 +3635,8 @@ class CompiledRuntime {
                 }),
               );
             } else if (raw) throw new Error('Unexpected body for an empty response');
+            if (op.outputCertificate && !certifies(data, op.outputCertificate))
+              throw new Error('Response does not fit its public type');
           } catch (cause) {
             throw createSdkError(
               'protocol',
@@ -3754,26 +3707,23 @@ class CompiledRuntime {
           ? field(safeBody, this.contract.errors.detailsPath)
           : safeBody;
         let details: unknown;
-        if (this.contract.typedErrorDetails) {
-          // Only advertise details that fit their emitted schema type after redaction.
-          // Malformed bodies remain available through explicit raw recovery.
-          if (codec && errorResponse?.errorDetailsCodecs)
-            try {
-              this.decode(safeBody, codec, { mode: 'response', path: 'error' });
-              // An unknown envelope alternative does not certify its projected fields.
-              details = structuredClone(
-                this.decodeProjection(
-                  detailsValue,
-                  errorResponse.errorDetailsCodecs,
-                  'error.details',
-                ),
-              );
-            } catch (cause) {
-              if (!(cause instanceof SdkError && cause.kind === 'validation')) throw cause;
-            }
-        }
+        if (this.contract.errorDetailsCertificate) {
+          try {
+            const decodedBody = codec
+              ? this.decode(safeBody, codec, { mode: 'response', path: 'error' })
+              : safeBody;
+            const decoded = plainNumbers(
+              this.contract.errors?.detailsPath
+                ? field(decodedBody, this.contract.errors.detailsPath)
+                : decodedBody,
+            );
+            if (certifies(decoded, this.contract.errorDetailsCertificate))
+              details = structuredClone(decoded);
+          } catch (cause) {
+            if (!(cause instanceof SdkError && cause.kind === 'validation')) throw cause;
+          }
+        } else details = plainNumbers(detailsValue);
         const redacted = plainNumbers(safeBody);
-        if (!this.contract.typedErrorDetails) details = plainNumbers(detailsValue);
         const publicCode: unknown = field(redacted, this.contract.errors?.codePath ?? 'code');
         const message: unknown = field(redacted, this.contract.errors?.messagePath ?? 'message');
         const signal = this.contract.errors?.retry;
@@ -3971,6 +3921,19 @@ class CompiledRuntime {
         throw createSdkError('protocol', 'Pagination items field is not an array', 'response');
       for (const value of values) {
         stopped(options.signal);
+        const certificate = this.operation(id)?.itemCertificate;
+        if (certificate && !certifies(value, certificate))
+          throw createSdkError(
+            'protocol',
+            'Pagination item does not fit its public type',
+            'response',
+            false,
+            page.meta,
+            undefined,
+            undefined,
+            undefined,
+            typeof page.raw === 'string' ? page.raw : undefined,
+          );
         yield value as T;
         if (++count >= limit) return;
       }

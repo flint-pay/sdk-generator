@@ -77,8 +77,6 @@ export function codecSharing(original: Record<string, CodecPlan>) {
         operation.payloadCodecs = operation.payloadCodecs.map((codec) => compact(codec));
       for (const response of Object.values(operation.responses)) {
         if (response.codec) response.codec = compact(response.codec);
-        if (response.errorDetailsCodecs)
-          response.errorDetailsCodecs = response.errorDetailsCodecs.map((codec) => compact(codec));
       }
       if (operation.streamEventCodecs)
         operation.streamEventCodecs = Object.fromEntries(
