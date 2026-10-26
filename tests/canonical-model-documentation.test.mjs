@@ -7,7 +7,11 @@ import { generate, loadContract } from '../dist/index.js';
 import { modelFieldReference } from '../dist/sdk-documentation.js';
 import { compilePhpModel, compileSdkContract } from '../dist/target-plan.js';
 import { compareCompiledContracts } from '../dist/compiled-compatibility.js';
-import { assertPackageLinks, packageDocuments } from './helpers/package-docs.mjs';
+import {
+  assertPackageLinks,
+  packageDocuments,
+  assertUniqueFieldTables,
+} from './helpers/package-docs.mjs';
 import {
   assertCanonicalOperationDocumentation,
   operationDocuments,
@@ -37,7 +41,67 @@ const response = (schema) => ({
 test('canonical union tables retain effective branch fields, presence and enums in both targets', () => {
   const directory = mkdtempSync(join(tmpdir(), 'sdk-canonical-docs-'));
   try {
+    const shared = {
+      anyOf: [
+        object(
+          {
+            shared_email: { ...string, description: 'Unique shared email definition. '.repeat(6) },
+          },
+          ['shared_email'],
+        ),
+        object({ shared_postal: { ...string, enum: ['home', 'office'] } }, ['shared_postal']),
+      ],
+    };
     const schemas = {
+      EnvelopeOne: object({ data: { type: 'array', items: shared } }, ['data']),
+      EnvelopeTwo: object(
+        {
+          data: {
+            type: 'array',
+            items: {
+              anyOf: [
+                object({ separate_left: string }, ['separate_left']),
+                object({ separate_right: string }, ['separate_right']),
+              ],
+            },
+          },
+        },
+        ['data'],
+      ),
+      ConstraintGroups: {
+        oneOf: [1, 2].map((length) =>
+          object(
+            {
+              code: {
+                type: 'string',
+                description: 'Stable constrained definition.',
+                enum: [length === 1 ? 'first' : 'second'],
+                minLength: length,
+              },
+            },
+            ['code'],
+          ),
+        ),
+      },
+      OwnerOne: object({
+        choice: shared,
+        owner_one: string,
+        nullable_named: { anyOf: [ref('NamedChoice'), { type: 'null' }] },
+      }),
+      OwnerTwo: object({
+        choice: shared,
+        owner_two: string,
+        nullable_named: { anyOf: [ref('NamedChoice'), { type: 'null' }] },
+      }),
+      MultiGroup: {
+        ...object({
+          first: { ...string, description: 'Stable first definition.' },
+          second: { ...string, description: 'Stable second definition.' },
+        }),
+        allOf: ['first', 'second'].map((field) => ({
+          anyOf: [{ not: { required: [field] } }, { required: [field] }, { required: [field] }],
+        })),
+      },
       Conditional: {
         allOf: [
           object(
@@ -100,6 +164,11 @@ test('canonical union tables retain effective branch fields, presence and enums 
         info: { title: 'Canonical docs', version: '1' },
         components: { schemas },
         paths: {
+          '/envelope-one': { get: operation('envelopeOne', 'EnvelopeOne') },
+          '/envelope-two': { get: operation('envelopeTwo', 'EnvelopeTwo') },
+          '/constraints': { get: operation('constraints', 'ConstraintGroups') },
+          '/owner-one': { post: operation('ownerOne', 'OwnerOne', 'MultiGroup') },
+          '/owner-two': { post: operation('ownerTwo', 'OwnerTwo', 'MultiGroup') },
           '/directional': { post: operation('directional', 'Directional', 'Directional') },
           '/directional-second': {
             post: operation('directionalSecond', 'Revocation', 'Directional'),
@@ -139,6 +208,7 @@ test('canonical union tables retain effective branch fields, presence and enums 
     for (const target of ['node', 'php']) {
       const root = join(output, target);
       assertPackageLinks(root);
+      assertUniqueFieldTables(root);
       (target === 'node' ? assertDocumentedModelExports : assertDocumentedPhpExports)(root);
       const coverage = assertCanonicalOperationDocumentation(root, contract);
       assert.ok(
@@ -160,17 +230,56 @@ test('canonical union tables retain effective branch fields, presence and enums 
         'email_values',
         'postal_values',
       ])
-        assert.match(docs, new RegExp('\\| `' + field + '` \\| Required \\|'));
+        assert.match(docs, new RegExp('\\| `' + field + '` \\| (?:Required|Conditional) \\|'));
       assert.match(docs, /variant 1: `mode` = `"eligibility"`/);
       assert.match(docs, /variant 2: `mode` = `"resolution"`/);
-      assert.match(docs, /Common fields above apply to every variant/);
+      assert.match(docs, /Field definitions apply to all variants/);
       assert.match(docs, /Items values: `"first"`, `"second"`/);
+      if (target === 'node') {
+        assert.match(docs, /`nullable_named` \| Optional \| \[NamedChoice\]\([^)]+\) or null/);
+        assert.equal(
+          (docs.match(/^\| `left_values` \|/gm) ?? []).length,
+          1,
+          'named nullable branches use their canonical model',
+        );
+      } else {
+        assert.match(docs, /`nullable_named`: \[NamedChoiceInput\]\([^)]+\) or null/);
+        assert.match(
+          docs,
+          /### ApiOwnerOneResponse200.nullable_named[\s\S]*?- Required: [^\n]*`left_values`/,
+        );
+      }
+      assert.equal(
+        (docs.match(/Unique shared email definition/g) ?? []).length,
+        6,
+        `${target}: both owners share one anonymous union definition`,
+      );
+      for (const definition of [
+        'Stable first definition.',
+        'Stable second definition.',
+        'Stable constrained definition.',
+      ])
+        assert.equal(
+          docs.split(definition).length - 1,
+          1,
+          `${target}: stable definition appears once`,
+        );
+      for (const field of ['first', 'second']) {
+        assert.equal(
+          (docs.match(new RegExp('^- Required: `' + field + '`\\.', 'gm')) ?? []).length,
+          1,
+          `${target}: dedupe identical alternatives`,
+        );
+        assert.match(docs, new RegExp('- Condition: not \\(present\\(`' + field + '`'));
+      }
+      assert.match(docs, /Constraints for `code`: minLength: `1`\. Values: `"first"`/);
+      assert.match(docs, /Constraints for `code`: minLength: `2`\. Values: `"second"`/);
       const directional = operationDocuments(root).find((op) => op.name.endsWith('.directional'));
       const inputs = linkedModelSections(
         directional.path,
         directional.source.split('#### Response')[0],
       );
-      assert.ok(inputs.some((model) => model.source.includes('| `secret` | Required |')));
+      assert.ok(inputs.some((model) => model.source.includes('| `secret` | Conditional |')));
       assert.ok(inputs.every((model) => !model.source.includes('| `server_id` |')));
       const revoke = operationDocuments(root).find((op) => op.name.endsWith('.revoke'));
       const returned = linkedModelSections(
@@ -184,14 +293,26 @@ test('canonical union tables retain effective branch fields, presence and enums 
       const branchDoc = linkedModelSections(
         first.path,
         first.source.split('#### Response')[0],
-      ).find((model) => model.source.includes('| `eligibility` | Required |'));
+      ).find((model) => model.source.includes('| `eligibility` | Conditional |'));
       assert.ok(branchDoc);
       const original = readFileSync(branchDoc.path, 'utf8');
       writeFileSync(
         branchDoc.path,
         original.replace(
           branchDoc.source,
-          branchDoc.source.replace('| `eligibility` | Required |', '| `eligibility` | Optional |'),
+          branchDoc.source.replace(/^\| `eligibility` \|.*\n/gm, ''),
+        ),
+      );
+      assert.throws(
+        () => assertCanonicalOperationDocumentation(root, contract),
+        /lost.*eligibility/,
+      );
+      writeFileSync(branchDoc.path, original);
+      writeFileSync(
+        branchDoc.path,
+        original.replace(
+          branchDoc.source,
+          branchDoc.source.replace('- Required: `eligibility`.', '- Optional: `eligibility`.'),
         ),
       );
       assert.throws(
@@ -218,8 +339,8 @@ test('independent composed union groups stay explicit without multiplying combin
   assert.equal((docs.match(/^### Groups variant /gm) ?? []).length, 6);
   assert.match(docs, /satisfy a variant from each numbered group/);
   for (const name of ['first', 'second', 'third']) {
-    assert.match(docs, new RegExp('\\| `' + name + '` \\| Required \\|'));
-    assert.match(docs, new RegExp('\\| `' + name + '_alternative` \\| Required \\|'));
+    assert.match(docs, new RegExp('\\| `' + name + '` \\| Conditional \\|'));
+    assert.match(docs, new RegExp('\\| `' + name + '_alternative` \\| Conditional \\|'));
   }
 });
 
@@ -239,7 +360,7 @@ test('PHP source documentation keeps union branches without publishing response 
   );
   assert.match(
     modelFieldReference(plan.documentationSchema, {}, 'Response'),
-    /\| `value` \| Required \|/,
+    /\| `value` \| Conditional \|/,
   );
 });
 
@@ -256,8 +377,8 @@ test('referenced alternatives retain enclosing requiredness without impossible t
   const docs = modelFieldReference(schema, { Choice: alternatives }, 'Composed');
   assert.equal((docs.match(/^### Composed variant /gm) ?? []).length, 2);
   assert.equal((docs.match(/\| `id` \| Required \|/g) ?? []).length, 1);
-  assert.match(docs, /\| `left` \| Required \|/);
-  assert.match(docs, /\| `right` \| Required \|/);
+  assert.match(docs, /\| `left` \| Conditional \|/);
+  assert.match(docs, /\| `right` \| Conditional \|/);
 });
 
 test('inline nested unions keep branch tables through arrays and map values', () => {
@@ -272,8 +393,8 @@ test('inline nested unions keep branch tables through arrays and map values', ()
   const docs = modelFieldReference(schema, {}, 'Container');
   for (const path of ['nested.choice', 'items[]', 'mapping{}'])
     assert.ok(docs.includes('### Container.' + path));
-  assert.equal((docs.match(/\| `email` \| Required \|/g) ?? []).length, 3);
-  assert.equal((docs.match(/\| `postal` \| Required \|/g) ?? []).length, 3);
+  assert.equal((docs.match(/\| `email` \| Conditional \|/g) ?? []).length, 3);
+  assert.equal((docs.match(/\| `postal` \| Conditional \|/g) ?? []).length, 3);
 });
 
 test('nested union fields retain their enclosing branch condition', () => {
@@ -290,8 +411,8 @@ test('nested union fields retain their enclosing branch condition', () => {
     ],
   };
   const docs = modelFieldReference(schema, {}, 'Outer');
-  assert.match(docs, /### Outer variant 1.details[\s\S]*?\| `first_field` \| Required \|/);
-  assert.match(docs, /### Outer variant 2.details[\s\S]*?\| `second_field` \| Required \|/);
+  assert.match(docs, /### Outer variant 1.details[\s\S]*?\| `first_field` \| Conditional \|/);
+  assert.match(docs, /### Outer variant 2.details[\s\S]*?\| `second_field` \| Conditional \|/);
   const shared = nested('shared');
   const repeated = modelFieldReference(
     {
@@ -303,13 +424,31 @@ test('nested union fields retain their enclosing branch condition', () => {
     {},
     'Presence',
   );
-  assert.match(repeated, /### Presence variant 1.details/);
-  assert.match(repeated, /### Presence variant 2.details/);
+  assert.equal((repeated.match(/^### Presence.details$/gm) ?? []).length, 1);
+  assert.match(repeated, /variant 1: `mode` = `"required"`[\s\S]*?- Required: `details`/);
+  assert.match(repeated, /variant 2: `mode` = `"optional"`[\s\S]*?- Optional: `details`/);
 });
 
 test('same-instance recursive union references terminate while retaining concrete branches', () => {
   const recursive = { oneOf: [{ 'x-sdk-ref': 'Recursive' }, object({ value: string }, ['value'])] };
   const docs = modelFieldReference(recursive, { Recursive: recursive }, 'Recursive');
   assert.ok(docs.length < 10000);
-  assert.match(docs, /\| `value` \| Required \|/);
+  assert.match(docs, /\| `value` \| Conditional \|/);
+});
+
+test('the package field-table guard detects a repeated fragment and ignores fenced examples', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'sdk-doc-table-guard-'));
+  try {
+    const table =
+      '| Field | Presence | Type | Description |\n| --- | --- | --- | --- |\n| `value` | Required | string | ' +
+      'Synthetic field description. '.repeat(10) +
+      ' |\n';
+    writeFileSync(join(directory, 'first.md'), table);
+    writeFileSync(join(directory, 'second.md'), '```markdown\n' + table + '```\n');
+    assert.equal(assertUniqueFieldTables(directory), 1);
+    writeFileSync(join(directory, 'second.md'), table);
+    assert.throws(() => assertUniqueFieldTables(directory), /repeated.*field table/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

@@ -1,4 +1,5 @@
 import { checkResponseExamples } from './helpers/flint-response-examples.mjs';
+import { assertUniqueFieldTables } from './helpers/package-docs.mjs';
 import { assertDocumentedModelExports, assertDocumentedPhpExports } from './helpers/docs-exports.mjs';
 import { npmPackResult } from '../dist/distribution.js';
 import { measureSdkWeight } from './helpers/sdk-weight.mjs';
@@ -85,6 +86,7 @@ assert.deepEqual(preview(restored,${JSON.stringify(output)}).changes,[],'full ex
         readFileSync(join(output, '.sdk-generator.json'), 'utf8'),
       ).interface;
       for (const target of ['node', 'php']) {
+        assertUniqueFieldTables(join(output, target));
         const coverage = assertCanonicalOperationDocumentation(
           join(output, target),
           documentedContract,

@@ -1,5 +1,13 @@
 import { schemaLiteral, enumNotes, type EnumLinks } from './schema-documentation.js';
-import { documentationVariants, modelFieldReference } from './sdk-documentation.js';
+import {
+  DocumentationFragments,
+  documentationVariants,
+  modelFieldReference,
+  fieldReferenceNotes,
+  modelDocumentationConventions,
+} from './sdk-documentation.js';
+import MarkdownIt from 'markdown-it';
+import { posix } from 'node:path';
 import type { Contract, Operation } from './contract.js';
 
 export const docAnchor = (name: string) =>
@@ -44,7 +52,34 @@ export function modelDocuments(
   fieldLinks: Map<string, string>;
   namedFieldLinks: Map<string, string>;
 } {
+  const aliases = new Map(fieldAliases);
   const sections = [...source.matchAll(/^## (\w+)\n([\s\S]*?)(?=^## |$(?![\s\S]))/gm)];
+  // Intern complete model field fragments before assigning files. Comparing
+  // rendered facts preserves target types, direction, constraints and enums.
+  const fragments = new Map<string, RegExpMatchArray>();
+  const fragmentAliases = new Map<string, string>();
+  for (const section of sections) {
+    const start = section[0].indexOf('| Field |');
+    if (start < 0) continue;
+    const fields = section[0].slice(start);
+    const identity = fields
+      .replaceAll(section[1]!, '{model}')
+      .replaceAll(docAnchor(section[1]!), '{model}');
+    const previous = fragments.get(identity);
+    if (!previous) {
+      fragments.set(identity, section);
+      continue;
+    }
+    aliases.set(section[1]!, previous[1]!);
+    for (const heading of fields.matchAll(/^#{3,6} (.+)$/gm))
+      fragmentAliases.set(
+        docAnchor(heading[1]!),
+        docAnchor(heading[1]!.replaceAll(section[1]!, previous[1]!)),
+      );
+    section[0] =
+      section[0].slice(0, start) +
+      `Fields, types, descriptions and enum values: [${previous[1]}](MODELS.md#${docAnchor(previous[1]!)}).\n\n`;
+  }
   const links = new Map<string, string>();
   const split = Buffer.byteLength(source) > 100_000;
   for (const section of sections)
@@ -52,6 +87,13 @@ export function modelDocuments(
       docAnchor(section[1]!),
       `${split ? `models/${section[1]}.md` : 'MODELS.md'}#${docAnchor(section[1]!)}`,
     );
+  for (const section of sections)
+    for (const heading of section[0].matchAll(/^#{3,6} (.+)$/gm))
+      links.set(
+        docAnchor(heading[1]!),
+        `${split ? `models/${section[1]}.md` : 'MODELS.md'}#${docAnchor(heading[1]!)}`,
+      );
+  for (const [from, to] of fragmentAliases) if (links.has(to)) links.set(from, links.get(to)!);
   const introduction = source.slice(0, sections[0]?.index ?? source.length);
   const files = new Map<string, string>();
   const list = (entries: typeof sections, prefix = '') =>
@@ -92,17 +134,102 @@ export function modelDocuments(
     sections.map((section) => [section[1]!, links.get(docAnchor(section[1]!))!]),
   );
   const namedFieldLinks = new Map(namedLinks);
-  for (const [name, canonical] of fieldAliases) {
+  for (const [name, canonical] of aliases) {
     let destination = canonical;
     const seen = new Set([name]);
-    while (fieldAliases.has(destination) && !seen.has(destination)) {
+    while (aliases.has(destination) && !seen.has(destination)) {
       seen.add(destination);
-      destination = fieldAliases.get(destination)!;
+      destination = aliases.get(destination)!;
     }
     if (namedLinks.has(destination)) namedFieldLinks.set(name, namedLinks.get(destination)!);
   }
   const fieldLinks = new Map([...namedFieldLinks].map(([name, link]) => [docAnchor(name), link]));
   return { files, links, namedLinks, fieldLinks, namedFieldLinks };
+}
+
+/** Share exact field-table nodes across the package, preferring model tables.
+ * Conditions remain at each use; links point directly at the table's heading.
+ */
+export function internDocumentationTables(files: Map<string, string>, target: string): void {
+  const markdown = new MarkdownIt();
+  const tables: {
+    path: string;
+    start: number;
+    end: number;
+    text: string;
+    heading: string;
+    root: boolean;
+  }[] = [];
+  for (const [path, source] of files) {
+    if (!path.startsWith(target + '/') || !path.endsWith('.md')) continue;
+    const lines = source.split('\n');
+    let heading = '',
+      level = 0;
+    const ids = new Set<string>();
+    for (const token of markdown.parse(source, {})) {
+      if (token.type === 'heading_open') {
+        const label = lines[token.map![0]]!.replace(/^#+ /, '');
+        const base = docAnchor(label);
+        heading = base;
+        for (let suffix = 1; ids.has(heading); suffix++) heading = base + '-' + suffix;
+        ids.add(heading);
+        level = Number(token.tag.slice(1));
+      }
+      if (token.type !== 'table_open') continue;
+      const [start, end] = token.map!;
+      const text = lines.slice(start, end).join('\n');
+      if (!text.startsWith('| Field | Presence |') || Buffer.byteLength(text) < 256) continue;
+      tables.push({
+        path,
+        start,
+        end,
+        text,
+        heading,
+        root: (path.includes('/models/') || path.endsWith('/MODELS.md')) && level === 2,
+      });
+    }
+  }
+  const canonical = new Map<string, (typeof tables)[number]>();
+  // Named model tables win over nested and operation tables, independently of
+  // traversal order. Exact content includes emitted target-specific type links.
+  for (const table of [...tables].sort((a, b) => Number(b.root) - Number(a.root)))
+    if (!canonical.has(table.text)) canonical.set(table.text, table);
+  const edits = new Map<string, typeof tables>();
+  for (const table of tables) {
+    const owner = canonical.get(table.text)!;
+    if (owner === table) continue;
+    // Distinct canonical models with differing conditions retain those rules;
+    // modelDocuments already aliases equivalent complete field fragments.
+    if (table.root) continue;
+    const changes = edits.get(table.path) ?? [];
+    changes.push(table);
+    edits.set(table.path, changes);
+  }
+  for (const [path, changes] of edits) {
+    const lines = files.get(path)!.split('\n');
+    for (const table of changes.sort((a, b) => b.start - a.start)) {
+      const owner = canonical.get(table.text)!;
+      const destination =
+        owner.path === path ? '' : posix.relative(posix.dirname(path), owner.path);
+      // Keep model links directly visible when sharing an operation's parameter
+      // table, so a named request body never gains an extra navigation hop.
+      const models = table.path.includes('/reference/')
+        ? [
+            ...new Set(
+              [...table.text.matchAll(/\[(\w+)\]\(([^)]+)\)/g)]
+                .filter((match) => /(?:MODELS\.md|models\/\w+\.md)#/.test(match[2]!))
+                .map((match) => match[0]),
+            ),
+          ]
+        : [];
+      lines.splice(
+        table.start,
+        table.end - table.start,
+        `Field definitions: [shared fields](${destination}#${owner.heading}).${models.length ? ' Models: ' + models.join(', ') + '.' : ''}`,
+      );
+    }
+    files.set(path, lines.join('\n'));
+  }
 }
 
 const errorRows = [
@@ -317,8 +444,10 @@ export function phpModelReference(
   const modelNames = (response: boolean) =>
     Object.fromEntries(
       Object.keys(c.models).flatMap((name) =>
-        response && names.has(name)
-          ? [[name, name]]
+        response
+          ? names.has(name)
+            ? [[name, name]]
+            : []
           : names.has(name + 'Input')
             ? [[name, name + 'Input']]
             : [],
@@ -326,6 +455,12 @@ export function phpModelReference(
     );
   const inputNames = modelNames(false),
     outputNames = modelNames(true);
+  const fragments = new DocumentationFragments();
+  for (const plan of selected) {
+    const schema =
+      plan.documentationSchema ?? c.models[plan.name] ?? c.models[plan.name.replace(/Input$/, '')];
+    if (schema) fragments.register(schema, plan.name, plan.response);
+  }
   const shapes = new Map<string, string>();
   const cell = (text: string) =>
     text
@@ -342,6 +477,7 @@ export function phpModelReference(
     );
   return (
     `# ${c.title} models\n\n[API reference](REFERENCE.md) · [Runtime guide](RUNTIME.md)\n\nThese classes expose presence-aware getters. Omitted optional response fields return null; has() distinguishes omission from present-null. Input classes omit read-only fields, and responses omit write-only fields. int64/uint64 values use integer strings; decimal fields preserve exact numeric strings.\n\n` +
+    modelDocumentationConventions +
     selected
       .map((plan) => {
         const schema =
@@ -353,6 +489,7 @@ export function phpModelReference(
         const variants =
           schema &&
           documentationVariants(schema, definitions).some((variant) => variant.conditions.length);
+        const fieldReferences = new Map<string, Set<string>>();
         const fields = schema
           ? modelFieldReference(
               schema,
@@ -362,6 +499,9 @@ export function phpModelReference(
               enumLinks,
               plan.response,
               Boolean(variants),
+              new Set(),
+              fragments,
+              fieldReferences,
             )
           : '';
         const identity = JSON.stringify([
@@ -384,7 +524,7 @@ export function phpModelReference(
                     plan.getters
                       .map(
                         (getter) =>
-                          `| \`${getter.field}\` | ${plan.documentation?.[getter.field]?.required ? 'Required' : 'Optional'} | ${type(getter.doc)} | ${[cell(plan.documentation?.[getter.field]?.markdown ?? plan.documentation?.[getter.field]?.description ?? ''), enumNotes(plan.documentation?.[getter.field]?.enums ?? [], (value) => schemaLiteral(value, true), enumLinks)].filter(Boolean).join(' ')} |`,
+                          `| \`${getter.field}\` | ${plan.documentation?.[getter.field]?.required ? 'Required' : 'Optional'} | ${type(getter.doc)} | ${[cell(plan.documentation?.[getter.field]?.markdown ?? plan.documentation?.[getter.field]?.description ?? ''), enumNotes(plan.documentation?.[getter.field]?.enums ?? [], (value) => schemaLiteral(value, true), enumLinks), fieldReferenceNotes(getter.field, fieldReferences)].filter(Boolean).join(' ')} |`,
                       )
                       .join('\n') +
                     '\n\n'

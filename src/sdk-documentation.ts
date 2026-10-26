@@ -225,6 +225,39 @@ export function documentationVariants(
   );
 }
 
+export const modelDocumentationConventions =
+  'Field definitions apply to all variants. Rules under each condition specify presence and additional constraints. Composed alternative groups apply together: satisfy a variant from each numbered group.\n\n';
+
+export function fieldReferenceNotes(
+  field: string,
+  references: ReadonlyMap<string, Set<string>>,
+): string {
+  return [...references]
+    .filter(
+      ([path]) =>
+        path === field ||
+        path.startsWith(field + '.') ||
+        path.startsWith(field + '[') ||
+        path.startsWith(field + '{'),
+    )
+    .map(([path, links]) => `${literalCell(path)}: ${[...links].join(', ')}.`)
+    .join(' ');
+}
+
+/** One registry per target package; identities retain direction and declared constraints. */
+export class DocumentationFragments {
+  private readonly locations = new Map<string, string>();
+  private key(schema: Schema, response?: boolean): string {
+    return stable([response, schema]);
+  }
+  register(schema: Schema, scope: string, response?: boolean): string | undefined {
+    const key = this.key(schema, response);
+    const previous = this.locations.get(key);
+    if (!previous) this.locations.set(key, scope);
+    return previous;
+  }
+}
+
 /** Canonical field tables must retain the constraints of every alternative. */
 export function modelFieldReference(
   schema: Schema,
@@ -235,6 +268,8 @@ export function modelFieldReference(
   response?: boolean,
   includeFields = true,
   ancestors = new Set<string>(),
+  fragments?: DocumentationFragments,
+  fieldReferences = new Map<string, Set<string>>(),
 ): string {
   const identity = stable(schema);
   if (ancestors.has(identity)) return '';
@@ -253,80 +288,141 @@ export function modelFieldReference(
   });
   const first = shapes[0];
   if (!first) return 'No satisfiable declared object variants.\n\n';
-  const identities = shapes.map((shape) =>
-    Object.fromEntries(
-      Object.entries(shape.fields).map(([field, child]) => [
-        field,
-        fieldTable(
-          { properties: { [field]: child }, required: shape.required.has(field) ? [field] : [] },
-          definitions,
-          'Field',
-          true,
-          names,
-          enumLinks,
-        ),
-      ]),
-    ),
-  );
-  const inlineAlternatives = (child: Schema): boolean =>
-    Boolean(
-      child.oneOf ||
-        child.anyOf ||
-        [
-          ...(child.allOf ?? []),
-          ...Object.values(child.properties ?? {}),
-          ...(child.items ? [child.items] : []),
-          ...(typeof child.additionalProperties === 'object' ? [child.additionalProperties] : []),
-        ].some(inlineAlternatives),
+  const variants = shapes.some((shape) => shape.conditions.length);
+  const declarations = (child: Schema): Schema[] => {
+    const { allOf, ...own } = child;
+    return [
+      ...Object.entries(own).map(([key, value]) => ({ [key]: value }) as Schema),
+      ...(allOf ?? []).flatMap(declarations),
+    ];
+  };
+  const conjunction = (parts: Schema[]): Schema => {
+    const combined: Schema = {};
+    const additional: Schema[] = [];
+    for (const part of parts)
+      for (const [key, value] of Object.entries(part)) {
+        if (Object.hasOwn(combined, key)) additional.push(part);
+        else Object.assign(combined, { [key]: value });
+      }
+    return additional.length ? { allOf: [combined, ...additional] } : combined;
+  };
+  // Presence is independent of a field's definition. Retain shared conjuncts
+  // once, then document only the extra constraints under each condition.
+  const fields: Record<string, Schema> = Object.create(null);
+  const presence = new Map<string, string>();
+  const shared = new Map<string, Set<string>>();
+  for (const field of new Set(shapes.flatMap((shape) => Object.keys(shape.fields)))) {
+    const children = shapes.flatMap((shape) => (shape.fields[field] ? [shape.fields[field]!] : []));
+    const parts = children.map(declarations);
+    const common = parts[0]!.filter((part) =>
+      parts.every((entries) => entries.some((entry) => stable(entry) === stable(part))),
     );
-  const common = Object.fromEntries(
-    Object.entries(first.fields).filter(([field, child]) =>
-      shapes.every(
-        (shape, index) =>
-          identities[index]![field] === identities[0]![field] &&
-          (!inlineAlternatives(child) || stable(shape.fields[field]) === stable(child)),
-      ),
-    ),
-  );
-  const table = (fields: Record<string, Schema>, required: Set<string>, label: string) =>
-    fieldTable(
-      { properties: fields, required: [...required] },
-      definitions,
-      label,
-      true,
-      names,
-      enumLinks,
+    fields[field] = conjunction(common);
+    shared.set(field, new Set(common.map(stable)));
+    presence.set(
+      field,
+      shapes.every((shape) => shape.fields[field] && shape.required.has(field))
+        ? 'Required'
+        : shapes.every((shape) => shape.fields[field] && !shape.required.has(field))
+          ? 'Optional'
+          : 'Conditional',
     );
-  let output = includeFields ? table(common, first.required, scope) : '';
-  if (shapes.some((shape) => shape.conditions.length)) {
-    if (
-      shapes.some((shape) =>
-        shape.conditions.some((condition) => / group \d+ variant /.test(condition)),
-      )
-    )
-      output +=
-        'Composed alternative groups apply together: satisfy a variant from each numbered group.\n\n';
-    if (Object.keys(common).length)
-      output +=
-        'Common fields above apply to every variant with the same presence and constraints. Each table below adds the fields and requirements for that variant.\n\n';
+  }
+  let output = '';
+  if (variants) {
+    if (!fragments) output += modelDocumentationConventions;
+    const alternatives = new Map<
+      string,
+      { indices: number[]; rules: string; tags: string[]; conditions: string[] }
+    >();
     for (const [index, shape] of shapes.entries()) {
       const tags = Object.entries(shape.fields).flatMap(([field, child]) =>
         schemaEnumValues(child, definitions)
           .filter((entry) => !entry.path && entry.values.length === 1)
           .map((entry) => `${literal(field)} = ${literal(entry.values[0]!)}`),
       );
-      output += `### ${scope} variant ${index + 1}${tags.length ? ': ' + tags.join(', ') : ''}\n\n${shape.conditions.join('; ')}.\n\n`;
-      output +=
-        table(
-          Object.fromEntries(
-            Object.entries(shape.fields).filter(([field]) => !Object.hasOwn(common, field)),
+      const condition = (value: Schema): string => {
+        const parts = [
+          ...(value.required?.length
+            ? [`present(${value.required.map((field) => literal(field)).join(', ')})`]
+            : []),
+          ...Object.entries(value.properties ?? {}).map(
+            ([field, child]) =>
+              `${literal(field)}: ${enumNotes(schemaEnumValues(child, definitions), literal, enumLinks) || typeDescription(child, definitions, names)}`,
           ),
-          shape.required,
-          `${scope} variant ${index + 1}`,
-        ) || 'No additional object fields.\n\n';
+          ...(value.allOf ?? []).map(condition).filter(Boolean),
+          ...(
+            [
+              ['oneOf', value.oneOf],
+              ['anyOf', value.anyOf],
+            ] as const
+          ).flatMap(([keyword, branches]) =>
+            branches
+              ? [
+                  `${keyword === 'oneOf' ? 'exactly one' : 'at least one'}(${branches.map(condition).join('; ')})`,
+                ]
+              : [],
+          ),
+          ...(value.not ? [`not (${condition(value.not)})`] : []),
+        ];
+        return parts.join(' and ');
+      };
+      const objectConstraints = (value: Schema): string[] => [
+        ...(value.not ? [`- Condition: not (${condition(value.not)}).\n`] : []),
+        ...(value.allOf ?? []).flatMap(objectConstraints),
+      ];
+      let rules = [...new Set(objectConstraints(shape.schema))].join('');
+      for (const [label, selected] of [
+        [
+          'Required',
+          Object.keys(shape.fields).filter(
+            (field) => presence.get(field) === 'Conditional' && shape.required.has(field),
+          ),
+        ],
+        [
+          'Optional',
+          Object.keys(shape.fields).filter(
+            (field) => presence.get(field) === 'Conditional' && !shape.required.has(field),
+          ),
+        ],
+        ['Undeclared', Object.keys(fields).filter((field) => !shape.fields[field])],
+      ] as const)
+        if (selected.length)
+          rules += `- ${label}: ${selected.map((field) => literal(field)).join(', ')}.\n`;
+      for (const [field, child] of Object.entries(shape.fields)) {
+        const extra = declarations(child).filter((part) => !shared.get(field)!.has(stable(part)));
+        if (!extra.length) continue;
+        const delta = conjunction(extra);
+        const notes = [delta, ...(delta.allOf ?? [])]
+          .map((part) => markdownNotes(part))
+          .filter(Boolean)
+          .join(' ');
+        const values = enumNotes(schemaEnumValues(child, definitions), literal, enumLinks);
+        const changesType = extra.some(
+          (part) => part.type || part.format || part['x-sdk-ref'] || part.oneOf || part.anyOf,
+        );
+        const type = changesType
+          ? typeDescription(conjunction(declarations(child)), definitions, names)
+          : 'any';
+        rules += `- Constraints for ${literal(field)}: ${[type === 'any' ? '' : type + '.', notes, values].filter(Boolean).join(' ')}\n`;
+      }
       if (!Object.keys(shape.fields).length)
-        output += `Value shape: ${typeDescription(shape.schema, definitions, names)}.\n\n`;
+        rules += `- Value shape: ${typeDescription(shape.schema, definitions, names)}.\n`;
+      const key = stable([rules, tags]);
+      const previous = alternatives.get(key);
+      if (previous) {
+        previous.indices.push(index + 1);
+        previous.conditions.push(...shape.conditions);
+      } else
+        alternatives.set(key, {
+          indices: [index + 1],
+          rules,
+          tags,
+          conditions: [...shape.conditions],
+        });
     }
+    for (const alternative of alternatives.values())
+      output += `### ${scope} variant ${alternative.indices.join(', ')}${alternative.tags.length ? ': ' + alternative.tags.join(', ') : ''}\n\n${alternative.conditions.join('; ')}.\n\n${alternative.rules || 'No additional constraints.\n'}\n`;
   }
   // Inline unions inside fields, array items and map values need their own
   // tables. Named children already link to their canonical model section.
@@ -339,16 +435,36 @@ export function modelFieldReference(
         !child.oneOf &&
         !child.anyOf &&
         child.allOf.every(namedComposition),
+    ) ||
+    Boolean(
+      (child.oneOf ?? child.anyOf)?.every((part) => part.type === 'null' || namedComposition(part)),
     );
   const nested = (child: Schema, path: string, parents = ancestors, context = scope): string => {
-    if (namedComposition(child)) return '';
+    const reference = (link: string) => {
+      const links = fieldReferences.get(path) ?? new Set<string>();
+      links.add(link);
+      fieldReferences.set(path, links);
+    };
+    if (namedComposition(child)) {
+      if (
+        !includeFields &&
+        documentationVariants(child, definitions).some((variant) => variant.conditions.length)
+      )
+        reference(typeDescription(child, definitions, names));
+      return '';
+    }
     const childIdentity = stable(child);
     if (parents.has(childIdentity)) return '';
     const identity = context + '.' + path + childIdentity;
     if (visited.has(identity)) return '';
     visited.add(identity);
     const alternatives = documentationVariants(child, definitions);
-    if (alternatives.some((variant) => variant.conditions.length))
+    if (alternatives.some((variant) => variant.conditions.length)) {
+      const scope = `${context}.${path}`;
+      const previous = fragments?.register(child, scope, response);
+      reference(`[declared alternatives](MODELS.md#${anchor(previous ?? scope)})`);
+      if (previous)
+        return `### ${scope}\n\nDeclared alternatives: [${previous}](MODELS.md#${anchor(previous)}).\n\n`;
       return (
         `### ${context}.${path}\n\n` +
         modelFieldReference(
@@ -360,8 +476,10 @@ export function modelFieldReference(
           response,
           true,
           parents,
+          fragments,
         )
       );
+    }
     const shape = schemaFields(child, definitions, new Set(), true);
     const next = new Set(parents).add(childIdentity);
     return (
@@ -380,9 +498,29 @@ export function modelFieldReference(
         child,
         field,
         ancestors,
-        Object.hasOwn(common, field) ? scope : `${scope} variant ${index + 1}`,
+        shapes.every((other) => stable(other.fields[field]) === stable(child))
+          ? scope
+          : `${scope} variant ${index + 1}`,
       );
-  return output;
+  return (
+    (includeFields
+      ? fieldTable(
+          { properties: fields },
+          definitions,
+          scope,
+          true,
+          names,
+          enumLinks,
+          presence,
+          new Map(
+            Object.keys(fields).map((field) => [
+              field,
+              fieldReferenceNotes(field, fieldReferences),
+            ]),
+          ),
+        )
+      : '') + output
+  );
 }
 function typeDescription(
   s: Schema,
@@ -399,7 +537,14 @@ function typeDescription(
     ];
     return types.filter((type) => type !== 'any').join(' and ') || 'any';
   }
-  if (s.oneOf || s.anyOf) return 'Alternative shapes (see declared variants)';
+  if (s.oneOf || s.anyOf) {
+    const types = [
+      ...new Set((s.oneOf ?? s.anyOf)!.map((part) => typeDescription(part, definitions, names))),
+    ];
+    return types.every((type) => type !== 'object' && type !== 'any')
+      ? types.join(' or ')
+      : 'Alternative shapes (see declared variants)';
+  }
   if (s.type === 'array') return `Array of ${typeDescription(s.items ?? {}, definitions, names)}`;
   const types = Array.isArray(s.type) ? s.type : [s.type ?? 'any'];
   return types
@@ -421,6 +566,8 @@ export function fieldTable(
   includeExamples = true,
   names?: ModelNames,
   enumLinks?: EnumLinks,
+  presence?: ReadonlyMap<string, string>,
+  references?: ReadonlyMap<string, string>,
 ): string {
   const { fields, required } = schemaFields(schema, definitions);
   if (!Object.keys(fields).length) return '';
@@ -475,10 +622,11 @@ export function fieldTable(
           enumDescriptions,
           child.readOnly ? 'Response only.' : '',
           child.writeOnly ? 'Input only.' : '',
+          references?.get(name),
         ]
           .filter(Boolean)
           .join(' ');
-        return `| \`${cell(name).replaceAll('`', '&#96;')}\` | ${required.has(name) ? 'Required' : 'Optional'} | ${typeDescription(child, definitions, names)} | ${notes} |`;
+        return `| \`${cell(name).replaceAll('`', '&#96;')}\` | ${presence?.get(name) ?? (required.has(name) ? 'Required' : 'Optional')} | ${typeDescription(child, definitions, names)} | ${notes} |`;
       })
       .join('\n') +
     '\n\n' +
@@ -587,6 +735,17 @@ export function modelReference(
         entry.input ? [[name, entry.input]] : [],
       ),
     );
+  const fragments = new DocumentationFragments();
+  for (const [name, schema] of Object.entries(c.models)) {
+    const entry = exports?.[name];
+    if (!exports || entry?.output === name)
+      fragments.register(
+        exports ? directionalSchema(schema, true) : schema,
+        name,
+        exports ? true : undefined,
+      );
+    if (entry?.input) fragments.register(directionalSchema(schema, false), entry.input, false);
+  }
   const section = (
     name: string,
     schema: Schema,
@@ -594,9 +753,10 @@ export function modelReference(
     replacement = '',
     response?: boolean,
   ) =>
-    `## ${name}\n\n${replacement}${markdownNotes(schema)}\n\n${enumNotes(schemaEnumValues(schema, c.definitions ?? c.models), literal, enumLinks)}\n\n${modelFieldReference(schema, c.definitions ?? c.models, name, names, enumLinks, response)}`;
+    `## ${name}\n\n${replacement}${markdownNotes(schema)}\n\n${enumNotes(schemaEnumValues(schema, c.definitions ?? c.models), literal, enumLinks)}\n\n${modelFieldReference(schema, c.definitions ?? c.models, name, names, enumLinks, response, true, new Set(), fragments)}`;
   return (
     `# ${c.title} models\n\n[API reference](REFERENCE.md) · [Runtime guide](RUNTIME.md)\n\nFields describe the API's declared shape. Inputs omit read-only fields; responses omit write-only fields and preserve unknown fields and enum values. ${target === 'node' ? 'Request enums are closed unions; response enums accept unknown strings. Input types use the Input suffix.' : 'Operation responses use presence-aware classes with typed getters; optional omitted fields return null.'}\n\nint64/uint64 values are integer strings${target === 'node' ? ' (TypeScript `${bigint}`); inputs also accept bigint' : ''}. Decimal fields use exact numeric strings. Use each field's declared units.\n\n` +
+    modelDocumentationConventions +
     Object.entries(c.models)
       .map(([name, schema]) => {
         if (!exports) return section(name, schema);

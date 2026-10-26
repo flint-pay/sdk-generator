@@ -4,6 +4,7 @@ import {
   resourceFile,
   relocateDocument,
   modelDocuments,
+  internDocumentationTables,
   optionsReference,
   errorReference,
   operationErrors,
@@ -2105,6 +2106,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
   for (const [path, value] of files)
     if (path.startsWith('node/') && path.endsWith('.d.ts'))
       files.set(path, formatNodeDeclaration(value));
+  for (const target of targets) internDocumentationTables(files, target);
   return files;
 }
 const resultStatus = (status: string) => successStatus(status) || status === 'default';

@@ -70,3 +70,27 @@ export function assertPackageLinks(directory) {
     }
   }
 }
+
+/** Large field tables must have one canonical location per package. */
+export function assertUniqueFieldTables(directory, minimumBytes = 256) {
+  const seen = new Map();
+  // No allowlist: navigation, policies and HTTP status tables are separate
+  // justified repeated blocks, not model/request field definitions.
+  for (const path of packageDocuments(directory)) {
+    const source = readFileSync(path, 'utf8');
+    const lines = source.split('\n');
+    for (const token of markdown.parse(source, {})) {
+      if (token.type !== 'table_open') continue;
+      const [start, end] = token.map;
+      const table = lines.slice(start, end).join('\n');
+      if (!table.startsWith('| Field | Presence |') || Buffer.byteLength(table) < minimumBytes)
+        continue;
+      assert.ok(
+        !seen.has(table),
+        `repeated ${Buffer.byteLength(table)}-byte field table: ${seen.get(table)} and ${path}:${start + 1}`,
+      );
+      seen.set(table, `${path}:${start + 1}`);
+    }
+  }
+  return seen.size;
+}
