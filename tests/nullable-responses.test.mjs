@@ -209,7 +209,7 @@ foreach($fixtures['cases'] as $i=>$payload){
  if(!($r->get('risk') instanceof Detail)||!($r->risk instanceof Detail)||$r->risk->getLevel()!=='future')exit(3);
  if(json_decode(json_encode($r),true)!==$payload)exit(4);}
  if($i===1&&($r->getRisk()!==null||$r->getReversed()!==null||$r->getInline()!==null))exit(5);
- if($i===2){if($r->hasRisk())exit(6);try{$r->getRisk();exit(7);}catch(SdkError $e){}}
+ if($i===2&&($r->hasRisk()||$r->getRisk()!==null))exit(6);
 }
 foreach($fixtures['malformed'] as $payload){$body=json_encode($payload);try{$c->api->getValues();exit(8);}catch(SdkError $e){if($e->kind!=='protocol')throw $e;}}
 echo 'ok';

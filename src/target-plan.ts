@@ -228,6 +228,17 @@ export interface PhpModelPlan {
   representation?: PhpRepresentation;
 }
 
+function nullablePhpAccessor(type: string): string {
+  if (
+    type === 'mixed' ||
+    type === 'null' ||
+    type.startsWith('?') ||
+    type.split('|').includes('null')
+  )
+    return type;
+  return type.includes('|') ? type + '|null' : '?' + type;
+}
+
 export function compilePhpModel(
   name: string,
   schema: Schema,
@@ -253,12 +264,17 @@ export function compilePhpModel(
     defaultObject: declaration.type === 'object',
     getters: Object.entries(declaration.properties ?? {})
       .filter(([, child]) => (response ? !child.writeOnly : !child.readOnly))
-      .map(([field, child]) => ({
-        field,
-        method: pascalWords(field) ? 'get' + pascalWords(field) : '',
-        type: phpType(child, response),
-        doc: phpDocType(child, response, definitions),
-      })),
+      .map(([field, child]) => {
+        const optional = !declaration.required?.includes(field);
+        const type = phpType(child, response);
+        const doc = phpDocType(child, response, definitions);
+        return {
+          field,
+          method: pascalWords(field) ? 'get' + pascalWords(field) : '',
+          type: response && optional ? nullablePhpAccessor(type) : type,
+          doc: response && optional ? nullablePhpAccessor(doc) : doc,
+        };
+      }),
     codec,
     ...(sharedCodec ? { sharedCodec } : {}),
   };
@@ -478,7 +494,14 @@ function compileRequestCall(op: Operation, c: Contract, optionsType: string) {
       : []),
     '?RequestOptions $options = null',
   ].join(', ');
-  let phpPrelude = `$input = [${paths.map((p, i) => `${php(p.name)} => $${names[i]}`).join(', ')}]; `;
+  let phpPrelude =
+    paths
+      .map(
+        (p, i) =>
+          `if ($${names[i]} instanceof Model && (is_array($${names[i]}->jsonSerialize()) || is_object($${names[i]}->jsonSerialize()))) throw SdkError::create('validation', ${php('Path parameter ' + p.name + ' requires a scalar value or a scalar model; entity models are not identifiers')}); `,
+      )
+      .join('') +
+    `$input = [${paths.map((p, i) => `${php(p.name)} => $${names[i]}`).join(', ')}]; `;
   if (hasParams(op)) {
     phpPrelude +=
       "$params = $params instanceof Model ? $params->toInputArray() : $params; $rest = $params ?? []; if ($rest && array_is_list($rest)) throw SdkError::create('validation', 'Expected associative params', 'not_sent'); ";
@@ -1192,11 +1215,16 @@ export function compileSdkContract(source: Contract): {
         entity.declaration,
       );
       model.representation = entity.representation;
+      const required = new Set(
+        phpDeclaration(entity.declaration, entity.schema['x-sdk-definitions']).required,
+      );
       for (const getter of model.getters) {
         const value = entity.representation.fields[getter.field];
         if (value) {
-          getter.type = phpRepresentationType(value, true);
-          getter.doc = phpRepresentationType(value);
+          const type = phpRepresentationType(value, true);
+          const doc = phpRepresentationType(value);
+          getter.type = !required.has(getter.field) ? nullablePhpAccessor(type) : type;
+          getter.doc = !required.has(getter.field) ? nullablePhpAccessor(doc) : doc;
         }
       }
       const existing = plan.php.models.findIndex((value) => value.name === model.name);

@@ -24,6 +24,10 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ### Breaking changes for regenerated SDKs
 
+- **PHP model access and integer inputs.** Omitted optional response fields now read as null through nullable getters and PHPDoc properties; use `has()` to distinguish omission from present-null. Required fields still fail during response decoding, and unknown property names raise a validation error. Integer-field `ExactNumber` inputs now reject decimal/exponent spellings such as `50.00` and `5e3`; pass `50` or `5000`. Integer response decoding and decimal precision are unchanged.
+- **PHP client resource reflection.** Resource properties now use PHPDoc-typed read-only magic access with a private lazy cache. Ordinary access and `isset()` remain available; migrate reflection/`property_exists()`/`get_object_vars()` checks to these APIs. Assignments raise `ValidationError`.
+- **PHP error text and exception codes.** Server-originated messages append available HTTP status, provider code and request ID. `getCode()` now returns the HTTP status, or 0 without a response; `errorCode` continues to hold provider codes. Per-kind classes and outcome values are unchanged.
+
 - **Node SSE transport.** Default SSE connections use native HTTP/HTTPS for socket lifetime control. Pass an explicit `transport` to retain application-specific fetch/Undici behavior.
 
 - **Runtime safety.** Pagination defaults to 1,000 pages; set `maxPages` explicitly for larger traversals. Cursor cycles and two consecutive empty pages with continuations raise protocol errors. Per-attempt timeouts now use `timeout` / `TimeoutError`; update error-kind switches. Refused connections and DNS failures report `not_sent`, with stable error codes and safe transport detail. PHP transport failures without an HTTP response use `null` instead of `0` for status and metadata status. Both targets parse `Retry-After` using decimal seconds or canonical GMT HTTP dates; permissive signed/exponent/relative-date spellings are ignored. Error JSON exports omit raw bodies, headers, URLs and unsanitized causes; use explicit access for recovery. JavaScript rejects unknown client options, both targets reject base URLs repeating operation path prefixes, and PHP model assignment raises a validation error instead of creating a dynamic property. See [runtime safety migration](docs/releases.md#runtime-safety).
@@ -83,6 +87,10 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 - `documentation.authShortcut` selects the authentication shortcut shown in README and operation examples.
 
 ### Fixed
+
+- PHP response access memoizes immutable model children and entity collections, preserving identity and making repeated reads constant-time. Mutable untyped values and raw exports retain defensive copies. Public/input storage shares its owned tree when their representations match.
+- PHP JSON parsing uses native decoding and a targeted token rewrite to preserve exact numbers, JSON string kinds, escaped strings and duplicate-key semantics without a character-by-character parser or concurrent duplicate parsed trees.
+- PHP resources initialize on first access while retaining read-only properties. Entity models used as positional identifiers fail with a parameter-specific scalar-model error. SDK errors expose `KIND_*` and `OUTCOME_*` constants; PHP runtime docs explain untyped multi-variant webhook events.
 
 - Runtime error messages identify caller authentication options; PHP invalid header values raise SDK validation errors. Malformed SSE events retain their event ID and one-based position. Unconsumed default Node SSE streams no longer keep the process alive and expire their idle budget before iteration. Node webhook verification accepts ArrayBuffer and Uint8Array bytes, and both targets explain millisecond-scale `nowSeconds` mistakes.
 - Optional response-model fields are additive even with open additional properties, permitting stable minor SDK releases. Draft iteration no longer creates fake first-release CHANGELOG/MIGRATION findings. Enum additions describe newly accepted inputs. Shared model comparisons and declaration reviews no longer repeat at every use site; historical compiled guarantees remain checked.

@@ -124,11 +124,11 @@ for (const key of keys) {
       assert.equal(Object.getPrototypeOf(contract.config.phpFieldClasses), Object.prototype);
       assert.deepEqual(Object.keys(contract.config.phpFieldClasses.Owner), expectedOrder);
       const output = render(contract);
-      assert.match(output.get('php/src/classes/Owner.php'), /getOther\(\): Place/);
+      assert.match(output.get('php/src/classes/Owner.php'), /getOther\(\): \?Place/);
       const getter = key === '__proto__' ? 'Proto' : key[0].toUpperCase() + key.slice(1);
       assert.match(
         output.get('php/src/classes/Owner.php'),
-        new RegExp(`get${getter}\\(\\): Location`),
+        new RegExp(`get${getter}\\(\\): \\?Location`),
       );
       assert.deepEqual(output, render(f.load('flat.json')));
       assert.deepEqual(output, render(f.load()));

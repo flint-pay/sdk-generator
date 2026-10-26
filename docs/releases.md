@@ -5,6 +5,17 @@
 - Preview versions use a SemVer prerelease suffix and npm's `next` tag in the release plan.
 - Commands below use the installed `sdk-generator` executable. From a source checkout, run `npm ci` and `npm run build`, then use `node dist/cli.js`. See the [CLI reference](cli.md) for arguments.
 
+## PHP model reads, integer inputs and errors
+
+Regenerate and review PHP consumers before upgrading:
+
+- Optional response getters and `@property-read` declarations are nullable. Reading an omitted optional field returns null; replace catches around optional reads with ordinary null handling, or use `has()` to distinguish omission from an explicit null. Required response fields still fail during decode with a `ProtocolError`, and unknown property names still fail loudly. Input omission behavior is unchanged.
+- Repeated reads share immutable hydrated entities and use copy-on-write arrays for entity collections. Do not depend on distinct object identities between reads. Mutable untyped objects and raw/input exports remain isolated copies.
+- Integer-field `ExactNumber` inputs require integer spelling: replace `new ExactNumber('50.00')` with `new ExactNumber('50')`, and `new ExactNumber('5e3')` with `new ExactNumber('5000')`. Plain integer strings use the same spelling rule. Decimal fields and integral decimal/exponent response tokens retain exact semantics.
+- Error messages append available HTTP status, provider code and request ID. Avoid exact message matching; use the existing per-kind classes, `kind`, `status`, `errorCode` and `outcome`. `getCode()` now returns the HTTP status or 0 without a response. No error classes are renamed. PHP also exposes `SdkError::KIND_*` and `OUTCOME_*` constants.
+- Resource properties initialize on first access and remain read-only. Resources use PHPDoc-typed magic properties backed by a private cache instead of public readonly slots; code using reflection, `property_exists()` or `get_object_vars()` should use ordinary property access or `isset()` instead. Assignments raise a local `ValidationError`.
+- Positional identifier arguments accept scalar models; entity models now fail with a parameter-specific error instead of a generic codec failure.
+
 ## Contributor Node prerequisites
 
 The published generator continues to support Node.js 22+. Source-checkout contributor tests require Node.js 22.16+ for the SQLite examples, and the test runner reports a prerequisite error on earlier versions. Run `nvm use` before testing; `.nvmrc` and CI use the contributor minimum. No Node upgrade is required for existing generator installs. Generated SDK runtime requirements are unchanged. See the [support matrix](support-matrix.md) for consumer requirements.
