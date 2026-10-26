@@ -520,8 +520,12 @@
       "schemaExamples": 410,
       "unsupportedMediaExamples": 2,
       "expectedFailures": "response-example-failures.json",
-      "basis": "All documented JSON response media examples across every status and recursively reachable schema-level examples, including error-only annotations, are decoded by the actual generated Node/PHP strict executors. Four hidden-form success responses use response-only audit plans; 23 hidden CLI/OAuth form error examples are explicitly excluded because those operations are outside the SDK surface and have no generated operation codec. Two SSE wire-text examples remain excluded. The single upstream defect (FLI-586) must fail for exactly the recorded reason in both targets; an unexpected pass, changed reason, missing example or any other failure fails the suite.",
-      "hiddenFormErrorExamples": 23
+      "basis": "All documented JSON response examples across every status are audited: 428 success media examples and 410 distinct nested annotations use the actual generated strict codecs; 5939 exposed error media examples call public generated methods through synthetic HTTP transports in Node and PHP. Check status-specific class/kind, code, complete details and request ID, with exactly one attempt. Node details are source-derived with declared numeric representations and must survive public certification; PHP mixed details preserve exact raw JSON numeric tokens. There are no nonconforming-details exclusions. Mutation controls dropping Node certification results or PHP details must fail the same assertions. Four hidden-form successes use response-only audit plans; 23 hidden CLI/OAuth form errors remain explicitly excluded because those operations have no generated codec, alongside two SSE wire-text examples. The single FLI-586 defect must fail for the recorded reason in both targets; a pass, changed reason, missing example or any other failure fails the suite.",
+      "hiddenFormErrorExamples": 23,
+      "successExamples": 428,
+      "errorThroughClient": 5939,
+      "detailsExclusions": 0,
+      "errorDetailsMutationChecks": 2
     },
     "webhookAmounts": "Reachable webhook amount declarations now share eight int64 schema locations, with zero plain-integer amount declarations (previously 108 plain integer and two int64 locations). Preserve exact integer strings in both targets. Webhook resource and delivery envelopes now use data.object.",
     "modelFixtureRefresh": "ReturnLineDecision/ReturnProcessDecision no longer declare decision_basis, selected_resolution_type or their old containment rules. Exercise current decline/override reason dependencies, nullable automatic_resolution_type, closed input enums and quantity minimums. ReturnPolicyRevisionInput replaces obsolete refund_timing with release_timing, required for allowed refund/store_credit through its published if/contains/then constraint. No profile correction is needed.",

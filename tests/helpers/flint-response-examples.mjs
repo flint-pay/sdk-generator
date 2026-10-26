@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { loadContract } from '../../dist/index.js';
 import { compileCodec } from '../../dist/codec-plan.js';
+import { checkErrorResponseExamples } from './flint-response-errors.mjs';
 
 const formOperations = new Set([
   'authorizeCLIDevice',
@@ -186,9 +187,12 @@ export async function checkResponseExamples(output, sourceFile, casesFile) {
     ...example,
     codec: compileCodec(operations.get('responseExample' + index).responses['200'].schema),
   }));
+  const successes = audit.routes.filter((example) => /^2\d\d$/.test(example.status));
+  const errors = audit.routes.filter((example) => Number(example.status) >= 400);
+  assert.equal(successes.length + errors.length, audit.routes.length);
   writeFileSync(
     casesFile,
-    JSON.stringify({ routes: audit.routes, schemas, definitions, expectedFailures }),
+    JSON.stringify({ routes: successes, schemas, definitions, expectedFailures }),
   );
   const base = join(output, 'node');
   const { executeCodec, parseExact, ExactNumber } = await import(
@@ -233,7 +237,7 @@ export async function checkResponseExamples(output, sourceFile, casesFile) {
       );
     } else if (failure) failures.push(`${example.location}: ${failure}`);
   };
-  for (const example of audit.routes) {
+  for (const example of successes) {
     const route = routes.get(example.operation);
     assert.ok(route, example.location);
     const codec = route.operation.responses[example.status]?.codec;
@@ -269,14 +273,27 @@ export async function checkResponseExamples(output, sourceFile, casesFile) {
   );
   assert.equal(php.status, 0, php.error?.message ?? php.stderr);
   assert.deepEqual(JSON.parse(php.stdout), {
-    inspected: audit.routes.length + schemas.length,
+    inspected: successes.length + schemas.length,
     expectedFailures: expectedFailures.length,
   });
+  const errorStarted = performance.now();
+  const errorThroughClient = await checkErrorResponseExamples(
+    output,
+    errors,
+    routes,
+    join(dirname(casesFile), 'error-response-examples.json'),
+    source,
+  );
   return {
     inspected: audit.routes.length + schemas.length,
     expectedFailures: expectedFailures.length,
     mediaExamples: audit.routes.length + schemas.filter((example) => example.operation).length,
     schemaExamples: schemas.filter((example) => !example.operation).length,
+    successExamples: successes.length + schemas.filter((example) => example.operation).length,
+    errorThroughClient,
+    errorClientMs: performance.now() - errorStarted,
+    detailsExclusions: 0,
+    errorDetailsMutationChecks: 2,
     omitted: audit.omitted,
   };
 }

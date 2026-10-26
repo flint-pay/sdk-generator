@@ -287,6 +287,7 @@ test('response-example coverage includes every status in the pinned full export'
   assert.equal(inventory.routes.length, 6363);
   assert.equal(inventory.schemas.length, 414);
   assert.equal(inventory.omitted.length, 25);
+  assert.equal(inventory.routes.filter(({ status }) => /^2\d\d$/.test(status)).length, 424);
   assert.equal(inventory.routes.filter(({ status }) => !/^2\d\d$/.test(status)).length, 5939);
 });
 
