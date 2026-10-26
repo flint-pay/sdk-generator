@@ -1,12 +1,14 @@
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, cpSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import {
   loadContract,
   generate,
+  render,
   validateFixtures,
   preview,
   setCompatibilityBaseline,
@@ -299,4 +301,184 @@ test('saved compiled compatibility retains key constraints across regeneration',
       (c) => c.severity !== 'breaking',
     ),
   );
+});
+
+for (const annotation of ['x-sensitive', 'writeOnly']) {
+  for (const inherited of [false, true]) {
+    test(`protected map key schemas load and omit examples (${annotation}, inherited=${inherited})`, () => {
+      const secret = 'SYNTHETIC_PROTECTED_MAP_EXAMPLE';
+      const map = {
+        type: 'object',
+        propertyNames: { minLength: 1 },
+        additionalProperties: { type: 'string', example: secret },
+        example: { valid: secret },
+      };
+      const schema = inherited
+        ? { type: 'object', [annotation]: true, properties: { nested: map } }
+        : { ...map, [annotation]: true };
+      const contract = load(document({ protectedMap: schema }));
+      const files = render(contract);
+      for (const [path, content] of files) {
+        assert.ok(!content.includes(secret), path);
+        assert.ok(!content.includes('x-sdk-example-protected'), path);
+      }
+    });
+  }
+}
+
+test('caller reserved extensions stay rejected before publication markers are inserted', () => {
+  for (const key of ['x-sdk-example-protected', 'x-sdk-pattern-php', 'x-sdk-unknown']) {
+    for (const sensitive of [false, true]) {
+      assert.throws(
+        () =>
+          load(
+            document({
+              invalid: {
+                type: 'object',
+                'x-sensitive': sensitive,
+                propertyNames: { minLength: 1, [key]: true },
+              },
+            }),
+          ),
+        /x-sdk-\* extensions are reserved/,
+      );
+    }
+    const path = join(dir, 'configured-reserved.json');
+    writeFileSync(
+      path,
+      JSON.stringify({
+        ...config,
+        webhook: {
+          algorithm: 'hmac-sha256',
+          header: 'X-Signature',
+          timestampHeader: 'X-Time',
+          separator: '.',
+          toleranceSeconds: 300,
+          typeField: 'type',
+          events: {
+            'map.changed': {
+              type: 'object',
+              'x-sensitive': true,
+              propertyNames: { minLength: 1, [key]: true },
+            },
+          },
+        },
+      }),
+    );
+    assert.throws(
+      () => loadContract(join(dir, 'api.json'), path),
+      /x-sdk-\* extensions are reserved/,
+    );
+  }
+});
+
+test('key constraint failures identify and escape the offending key in both generated executors', async () => {
+  const codec = compileCodec({
+    type: 'object',
+    propertyNames: { minLength: 3, pattern: '^[a-z]+$' },
+  });
+  const { executeCodec } = await import(pathToFileURL(join(output, 'node/runtime.js')).href);
+  const cases = [
+    [{ ab: 'x' }, 'input["ab"]: string violates minLength'],
+    [{ 'a"\\\n]': 'x' }, String.raw`input["a\"\\\n]"]: string violates pattern`],
+  ];
+  for (const mode of ['request', 'response']) {
+    const path = mode === 'request' ? 'input' : 'response';
+    for (const [value, expected] of cases) {
+      assert.throws(() => executeCodec(value, codec, { mode, path }), {
+        message: expected.replace(/^input/, path),
+      });
+    }
+  }
+  const plan = join(dir, 'key-errors-codec.json');
+  writeFileSync(plan, JSON.stringify(codec));
+  const php = String.raw`
+require $argv[1].'/src/Client.php';
+$codec=json_decode(file_get_contents($argv[2]),true,512,JSON_THROW_ON_ERROR);
+$cases=[
+ [(object)['ab'=>'x'], 'input["ab"]: string violates minLength'],
+ [(object)["a\"\\\n]"=>'x'], <<<'ERROR'
+input["a\"\\\n]"]: string violates pattern
+ERROR],
+];
+foreach(['request','response'] as $mode){
+ $path=$mode==='request'?'input':'response';
+ foreach($cases as [$value,$expected]){
+  try{Example\SchemaKeys\Codec::execute($value,$codec,['mode'=>$mode,'path'=>$path]);throw new RuntimeException('accepted invalid key');}
+  catch(Example\SchemaKeys\SdkError $error){
+   if($error->getMessage()!==str_replace('input[',$path.'[',$expected))throw new RuntimeException($error->getMessage());
+  }
+ }
+}
+echo 'ok';`;
+  const result = spawnSync('php', ['-r', php, join(output, 'php'), plan], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.error?.message ?? result.stderr);
+  assert.equal(result.stdout, 'ok');
+});
+
+function referenceCli() {
+  const root = join(dir, 'uncached');
+  cpSync(new URL('../dist/', import.meta.url), join(root, 'dist'), { recursive: true });
+  cpSync(new URL('../package.json', import.meta.url), join(root, 'package.json'));
+  symlinkSync(resolve('node_modules'), join(root, 'node_modules'), 'dir');
+  const contract = join(root, 'dist/contract.js');
+  const source = readFileSync(contract, 'utf8');
+  const cachedReturn = /if \(compared\.has\(key\)\)\s*return;/g;
+  assert.equal([...source.matchAll(cachedReturn)].length, 1);
+  writeFileSync(contract, source.replace(cachedReturn, 'if (false) return;'));
+  return join(root, 'dist/cli.js');
+}
+
+test('identical union intersections retain numeric representation diagnostics', () => {
+  const union = { anyOf: [{ type: 'integer', format: 'int64' }, { type: 'integer' }] };
+  assert.throws(
+    () => load(document({ invalid: { allOf: [union, structuredClone(union)] } })),
+    /intersected numeric schemas use different SDK representations/,
+  );
+});
+
+test('diagnose is identical with relation memoization on and off across composed identical subtrees', () => {
+  const reference = referenceCli();
+  const keywords = ['allOf', 'anyOf', 'oneOf'];
+  const pairs = [
+    [{ type: 'integer', format: 'int64' }, { type: 'integer' }],
+    [{ type: 'string' }, { type: 'integer', format: 'int64' }],
+    [
+      { type: 'integer', format: 'int64' },
+      { type: 'integer', format: 'int64', minimum: 0 },
+    ],
+  ];
+  for (const [index, pair] of pairs.entries()) {
+    const shapes = {};
+    for (const inner of keywords)
+      for (const outer of keywords) {
+        const union = { [inner]: structuredClone(pair) };
+        for (const [name, wrap] of [
+          ['scalar', (schema) => schema],
+          ['field', (schema) => ({ type: 'object', properties: { value: schema } })],
+          ['items', (schema) => ({ type: 'array', items: schema })],
+          ['map', (schema) => ({ type: 'object', additionalProperties: schema })],
+        ]) {
+          const repeated = wrap(union);
+          shapes[`${inner}_${outer}_${name}`] = { [outer]: [repeated, structuredClone(repeated)] };
+        }
+      }
+    const path = join(dir, `differential-${index}.json`);
+    writeFileSync(path, JSON.stringify(document(shapes)));
+    const run = (cli) => {
+      const result = spawnSync(
+        process.execPath,
+        [cli, 'diagnose', path, join(dir, 'sdk.json'), '--json'],
+        {
+          encoding: 'utf8',
+          timeout: 30000,
+          maxBuffer: 8 * 1024 * 1024,
+        },
+      );
+      assert.equal(result.error, undefined);
+      assert.ok(result.status === 0 || result.status === 1, result.stderr);
+      return { status: result.status, report: JSON.parse(result.stdout), stderr: result.stderr };
+    };
+    assert.deepEqual(run('dist/cli.js'), run(reference), `numeric pair ${index}`);
+  }
 });

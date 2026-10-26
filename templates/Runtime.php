@@ -3531,7 +3531,16 @@ final class Codec
                     self::executeNode(
                         (string) $key,
                         $s['propertyNames'],
-                        $path . '.{key}',
+                        $path .
+                            '[' .
+                            json_encode(
+                                (string) $key,
+                                JSON_UNESCAPED_UNICODE |
+                                    JSON_UNESCAPED_SLASHES |
+                                    JSON_UNESCAPED_LINE_TERMINATORS |
+                                    JSON_INVALID_UTF8_SUBSTITUTE,
+                            ) .
+                            ']',
                         true,
                         true,
                         $definitions,

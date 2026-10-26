@@ -594,6 +594,8 @@ function schema(s: Schema, p: string, legacy = false, explicitNumbers = false): 
           'enum',
           'const',
           'x-sdk-pattern-php',
+          // Raw reserved extensions are rejected before dereferencing/protection.
+          EXAMPLE_PROTECTION_MARKER,
         ].includes(key)
       )
         fail(p + '/propertyNames/' + pointerSegment(key), remedy);
@@ -1027,6 +1029,8 @@ function checkRepresentations(s: Schema, p: string, explicitNumbers = false): vo
     }
     return hash;
   };
+  const compared = new Set<string>();
+  let representationVersion = 0;
   const checkOverlap = (
     left: Schema[],
     right: Schema[],
@@ -1034,18 +1038,20 @@ function checkRepresentations(s: Schema, p: string, explicitNumbers = false): vo
     relation: Relation = 'alternatives',
   ): void => {
     if (!left.length || !right.length) return;
-    // Comparing two identical, already validated subtrees adds no ambiguity.
-    // Expanding both copies would multiply nested union branches needlessly.
-    if (left.length === right.length && left.every((shape, i) => shape === right[i])) return;
-    const expands = (shapes: Schema[]) =>
-      shapes.some((shape) => shape.oneOf || shape.anyOf || shape.allOf);
-    if (
-      expands(left) &&
-      expands(right) &&
-      left.length === right.length &&
-      left.every((shape, i) => fingerprint(shape) === fingerprint(right[i]!))
-    )
-      return;
+    // Cache only a completed comparison of this relation. Individually valid
+    // alternatives can still have incompatible cross-branch intersections.
+    const key = JSON.stringify([relation, left.map(fingerprint), right.map(fingerprint)]);
+    if (compared.has(key)) return;
+    const version = representationVersion;
+    compareOverlap(left, right, path, relation);
+    if (version === representationVersion) compared.add(key);
+  };
+  const compareOverlap = (
+    left: Schema[],
+    right: Schema[],
+    path: string,
+    relation: Relation,
+  ): void => {
     const originals = new Map<Schema, Schema>();
     const shallow = (shape: Schema): Schema => {
       const { allOf, ...copy } = shape;
@@ -1099,6 +1105,8 @@ function checkRepresentations(s: Schema, p: string, explicitNumbers = false): vo
           const original = originals.get(shape);
           if (original) original['x-sdk-number-input'] = 'explicit';
           fingerprints = new WeakMap();
+          compared.clear();
+          representationVersion++;
         }
       }
     }
@@ -2351,6 +2359,11 @@ function loadContractInput(
   // their source locations before validation can normalize annotation wrappers.
   const markConfiguredExamples = (value: unknown, sourcePath: string, context: Context): void => {
     if (context === 'literal' || !value || typeof value !== 'object') return;
+    if (context === 'schema' && Object.keys(value).some((key) => key.startsWith('x-sdk-')))
+      fail(
+        'config' + sourcePath,
+        'x-sdk-* extensions are reserved for resolved generator metadata',
+      );
     if (context === 'schema' && exampleProtection?.protects('config', sourcePath))
       Reflect.set(value, EXAMPLE_PROTECTION_MARKER, true);
     for (const [key, child] of Object.entries(value))

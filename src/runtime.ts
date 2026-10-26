@@ -2207,7 +2207,7 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
         executeNode(k, s.propertyNames, {
           mode: 'match',
           direction: 'response',
-          path: `${path}.{key}`,
+          path: `${path}[${JSON.stringify(k)}]`,
           definitions,
           depth: depth + 1,
           validateConstraints: true,

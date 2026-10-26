@@ -18,9 +18,9 @@ Regenerate and review PHP consumers before upgrading:
 
 ## Schema key constraints and type arrays
 
-Regenerated SDKs enforce newly declared `propertyNames` length, pattern, enum and constant constraints on every object key in requests and strict responses. Correct invalid keys instead of relying on response enum openness; value enums remain open. Tightening input key constraints is breaking under the existing release policy. Dictionary keys remain `string` in both targets.
+Regenerated SDKs enforce newly declared `propertyNames` length, pattern, enum and constant constraints on every object key in requests and strict responses. Correct invalid keys instead of relying on response enum openness; value enums remain open. Tightening input key constraints is breaking under the existing release policy. Dictionary keys remain `string` in both targets. Key validation errors include the JSON-escaped offending key in brackets. Sensitive and write-only maps retain example publication protection.
 
-OpenAPI 3.1 type arrays now load as equivalent unions. Loaded `["null"]` schemas accept only null in both targets: Node callers that previously sent non-null values through that declaration must use null or correct their source schema. Dynamic schema-taking helpers still require explicit `anyOf` or `type: "null"`.
+OpenAPI 3.1 type arrays now load as equivalent unions. Loaded `["null"]` schemas accept only null in both targets: Node callers that previously sent non-null values through that declaration must use null or correct their source schema. Dynamic schema-taking helpers still require explicit `anyOf` or `type: "null"`. Repeated unions inside intersections still require consistent numeric SDK representations across intersecting branches; correct incompatible numeric formats in the source or provider override.
 
 ## Contributor Node prerequisites
 
