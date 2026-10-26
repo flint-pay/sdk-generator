@@ -1,13 +1,7 @@
 import type { RequestOptionValues } from './request-options.js';
 import { DescriptorSource } from './descriptor-source.js';
-import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import type { DefaultCredentials } from './contract.js';
-import { inspect } from 'node:util';
-import { request as httpRequest } from 'node:http';
-import { request as httpsRequest } from 'node:https';
-import { Readable, pipeline, type Transform } from 'node:stream';
-import { createGunzip, createInflate, createBrotliDecompress } from 'node:zlib';
+import type { Transform } from 'node:stream';
 import type { Schema } from './contract.js';
 import {
   compileRuntimePlan,
@@ -20,6 +14,8 @@ export type { RuntimeContract } from './runtime-plan.js';
 export type { Operation, Schema } from './contract.js';
 import { compileCodec, ANY_CODEC, exactValue, wireKind, type CodecPlan } from './codec-plan.js';
 export { directionalSchema } from './codec-plan.js';
+
+const inspectCustom = Symbol.for('nodejs.util.inspect.custom');
 
 export type ErrorKind =
   | 'transport'
@@ -66,7 +62,7 @@ export class SdkError extends Error {
     public raw?: string,
   ) {
     super(message);
-    // Native error formatting bypasses inspect.custom. An own accessor keeps recovery
+    // Native error formatting bypasses custom inspection. An own accessor keeps recovery
     // access without evaluating the private cause during rendering, including Node 22.
     if (options && 'cause' in options) errorCauses.set(this, options.cause);
     Object.defineProperty(this, 'cause', {
@@ -110,7 +106,7 @@ export class SdkError extends Error {
       stack: this.stack,
     };
   }
-  [inspect.custom]() {
+  [inspectCustom]() {
     return this.toJSON();
   }
 }
@@ -283,7 +279,7 @@ class AmbientCredentialProvider implements CredentialProvider {
   toJSON() {
     return { credentials: '[REDACTED]' };
   }
-  [inspect.custom]() {
+  [inspectCustom]() {
     return { credentials: '[REDACTED]' };
   }
   canInvalidate(credential = this.#lastCredential) {
@@ -369,7 +365,9 @@ class AmbientCredentialProvider implements CredentialProvider {
       fail('source_unavailable', 'Supported sources: token, token_file');
     const sourceKey =
       source === 'token'
-        ? createHash('sha256')
+        ? process
+            .getBuiltinModule('crypto')
+            .createHash('sha256')
             .update(read('OIDC_TOKEN') ?? '')
             .digest('hex')
         : file;
@@ -409,7 +407,7 @@ class AmbientCredentialProvider implements CredentialProvider {
           source === 'token'
             ? (read('OIDC_TOKEN') ?? '')
             : file
-              ? (await readFile(file, 'utf8')).trim()
+              ? (await process.getBuiltinModule('fs/promises').readFile(file, 'utf8')).trim()
               : '';
       } catch {
         fail('subject_token_request_failed', 'Cannot read the configured token file');
@@ -682,8 +680,14 @@ async function streamFetch(
     redirect: 'manual';
   },
 ): Promise<Response> {
+  const { Readable, pipeline } = process.getBuiltinModule('stream');
+  const { createGunzip, createInflate, createBrotliDecompress } = process.getBuiltinModule('zlib');
+  const transport =
+    url.protocol === 'https:'
+      ? process.getBuiltinModule('https')
+      : process.getBuiltinModule('http');
   return new Promise((resolve, reject) => {
-    const request = (url.protocol === 'https:' ? httpsRequest : httpRequest)(
+    const request = transport.request(
       url,
       { method: init.method, headers: init.headers, signal: init.signal },
       (incoming) => {
@@ -805,7 +809,7 @@ export class EventStream implements AsyncIterable<ServerSentEvent> {
     this.released();
     await this.reader.cancel().catch(() => {});
   }
-  [inspect.custom]() {
+  [inspectCustom]() {
     return { meta: inspectedMetadata(this.meta), closed: this.closed };
   }
   async *[Symbol.asyncIterator](): AsyncGenerator<ServerSentEvent> {
@@ -854,7 +858,7 @@ export class EventStream implements AsyncIterable<ServerSentEvent> {
                 ...(retry !== undefined ? { retry } : {}),
               };
         if (frame)
-          Object.defineProperty(frame, inspect.custom, {
+          Object.defineProperty(frame, inspectCustom, {
             value: () => ({ event: frame.event }),
           });
         data = '';
@@ -2050,7 +2054,7 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
       !(result instanceof ParsedNumber)
     ) {
       const object = Object.assign(Object.create(null), result);
-      Object.defineProperty(object, inspect.custom, {
+      Object.defineProperty(object, inspectCustom, {
         value: () => redactCodec(object, s, redactFields, definitions),
       });
       return object;
@@ -2183,7 +2187,7 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
         bad(path, 'object violates maxProperties');
     }
     if (response)
-      Object.defineProperty(out, inspect.custom, {
+      Object.defineProperty(out, inspectCustom, {
         value: () => redactCodec(out, s, redactFields, definitions),
         enumerable: false,
       });
@@ -2425,7 +2429,7 @@ class CompiledModel<T = unknown> {
   toJSON() {
     return structuredClone(this.value);
   }
-  [inspect.custom]() {
+  [inspectCustom]() {
     return redactCodec(this.value, this.dynamicCodec ? this.dynamicCodec() : this.codec);
   }
 }
@@ -2734,6 +2738,7 @@ export function verifyWebhookFromPlan(
     )
     .map((candidate) => Buffer.from(candidate, format === 'standard-webhooks' ? 'base64' : 'hex'));
   let valid = false;
+  const { createHmac, timingSafeEqual } = process.getBuiltinModule('crypto');
   for (const key of keys) {
     const expected = createHmac('sha256', key).update(signed).digest();
     for (const actual of digests) valid = timingSafeEqual(expected, actual) || valid;
@@ -2894,7 +2899,7 @@ class CompiledRuntime {
     positive(options.timeoutMs ?? 10000, 'timeoutMs');
     positive(options.deadlineMs ?? 30000, 'deadlineMs');
   }
-  [inspect.custom]() {
+  [inspectCustom]() {
     return { baseUrl: this.base.origin, credentials: '[REDACTED]' };
   }
   private decode(value: unknown, codec: CodecPlan, context: CodecContext): unknown {
@@ -2954,7 +2959,9 @@ class CompiledRuntime {
         Object.entries(options?.headers ?? {}).find(
           ([name]) => name.toLowerCase() === header,
         )?.[1] ??
-        (op?.idempotency?.auto ? (op.idempotency.autoKeyPrefix ?? '') + randomUUID() : undefined))
+        (op?.idempotency?.auto
+          ? (op.idempotency.autoKeyPrefix ?? '') + process.getBuiltinModule('crypto').randomUUID()
+          : undefined))
       : undefined;
     try {
       return await this.executeRequest<T>(
@@ -3427,7 +3434,7 @@ class CompiledRuntime {
           );
           this.streams.add(stream);
           const result = { data: stream, meta, raw: '' };
-          Object.defineProperty(result, inspect.custom, {
+          Object.defineProperty(result, inspectCustom, {
             value: () => ({ data: '[Event stream]', meta: inspectedMetadata(meta) }),
           });
           return result as Result<T>;
@@ -3459,7 +3466,7 @@ class CompiledRuntime {
             );
           const data = new Uint8Array(bytes);
           const result = { data, meta, raw: data };
-          Object.defineProperty(result, inspect.custom, {
+          Object.defineProperty(result, inspectCustom, {
             value: () => ({ data: '[Binary response]', meta: inspectedMetadata(meta) }),
           });
           return result as Result<T>;
@@ -3556,7 +3563,7 @@ class CompiledRuntime {
               raw,
             );
           const result = { data: data as T, meta, raw };
-          Object.defineProperty(result, inspect.custom, {
+          Object.defineProperty(result, inspectCustom, {
             value: () => ({
               data: redactCodec(
                 data,

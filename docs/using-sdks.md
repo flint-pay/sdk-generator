@@ -14,7 +14,7 @@ Resource and method names come from the SDK configuration, or from matching Open
 
 Node (one ESM package with TypeScript declarations):
 
-- Node.js 22+ for ESM imports. Use a `.mjs` file or a project with `"type": "module"`.
+- Node.js 22.3+ for ESM imports. Use a `.mjs` file or a project with `"type": "module"`.
 - Node.js 22.12+ for CommonJS: `const { Client } = require('@example/library')`, including resource subpaths such as `require('@example/library/resources/books')`.
 - TypeScript 5.9+ with NodeNext module resolution. Install `@types/node` 22.16.0+ matching your runtime as a development dependency, for example `npm install --save-dev @types/node@22`; older declarations can fail with TypeScript 5.9. Node types are an optional peer dependency, so JavaScript installs need no type packages.
 
@@ -373,10 +373,10 @@ Conditional calls send the declared precondition header and surface conflicts wi
 
 Node verification accepts original `Buffer`, `Uint8Array` and `ArrayBuffer` bytes. Pass `nowSeconds` in seconds; millisecond-scale values raise an input error explaining the conversion.
 
-Packages with webhook verification declared also expose a standalone verifier. It requires no client options, base URL or API credentials; the client method delegates to the same verification implementation.
+Packages with webhook verification declared expose a standalone verifier through the `webhooks` subpath, which loads webhook codecs without operation descriptors. The root `verifyWebhook` export and client method remain available. It requires no client options, base URL or API credentials; the client method delegates to the same verification implementation.
 
 ```js
-import { verifyWebhook } from '@example/payments';
+import { verifyWebhook } from '@example/payments/webhooks';
 const verified = verifyWebhook(rawBody, headers, [currentSecret, previousSecret]);
 if (!verified.known) console.log(verified.reason);
 ```
@@ -461,7 +461,7 @@ if (verified.known) {
 }
 ```
 
-Node exports `VerifiedWebhook`, `KnownWebhookEvent` and one `WebhookEvent<EventName>` type per declared event from the package root. Per-event types use the PHP event naming rule: `payment_intent.succeeded` becomes `WebhookEventPaymentIntentSucceeded`. Names match where PHP emits an event class; multi-variant events have a named Node union without a corresponding PHP event class. These types are unavailable from `resources/*`; `KnownWebhookEvent` is `never` when no events are declared.
+Node exports `VerifiedWebhook`, `KnownWebhookEvent` and one `WebhookEvent<EventName>` type per declared event from the package root and the `webhooks` subpath. Per-event types use the PHP event naming rule: `payment_intent.succeeded` becomes `WebhookEventPaymentIntentSucceeded`. Names match where PHP emits an event class; multi-variant events have a named Node union without a corresponding PHP event class. These types are unavailable from `resources/*`; `KnownWebhookEvent` is `never` when no events are declared.
 
 Use indexed access for payload annotations, for example `type SucceededPayload = WebhookEventPaymentIntentSucceeded['data']`. A top-level `typeField` supports exhaustive `switch` narrowing with a `never` default. For a dotted path such as `meta.name`, annotate a handler with the named event type or use `Extract<KnownWebhookEvent, { meta: { name: 'payment_intent.succeeded' } }>`.
 
@@ -677,7 +677,7 @@ console.log(redact(model.toJSON(), schema)); // { value: '[REDACTED]' }
 
 - PHP provides the schema-taking base `Model` constructor, `Codec::normalize` and `Codec::redact`. `Codec::encode` writes normalized values as JSON.
 - Helpers run locally with the package's value rules. No generator installation or schema registry service is needed.
-- Generated declarations, docs, samples and PHP schema definitions omit examples/defaults from sensitive, write-only and password locations, including shared reference targets and compositions. Samples use placeholders; replace them with your own values. Descriptions and wire behavior remain unchanged.
+- Generated declarations, docs, samples and compiled descriptors omit examples/defaults from sensitive, write-only and password locations, including shared reference targets and compositions. Samples use placeholders; replace them with your own values. Descriptions and wire behavior remain unchanged.
 - Node `Model.toJSON()` returns a defensive copy in which exact numbers are strings. Where a field allows both exact numbers and strings, a model rebuilt from that copy treats those strings as JSON strings. To edit an input, keep the original values, including `ExactNumber` instances, and build a new model; or restore `ExactNumber` explicitly at fields meant to be JSON numbers.
 - For a null-only schema, use `type: 'null'`. In Node, `type: ['null']` also permits non-null values; PHP rejects them. Nullable forms such as `type: ['string', 'null']` keep their non-null type in both targets.
 
@@ -695,12 +695,12 @@ const result = await client.paymentIntents.get({ payment_intent_id: 'pi_example'
 This example assumes an SDK with a declared server, a `token` shortcut and object-style requests.
 
 - A scoped client exposes only its resource, with the same argument and return types. Its subpath also exports related input and response types and reachable model factories.
-- Webhook verification stays on the root client. Package-root and `custom/` helper imports keep working.
-- Resource imports let ESM bundlers drop unrelated descriptors; use them for the largest bundle-size reduction. Root clients keep the complete surface.
+- Webhook verification is available on the root client and through `package-name/webhooks`. Package-root and `custom/` helper imports keep working.
+- Resource imports load their descriptor chunks independently and let ESM bundlers drop unrelated descriptors; use them for the largest bundle-size reduction. Root clients keep the complete surface.
 - Both forms decode descriptors on first use by a request, model factory, predicate or webhook verification, so a first call costs more than later ones. Reused clients reuse their transports; credentials and request state are never stored in shared descriptor caches.
-- Split files add packaging overhead, so npm and Composer archives can grow while startup memory falls.
+- Large Node declaration graphs share chunks of up to 64 symbols, reducing files loaded by TypeScript without duplicating type definitions. Import from public package exports rather than internal declaration paths.
 - Node packages bundle their transitive runtime and declaration dependencies, including the shared descriptor validator's `php-value-plan` module. That module is JavaScript and requires no PHP installation.
-- PHP classes live in individual files for autoloading and editor indexing. Descriptors load on demand; the tested full public fixture needs no increased memory limit. `SchemaRegistry::contract()` and `codecs()` materialize the complete plan and are unnecessary for normal calls.
+- PHP classes live in individual files for autoloading and editor indexing. Descriptors load on demand; the tested full public fixture needs no increased memory limit. `SchemaRegistry::contract()` and `codecs()` materialize the complete compiled plan and are unnecessary for normal calls. Raw schema definitions and `SchemaRegistry::definitions()` are no longer shipped; supply application-owned schemas to dynamic schema helpers.
 
 ### Successful HTTP responses and schema drift
 
@@ -771,7 +771,7 @@ Keep handwritten domain helpers in the generated package's `custom/` directory; 
 
 ### Generated examples
 
-Each package's `examples/` directory has a runnable script for every operation, linked from the API reference.
+Each package's `examples/` directory has a runnable script for every operation, linked from the API reference. Node emits one `.mjs` file per operation and validates it with TypeScript's `checkJs`. PHP examples find Composer's autoloader from the application directory or their installed location under `vendor/`; copied examples work inside the application too.
 
 - Scripts read `API_BASE_URL`, `API_TOKEN`, `API_KEY` or the configured shortcut's uppercase snake-case variable explicitly. A script without a compiled default server requires `API_BASE_URL`, and a script for an authenticated operation requires its credential variable; each explains how to set it.
 - Replace sample IDs with values from your account before running.

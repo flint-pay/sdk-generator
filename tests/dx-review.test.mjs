@@ -1,3 +1,4 @@
+import { replacePhpExampleAutoload } from './local-example.mjs';
 import { declarations as allDeclarations } from './helpers/generated-source.mjs';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -98,15 +99,13 @@ function runExample(f, target, source, key) {
     writeFileSync(file, source);
     return execFileSync(process.execPath, [file], { env, stdio: 'pipe' });
   }
-  source = source
-    .replace(
-      /require __DIR__ \. '[^']*vendor\/autoload.php';/,
-      `require ${JSON.stringify(join(f.output, 'php/src/Runtime.php'))};require ${JSON.stringify(join(f.output, 'php/src/Client.php'))};`,
-    )
-    .replace(
-      'new ClientOptions(',
-      `new ClientOptions(transport:function($r){if($r['headers']['idempotency-key']!==${key === undefined ? 'null' : JSON.stringify(key)})throw new \\Exception('wrong key');return ['status'=>204,'headers'=>[],'body'=>''];},`,
-    );
+  source = replacePhpExampleAutoload(
+    source,
+    `require ${JSON.stringify(join(f.output, 'php/src/Runtime.php'))};require ${JSON.stringify(join(f.output, 'php/src/Client.php'))};`,
+  ).replace(
+    'new ClientOptions(',
+    `new ClientOptions(transport:function($r){if($r['headers']['idempotency-key']!==${key === undefined ? 'null' : JSON.stringify(key)})throw new \\Exception('wrong key');return ['status'=>204,'headers'=>[],'body'=>''];},`,
+  );
   const file = join(f.output, 'php', 'run-example.php');
   writeFileSync(file, source);
   return execFileSync('php', [file], { env, stdio: 'pipe' });

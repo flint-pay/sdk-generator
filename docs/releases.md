@@ -224,6 +224,16 @@ Regenerate packages as a complete unit, review the preview and compatibility fin
 
 Configuration validation rejects `npm.name` values longer than 214 characters, including the scope and separator. Shorten an oversized package name before regenerating.
 
+### Generated package contents and imports
+
+Regenerate the complete package and import through the package name or its public subpaths. Large Node packages coalesce internal `declarations/NAME.d.ts` files into shared chunks; direct file imports into those internals must migrate to root or resource exports. Node's minimum ESM runtime is now 22.3, allowing built-ins to load on feature use; CommonJS still requires 22.12. Node remains the supported execution runtime.
+
+For webhook-only consumers, use `import { verifyWebhook } from 'package-name/webhooks'`. The subpath also exports `parseExact`, `VerifiedWebhook`, `KnownWebhookEvent` and the event types. Existing root imports and `client.verifyWebhook()` keep working. Resource subpaths load bounded shared codec chunks and their own operation data. Node client inspection now shows a resource count; use explicit resource properties when exploring methods.
+
+Replace references to generated `.ts` operation examples with the corresponding `.mjs` files. These JavaScript examples are checked against the public SDK declarations with TypeScript `checkJs`. Copied webhook inbox examples use public package imports. PHP operation examples locate the application's Composer autoloader from a project or vendor installation.
+
+PHP packages no longer include `src/schema-definitions.json` or `SchemaRegistry::definitions()`. Applications using raw schemas must keep their own schemas and pass them to the existing dynamic schema helpers. `SchemaRegistry::contract()` and `codecs()` still expose the complete compiled plan; compiled codecs are not raw JSON Schemas. Generated PHP classes retain individual files for Composer autoloading and editor indexing.
+
 ### Migrating PHP entity representations
 
 PHP response models expose declared nested objects as generated entities, lists of typed entities, and PHP arrays for dictionaries. Node wire behavior is unaffected.

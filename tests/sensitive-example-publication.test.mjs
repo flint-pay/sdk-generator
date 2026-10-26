@@ -212,7 +212,7 @@ for (const flag of [{ 'x-sensitive': true }, { writeOnly: true }, { format: 'pas
       { Bridge: ref('Bridge'), Explicit: ref('Explicit'), VisibleModel: ref('VisibleModel') },
     );
     const files = assertRestoredPublications(f.contract);
-    const definitions = JSON.parse(files.get('php/src/schema-definitions.json'));
+    const definitions = compileSdkContract(f.contract).source.definitions;
     assert.equal(definitions.Explicit.properties.value.example, undefined);
     assert.match(files.get('node/examples/api-sendExplicit.mjs'), /value: "example"/);
     assert.match(files.get('php/examples/api-sendExplicit.php'), /'value' => 'example'/);
@@ -235,7 +235,7 @@ for (const flag of [{ 'x-sensitive': true }, { writeOnly: true }, { format: 'pas
       { config: { validation: 'schema' } },
     );
     const files = assertRestoredPublications(f.contract);
-    const definitions = JSON.parse(files.get('php/src/schema-definitions.json'));
+    const definitions = compileSdkContract(f.contract).source.definitions;
     assert.equal(definitions.ContainmentRules.contains.example, undefined);
   });
 
@@ -293,7 +293,7 @@ for (const flag of [{ 'x-sensitive': true }, { writeOnly: true }, { format: 'pas
       ),
       'synthetic provenance includes the operation and vendored document identity',
     );
-    const definitions = JSON.parse(files.get('php/src/schema-definitions.json'));
+    const definitions = compileSdkContract(contract).source.definitions;
     assert.equal(definitions.FirstEvent.properties.value.example, visible);
     assert.equal(definitions.SecondEvent.properties.value.example, undefined);
   });
@@ -349,7 +349,7 @@ test('a write-only property leaves sibling examples and their shared components 
           .includes('USD'),
       );
     }
-    const definitions = JSON.parse(files.get('php/src/schema-definitions.json'));
+    const definitions = compileSdkContract(f.contract).source.definitions;
     assert.equal(definitions.Envelope.example, undefined, 'container example can embed a secret');
     assert.equal(definitions.Envelope.properties.label.example, visible);
     assert.equal(definitions.PublicMoney.properties.currency.example, 'USD');
@@ -371,7 +371,7 @@ for (const flag of [{ 'x-sensitive': true }, { writeOnly: true }, { format: 'pas
       { Bridge: ref('Bridge'), PublicFields: ref('PublicFields') },
     );
     assertSafe(render(f.contract));
-    const definitions = JSON.parse(render(f.contract).get('php/src/schema-definitions.json'));
+    const definitions = compileSdkContract(f.contract).source.definitions;
     assert.equal(definitions.PublicFields.properties.value.example, undefined);
     assert.equal(definitions.PublicFields.properties.sibling.example, visible);
   });
@@ -385,7 +385,7 @@ for (const flag of [{ 'x-sensitive': true }, { writeOnly: true }, { format: 'pas
     assert.equal(original.includes(EXAMPLE_PROTECTION_MARKER), false);
     const files = render(f.contract);
     assertSafe(files);
-    const definitions = JSON.parse(files.get('php/src/schema-definitions.json'));
+    const definitions = compileSdkContract(f.contract).source.definitions;
     assert.deepEqual(definitions.Shared.properties.value, {
       type: 'string',
       description: 'Synthetic field description',

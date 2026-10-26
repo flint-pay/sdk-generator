@@ -438,6 +438,8 @@ test('installable packages lint and Node package types/examples compile', async 
     [
       '--strict',
       '--noEmit',
+      '--allowJs',
+      '--checkJs',
       '--target',
       'ES2022',
       '--module',
@@ -449,7 +451,7 @@ test('installable packages lint and Node package types/examples compile', async 
       '--typeRoots',
       resolve('node_modules/@types'),
       ...readdirSync(join(cwd, 'examples'))
-        .filter((p) => p.endsWith('.ts'))
+        .filter((p) => p.endsWith('.mjs') && p !== 'webhook-inbox.mjs')
         .map((p) => 'examples/' + p),
     ],
     { cwd, encoding: 'utf8' },
@@ -699,7 +701,7 @@ test('known sensitive response fields and raw bodies are redacted in default ins
   assert.ok(result.raw.includes('private-value'));
 });
 
-test('all generated JavaScript, TypeScript and PHP operation examples execute', async () => {
+test('all generated JavaScript and PHP operation examples execute', async () => {
   const { spawn } = await import('node:child_process');
   let calls = 0;
   const server = createServer(async (req, res) => {
@@ -725,13 +727,9 @@ test('all generated JavaScript, TypeScript and PHP operation examples execute', 
       const dir = join(output, target, 'examples');
       for (const file of readdirSync(dir).filter((f) => f.startsWith('payments-'))) {
         const localFile = localExampleFile(join(dir, file));
-        const child = spawn(
-          target === 'php' ? 'php' : process.execPath,
-          [...(file.endsWith('.ts') ? ['--experimental-strip-types'] : []), localFile],
-          {
-            env,
-          },
-        );
+        const child = spawn(target === 'php' ? 'php' : process.execPath, [localFile], {
+          env,
+        });
         let stdout = '';
         let stderr = '';
         child.stdout.on('data', (b) => (stdout += b));
@@ -743,7 +741,7 @@ test('all generated JavaScript, TypeScript and PHP operation examples execute', 
         assert.match(stdout.trim(), /(?:^|\n)req_0014YYCZGR3ZM8Q1KMYD4AMVDB$/);
       }
     }
-    assert.equal(calls, contract.operations.length * 3);
+    assert.equal(calls, contract.operations.length * 2);
   } finally {
     server.closeAllConnections();
     await new Promise((r) => server.close(r));

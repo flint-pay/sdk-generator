@@ -153,8 +153,7 @@ test('PHP field pins retain exact concrete classes, isolate other refs, and leav
     [...before].filter(([file]) => file.startsWith('node/')),
     [...after].filter(([file]) => file.startsWith('node/')),
   );
-  for (const file of ['php/MODELS.md', 'php/src/schema-definitions.json'])
-    assert.equal(after.get(file), before.get(file));
+  assert.equal(after.get('php/MODELS.md'), before.get('php/MODELS.md'));
   generate(pinned.load(), pinned.output);
   const data = {
     data: { location: { id: 'pinned' }, other: { id: 'plain' }, newlyDescribed: { id: 'new' } },

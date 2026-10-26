@@ -260,6 +260,8 @@ test('singleton numeric enum types accept exact strings and generate type-correc
       resolve('node_modules/typescript/bin/tsc'),
       '--strict',
       '--noEmit',
+      '--allowJs',
+      '--checkJs',
       '--target',
       'ES2022',
       '--module',
@@ -267,7 +269,7 @@ test('singleton numeric enum types accept exact strings and generate type-correc
       '--typeRoots',
       resolve('node_modules/@types'),
       consumer,
-      ...operations.map((entry) => join(f.output, 'node/examples', `api-${entry.id}.ts`)),
+      ...operations.map((entry) => join(f.output, 'node/examples', `api-${entry.id}.mjs`)),
     ],
     { encoding: 'utf8', timeout: 120000 },
   );

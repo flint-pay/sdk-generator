@@ -248,6 +248,8 @@ await c.api.updateOrder('id');`;
         resolve('node_modules/typescript/bin/tsc'),
         '--strict',
         '--noEmit',
+        '--allowJs',
+        '--checkJs',
         '--module',
         'nodenext',
         '--target',
@@ -256,7 +258,7 @@ await c.api.updateOrder('id');`;
         resolve('node_modules/@types'),
         file,
         ...Object.keys(f.contract.operations).map((_, i) =>
-          join(f.output, 'node/examples/api-' + f.contract.operations[i].method + '.ts'),
+          join(f.output, 'node/examples/api-' + f.contract.operations[i].method + '.mjs'),
         ),
       ],
       { stdio: 'pipe' },

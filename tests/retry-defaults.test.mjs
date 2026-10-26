@@ -1,3 +1,4 @@
+import { replacePhpExampleAutoload } from './local-example.mjs';
 import { before } from 'node:test';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -664,15 +665,13 @@ test('generated examples retry transient failures without an explicit attempt ov
       assert.equal(calls[0].headers['idempotency-key'], calls[1].headers['idempotency-key']);
     let php = readFileSync(join(output, `php/examples/api-${op}.php`), 'utf8');
     assert.doesNotMatch(php, /maxAttempts/);
-    php = php
-      .replace(
-        /require[^;]+;/,
-        `require $argv[1].'/src/Runtime.php'; require $argv[1].'/src/Client.php'; $calls=[];`,
-      )
-      .replace(
-        'new ClientOptions(',
-        `new ClientOptions(transport: function($r)use(&$calls){$calls[]=$r;return ['status'=>count($calls)===1?503:204,'headers'=>[],'body'=>''];},`,
-      );
+    php = replacePhpExampleAutoload(
+      php,
+      `require $argv[1].'/src/Runtime.php'; require $argv[1].'/src/Client.php'; $calls=[];`,
+    ).replace(
+      'new ClientOptions(',
+      `new ClientOptions(transport: function($r)use(&$calls){$calls[]=$r;return ['status'=>count($calls)===1?503:204,'headers'=>[],'body'=>''];},`,
+    );
     php += '\nif(count($calls)!==2)throw new Exception("Example did not retry");\n';
     if (op === 'keyed')
       php +=

@@ -357,7 +357,6 @@ test('mixed JSON, empty and SSE examples validate and run every result path in N
         selected = result;
         for (const [command, file] of [
           [process.execPath, 'node/examples/api-value.mjs'],
-          [process.execPath, 'node/examples/api-value.ts'],
           ['php', 'php/examples/api-value.php'],
         ]) {
           const localFile = localExampleFile(join(f.output, file));
