@@ -1821,28 +1821,44 @@ final class Codec
         if (!function_exists('json_validate') || !json_validate($text)) {
             json_decode($text, false, 512, JSON_THROW_ON_ERROR);
         }
-        $encoded = preg_replace_callback(
-            '/"(?:[^"\x5c]++|\x5c.)*+"|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/s',
-            static function (array $match): string {
-                $token = $match[0];
-                if ($token[0] === '"') {
-                    // Escape genuine strings beginning with our private marker.
-                    return str_starts_with($token, '"\\u0000')
-                        ? '"\\u0000' . substr($token, 1)
-                        : $token;
+        // Scan validated JSON in linear time. Skip string contents, including
+        // escaped quotes/backslashes, without depending on PCRE resource limits.
+        // Copy unchanged spans only when a token actually needs rewriting.
+        $encoded = '';
+        $copied = 0;
+        $offset = 0;
+        $length = strlen($text);
+        while ($offset < $length) {
+            $offset += strcspn($text, '"-0123456789', $offset);
+            if ($offset === $length) {
+                break;
+            }
+            $start = $offset;
+            if ($text[$offset] === '"') {
+                ++$offset;
+                // Escape genuine strings beginning with our private marker.
+                if (substr_compare($text, '\u0000', $offset, 6) === 0) {
+                    $encoded .= substr($text, $copied, $offset - $copied) . '\u0000';
+                    $copied = $offset;
                 }
-                $safe =
-                    preg_match('/^-?(?:0|[1-9]\d*)$/D', $token) &&
-                    abs((float) $token) <= 9007199254740991;
-                return $safe ? $token : '"\\u0000' . $token . '"';
-            },
-            $text,
-        );
-        if ($encoded === null) {
-            throw new \RuntimeException(
-                'Unable to preserve JSON numeric tokens: ' . preg_last_error_msg(),
-            );
+                do {
+                    $offset += strcspn($text, "\"\\", $offset);
+                    $escaped = $text[$offset] === '\\';
+                    $offset += $escaped ? 2 : 1;
+                } while ($escaped);
+                continue;
+            }
+            $offset += strspn($text, '0123456789.eE+-', $offset);
+            $token = substr($text, $start, $offset - $start);
+            $safe =
+                strcspn($token, '.eE') === strlen($token) &&
+                abs((float) $token) <= 9007199254740991;
+            if (!$safe) {
+                $encoded .= substr($text, $copied, $start - $copied) . '"\u0000' . $token . '"';
+                $copied = $offset;
+            }
         }
+        $encoded .= substr($text, $copied);
         $parsed = json_decode($encoded, false, 512, JSON_THROW_ON_ERROR);
         self::restoreNumbers($parsed, $preserveNumbers);
         return $parsed;

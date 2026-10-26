@@ -187,6 +187,42 @@ echo json_encode(Codec::plainNumbers($v),JSON_THROW_ON_ERROR);`,
   }
 });
 
+test('large escaped JSON strings decode exactly through the parser and generated client without PCRE limits', () => {
+  const code = String.raw`
+use ModelDx\{Client,ClientOptions,Codec,ParsedNumber};
+$cases=[
+    ['x\n', "x\n", 1000000],
+    ['\"5e3', '"5e3', 400000],
+    ['\\\\9007199254740993', '\\9007199254740993', 150000],
+    ['\u0000\u263a\u0031', "\0☺1", 200000],
+    [str_repeat('\\',1024).'\"1.2300', str_repeat('\\',512).'"1.2300', 1500],
+];
+foreach($cases as [$escaped,$unit,$count]){
+    $expected=str_repeat($unit,$count);
+    $raw='{"data":[],"next":"'.str_repeat($escaped,$count).'","extra":{"decimal":1.2300,"big":9007199254740993,"safe":42}}';
+    foreach([false,true] as $preserve){
+        $v=Codec::parse($raw,$preserve);
+        if($v->next!==$expected || $v->extra->safe!==42)throw new Exception('string changed');
+        if($preserve){
+            if(!$v->extra->decimal instanceof ParsedNumber || $v->extra->decimal->value!=='1.2300' || $v->extra->big->value!=='9007199254740993')throw new Exception('exact tokens');
+        }elseif($v->extra->decimal!=='1.2300' || $v->extra->big!=='9007199254740993')throw new Exception('exact strings');
+        unset($v);
+    }
+    // The low-limit run isolates parsing; URL validation uses PCRE separately.
+    if((int)ini_get('pcre.backtrack_limit')>1){
+        $c=new Client(new ClientOptions('https://example.invalid',transport:fn($r)=>['status'=>200,'headers'=>[],'body'=>$raw]));
+        if($c->catalog->retrieve('list')->data->next!==$expected)throw new Exception('client string changed');
+        unset($c);
+    }
+}
+echo 'ok';`;
+  assert.equal(php(code, [], ['-d', 'memory_limit=128M']), 'ok');
+  assert.equal(
+    php(code, [], ['-d', 'memory_limit=128M', '-d', 'pcre.backtrack_limit=1', '-d', 'pcre.jit=0']),
+    'ok',
+  );
+});
+
 test('integer inputs reject decimal/exponent strings and ExactNumber tokens; responses retain integral-token support', () => {
   const rows = JSON.parse(
     php(String.raw`
@@ -241,7 +277,7 @@ $parsed=ModelDx\Codec::parse($raw,true);
 if($parsed[25999]->amount->value!=='1.2300' || $parsed[0]->total->value!=='9007199254740993')throw new Exception('precision');
 echo json_encode([strlen($raw),count($parsed),memory_get_peak_usage(true)]);`,
       [],
-      ['-d', 'memory_limit=128M'],
+      ['-d', 'memory_limit=128M', '-d', 'pcre.backtrack_limit=1', '-d', 'pcre.jit=0'],
     ),
   );
   assert.deepEqual(result.slice(0, 2), [4368001, 26000]);
