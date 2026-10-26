@@ -937,7 +937,7 @@ test('PHP default-only publication removal requires review with unchanged compil
   );
 });
 
-test('Node-only default provenance creates no finding when no published value changes', () => {
+test('Node default publication removal requires documentation review without execution changes', () => {
   const f = fixture(
     'node-default',
     { Shared: { type: 'string', 'x-sensitive': true, default: marker } },
@@ -946,11 +946,17 @@ test('Node-only default provenance creates no finding when no published value ch
   );
   const legacy = structuredClone(f.contract);
   delete legacy.exampleProtection;
-  assert.deepEqual(
-    [...render({ ...legacy, exampleProtection: { locations: [], schemas: [] } })],
-    [...render(f.contract)],
+  assert.ok(
+    [...render({ ...legacy, exampleProtection: { locations: [], schemas: [] } })].some(
+      ([, source]) => source.includes(marker),
+    ),
   );
-  assert.deepEqual(compare(legacy, f.contract), []);
+  for (const [name, source] of render(f.contract))
+    assert.equal(source.includes(marker), false, name);
+  assert.deepEqual(
+    compare(legacy, f.contract).map(({ severity, subject }) => ({ severity, subject })),
+    [{ severity: 'review', subject: 'published schema examples' }],
+  );
 });
 
 for (const flag of [{ 'x-sensitive': true }, { writeOnly: true }])
@@ -1048,7 +1054,7 @@ test('publishers require source protection provenance while historical compariso
   assert.ok(compare(legacy, f.contract).every((finding) => finding.severity === 'review'));
 });
 
-test('identical Node default schemas preserve historical aliases without compatibility findings', () => {
+test('identical Node default schemas preserve historical aliases with documentation-only review', () => {
   const schema = { type: 'object', properties: { value: { type: 'string', default: marker } } };
   const f = fixture(
     'default-sharing',
@@ -1066,7 +1072,10 @@ test('identical Node default schemas preserve historical aliases without compati
   assert.equal(f.contract.models.Envelope.properties.first['x-sdk-ref'], 'Beta');
   const legacy = structuredClone(f.contract);
   delete legacy.exampleProtection;
-  assert.deepEqual(compare(legacy, f.contract), []);
+  assert.deepEqual(
+    compare(legacy, f.contract).map(({ severity, subject }) => ({ severity, subject })),
+    [{ severity: 'review', subject: 'published schema examples' }],
+  );
 });
 
 for (const flag of [{ 'x-sensitive': true }, { writeOnly: true }])

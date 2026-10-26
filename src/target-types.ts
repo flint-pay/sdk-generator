@@ -234,7 +234,7 @@ export function typescriptType(
             fields
               .map(
                 ([key, child]) =>
-                  `${documentation ? schemaComment(child, definitions) : ''}${JSON.stringify(key)}${required.has(key) ? '' : '?'}: ${absent.has(key) || child.readOnly ? 'never' : render(child)};`,
+                  `${documentation ? schemaComment(child, definitions, response) : ''}${JSON.stringify(key)}${required.has(key) ? '' : '?'}: ${absent.has(key) || child.readOnly ? 'never' : render(child)};`,
               )
               .join(' ') +
             (objectDeclaration(s, false).open ? ' [key: string]: unknown;' : '') +
@@ -425,7 +425,7 @@ export function typescriptType(
         declaration.fields
           .map(
             ([k, v]) =>
-              (documentation ? schemaComment(v, definitions) : '') +
+              (documentation ? schemaComment(v, definitions, response) : '') +
               (!response && v.readOnly
                 ? `${JSON.stringify(k)}?: ${optionalPropertyType(k, 'never')};`
                 : `${JSON.stringify(k)}${s.required?.includes(k) ? '' : '?'}: ${s.required?.includes(k) ? render(v, response && k !== discriminator) : optionalPropertyType(k, render(v, response && k !== discriminator))};`),

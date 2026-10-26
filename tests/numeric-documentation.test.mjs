@@ -90,13 +90,7 @@ test('numeric field docs agree with generated declarations and factories in both
             : readFileSync(join(out, target, filename), 'utf8');
         for (const [name, schema] of Object.entries(native)) {
           if (filename === 'REFERENCE.md' && schema.type.includes('null')) continue;
-          const type =
-            target === 'php' && filename === 'MODELS.md'
-              ? (schema.type.includes('number') ? 'int\\|float' : 'int') +
-                (schema.type.includes('null') ? '\\|null' : '')
-              : Array.isArray(schema.type)
-                ? schema.type.join(' or ')
-                : schema.type;
+          const type = Array.isArray(schema.type) ? schema.type.join(' or ') : schema.type;
           const row = docs.split('\n').find((line) => line.startsWith(`| \`${name}\` |`));
           assert.ok(row, `${target}/${filename}: ${name}`);
           assert.ok(row.includes(`| ${type} | ${name} reading.`), row);
@@ -106,10 +100,7 @@ test('numeric field docs agree with generated declarations and factories in both
           if (filename === 'REFERENCE.md' && schema.type.includes('null')) continue;
           const row = docs.split('\n').find((line) => line.startsWith(`| \`${name}\` |`));
           assert.ok(row, `${target}/${filename}: ${name}`);
-          const type =
-            target === 'php' && filename === 'MODELS.md'
-              ? 'string' + (schema.type.includes('null') ? '\\|null' : '')
-              : `${['int64', 'uint64'].includes(schema.format) ? 'integer string' : 'exact numeric string'}${Array.isArray(schema.type) && schema.type.includes('null') ? ' or null' : ''}`;
+          const type = `${['int64', 'uint64'].includes(schema.format) ? 'integer string' : 'exact numeric string'}${Array.isArray(schema.type) && schema.type.includes('null') ? ' or null' : ''}`;
           assert.ok(row.includes(`| ${type} |`), row);
           assert.match(
             row,
@@ -126,11 +117,13 @@ test('numeric field docs agree with generated declarations and factories in both
     }
     const declarations = readFileSync(join(out, 'node/declarations/NumbersInput.d.ts'), 'utf8');
     for (const name of Object.keys(native)) {
-      const comment = declarations.match(new RegExp(`/\\*\\* ${name} reading\\.(.*?)\\*/`))?.[0];
+      const comment = declarations.match(
+        new RegExp(`/\\*\\* Shape \\$ \\(Value\\): [^*]*${name} reading\\.(.*?)\\*/`),
+      )?.[0];
       assert.ok(comment, name);
       assert.doesNotMatch(comment, /exact numeric string|ExactNumber/);
     }
-    assert.match(declarations, /plain reading\. \*\/\s*"plain"\?: number/);
+    assert.match(declarations, /plain reading\.[^*]*\*\/\s*"plain"\?: number/);
     assert.match(declarations, /decimal reading\. Use an exact numeric string/);
     const branch = contract.models.ExactChoice.oneOf[0];
     assert.equal(schemaNotes(branch), 'Use ExactNumber for an exact JSON number. Format: decimal.');

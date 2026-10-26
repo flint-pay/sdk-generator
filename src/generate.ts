@@ -1380,9 +1380,12 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       declarations += targetPlan.node.responseReturnDeclarations!;
     }
 
+    const outputDocumentationAliases = Object.fromEntries(
+      Object.entries(targetPlan.node.models).map(([key, value]) => [key, value.outputAlias ?? key]),
+    );
     for (const [name, model] of Object.entries(models)) {
       if (!model.outputAlias)
-        declarations += `${schemaComment(c.models[name]!, c.definitions ?? c.models)}export type ${name} = ${model.documentedOutput ?? model.output};\n`;
+        declarations += `${schemaComment(c.models[name]!, c.definitions ?? c.models, true, outputDocumentationAliases)}export type ${name} = ${model.documentedOutput ?? model.output};\n`;
       if (model.inputReachable === false) continue;
       declarations += `${schemaComment(c.models[name]!, c.definitions ?? c.models)}export type ${name}Input = ${model.documentedInput ?? model.input};\n`;
       // Preserve the validated object branch when a model also permits

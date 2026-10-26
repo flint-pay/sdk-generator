@@ -4,7 +4,11 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync, readdirSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadContract, generate } from '../dist/index.js';
-import { relocateDocument, modelDocuments } from '../dist/package-documentation.js';
+import {
+  relocateDocument,
+  modelDocuments,
+  internDocumentationTables,
+} from '../dist/package-documentation.js';
 import { assertPackageLinks, packageDocuments } from './helpers/package-docs.mjs';
 import { responseReference } from '../dist/sdk-documentation.js';
 import {
@@ -186,12 +190,13 @@ test('resource docs separate inputs from linked output fields, errors and shared
       if (target === 'php') {
         assertDocumentedPhpExports(root);
         const modelFile = readdirSync(join(root, 'src/classes'))
+          .filter((file) => file.endsWith('.php'))
           .map((file) => join(root, 'src/classes', file))
-          .find((file) => readFileSync(file, 'utf8').includes('Current state. Values:'));
+          .find((file) => readFileSync(file, 'utf8').includes('Current state. Value enum:'));
         assert.ok(modelFile);
         assert.match(
           readFileSync(modelFile, 'utf8'),
-          /Current state\. Values: "ready", "waiting"\./,
+          /Current state\. Value enum: "ready", "waiting"\./,
         );
         const modelNames = new Set(
           readdirSync(join(root, 'src/classes')).map((path) => path.replace(/\.php$/, '')),
@@ -248,6 +253,38 @@ test('moving documentation changes links while preserving code literals and exam
   assert.ok(moved.startsWith('[Model](../models/Entity.md#entity)'));
   assert.ok(moved.includes('`[literal](MODELS.md#entity)`'));
   assert.ok(moved.includes('const value = "[literal](MODELS.md#entity)";'));
+  assert.equal(
+    relocateDocument('[site guide](/docs/guide) and `[literal](/docs/guide)`', new Map(), true),
+    'site guide and `[literal](/docs/guide)`',
+  );
+});
+
+test('shared root definitions keep operation links direct and preserve each model condition', () => {
+  const table =
+    '| Field | Presence | Type | Description |\n| --- | --- | --- | --- |\n| `value` | Conditional | string | ' +
+    'Synthetic field description. '.repeat(10) +
+    ' |\n\n';
+  const files = new Map([
+    [
+      'node/models/First.md',
+      '## First\n\n' + table + '### First variant 1\n\n- Required: `value`.\n',
+    ],
+    [
+      'node/models/Second.md',
+      '## Second\n\n' + table + '### Second variant 1\n\n- Optional: `value`.\n',
+    ],
+    [
+      'node/reference/records.md',
+      '### records.get\n\nReturns [Second](../models/Second.md#second).\n',
+    ],
+  ]);
+  internDocumentationTables(files, 'node');
+  assert.match(files.get('node/models/Second.md'), /shared fields.*First.md#first/);
+  assert.match(files.get('node/models/Second.md'), /Optional: `value`/);
+  assert.match(
+    files.get('node/reference/records.md'),
+    /\[Second\]\(\.\.\/models\/First.md#first\).*\[declared conditions\]\(\.\.\/models\/Second.md#second\)/,
+  );
 });
 
 test('response alternatives show top-level output fields and enum values without input-only fields', () => {

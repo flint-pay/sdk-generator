@@ -1,12 +1,10 @@
-import { schemaLiteral, enumNotes, type EnumLinks } from './schema-documentation.js';
+import { compileDocumentation } from './documentation-plan.js';
+import { type EnumLinks } from './schema-documentation.js';
 import {
   DocumentationFragments,
-  documentationVariants,
   modelFieldReference,
-  fieldReferenceNotes,
   modelDocumentationConventions,
-  schemaFields,
-  typeDescription,
+  modelDescriptions,
 } from './sdk-documentation.js';
 import MarkdownIt from 'markdown-it';
 import { posix } from 'node:path';
@@ -26,15 +24,20 @@ export function relocateDocument(
   nested = false,
 ): string {
   return source.replace(
-    /(?<block>^(?<fence>`{3,}|~{3,})[^\n]*\n[\s\S]*?^\k<fence>[ \t]*(?:\n|$))|(?<inline>(?<ticks>`+)[^\n]*?\k<ticks>)|\]\((?<destination>[^)]+)\)/gm,
+    /(?<block>^(?<fence>`{3,}|~{3,})[^\n]*\n[\s\S]*?^\k<fence>[ \t]*(?:\n|$))|(?<inline>(?<ticks>`+)[^\n]*?\k<ticks>)|(?<siteLink>\[(?<siteLabel>[^\]]+)\]\(\/(?!\/)[^)]+\))|\]\((?<destination>[^)]+)\)/gm,
     (
       match: string,
       _block: string | undefined,
       _fence: string | undefined,
       _inline: string | undefined,
       _ticks: string | undefined,
+      _siteLink: string | undefined,
+      siteLabel: string | undefined,
       destination: string | undefined,
     ) => {
+      // A source site's root-relative prose link has no origin in an installed
+      // package. Retain its label instead of inventing a package-local target.
+      if (siteLabel !== undefined) return siteLabel;
       if (!destination || /^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(destination)) return match;
       const model = destination.match(/^MODELS\.md#(.+)$/)?.[1];
       const resolved = model ? (models.get(model) ?? destination) : destination;
@@ -60,13 +63,31 @@ export function modelDocuments(
   // rendered facts preserves target types, direction, constraints and enums.
   const fragments = new Map<string, RegExpMatchArray>();
   const fragmentAliases = new Map<string, string>();
+  const tableOwners = new Map<string, RegExpMatchArray>();
+  for (const section of sections) {
+    const table = section[0].match(/\| Field \|[^\n]*\n(?:\|[^\n]*\n)+/)?.[0];
+    if (table && (tableOwners.get(table)?.[0].length ?? 0) < section[0].length)
+      tableOwners.set(table, section);
+  }
   for (const section of sections) {
     const start = section[0].indexOf('| Field |');
     if (start < 0) continue;
     const fields = section[0].slice(start);
+    const table = fields.match(/^\| Field \|[^\n]*\n(?:\|[^\n]*\n)+/)?.[0];
+    const owner = table && tableOwners.get(table);
+    if (owner && owner !== section && fields.trim() === table.trim()) {
+      aliases.set(section[1]!, owner[1]!);
+      section[0] =
+        section[0].slice(0, start) +
+        `Fields, types, descriptions and enum values: [${owner[1]}](MODELS.md#${docAnchor(owner[1]!)}).\n\n`;
+      continue;
+    }
     const identity = fields
-      .replaceAll(section[1]!, '{model}')
-      .replaceAll(docAnchor(section[1]!), '{model}');
+      .replace(
+        /^(#{3,6} )(.+)$/gm,
+        (_, prefix: string, heading: string) => prefix + heading.replace(section[1]!, '{model}'),
+      )
+      .replaceAll(`](#${docAnchor(section[1]!)}-`, '](#{model}-');
     const previous = fragments.get(identity);
     if (!previous) {
       fragments.set(identity, section);
@@ -163,6 +184,7 @@ export function modelDocuments(
  * Conditions remain at each use; links point directly at the table's heading.
  */
 export function internDocumentationTables(files: Map<string, string>, target: string): void {
+  internEnumerationLists(files, target);
   const markdown = new MarkdownIt();
   const tables: {
     path: string;
@@ -207,12 +229,11 @@ export function internDocumentationTables(files: Map<string, string>, target: st
   for (const table of [...tables].sort((a, b) => Number(b.root) - Number(a.root)))
     if (!canonical.has(table.text)) canonical.set(table.text, table);
   const edits = new Map<string, typeof tables>();
+  const redirected = new Map<string, (typeof tables)[number]>();
   for (const table of tables) {
     const owner = canonical.get(table.text)!;
     if (owner === table) continue;
-    // Distinct canonical models with differing conditions retain those rules;
-    // modelDocuments already aliases equivalent complete field fragments.
-    if (table.root) continue;
+    if (table.root) redirected.set(table.path + '#' + table.heading, owner);
     const changes = edits.get(table.path) ?? [];
     changes.push(table);
     edits.set(table.path, changes);
@@ -241,6 +262,75 @@ export function internDocumentationTables(files: Map<string, string>, target: st
       );
     }
     files.set(path, lines.join('\n'));
+  }
+  // Operations still reach the definitions table with one link. Keep a separate
+  // link to the declaring model's conditions when its definitions are shared.
+  for (const [path, source] of files) {
+    if (!path.startsWith(target + '/reference/')) continue;
+    files.set(
+      path,
+      source.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (link, label: string, href: string) => {
+        const [file, fragment] = href.split('#');
+        const original = posix.normalize(posix.join(posix.dirname(path), file!));
+        const owner = redirected.get(original + '#' + fragment);
+        if (!owner) return link;
+        const destination = posix.relative(posix.dirname(path), owner.path) + '#' + owner.heading;
+        return `[${label}](${destination}) ([declared conditions](${href}))`;
+      }),
+    );
+  }
+}
+
+/** Enum sets have a canonical list just as object facts have a canonical table. */
+function internEnumerationLists(files: Map<string, string>, target: string): void {
+  const canonical = new Map<string, { path: string; heading: string }>();
+  const redirects = new Map<string, { path: string; heading: string }>();
+  for (const [path, source] of files) {
+    if (!path.startsWith(target + '/') || !path.endsWith('.md')) continue;
+    const headings = [...source.matchAll(/^#{2,6} (.+)\n/gm)];
+    const edits: { start: number; end: number }[] = [];
+    for (const [index, heading] of headings.entries()) {
+      if (!heading[1]!.endsWith(' values')) continue;
+      const end = headings[index + 1]?.index ?? source.length;
+      const body = source.slice(heading.index! + heading[0].length, end).trim();
+      if (Buffer.byteLength(body) < 256 || !body.split('\n').every((line) => /^- `/.test(line)))
+        continue;
+      const owner = canonical.get(body);
+      const location = { path, heading: docAnchor(heading[1]!) };
+      if (!owner) canonical.set(body, location);
+      else {
+        redirects.set(path + '#' + location.heading, owner);
+        edits.push({ start: heading.index!, end });
+      }
+    }
+    let result = source;
+    for (const edit of edits.reverse())
+      result = result.slice(0, edit.start) + result.slice(edit.end);
+    files.set(path, result);
+  }
+  for (const [path, source] of files) {
+    if (!path.startsWith(target + '/') || !path.endsWith('.md')) continue;
+    files.set(
+      path,
+      source.replace(
+        /(?<fence>^```[^\n]*\n[\s\S]*?^```[^\n]*(?:\n|$))|(?<inline>`+[^\n]*?`+)|\]\((?<href>[^)]+)\)/gm,
+        (
+          match,
+          _fence: string | undefined,
+          _inline: string | undefined,
+          href: string | undefined,
+        ) => {
+          if (!href || /^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(href)) return match;
+          const [file, fragment] = href.split('#');
+          const original = file ? posix.normalize(posix.join(posix.dirname(path), file)) : path;
+          const owner = redirects.get(original + '#' + fragment);
+          if (!owner) return match;
+          const destination =
+            owner.path === path ? '' : posix.relative(posix.dirname(path), owner.path);
+          return `](${destination}#${owner.heading})`;
+        },
+      ),
+    );
   }
 }
 
@@ -466,27 +556,19 @@ export function phpModelReference(
       ),
     );
   const inputNames = modelNames(false),
-    outputNames = modelNames(true);
+    outputNames = {
+      ...modelNames(true),
+      ...Object.fromEntries(
+        selected.filter((model) => model.response).map((model) => [model.name, model.name]),
+      ),
+    };
   const fragments = new DocumentationFragments();
   for (const plan of selected) {
     const schema =
       plan.documentationSchema ?? c.models[plan.name] ?? c.models[plan.name.replace(/Input$/, '')];
-    if (schema) fragments.register(schema, plan.name, plan.response);
+    if (schema) fragments.register(schema, plan.name, plan.response, c.definitions ?? c.models);
   }
   const shapes = new Map<string, string>();
-  const cell = (text: string) =>
-    text
-      .replaceAll('|', '\\|')
-      .replace(/[\r\n]+/g, ' ')
-      .replaceAll('<', '&lt;');
-  const type = (source: string) =>
-    cell(source).replace(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\b\w+\b/g, (name) =>
-      /^["']/.test(name)
-        ? schemaLiteral(name)
-        : names.has(name)
-          ? `[${name}](MODELS.md#${docAnchor(name)})`
-          : name,
-    );
   return (
     `# ${c.title} models\n\n[API reference](REFERENCE.md) · [Runtime guide](RUNTIME.md)\n\nThese classes expose presence-aware getters. Omitted optional response fields return null; has() distinguishes omission from present-null. Input classes omit read-only fields, and responses omit write-only fields. int64/uint64 values use integer strings; decimal fields preserve exact numeric strings.\n\n` +
     modelDocumentationConventions +
@@ -498,59 +580,35 @@ export function phpModelReference(
           c.models[plan.name.replace(/Input$/, '')];
         const definitions = c.definitions ?? c.models;
         const names = plan.response ? outputNames : inputNames;
-        const variants =
-          schema &&
-          documentationVariants(schema, definitions).some((variant) => variant.conditions.length);
-        const fieldReferences = new Map<string, Set<string>>();
-        const fields = schema
-          ? modelFieldReference(
-              schema,
-              definitions,
-              plan.name,
-              names,
-              enumLinks,
-              plan.response,
-              Boolean(variants),
-              new Set(),
-              fragments,
-              fieldReferences,
-            )
-          : '';
-        const documentedFields = schema ? schemaFields(schema, definitions).fields : {};
-        const getterType = (getter: (typeof plan.getters)[number]) => {
-          const field = documentedFields[getter.field];
-          // PHP's accessor projection uses mixed for some anonymous item
-          // alternatives. The schema reference can state their declared shape
-          // and link its canonical rules without implying a different accessor.
-          return field && getter.doc.includes('list<mixed>') && field.items
-            ? typeDescription(field, definitions, names)
-            : type(getter.doc);
-        };
-        const identity = JSON.stringify([
-          plan.getters,
-          plan.documentation,
-          plan.constructorDoc,
-          fields ? schema : null,
-        ]);
+        const context = schema
+          ? compileDocumentation(schema, definitions, plan.response)
+          : undefined;
+        const { model, ...facts } = context?.root ?? {};
+        const identity = JSON.stringify([plan.response, facts]);
         const previous = shapes.get(identity);
         if (!previous) shapes.set(identity, plan.name);
         else fieldAliases?.set(plan.name, previous);
+        const fieldReferences = new Map<string, Set<string>>();
+        const fields =
+          schema && !previous
+            ? modelFieldReference(
+                schema,
+                definitions,
+                plan.name,
+                names,
+                enumLinks,
+                plan.response,
+                true,
+                new Set(),
+                fragments,
+                fieldReferences,
+              )
+            : '';
         return (
-          `## ${plan.name}\n\n${plan.description ?? schema?.description ?? ''}\n\n${plan.response ? 'Response model.' : 'Request input.'}\n\n` +
+          `## ${plan.name}\n\n${schema ? modelDescriptions(schema, definitions, plan.response) : (plan.description ?? '')}\n\n${plan.response ? 'Response model.' : 'Request input.'}\n\n` +
           (previous
             ? `Fields, types, descriptions and enum values: [${previous}](MODELS.md#${docAnchor(previous)}).\n\n`
-            : variants
-              ? fields
-              : (plan.getters.length
-                  ? '| Field | Presence | Type | Description |\n| --- | --- | --- | --- |\n' +
-                    plan.getters
-                      .map(
-                        (getter) =>
-                          `| \`${getter.field}\` | ${plan.documentation?.[getter.field]?.required ? 'Required' : 'Optional'} | ${getterType(getter)} | ${[cell(plan.documentation?.[getter.field]?.markdown ?? plan.documentation?.[getter.field]?.description ?? ''), enumNotes(plan.documentation?.[getter.field]?.enums ?? [], (value) => schemaLiteral(value, true), enumLinks), fieldReferenceNotes(getter.field, fieldReferences)].filter(Boolean).join(' ')} |`,
-                      )
-                      .join('\n') +
-                    '\n\n'
-                  : `Value shape: ${type(plan.constructorDoc)}.\n\n`) + fields)
+            : fields)
         );
       })
       .join('')

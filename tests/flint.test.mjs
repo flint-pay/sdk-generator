@@ -92,9 +92,10 @@ test('Flint reference pins local source, all seven selected operations and recur
         s = statSync(file);
       return size + (s.isDirectory() ? bytes(file) : s.size);
     }, 0);
-  // Published merchant/platform envelopes add five models; measured output is 4.16 MB.
+  // Complete field/branch facts in source comments and Markdown total 4.51 MB.
+  // Keep bounded headroom while detecting accidental recursive expansion.
   assert.ok(
-    bytes(join(output, 'node')) + bytes(join(output, 'php')) < 4_500_000,
+    bytes(join(output, 'node')) + bytes(join(output, 'php')) < 4_800_000,
     'named shapes must be shared rather than repeatedly expanded',
   );
 });

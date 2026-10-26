@@ -51,7 +51,10 @@ test('Markdown schema constraints and sample values remain literal while prose l
     schemaNotes(child),
     `${description} pattern: ${pattern}. Example: ${JSON.stringify(example)}.`,
   );
-  assert.equal(schemaComment(child).trim(), `/** ${schemaNotes(child)} */`);
+  assert.equal(
+    schemaComment(child).trim(),
+    `/** Shape $ (Value): string. ${schemaNotes(child)} Value enum: ${JSON.stringify(example)}. */`,
+  );
 });
 
 test('long type expressions become readable code blocks without changing their TypeScript syntax', () => {

@@ -4,13 +4,19 @@ import { dirname, join, resolve } from 'node:path';
 import MarkdownIt from 'markdown-it';
 import { packageDocuments } from './package-docs.mjs';
 import {
-  bodyReference,
-  responseReference,
   documentationVariants,
   schemaFields,
-  fieldTable,
   modelName,
-} from '../../dist/sdk-documentation.js';
+  expectedFieldFacts,
+  expectedAnnotations,
+  expectedDocumentationFacts,
+  expectedType,
+  expectedConstraints,
+  expectedEnums,
+  typeLinks,
+  parsedType,
+  normalizedEnums,
+} from './documentation-expectations.mjs';
 import { compileSdkContract } from '../../dist/target-plan.js';
 import { directionalSchema, compileCodec } from '../../dist/codec-plan.js';
 import { payloadSchemas } from '../../dist/response-return.js';
@@ -101,15 +107,30 @@ function fieldFacts(source, path) {
     }
     if (cells.length !== 4 || !['Required', 'Optional', 'Conditional'].includes(cells[1].content))
       continue;
-    const enums = [];
-    let enumRegion = false;
+    const enums = [],
+      enumEntries = new Map();
+    let enumRegion = false,
+      enumPath = '';
+    const addValues = (values) => {
+      enums.push(...values);
+      enumEntries.set(enumPath, [...(enumEntries.get(enumPath) ?? []), ...values]);
+    };
+    const pathFor = (label) =>
+      label.startsWith('Items')
+        ? '[]' + label.slice(5).replace(/ values$/, '')
+        : label.startsWith('Map')
+          ? '.*' + label.slice(3).replace(/ values$/, '')
+          : '';
     for (const child of cells[3].children) {
       if (child.type === 'text') {
-        if (/(?:Values|Items[\[\].*]* values|Map[\[\].*]* values): $/.test(child.content))
+        if (/(?:Values|Items[\[\].*]* values|Map[\[\].*]* values): $/.test(child.content)) {
           enumRegion = true;
-        else if (child.content.includes('.')) enumRegion = false;
+          enumPath = pathFor(
+            child.content.match(/(Values|Items[\[\].*]* values|Map[\[\].*]* values): $/)[1],
+          );
+        } else if (child.content.includes('.')) enumRegion = false;
       }
-      if (enumRegion && child.type === 'code_inline') enums.push(child.content);
+      if (enumRegion && child.type === 'code_inline') addValues([child.content]);
     }
     for (const [index, child] of cells[3].children.entries()) {
       if (
@@ -117,8 +138,13 @@ function fieldFacts(source, path) {
         !/\d+ declared values/.test(cells[3].children[index + 1]?.content ?? '')
       )
         continue;
+      enumPath = pathFor(
+        cells[3].children[index - 1]?.content.match(
+          /(Values|Items[\[\].*]* values|Map[\[\].*]* values): $/,
+        )?.[1] ?? 'Values',
+      );
       const [file, fragment] = child.attrGet('href').split('#');
-      const text = file && path ? readFileSync(resolve(dirname(path), file), 'utf8') : source;
+      const text = path ? readFileSync(file ? resolve(dirname(path), file) : path, 'utf8') : source;
       const lines = text.split('\n');
       const headings = new Set();
       const references = markdown.parse(text, {});
@@ -133,8 +159,8 @@ function fieldFacts(source, path) {
         const end =
           references.slice(heading + 1).find((token) => token.type === 'heading_open')?.map[0] ??
           lines.length;
-        enums.push(
-          ...markdown
+        addValues(
+          markdown
             .parse(lines.slice(start, end).join('\n'), {})
             .flatMap((token) => token.children ?? [])
             .filter((token) => token.type === 'code_inline')
@@ -147,9 +173,11 @@ function fieldFacts(source, path) {
       field: cells[0].children.find((child) => child.type === 'code_inline')?.content,
       presence: cells[1].content,
       enums,
+      enumEntries: normalizedEnums([...enumEntries].map(([path, values]) => ({ path, values }))),
       type: inlineType(cells[2].content),
       links: modelLinks(cells[2].content),
       constraints: constraintFacts(cells[3].content),
+      notes: cells[3].content,
     });
   }
   // Canonical definitions carry invariant facts; compact rules supply presence
@@ -190,10 +218,16 @@ export function assertCanonicalOperationDocumentation(directory, contract) {
     const [request, rest] = operation.source.split('#### Response\n');
     const response = rest.split('#### Errors\n')[0];
     for (const section of linkedModelSections(operation.path, request + response)) {
+      if (section.label === 'declared conditions') continue;
       assert.doesNotMatch(
         section.source,
         /Fields, types, descriptions and enum values:|Fields, descriptions and enum values are shared/,
         `${operation.name}: ${section.label} adds a second hop`,
+      );
+      assert.doesNotMatch(
+        section.source.split(/^### /m)[0],
+        /Field definitions: \[shared fields\]/,
+        `${operation.name}: ${section.label} must link directly to definitions`,
       );
     }
     const outputs = op.response?.payloadPath
@@ -201,18 +235,15 @@ export function assertCanonicalOperationDocumentation(directory, contract) {
       : Object.entries(op.responses)
           .filter(([status]) => /^(?:2\d\d|2XX)$/.test(status))
           .flatMap(([, entry]) => (entry.schema ? [entry.schema] : []));
-    for (const [section, original] of [
-      [request, bodyReference(op, definitions)],
-      [
-        response,
-        outputs.map((schema) => responseReference(schema, definitions, operation.name)).join(''),
-      ],
+    for (const [section, schemas, isResponse] of [
+      [request, op.body ? [op.body] : [], false],
+      [response, outputs, true],
     ]) {
-      // The old request renderer also printed an incomplete common view before
-      // applying alternatives (e.g. an "optional" discriminator required by
-      // every branch). Compare its complete effective variant tables instead.
-      const variant = original.search(/^#{4,5} .* variant /m);
-      const oldFacts = fieldFacts(variant < 0 ? original : original.slice(variant));
+      const oldFacts = schemas.flatMap((schema) =>
+        documentationVariants(schema, definitions).flatMap((variant) =>
+          expectedFieldFacts(variant.schema, definitions, {}, isResponse),
+        ),
+      );
       if (!oldFacts.length) continue;
       const matches = (entry, fact) =>
         entry.field === fact.field &&
@@ -241,14 +272,24 @@ export function assertCanonicalOperationDocumentation(directory, contract) {
 const inlineType = (text) => text.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replaceAll('\\|', '|');
 const modelLinks = (text) =>
   [...text.matchAll(/\[([^\]]+)\]\([^)]+\)/g)].map((match) => match[1]).sort();
-const constraintFacts = (text) =>
-  [
+const constraintFacts = (text) => {
+  const scopes = [...text.matchAll(/\b(Items[\[\].*]*|Map[\[\].*]* values): /g)];
+  return [
     ...text.matchAll(
       /\b(format|minimum|maximum|exclusiveMinimum|exclusiveMaximum|multipleOf|minLength|maxLength|minItems|maxItems|minProperties|maxProperties|uniqueItems|pattern): (`+)(.*?)\2/gi,
     ),
   ]
-    .map((match) => `${match[1].toLowerCase()}:${match[3]}`)
+    .map((match) => {
+      const label = scopes.filter((scope) => scope.index < match.index).at(-1)?.[1];
+      const path = !label
+        ? ''
+        : label.startsWith('Items')
+          ? '[]' + label.slice(5)
+          : '.*' + label.slice(3).replace(/ values$/, '');
+      return `${path}:${match[1].toLowerCase()}:${match[3]}`;
+    })
     .sort();
+};
 
 /** Reconstruct each visible branch's full fact tuple from definitions and deltas. */
 function branchFacts(source, path, scope, index) {
@@ -261,22 +302,24 @@ function branchFacts(source, path, scope, index) {
     if (shared.label === 'shared fields' && /\| Field \| Presence \|/.test(shared.source))
       definitions += '\n' + shared.source.split(/^### /m)[0];
   const facts = new Map(fieldFacts(definitions, path).map((fact) => [fact.field, fact]));
-  if (index === undefined) return [...facts.values()];
-  const heading = headings.find(
-    (entry) =>
-      new RegExp('^' + escape(scope) + ' variant ([\\d, ]+)(?::|$)').test(entry[1]) &&
-      entry[1]
-        .slice((scope + ' variant ').length)
-        .split(':')[0]
-        .split(', ')
-        .includes(String(index + 1)),
-  );
-  assert.ok(
-    heading,
-    `${scope}: lost branch ${index + 1}; headings ${JSON.stringify(headings.map((entry) => entry[1]))}`,
-  );
-  const end = headings.find((entry) => entry.index > heading.index)?.index ?? source.length;
-  const rules = source.slice(heading.index + heading[0].length, end);
+  let rules = definitions;
+  if (index !== undefined) {
+    const heading = headings.find(
+      (entry) =>
+        new RegExp('^' + escape(scope) + ' variant ([\\d, ]+)(?::|$)').test(entry[1]) &&
+        entry[1]
+          .slice((scope + ' variant ').length)
+          .split(':')[0]
+          .split(', ')
+          .includes(String(index + 1)),
+    );
+    assert.ok(
+      heading,
+      `${scope}: lost branch ${index + 1}; headings ${JSON.stringify(headings.map((entry) => entry[1]))}`,
+    );
+    const end = headings.find((entry) => entry.index > heading.index)?.index ?? source.length;
+    rules = source.slice(heading.index + heading[0].length, end);
+  }
   for (const token of markdown.parse(rules, {}).filter((token) => token.type === 'inline')) {
     const presence = token.content.match(/^(Required|Optional|Undeclared): /)?.[1];
     if (presence)
@@ -284,6 +327,20 @@ function branchFacts(source, path, scope, index) {
         if (presence === 'Undeclared') facts.delete(field);
         else if (facts.has(field)) facts.get(field).presence = presence;
       }
+    const value = token.content.match(/^Value shape: (.*)$/);
+    if (value) {
+      const type = value[1].match(/^(.*?)\.(?: |$)/)?.[1];
+      assert.ok(type, `${scope}: missing value type`);
+      const row = fieldFacts(
+        '| Field | Presence | Type | Description |\n| --- | --- | --- | --- |\n| `$value` | Required | ' +
+          type +
+          ' | ' +
+          value[1].slice(type.length + 1) +
+          ' |\n',
+        path,
+      )[0];
+      facts.set('$value', row);
+    }
     const delta = token.content.match(/^Constraints for `([^`]+)`: (.*)$/);
     if (!delta || !facts.has(delta[1])) continue;
     const fact = facts.get(delta[1]);
@@ -297,6 +354,7 @@ function branchFacts(source, path, scope, index) {
       fact.type = inlineType(type);
       fact.links = modelLinks(type);
     }
+    fact.notes += ' ' + delta[2];
     fact.constraints = [...new Set([...fact.constraints, ...constraintFacts(delta[2])])].sort();
     // Reuse the long-enum resolver through a synthetic row; definitions may
     // carry common enum facts, while the delta carries the narrowed set.
@@ -307,7 +365,15 @@ function branchFacts(source, path, scope, index) {
           ' |\n',
         path,
       )[0]?.enums ?? [];
-    if (enums.length) fact.enums = [...new Set(enums)];
+    if (enums.length) {
+      fact.enums = [...new Set(enums)];
+      fact.enumEntries = fieldFacts(
+        '| Field | Presence | Type | Description |\n| --- | --- | --- | --- |\n| `delta` | Required | string | ' +
+          delta[2] +
+          ' |\n',
+        path,
+      )[0].enumEntries;
+    }
   }
   return [...facts.values()];
 }
@@ -315,7 +381,8 @@ function branchFacts(source, path, scope, index) {
 // A separate compiler-plan witness catches even a mutation in the shared
 // type formatter (which the old-table comparison alone could not detect).
 function assertConcreteCollectionType(type, schema, definitions, context) {
-  if (!/Array of any|list(?:&lt;|<)mixed/.test(type)) return;
+  if (!/Array of any|list(?:&lt;|<)mixed|\"kind\":\"array\",\"item\":\{\"kind\":\"any\"/.test(type))
+    return;
   const concrete = (plan, seen = new Set()) => {
     if (plan.value.kind !== 'dynamic') return true;
     if (plan.reference && definitions[plan.reference] && !seen.has(plan.reference))
@@ -330,10 +397,10 @@ function assertConcreteCollectionType(type, schema, definitions, context) {
 }
 
 /** Compare full branch tuples against the compiler's directional documentation schemas.
- * Expected tables use the unsuppressed field renderer, independently of compact deltas.
+ * Expected facts come from codec instructions, independently of all renderers.
  * This covers every canonical model used by suppressed operations, including nested unions.
  */
-export function assertCanonicalBranchDocumentation(directory, contract) {
+export function assertCanonicalBranchDocumentation(directory, contract, report, selectedModels) {
   const target = directory.endsWith('/php') ? 'php' : 'node';
   let compilation = compilations.get(contract);
   if (!compilation) {
@@ -348,7 +415,7 @@ export function assertCanonicalBranchDocumentation(directory, contract) {
   );
   const buildNames = (response) =>
     Object.fromEntries(
-      Object.entries(plan.node.models).flatMap(([name, model]) => {
+      Object.entries(target === 'node' ? plan.node.models : c.models).flatMap(([name, model]) => {
         if (target === 'node')
           return response
             ? [[name, model.outputAlias ?? name]]
@@ -360,9 +427,38 @@ export function assertCanonicalBranchDocumentation(directory, contract) {
       }),
     );
   const inputNames = buildNames(false),
-    outputNames = buildNames(true);
+    outputNames = {
+      ...buildNames(true),
+      ...(target === 'php'
+        ? Object.fromEntries(
+            php.filter((model) => model.response).map((model) => [model.name, model.name]),
+          )
+        : {}),
+    };
   const names = (response) => (response ? outputNames : inputNames);
   const files = packageDocuments(directory);
+  const outputSchemas = new Map();
+  for (const [name, model] of Object.entries(plan.node.models)) {
+    if (model.outputAlias) continue;
+    const declarations = [
+      ...new Map(
+        Object.entries(c.models)
+          .filter(([source]) => (plan.node.models[source]?.outputAlias ?? source) === name)
+          .map(([source]) => {
+            const view = directionalSchema(c.models[source], true);
+            const { description, 'x-sdk-type-name': _name, ...shape } = view;
+            return [
+              JSON.stringify(shape),
+              { ...view, description: `Declared schema ${source}. ${view.description ?? ''}` },
+            ];
+          }),
+      ).values(),
+    ];
+    outputSchemas.set(
+      name,
+      declarations.length > 1 ? { anyOf: declarations } : directionalSchema(c.models[name], true),
+    );
+  }
   const models =
     target === 'php'
       ? php.map((model) => ({
@@ -371,9 +467,7 @@ export function assertCanonicalBranchDocumentation(directory, contract) {
           schema: model.documentationSchema,
         }))
       : Object.entries(plan.node.models).flatMap(([name, model]) => [
-          ...(model.outputAlias
-            ? []
-            : [{ name, response: true, schema: directionalSchema(c.models[name], true) }]),
+          ...(model.outputAlias ? [] : [{ name, response: true, schema: outputSchemas.get(name) }]),
           ...(model.inputReachable === false
             ? []
             : [
@@ -385,46 +479,121 @@ export function assertCanonicalBranchDocumentation(directory, contract) {
               ]),
         ]);
   const sections = new Map();
+  const canonicalSchemas = new Map(models.map((model) => [model.name, model.schema]));
+  const modelLocations = new Map();
+  for (const path of files.filter((path) => /(?:MODELS\.md|\/models\/[^/]+\.md)$/.test(path)))
+    for (const match of readFileSync(path, 'utf8').matchAll(/^#{2,6} (.+)\n/gm))
+      modelLocations.set(match[1], path);
   const modelSection = (name) => {
     if (sections.has(name)) return sections.get(name);
-    const path =
-      files.find((path) => path.endsWith('/models/' + name + '.md')) ??
-      join(directory, 'MODELS.md');
+    const path = modelLocations.get(name) ?? join(directory, 'MODELS.md');
     const section = linkedModelSections(path, `[${name}](#${slug(name)})`)[0];
     sections.set(name, section);
     return section;
   };
   const aliases = new Map();
+  const fieldAlias = (section) => {
+    const intro = section?.source.split(/^### /m)[0] ?? '';
+    const explicit = intro.match(
+      /Fields, types, descriptions and enum values: \[[^\]]+\]\([^)]+\)/,
+    )?.[0];
+    if (explicit) return linkedModelSections(section.path, explicit)[0];
+    if (/Fields, descriptions and enum values are shared/.test(intro))
+      return linkedModelSections(
+        section.path,
+        intro.match(/Response: \[[^\]]+\]\([^)]+\)/)?.[0] ?? '',
+      )[0];
+    const fragment = intro.match(
+      /(?:Declared alternatives|Field definitions): \[[^\]]+\]\([^)]+\)/,
+    )?.[0];
+    if (fragment) {
+      const linked = linkedModelSections(section.path, fragment)[0];
+      if (linked?.label !== 'shared fields') return linked;
+    }
+  };
   const canonicalLabel = (name, seen = new Set()) => {
     if (aliases.has(name)) return aliases.get(name);
     if (seen.has(name) || !models.some((model) => model.name === name)) return name;
     const section = modelSection(name);
-    const intro = section?.source.split(/^### /m)[0] ?? '';
-    const alias =
-      /Fields, types, descriptions and enum values:|Fields, descriptions and enum values are shared/.test(
-        intro,
-      )
-        ? linkedModelSections(section.path, intro)[0]
-        : undefined;
+    const alias = fieldAlias(section);
     const canonical = alias ? canonicalLabel(alias.heading, new Set(seen).add(name)) : name;
     aliases.set(name, canonical);
     return canonical;
   };
+  const canonicalSection = (section, seen = new Set()) => {
+    const identity = section.path + '#' + section.heading;
+    if (seen.has(identity)) return section;
+    const alias = fieldAlias(section);
+    return alias ? canonicalSection(alias, new Set(seen).add(identity)) : section;
+  };
+  const objectModels = new Set(
+    Object.entries(definitions).flatMap(([name, schema]) => {
+      const plan = compileCodec(schema);
+      return plan.value.kind === 'object' && !plan.nullable
+        ? [canonicalLabel(inputNames[name] ?? name), canonicalLabel(outputNames[name] ?? name)]
+        : [];
+    }),
+  );
+  const normalizeTree = (tree) => {
+    const result = JSON.parse(
+      JSON.stringify(tree, (key, value) => (key === 'name' ? canonicalLabel(value) : value)),
+    );
+    if (result.item) result.item = normalizeTree(result.item);
+    if (result.value) result.value = normalizeTree(result.value);
+    if (result.branches) {
+      result.branches = result.branches
+        .map(normalizeTree)
+        .flatMap((branch) =>
+          branch.kind === result.kind && !branch.nullable ? branch.branches : [branch],
+        );
+      if (
+        result.kind === 'and' &&
+        result.branches.some((b) => b.kind === 'model' && objectModels.has(b.name))
+      )
+        result.branches = result.branches.filter((b) => b.kind !== 'object');
+      result.branches = [
+        ...new Map(result.branches.map((branch) => [JSON.stringify(branch), branch])).values(),
+      ].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+      if (result.branches.length === 1)
+        return result.nullable ? { ...result.branches[0], nullable: true } : result.branches[0];
+    }
+    return result;
+  };
   const normalizeType = (fact) => ({
     ...fact,
-    type: fact.type.replace(/\b[A-Za-z_]\w*\b/g, (name) => canonicalLabel(name)),
+    annotationLinks: fact.links,
+    type: normalizeTree(typeof fact.type === 'string' ? parsedType(fact.type) : fact.type),
     links: fact.links.map((name) => canonicalLabel(name)).sort(),
   });
+  const annotationNotes = (section, seen = new Set()) => {
+    if (!section) return '';
+    const identity = section.path + '#' + section.heading;
+    if (seen.has(identity)) return '';
+    const alias = fieldAlias(section);
+    return [
+      section?.source ?? '',
+      ...(alias ? [annotationNotes(alias, new Set(seen).add(identity))] : []),
+    ].join(' ');
+  };
   let checkedBranches = 0,
     checkedFacts = 0;
   const seen = new Set();
   const check = (schema, section, scope, response, ancestors = new Set()) => {
     if (!schema) return;
-    const identity = JSON.stringify([schema, section.path, scope, response]);
+    const origin = scope;
+    section = canonicalSection(section);
+    scope = section.heading;
+    const variants = documentationVariants(schema, definitions, new Set(), response);
+    const identity = JSON.stringify([
+      expectedDocumentationFacts(schema, definitions, response),
+      section.path,
+      scope,
+      response,
+    ]);
     if (seen.has(identity) || ancestors.has(JSON.stringify(schema))) return;
     seen.add(identity);
     ancestors = new Set(ancestors).add(JSON.stringify(schema));
-    const variants = documentationVariants(schema, definitions);
+    const valueOwner = canonicalLabel(names(response)[modelName(schema, definitions)] ?? scope);
     const hasVariants = variants.some((variant) => variant.conditions.length);
     const invariant = branchFacts(section.source, section.path, scope);
     for (const fact of invariant) {
@@ -435,54 +604,101 @@ export function assertCanonicalBranchDocumentation(directory, contract) {
       for (const child of fields)
         assertConcreteCollectionType(fact.type, child, definitions, `${scope}.${fact.field}`);
     }
-    if (hasVariants)
-      for (const [index, variant] of variants.entries()) {
-        const shape = schemaFields(variant.schema, definitions, new Set(), true);
-        const properties = Object.fromEntries(
-          Object.entries(shape.fields).filter(([, child]) =>
-            response ? !child.writeOnly : !child.readOnly,
-          ),
+    for (const [index, variant] of variants.entries()) {
+      const shape = schemaFields(variant.schema, definitions, new Set(), true);
+      const properties = Object.fromEntries(
+        Object.entries(shape.fields).filter(([, child]) =>
+          response ? !child.writeOnly : !child.readOnly,
+        ),
+      );
+      const expected = expectedFieldFacts(variant.schema, definitions, names(response), response);
+      if (!expected.length) {
+        const type = expectedType(
+          variant.schema,
+          definitions,
+          names(response),
+          new Set(),
+          (name) => canonicalLabel(name) === valueOwner,
         );
-        const expected = fieldFacts(
-          fieldTable(
-            { properties, required: [...shape.required] },
-            definitions,
-            'Expected',
-            false,
-            names(response),
-          ),
-        );
-        const actual = branchFacts(section.source, section.path, scope, index).map(normalizeType);
-        for (const fact of expected.map(normalizeType)) {
-          const found = actual.find((entry) => entry.field === fact.field);
-          assert.ok(found, `${scope} branch ${index + 1}: lost ${fact.field}`);
-          assertConcreteCollectionType(
-            found.type,
-            properties[fact.field],
-            definitions,
-            `${scope}.${fact.field}`,
-          );
-          for (const key of ['type', 'links', 'presence'])
-            assert.deepEqual(
-              found[key],
-              fact[key],
-              `${scope} branch ${index + 1}: lost ${fact.field} ${key}`,
-            );
-          for (const key of ['constraints', 'enums'])
-            assert.deepEqual(
-              [...new Set(found[key])].sort(),
-              [...new Set(fact[key])].sort(),
-              `${scope} branch ${index + 1}: lost ${fact.field} ${key}`,
-            );
-          assert.ok(
-            !/Array of any|list(?:&lt;|<)mixed/.test(found.type) ||
-              /Array of any|list(?:&lt;|<)mixed/.test(fact.type),
-            `${scope}: concrete collection degraded to any`,
-          );
-          checkedFacts++;
-        }
-        checkedBranches++;
+        expected.push({
+          ...expectedAnnotations(variant.schema, definitions),
+          field: '$value',
+          presence: 'Required',
+          type,
+          links: typeLinks(type),
+          constraints: expectedConstraints(variant.schema, definitions),
+          enums: expectedEnums(variant.schema, definitions).flatMap((e) => e.values),
+          enumEntries: normalizedEnums(expectedEnums(variant.schema, definitions)),
+        });
       }
+      const actual = branchFacts(
+        section.source,
+        section.path,
+        scope,
+        hasVariants ? index : undefined,
+      ).map(normalizeType);
+      for (const fact of expected.map(normalizeType)) {
+        const found = actual.find((entry) => entry.field === fact.field);
+        assert.ok(
+          found,
+          `${scope} branch ${index + 1}: lost ${fact.field} (linked from ${origin})`,
+        );
+        assertConcreteCollectionType(
+          JSON.stringify(found.type),
+          properties[fact.field] ?? variant.schema,
+          definitions,
+          `${scope}.${fact.field}`,
+        );
+        for (const key of ['type', 'links', 'presence'])
+          assert.deepEqual(
+            found[key],
+            fact[key],
+            `${scope} branch ${index + 1}: lost ${fact.field} ${key}`,
+          );
+        assert.deepEqual(
+          found.enumEntries,
+          fact.enumEntries,
+          `${scope} branch ${index + 1}: lost ${fact.field} enums`,
+        );
+        for (const key of ['constraints', 'enums'])
+          assert.deepEqual(
+            [...new Set(found[key])].sort(),
+            [...new Set(fact[key])].sort(),
+            `${scope} branch ${index + 1}: lost ${fact.field} ${key}`,
+          );
+        assert.ok(
+          !/Array of any|list(?:&lt;|<)mixed/.test(JSON.stringify(found.type)) ||
+            /Array of any|list(?:&lt;|<)mixed/.test(JSON.stringify(fact.type)),
+          `${scope}: concrete collection degraded to any`,
+        );
+        const reachableNotes = [
+          found.notes,
+          ...found.annotationLinks.map((name) => annotationNotes(modelSection(name))),
+          ...linkedModelSections(section.path, found.notes).map((entry) => annotationNotes(entry)),
+        ].join(' ');
+        const prose = (text) =>
+          markdown
+            .parseInline(text.replace(/[\r\n]+/g, ' '), {})
+            .flatMap((token) => token.children ?? [])
+            .filter((token) => !['link_open', 'link_close'].includes(token.type))
+            .map((token) => token.content)
+            .join('')
+            .replace(/\s+/g, ' ')
+            .trim();
+        for (const description of fact.descriptions ?? [])
+          assert.ok(
+            prose(reachableNotes).includes(prose(description)),
+            `${scope}: lost ${fact.field} description`,
+          );
+        for (const value of fact.defaults ?? [])
+          assert.ok(
+            prose(reachableNotes).includes('Default: ' + value + '.'),
+            `${scope}: lost ${fact.field} default`,
+          );
+        checkedFacts++;
+      }
+      checkedBranches++;
+    }
     // Nested declared alternatives have canonical links (shared across owners).
     // Traverse links whose schemas are inline, keeping their branch association.
     for (const [index, variant] of variants.entries()) {
@@ -492,8 +708,23 @@ export function assertCanonicalBranchDocumentation(directory, contract) {
         if (parents.has(identity) || ancestors.has(identity)) return;
         parents = new Set(parents).add(identity);
         if ((response && child.writeOnly) || (!response && child.readOnly)) return;
+        const fieldSignature = (value) =>
+          JSON.stringify(
+            documentationVariants(value, definitions, new Set(), response).map((v) =>
+              expectedFieldFacts(v.schema, definitions, names(response), response).map(
+                normalizeType,
+              ),
+            ),
+          );
         const named = (value) =>
-          Boolean(names(response)[modelName(value, definitions)]) ||
+          Boolean(
+            names(response)[modelName(value, definitions)] &&
+              (!canonicalSchemas.get(names(response)[modelName(value, definitions)]) ||
+                fieldSignature(value) ===
+                  fieldSignature(
+                    canonicalSchemas.get(names(response)[modelName(value, definitions)]),
+                  )),
+          ) ||
           Boolean(
             value.allOf?.length &&
               !value.properties &&
@@ -506,29 +737,88 @@ export function assertCanonicalBranchDocumentation(directory, contract) {
           );
         if (named(child)) return;
         if (
-          documentationVariants(child, definitions).some((variant) => variant.conditions.length)
+          documentationVariants(child, definitions, new Set(), response).some(
+            (variant) => variant.conditions.length,
+          ) ||
+          Object.values(schemaFields(child, definitions).fields).some((field) =>
+            response ? !field.writeOnly : !field.readOnly,
+          ) ||
+          child['x-sdk-ref']
         ) {
-          const localScope = context + '.' + path;
-          const local = section.source.match(
-            new RegExp(
-              '^### ' +
-                localScope.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') +
-                '\\n([\\s\\S]*?)(?=^### |$(?![\\s\\S]))',
-              'm',
-            ),
-          );
+          let localScope = context + '.' + path;
+          let local;
+          // Equivalent field facts may have one invariant fragment even when
+          // their source annotations differ in non-documentary metadata.
+          for (const candidate of new Set([localScope, scope + '.' + path])) {
+            local = section.source.match(
+              new RegExp(
+                '^### ' +
+                  candidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') +
+                  '(?: fields \\d+)?' +
+                  '\\n([\\s\\S]*?)(?=^### |$(?![\\s\\S]))',
+                'm',
+              ),
+            );
+            if (local) {
+              localScope = local[0].slice(4, local[0].indexOf('\n'));
+              break;
+            }
+          }
+          if (!local) {
+            // A recursive union can already be represented by its named
+            // members. Prove every branch tuple against those compiler-owned
+            // declarations, then certify the linked documents themselves.
+            const links = typeLinks(expectedType(child, definitions, names(response))).filter(
+              (name) => canonicalSchemas.has(name),
+            );
+            const branchSignature = (schema) =>
+              JSON.stringify({
+                fields: expectedFieldFacts(schema, definitions, names(response), response).map(
+                  normalizeType,
+                ),
+                type: normalizeTree(
+                  expectedType(schema, definitions, names(response), new Set(), () => true),
+                ),
+                constraints: expectedConstraints(schema, definitions),
+                enums: normalizedEnums(expectedEnums(schema, definitions)),
+              });
+            const wanted = documentationVariants(child, definitions, new Set(), response);
+            const available = new Set(
+              links.flatMap((name) =>
+                documentationVariants(
+                  canonicalSchemas.get(name),
+                  definitions,
+                  new Set(),
+                  response,
+                ).map((v) => branchSignature(v.schema)),
+              ),
+            );
+            if (
+              links.length > 1 &&
+              wanted.every(
+                (v) =>
+                  expectedFieldFacts(v.schema, definitions, names(response), response).length &&
+                  available.has(branchSignature(v.schema)),
+              )
+            ) {
+              for (const name of links)
+                check(canonicalSchemas.get(name), modelSection(name), name, response, ancestors);
+              return;
+            }
+          }
           assert.ok(local, `${localScope}: lost nested variant definitions`);
           if (local) {
             const linked = linkedModelSections(section.path, local[1]).find(
               (entry) => entry.label !== 'shared fields',
             );
-            if (linked && /Declared alternatives:/.test(local[1]))
+            if (linked && /(?:Declared alternatives|Field definitions):/.test(local[1]))
               check(child, linked, linked.heading, response, ancestors);
             else {
               check(
                 child,
                 {
                   ...section,
+                  heading: localScope,
                   source: section.source.slice(
                     section.source.indexOf(local[0]) + local[0].indexOf('\n') + 1,
                   ),
@@ -547,6 +837,15 @@ export function assertCanonicalBranchDocumentation(directory, contract) {
         if (typeof child.additionalProperties === 'object')
           visit(child.additionalProperties, path + '{}', context, parents);
       };
+      if (!Object.keys(shape.fields).length) {
+        const collectionParts = (value) => {
+          if (value.items) visit(value.items, '[]', `${scope} variant ${index + 1}`);
+          if (typeof value.additionalProperties === 'object')
+            visit(value.additionalProperties, '{}', `${scope} variant ${index + 1}`);
+          for (const part of value.allOf ?? []) collectionParts(part);
+        };
+        collectionParts(variant.schema);
+      }
       for (const [field, child] of Object.entries(shape.fields))
         visit(
           child,
@@ -563,22 +862,23 @@ export function assertCanonicalBranchDocumentation(directory, contract) {
     }
   };
   for (const model of models) {
+    if (selectedModels && !selectedModels.has(model.name)) continue;
     if (!model.schema) continue;
     const section = modelSection(model.name);
-    if (!section) continue;
-    const alias = linkedModelSections(section.path, section.source).find(
-      (entry) =>
-        /Fields, types, descriptions and enum values:|Fields, descriptions and enum values are shared/.test(
-          section.source.split(/^### /m)[0],
-        ) && entry.label !== 'shared fields',
-    );
-    const canonical = alias ?? section;
-    check(
-      model.schema,
-      canonical,
-      canonical.heading,
-      model.response || (target === 'node' && !canonical.heading.endsWith('Input')),
-    );
+    assert.ok(section, `missing canonical model ${model.name}`);
+    const alias = fieldAlias(section);
+    const canonical = alias ? modelSection(canonicalLabel(model.name)) : section;
+    try {
+      check(
+        model.schema,
+        canonical,
+        canonical.heading,
+        model.response || (target === 'node' && !canonical.heading.endsWith('Input')),
+      );
+    } catch (error) {
+      if (!report) throw error;
+      report(error);
+    }
   }
   return { checkedBranches, checkedFacts };
 }

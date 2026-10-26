@@ -1,8 +1,16 @@
 import {
+  compileDocumentation,
+  documentationPositions,
+  factEnums,
+  factShape,
+  factParts,
+} from './documentation-plan.js';
+import { factSourceDocumentation, factCollectionNotes } from './documentation-format.js';
+import {
   schemaNotes,
+  modelDocumentationNames,
   schemaLiteral,
   schemaEnumValues,
-  enumNotes,
   type SchemaEnumValues,
 } from './schema-documentation.js';
 import {
@@ -13,7 +21,11 @@ import {
 import type { TypeCertificate } from './type-certificate.js';
 import { REQUEST_OPTIONS } from './request-options.js';
 import { responseOnlyModels } from './schema-usage.js';
-import { omitProtectedExamples } from './example-protection.js';
+import {
+  omitProtectedExamples,
+  markProtectedDocumentation,
+  hasProtectedDocumentation,
+} from './example-protection.js';
 import { reservePublicSymbols } from './public-symbols.js';
 import { pascalWords, webhookEventTypeName, isReservedTypeName } from './naming.js';
 import {
@@ -255,6 +267,13 @@ function nullablePhpAccessor(type: string): string {
   return type.includes('|') ? type + '|null' : '?' + type;
 }
 
+const exampleDocumentationViews = new WeakMap<Schema, Schema>();
+const responseDocumentationViews = new WeakMap<Schema, Schema>();
+const documentationDefinitionViews = new WeakMap<
+  object,
+  Map<boolean, Readonly<Record<string, Schema>>>
+>();
+
 export function compilePhpModel(
   name: string,
   schema: Schema,
@@ -263,11 +282,25 @@ export function compilePhpModel(
   declaration: Schema = schema,
   definitions: Readonly<Record<string, Schema>> = {},
   includeExamples = true,
+  bindings?: PhpRepresentation,
+  documentationDefinitions: Readonly<Record<string, Schema>> = definitions,
 ): PhpModelPlan {
+  const views = includeExamples ? exampleDocumentationViews : responseDocumentationViews;
   const documentationView = (s: Schema): Schema => {
-    const { ['x-sdk-definitions']: _definitions, example, examples, ...view } = s;
-    return {
+    const cached = views.get(s);
+    if (cached) return cached;
+    const {
+      ['x-sdk-definitions']: _definitions,
+      example,
+      examples,
+      default: defaultValue,
+      ...view
+    } = s;
+    const result = {
       ...view,
+      ...(!hasProtectedDocumentation(s) && Object.hasOwn(s, 'default')
+        ? { default: defaultValue }
+        : {}),
       ...(includeExamples
         ? { ...(example !== undefined ? { example } : {}), ...(examples ? { examples } : {}) }
         : {}),
@@ -290,13 +323,111 @@ export function compilePhpModel(
           s[keyword] ? [[keyword, s[keyword]!.map(documentationView)]] : [],
         ),
       ),
+      ...Object.fromEntries(
+        (['not', 'contains', 'if', 'then', 'else', 'propertyNames'] as const).flatMap((keyword) =>
+          s[keyword] ? [[keyword, documentationView(s[keyword])]] : [],
+        ),
+      ),
+    };
+    views.set(s, result);
+    return result;
+  };
+  let definitionViews = documentationDefinitionViews.get(documentationDefinitions);
+  if (!definitionViews)
+    documentationDefinitionViews.set(documentationDefinitions, (definitionViews = new Map()));
+  let definitionView = definitionViews.get(includeExamples);
+  if (!definitionView) {
+    definitionView = Object.fromEntries(
+      Object.entries(documentationDefinitions).map(([name, value]) => [
+        name,
+        documentationView(value),
+      ]),
+    );
+    definitionViews.set(includeExamples, definitionView);
+  }
+  documentationDefinitions = definitionView;
+  const boundNames: Record<string, string> = {};
+  // Bind model links to the same target representation that emits getter types.
+  const bind = (s: Schema, value?: PhpRepresentation): Schema => {
+    if (!value) return s;
+    if (value.kind === 'nullable') value = value.value;
+    if (value.kind === 'entity') boundNames[value.name] = value.name;
+    return {
+      ...s,
+      ...(value?.kind === 'entity' ? { 'x-sdk-type-name': value.name } : {}),
+      ...(s.properties
+        ? {
+            properties: Object.fromEntries(
+              Object.entries(s.properties).map(([field, child]) => [
+                field,
+                bind(child, value?.kind === 'record' ? value.fields[field] : undefined),
+              ]),
+            ),
+          }
+        : {}),
+      ...(s.items
+        ? { items: bind(s.items, value?.kind === 'list' ? value.value : undefined) }
+        : {}),
+      ...(typeof s.additionalProperties === 'object'
+        ? {
+            additionalProperties: bind(
+              s.additionalProperties,
+              value?.kind === 'map' ? value.value : undefined,
+            ),
+          }
+        : {}),
+      ...Object.fromEntries(
+        (['allOf', 'oneOf', 'anyOf'] as const).flatMap((key) =>
+          s[key] ? [[key, s[key].map((child) => bind(child, value))]] : [],
+        ),
+      ),
     };
   };
-  const documentationSchema = documentationView(declaration);
+  let documentationSchema = bind(documentationView(declaration), bindings);
+  let documentationFacts = compileDocumentation(
+    documentationSchema,
+    documentationDefinitions,
+    response,
+  );
+  const sourceFacts =
+    schema === declaration
+      ? documentationFacts
+      : compileDocumentation(documentationView(schema), documentationDefinitions, response);
+  const existingDescriptions = new Set(
+    factParts(documentationFacts.root, documentationFacts.definitions).flatMap((part) =>
+      part.description ? [part.description] : [],
+    ),
+  );
+  const inheritedDescriptions = [
+    ...new Set(
+      factParts(sourceFacts.root, sourceFacts.definitions).flatMap((part) =>
+        part.description && !existingDescriptions.has(part.description) ? [part.description] : [],
+      ),
+    ),
+  ];
+  if (inheritedDescriptions.length) {
+    documentationSchema = {
+      ...documentationSchema,
+      description: [documentationSchema.description, ...inheritedDescriptions]
+        .filter(Boolean)
+        .join('\n\n'),
+    };
+    documentationFacts = compileDocumentation(
+      documentationSchema,
+      documentationDefinitions,
+      response,
+    );
+  }
   declaration = {
     ...phpDeclaration(declaration, schema['x-sdk-definitions'] ?? definitions),
     'x-sdk-definitions': { ...definitions },
   };
+  const documentedFields = factShape(
+    documentationFacts.root,
+    documentationFacts.definitions,
+  ).fields;
+  // Getter bindings overlay one shared inventory, without copying it per field.
+  Object.setPrototypeOf(boundNames, modelDocumentationNames(documentationDefinitions, response));
   const codec = compileCodec(schema);
   const sharedCodec = shared.get(stable(codec));
   return {
@@ -311,22 +442,26 @@ export function compilePhpModel(
         : phpDocType(declaration, response),
     defaultObject: declaration.type === 'object',
     documentation: Object.fromEntries(
-      Object.entries(declaration.properties ?? {}).map(([field, child]) => {
-        const { example, examples, ...withoutExamples } = child;
+      Object.entries(declaration.properties ?? {}).map(([field, originalChild]) => {
+        const fact =
+          documentedFields[field] ??
+          compileDocumentation(documentationView(originalChild), documentationDefinitions, response)
+            .root;
         return [
           field,
           {
             required: declaration.required?.includes(field) ?? false,
-            enums: schemaEnumValues(child, declaration['x-sdk-definitions']),
-            markdown: schemaNotes(includeExamples ? child : withoutExamples, {
+            enums: factEnums(fact, documentationFacts.definitions),
+            markdown: factCollectionNotes(fact, {
               literal: schemaLiteral,
             }),
-            description: [
-              schemaNotes(includeExamples ? child : withoutExamples),
-              enumNotes(schemaEnumValues(child, declaration['x-sdk-definitions'])),
-            ]
-              .filter(Boolean)
-              .join(' '),
+            description: factSourceDocumentation(
+              fact,
+              documentationFacts.definitions,
+              documentationPositions(fact, documentationFacts.definitions),
+              boundNames,
+              'see',
+            ),
           },
         ];
       }),
@@ -1170,7 +1305,13 @@ export function compileSdkContract(source: Contract): {
   const replaceOutputNames = (type: string): string =>
     type.replace(
       /\/\*[\s\S]*?\*\/|\/\/[^\r\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|[A-Za-z_$][\w$]*/g,
-      (token) => outputAliases.get(token) ?? token,
+      (token) =>
+        token.startsWith('/*')
+          ? token.replace(
+              /\{@(link|see) (\w+)\}/g,
+              (_, tag: string, name: string) => `{@${tag} ${outputAliases.get(name) ?? name}}`,
+            )
+          : (outputAliases.get(token) ?? token),
     );
   // Repeating after each grouping also collapses envelopes whose children became aliases.
   for (;;) {
@@ -1445,6 +1586,8 @@ export function compileSdkContract(source: Contract): {
         entity.declaration,
         {},
         false,
+        entity.representation,
+        semantic.definitions,
       );
       model.representation = entity.representation;
       const required = new Set(
@@ -1523,6 +1666,7 @@ export function prepareTargetContract(c: Contract): Contract {
 function targetContract(c: Contract, purpose: 'semantic' | 'publication'): Contract {
   c = JSON.parse(stable(c)) as Contract;
   if (purpose === 'publication') omitProtectedExamples(c);
+  else markProtectedDocumentation(c);
   // Share named nested shapes in recursive graphs. Expanding a provider's graph
   // into every operation, factory and declaration otherwise grows exponentially.
   if (c.definitions && c.config.schemaSharing !== 'named') {

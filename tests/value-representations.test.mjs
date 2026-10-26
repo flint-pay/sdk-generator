@@ -137,10 +137,19 @@ test('numeric hover and model reference guidance follow the declared value repre
       );
     }
   }
-  const input = readFileSync(join(out, 'node/declarations/ValueInput.d.ts'), 'utf8');
+  const input = readFileSync(join(out, 'node/declarations/ValueInput.d.ts'), 'utf8').replace(
+    /\n\s*\*(?!\/) ?/g,
+    ' ',
+  );
   assert.match(input, /"latitude"\?: number;/);
-  assert.match(input, /\/\*\* Format: float\. \*\/\s*"float_number"\?: number;/);
-  assert.match(input, /\/\*\* Format: double\. \*\/\s*"change_percent"\?: number;/);
+  assert.match(
+    input,
+    /\/\*\* Shape \$ \(Value\): number\. Format: float\.[^*]*\*\/\s*"float_number"\?: number;/,
+  );
+  assert.match(
+    input,
+    /\/\*\* Shape \$ \(Value\): number\. Format: double\.[^*]*\*\/\s*"change_percent"\?: number;/,
+  );
   assert.match(input, /"nullable_number"\?: number \| null;/);
   assert.doesNotMatch(
     input,
@@ -150,7 +159,7 @@ test('numeric hover and model reference guidance follow the declared value repre
     assert.match(
       input,
       new RegExp(
-        '/\\*\\* ' +
+        '/\\*\\* Shape \\$ \\(Value\\): [^*]*?' +
           (['large', 'unsigned'].includes(field)
             ? 'Use an integer string \\(decimal digits\\), not a floating-point number'
             : 'Use an exact numeric string, not a floating-point number') +
@@ -165,10 +174,7 @@ test('numeric hover and model reference guidance follow the declared value repre
     for (const field of ['latitude', 'float_number', 'change_percent', 'nullable_number']) {
       const row = docs.split('\n').find((line) => line.startsWith('| `' + field + '` |'));
       assert.ok(row, target + ': ' + field);
-      assert.match(
-        row,
-        target === 'php' ? /\| int\\\|float(?:\\\|null)? \|/ : /\| number(?: or null)? \|/,
-      );
+      assert.match(row, /\| number(?: or null)? \|/);
       assert.doesNotMatch(row, /exact numeric string|ExactNumber/);
     }
     for (const field of ['decimal', 'large', 'unsigned', 'nullable_decimal']) {
@@ -176,11 +182,9 @@ test('numeric hover and model reference guidance follow the declared value repre
       assert.ok(row, target + ': ' + field);
       assert.match(
         row,
-        target === 'php'
-          ? /\| string(?:\\\|null)? \|/
-          : ['large', 'unsigned'].includes(field)
-            ? /\| integer string \|/
-            : /\| exact numeric string(?: or null)? \|/,
+        ['large', 'unsigned'].includes(field)
+          ? /\| integer string \|/
+          : /\| exact numeric string(?: or null)? \|/,
       );
       assert.match(
         row,

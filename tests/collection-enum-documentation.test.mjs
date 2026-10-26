@@ -4,6 +4,7 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync, readdirSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generate, loadContract } from '../dist/index.js';
+import { internDocumentationTables } from '../dist/package-documentation.js';
 import { schemaEnumValues } from '../dist/schema-documentation.js';
 import { assertPackageLinks, packageDocuments } from './helpers/package-docs.mjs';
 import {
@@ -146,10 +147,10 @@ test('collection enums survive references, nested arrays and maps in both packag
           .replace(/\n\s*\*\s?/g, ' ');
         assert.match(
           declarations,
-          /Permitted payment options\. Items values: "card", "apple_pay", "google_pay", "affirm", "ach_debit"/,
+          /Permitted payment options\. \[\] enum: "card", "apple_pay", "google_pay", "affirm", "ach_debit"/,
         );
-        assert.match(declarations, /Items\[\] values: "api", "dashboard"/);
-        assert.match(declarations, /Map values: "api", "dashboard"/);
+        assert.match(declarations, /\[\]\[\] enum: "api", "dashboard"/);
+        assert.match(declarations, /\.\* enum: "api", "dashboard"/);
       } else {
         assertDocumentedPhpExports(root);
         const classes = readdirSync(join(root, 'src/classes'))
@@ -158,10 +159,10 @@ test('collection enums survive references, nested arrays and maps in both packag
           .join('\n');
         assert.match(
           classes,
-          /Permitted payment options\. Items values: "card", "apple_pay", "google_pay", "affirm", "ach_debit"/,
+          /Permitted payment options\. \[\] enum: "card", "apple_pay", "google_pay", "affirm", "ach_debit"/,
         );
-        assert.match(classes, /Items\[\] values: "api", "dashboard"/);
-        assert.match(classes, /Map values: "api", "dashboard"/);
+        assert.match(classes, /\[\]\[\] enum: "api", "dashboard"/);
+        assert.match(classes, /\.\* enum: "api", "dashboard"/);
         assert.match(runtime, /\| client_request_id \|[^\n]*operation declares/i);
       }
     }
@@ -180,4 +181,38 @@ test('enum metadata resolves referenced collections without looping recursive de
     { path: '[]', values: ['"one"', '"two"'] },
   ]);
   assert.deepEqual(schemaEnumValues({ 'x-sdk-ref': 'Recursive' }, definitions), []);
+});
+
+test('long enum lists have one canonical owner across model files and combined indexes', () => {
+  const values = Array.from({ length: 40 }, (_, i) => '- `"synthetic_event_' + i + '"`').join('\n');
+  for (const target of ['node', 'php']) {
+    const files = new Map([
+      [
+        target + '/MODELS.md',
+        '# Models\n\n## First\n\n[Values](#firstkind-values)\n\n### First.kind values\n\n' +
+          values +
+          '\n\n## Second\n\n[Values](#secondkind-values)\n\n### Second.kind values\n\n' +
+          values +
+          '\n\n## Third\n\nRetained model.\n',
+      ],
+      [
+        target + '/models/Another.md',
+        '## Another\n\n[Values](#anotherkind-values)\n\n### Another.kind values\n\n' +
+          values +
+          '\n',
+      ],
+    ]);
+    internDocumentationTables(files, target);
+    assert.equal([...files.values()].join('\n').split(values).length - 1, 1);
+    assert.match(files.get(target + '/MODELS.md'), /## Third\n\nRetained model/);
+    assert.match(files.get(target + '/MODELS.md'), /\[Values\]\(#firstkind-values\)/);
+    assert.match(
+      files.get(target + '/models/Another.md'),
+      /\[Values\]\(\.\.\/MODELS.md#firstkind-values\)/,
+    );
+    assert.doesNotMatch(
+      [...files.values()].join('\n'),
+      /### Second.kind values|### Another.kind values/,
+    );
+  }
 });

@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { generate, loadContract } from '../dist/index.js';
-import { modelFieldReference } from '../dist/sdk-documentation.js';
+import { modelFieldReference, modelReference } from '../dist/sdk-documentation.js';
 import { compilePhpModel, compileSdkContract } from '../dist/target-plan.js';
 import { modelDocuments } from '../dist/package-documentation.js';
 import { compareCompiledContracts } from '../dist/compiled-compatibility.js';
@@ -301,7 +301,7 @@ test('canonical union tables retain effective branch fields, presence, types and
           'named nullable branches use their canonical model',
         );
       } else {
-        assert.match(docs, /`nullable_named`: \[NamedChoiceInput\]\([^)]+\) or null/);
+        assert.match(docs, /`nullable_named` \| Optional \| \[NamedChoiceInput\]\([^)]+\) or null/);
         assert.match(
           docs,
           /### ApiOwnerOneResponse200.nullable_named[\s\S]*?- Required: [^\n]*`left_values`/,
@@ -419,11 +419,11 @@ test('canonical union tables retain effective branch fields, presence, types and
     cpSync('templates', join(mutation, 'templates'), { recursive: true });
     symlinkSync(resolve('node_modules'), join(mutation, 'node_modules'));
     writeFileSync(join(mutation, 'package.json'), '{"type":"module"}');
-    const rendererPath = join(mutation, 'dist/sdk-documentation.js');
+    const rendererPath = join(mutation, 'dist/documentation-format.js');
     const renderer = readFileSync(rendererPath, 'utf8');
     const changed = renderer.replace(
-      'return `Array of ${typeDescription(s.items ?? {}, definitions, names, seen)}`;',
-      'return "Array of any";',
+      "type = `Array of ${fact.item ? childType(fact.item) : 'any'}`;",
+      'type = "Array of any";',
     );
     assert.notEqual(changed, renderer, 'the renderer mutation must apply');
     writeFileSync(rendererPath, changed);
@@ -583,6 +583,83 @@ test('colliding dotted scope anchors keep the complete fragment rather than an a
     assert.match(linked.source, /Complete definition/);
     assert.match(linked.source, /oneOf variant 1/);
     assert.doesNotMatch(linked.source, /Declared alternatives:/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('anonymous field fragments cannot steal public model anchors', () => {
+  const source = modelReference({
+    title: 'Synthetic anchors',
+    models: {
+      Owner: object({ thing: object({ unique_local: string }) }),
+      Ownerthing: object({ unique_named: string }),
+    },
+  });
+  const docs = modelDocuments(source + '\n' + 'padding '.repeat(15000));
+  const directory = mkdtempSync(join(tmpdir(), 'sdk-doc-model-anchor-'));
+  try {
+    mkdirSync(join(directory, 'models'));
+    for (const [path, text] of docs.files) writeFileSync(join(directory, path), text);
+    for (const [anchor, field] of [
+      ['ownerthing', 'unique_named'],
+      ['ownerthing-fields-1', 'unique_local'],
+    ]) {
+      const destination = docs.links.get(anchor);
+      assert.ok(destination, anchor);
+      const linked = linkedModelSections(
+        join(directory, 'MODELS.md'),
+        `[shape](${destination})`,
+      )[0];
+      assert.match(linked.source, new RegExp('`' + field + '`'));
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('PHP hoisted declarations retain inherited wire-schema descriptions', () => {
+  const definitions = {
+    Common: { ...object({ value: string }), description: 'Inherited synthetic model description.' },
+  };
+  const schema = { allOf: [{ 'x-sdk-ref': 'Common' }, object({ id: string }, ['id'])] };
+  const declaration = object({ id: string, value: string }, ['id']);
+  for (const response of [false, true]) {
+    const plan = compilePhpModel('Hoisted', schema, response, new Map(), declaration, definitions);
+    assert.match(plan.documentationSchema.description, /Inherited synthetic model description\./);
+    assert.equal(declaration.description, undefined);
+    assert.deepEqual(
+      plan.getters.map((getter) => getter.field),
+      ['id', 'value'],
+    );
+  }
+});
+
+test('array-item fragments cannot collide with their enclosing variant anchors', () => {
+  const source = modelReference({
+    title: 'Synthetic array anchors',
+    models: {
+      Owner: {
+        oneOf: [{ type: 'array', items: object({ unique_item: string }, ['unique_item']) }, string],
+      },
+    },
+  });
+  assert.match(source, /^### Owner variant 1\.\[\] fields 1$/m);
+  const docs = modelDocuments(source + '\n' + 'padding '.repeat(15000));
+  const directory = mkdtempSync(join(tmpdir(), 'sdk-doc-item-anchor-'));
+  try {
+    mkdirSync(join(directory, 'models'));
+    for (const [path, text] of docs.files) writeFileSync(join(directory, path), text);
+    const linked = linkedModelSections(
+      join(directory, 'MODELS.md'),
+      `[items](${docs.links.get('owner-variant-1-fields-1')})`,
+    )[0];
+    assert.match(linked.source, /`unique_item` \| Required \| string/);
+    const variant = linkedModelSections(
+      join(directory, 'MODELS.md'),
+      `[variant](${docs.links.get('owner-variant-1')})`,
+    )[0];
+    assert.match(variant.source, /Value shape: Array of object/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

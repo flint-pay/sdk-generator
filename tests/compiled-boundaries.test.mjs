@@ -22,6 +22,8 @@ const semantic = new Set([
   'naming',
   'public-symbols',
   'schema-documentation',
+  'documentation-plan',
+  'documentation-format',
   'schema-annotations',
   'example-protection',
   'parameter-example-policy',

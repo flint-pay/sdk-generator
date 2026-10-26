@@ -208,7 +208,7 @@ test('identical response shapes share a canonical name while PHP identities rema
   );
   assert.match(
     readFileSync(join(f.output, 'node/declarations/BetaResult.d.ts'), 'utf8'),
-    /export type BetaResult = \{\s*"id": string;\s*\};/,
+    /export type BetaResult = \{\s*(?:\/\*\*[^*]*\*\/\s*)?"id": string;\s*\};/,
   );
   const consumer = join(f.output, 'node/consumer.ts');
   const constrained = typescriptType(

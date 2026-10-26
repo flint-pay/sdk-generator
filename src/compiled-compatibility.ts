@@ -527,17 +527,28 @@ function executionDescriptors(target: CompiledSdkContract['node'] | CompiledSdkC
   if ('runtime' in execution)
     return {
       ...execution,
-      models: execution.models.map(({ documentationSchema, ...model }) => model),
+      models: execution.models.map(
+        ({ documentationSchema, documentation, description, ...model }) => model,
+      ),
     };
-  return 'eventDeclarations' in execution
-    ? {
-        ...execution,
-        eventDeclarations: execution.eventDeclarations?.replace(
-          '; reason: "unknown_event" | "unmatched_envelope"',
-          '',
-        ),
-      }
-    : execution;
+  return {
+    ...execution,
+    models: Object.fromEntries(
+      Object.entries(execution.models).map(
+        ([name, { documentedInput, documentedOutput, ...model }]) => [name, model],
+      ),
+    ),
+    operations: Object.fromEntries(
+      Object.entries(execution.operations).map(([name, { documentedInput, ...operation }]) => [
+        name,
+        operation,
+      ]),
+    ),
+    eventDeclarations: execution.eventDeclarations?.replace(
+      '; reason: "unknown_event" | "unmatched_envelope"',
+      '',
+    ),
+  };
 }
 
 /** Historical raw objects and dictionaries did not have representation graphs. */

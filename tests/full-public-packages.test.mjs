@@ -1,6 +1,9 @@
 import { checkResponseExamples } from './helpers/flint-response-examples.mjs';
-import { assertUniqueFieldTables } from './helpers/package-docs.mjs';
-import { assertDocumentedModelExports, assertDocumentedPhpExports } from './helpers/docs-exports.mjs';
+import { assertUniqueFieldTables, packageDocuments } from './helpers/package-docs.mjs';
+import {
+  assertDocumentedModelExports,
+  assertDocumentedPhpExports,
+} from './helpers/docs-exports.mjs';
 import { npmPackResult } from '../dist/distribution.js';
 import { measureSdkWeight } from './helpers/sdk-weight.mjs';
 import { measureWebhookTypes } from './helpers/webhook-types.mjs';
@@ -89,6 +92,21 @@ assert.deepEqual(preview(restored,${JSON.stringify(output)}).changes,[],'full ex
         readFileSync(join(output, '.sdk-generator.json'), 'utf8'),
       ).interface;
       for (const target of ['node', 'php']) {
+        const modelDocs = packageDocuments(join(output, target))
+          .filter((path) => /(?:MODELS|models\/[^/]+)\.md$/.test(path))
+          .map((path) => readFileSync(path, 'utf8'))
+          .join('\n');
+        for (const name of [
+          'CheckoutSession',
+          'OnboardingAdvanceRequestInput',
+          'CreateReturnPreviewRequestInput',
+          'UpdateDeliveryMethodRequestInput',
+        ])
+          assert.match(
+            modelDocs,
+            new RegExp('^## ' + name + '$', 'm'),
+            `${target}: named regression witness ${name}`,
+          );
         assertUniqueFieldTables(join(output, target));
         const branches = assertCanonicalBranchDocumentation(
           join(output, target),
@@ -526,7 +544,12 @@ $streaming->close();
         weight.bundles.webhooks < 3 * 1024 * 1024,
         'webhook bundle includes excess descriptors',
       );
-      assert.ok(weight.sizes.node.files < 4000, 'Node package file count budget exceeded');
+      // Canonical documentation has one page per model/resource. Keep the
+      // existing code/metadata budget independent of that required split.
+      assert.ok(
+        weight.sizes.node.files - packageDocuments(join(output, 'node')).length < 4000,
+        'Node non-documentation package file count budget exceeded',
+      );
       assert.ok(weight.sizes.php['.json'] < 18 * 1024 * 1024, 'PHP includes duplicate raw schemas');
       assert.ok(weight.sizes.node['.js'] < 24 * 1024 * 1024, 'Node source size budget exceeded');
       assert.ok(weight.sizes.node['.d.ts'] < 13 * 1024 * 1024, 'declaration size budget exceeded');

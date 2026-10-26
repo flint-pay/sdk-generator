@@ -362,6 +362,21 @@ function protectionPointers(contract: Contract): ReadonlySet<string> {
   return new Set(protection.schemas);
 }
 
+// Symbols survive declaration spreads but never enter JSON identities or records.
+// PHP resolves class identity from semantic annotations, then projects only safe docs.
+const protectedDocumentation = Symbol('protectedDocumentation');
+export function markProtectedDocumentation(contract: Contract): void {
+  const protectedSchemas = protectionPointers(contract);
+  contractSchemas(contract, (schema, pointer) => {
+    if (protectedSchemas.has(pointer)) Object.assign(schema, { [protectedDocumentation]: true });
+  });
+}
+export function hasProtectedDocumentation(schema: Schema): boolean {
+  return (
+    (schema as Schema & { [protectedDocumentation]?: boolean })[protectedDocumentation] === true
+  );
+}
+
 /** One publication boundary for every target's declarations, docs, samples and descriptors.
  * The caller owns this cloned contract; private source annotations remain in saved records. */
 export function omitProtectedExamples(contract: Contract): void {
@@ -396,9 +411,6 @@ export function removesPublishedExamples(before: Contract, after: Contract): boo
   contractSchemas(after, (_schema, pointer, identity) => {
     if (nextProtection.has(pointer)) nextProtectedIdentities.add(identity);
   });
-  const php =
-    (before.config.targets ?? ['node', 'php']).includes('php') &&
-    (after.config.targets ?? ['node', 'php']).includes('php');
   let removed = false;
   contractSchemas(before, (schema, pointer, identity) => {
     if (
@@ -406,8 +418,7 @@ export function removesPublishedExamples(before: Contract, after: Contract): boo
       !previousProtection.has(pointer) &&
       (schema.example !== undefined ||
         (Array.isArray(schema.examples) && schema.examples.length > 0) ||
-        (php &&
-          pointer.startsWith('/definitions/') &&
+        (pointer.startsWith('/definitions/') &&
           ['example', 'examples', 'default'].some((key) => Object.hasOwn(schema, key))))
     )
       removed = true;
