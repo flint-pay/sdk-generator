@@ -58,7 +58,7 @@ function ok(command, args) {
   assert.equal(r.status, 0, r.stdout + r.stderr);
   return r.stdout;
 }
-function typecheck(path) {
+function typecheck(path, options = []) {
   ok(process.execPath, [
     'node_modules/typescript/bin/tsc',
     '--strict',
@@ -71,6 +71,7 @@ function typecheck(path) {
     'ES2022',
     '--typeRoots',
     resolve('node_modules/@types'),
+    ...options,
     path,
   ]);
 }
@@ -1565,3 +1566,152 @@ test('compacted declarations retain inline error-detail references and readable 
   writeFileSync(join(dir, 'package.json'), '{"type":"module"}');
   typecheck(join(dir, 'node/index.d.ts'));
 });
+
+for (const nesting of ['direct', 'object', 'array', 'nullable']) {
+  test(`projected ${nesting} errors and payloads certify the types used by consumers`, async (t) => {
+    const object = (properties) => ({
+      type: 'object',
+      properties,
+      required: Object.keys(properties),
+    });
+    const wrapSchema = (schema) =>
+      nesting === 'array'
+        ? { type: 'array', items: schema }
+        : nesting === 'object'
+          ? object({ content: schema })
+          : nesting === 'nullable'
+            ? { oneOf: [schema, { type: 'null' }] }
+            : schema;
+    const wrap = (value) =>
+      nesting === 'array' ? [value] : nesting === 'object' ? { content: value } : value;
+    const unwrap = (value) =>
+      nesting === 'array' ? value[0] : nesting === 'object' ? value.content : value;
+    const access = nesting === 'array' ? '[0]' : nesting === 'object' ? '.content' : '';
+    const errorAccess =
+      nesting === 'array'
+        ? 'Array.isArray(error.details) && error.details[0]'
+        : nesting === 'object'
+          ? "error.details && 'content' in error.details && error.details.content"
+          : 'error.details';
+    const alternatives = (key) => ({
+      oneOf: [object({ [key]: ref('FirstDetail') }), object({ [key]: ref('SecondDetail') })],
+    });
+    const f = fixture(
+      t,
+      {
+        components: {
+          schemas: {
+            FirstDetail: wrapSchema(
+              object({ kind: { type: 'string', enum: ['a'] }, foo: { type: 'string' } }),
+            ),
+            SecondDetail: wrapSchema(
+              object({ kind: { type: 'string', enum: ['b'] }, bar: { type: 'number' } }),
+            ),
+          },
+        },
+        paths: {
+          '/choice': {
+            get: {
+              operationId: 'choose',
+              responses: {
+                ...jsonResponse(alternatives('data')),
+                400: {
+                  description: 'Invalid',
+                  content: { 'application/json': { schema: alternatives('error') } },
+                },
+              },
+            },
+          },
+        },
+      },
+      {
+        responses: { return: 'payload', payloadPath: 'data' },
+        errors: { detailsPath: 'error' },
+        operations: { choose: { resource: 'choices', method: 'get' } },
+      },
+    );
+    const source = join(f.output, 'node/consumer.ts');
+    writeFileSync(
+      source,
+      `import {SdkError, type Client} from './index.js';
+export function inspectError(error: SdkError) {
+  const details = ${errorAccess};
+  if (details && 'foo' in details) return details.foo.toUpperCase();
+  if (details && 'bar' in details) return details.bar.toFixed(1);
+}
+export function inspectPayload(value: Awaited<ReturnType<Client['choices']['get']>>) {
+  if (!value) return;
+  const data = value${access};
+  if ('foo' in data) return data.foo.toUpperCase();
+  return data.bar.toFixed(1);
+}
+`,
+    );
+    typecheck(source, ['--exactOptionalPropertyTypes']);
+    writeFileSync(
+      join(f.output, 'node/consumer.js'),
+      ts.transpileModule(readFileSync(source, 'utf8'), {
+        compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+      }).outputText,
+    );
+    const consumer = await import(pathToFileURL(join(f.output, 'node/consumer.js')));
+    const sdk = await import(pathToFileURL(join(f.output, 'node/index.js')));
+    let status = 400;
+    let value;
+    const client = new sdk.Client({
+      baseUrl: 'https://example.invalid',
+      transport: async () =>
+        new Response(JSON.stringify({ [status === 400 ? 'error' : 'data']: value }), { status }),
+    });
+    for (const [body, expected] of [
+      [{ kind: 'future', foo: 42 }, undefined],
+      [{ kind: 'a', foo: 42 }, undefined],
+      [{ kind: 'future', bar: 'invalid' }, undefined],
+      [{ kind: 'future', foo: 42, bar: 1 }, undefined],
+      [{ kind: 'future', foo: 'safe', bar: 'invalid' }, undefined],
+      [{ kind: 'future' }, undefined],
+      [{ kind: 'future', foo: 'safe' }, 'SAFE'],
+      [{ kind: 'future', foo: 'safe', future: true }, 'SAFE'],
+      [{ kind: 'future', bar: 42 }, '42.0'],
+    ]) {
+      value = wrap(body);
+      await assert.rejects(client.choices.get(), (error) => {
+        assert.ok(error instanceof sdk.SdkError);
+        assert.equal(consumer.inspectError(error), expected);
+        if (expected === undefined) {
+          assert.equal(error.details, undefined);
+          assert.deepEqual(JSON.parse(error.raw).error, value);
+        } else assert.equal(unwrap(error.details).kind, 'future');
+        return true;
+      });
+      status = 200;
+      if (expected === undefined)
+        await assert.rejects(client.choices.get(), (error) => {
+          assert.equal(error.kind, 'protocol');
+          assert.deepEqual(JSON.parse(error.raw).data, value);
+          return true;
+        });
+      else assert.equal(consumer.inspectPayload(await client.choices.get()), expected);
+      status = 400;
+    }
+    if (nesting === 'nullable') {
+      // Null fits both envelope branches, so the oneOf envelope is ambiguous.
+      value = null;
+      await assert.rejects(client.choices.get(), (error) => {
+        assert.equal(error.details, undefined);
+        assert.equal(JSON.parse(error.raw).error, null);
+        assert.equal(consumer.inspectError(error), undefined);
+        return true;
+      });
+      status = 200;
+      await assert.rejects(client.choices.get(), { kind: 'protocol' });
+    }
+    const { plan } = compileSdkContract(f.contract);
+    assert.equal(plan.php.runtime.operations[0].responses['400'].errorDetailsCodecs, undefined);
+    for (const invalid of [[], [{}]]) {
+      const runtime = structuredClone(plan.runtime);
+      runtime.operations[0].responses['400'].errorDetailsCodecs = invalid;
+      assert.throws(() => assertRuntimePlan(runtime), /codec/i);
+    }
+  });
+}

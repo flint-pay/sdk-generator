@@ -291,7 +291,7 @@ try {
 | Request ID    | `meta?.requestId`       | `$error->meta['requestId']` |
 | HTTP status   | `status` or `undefined` | `status` or `null`          |
 
-Node `SdkError.code` uses the schema’s known string codes plus an open string alternative. `SdkError.details` uses the configured error schema plus runtime failure details; narrow the shape before reading a field. Malformed API details, or redacted details that no longer fit the schema, are `undefined`; explicit `raw` access remains available for recovery.
+Node `SdkError.code` uses the schema’s known string codes plus an open string alternative. `SdkError.details` uses the configured error schema plus runtime failure details; narrow the shape before reading a field. Projected details are validated against their declared shapes even when the envelope is a future alternative. Malformed API details, or redacted details that no longer fit the schema, are `undefined`; explicit `raw` access remains available for recovery.
 
 `SdkError` and `kind` remain the authoritative API. Each runtime failure also has a subclass chosen solely from `kind`. Node exposes the classes through `errors` at the package root and resource subpaths; `errors.SdkError === SdkError`, and `errors.NotFoundError` works as a TypeScript type. PHP classes live in `Example\Library\Errors`, separate from generated models. Every subclass is still an `SdkError`. Node `name` and inspection show the subclass name, including in minified bundles. Node stacks and PHP exception file/line metadata identify the factory's calling site.
 
@@ -318,7 +318,7 @@ Messages and codes:
 - Messages and provider codes must be JSON strings. Numeric tokens, including decimal, exponent and large-integer values, never become messages or codes and never match string retry codes. Parsed details keep their exact numeric representation.
 - Public codes are redacted; code-based retry matching uses the original string at `errors.codePath`.
 - Malformed or non-JSON error bodies keep status, metadata and explicit `raw` access.
-- Provider `details` are `unknown` in TypeScript. Read the message, status and code without narrowing them.
+- Provider `details` use the declared schema type when available, otherwise `unknown` in TypeScript. Narrow details before reading their fields.
 
 | `outcome`  | Meaning for recovery                                                                                                                                      |
 | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |

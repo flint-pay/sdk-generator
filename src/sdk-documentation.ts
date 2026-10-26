@@ -130,6 +130,7 @@ export function schemaFields(
 const documentedModels = new WeakMap<Record<string, Schema>, Map<string, string>>();
 function modelName(schema: Schema, definitions: Record<string, Schema>): string | undefined {
   if (schema['x-sdk-ref']) return schema['x-sdk-ref'];
+  if (schema['x-sdk-type-name']) return schema['x-sdk-type-name'];
   let index = documentedModels.get(definitions);
   if (!index) {
     index = new Map();

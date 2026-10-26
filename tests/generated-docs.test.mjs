@@ -272,3 +272,61 @@ test('download scripts, quickstarts and runtime recipes save exact bytes and ins
     ]);
   }
 });
+
+test('owning component hints retain request-body model links in both target references', () => {
+  const directory = join(root, 'body-model-links');
+  mkdirSync(directory);
+  writeFileSync(
+    join(directory, 'api.json'),
+    JSON.stringify({
+      openapi: '3.1.0',
+      info: { title: 'Body model links', version: '1' },
+      components: {
+        schemas: {
+          CreateWidgetRequest: {
+            type: 'object',
+            properties: { name: { type: 'string' } },
+            required: ['name'],
+          },
+        },
+      },
+      paths: {
+        '/widgets': {
+          post: {
+            operationId: 'createWidget',
+            requestBody: {
+              required: true,
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/CreateWidgetRequest' },
+                },
+              },
+            },
+            responses: { 204: { description: 'Created' } },
+          },
+        },
+      },
+    }),
+  );
+  writeFileSync(
+    join(directory, 'sdk.json'),
+    JSON.stringify({
+      version: '1.0.0',
+      npm: { name: '@example/body-model-links' },
+      composer: { name: 'example/body-model-links', namespace: 'Example\\BodyModelLinks' },
+    }),
+  );
+  const contract = loadContract(join(directory, 'api.json'), join(directory, 'sdk.json'));
+  assert.equal(contract.operations[0].body['x-sdk-type-name'], 'CreateWidgetRequest');
+  const output = join(directory, 'out');
+  generate(contract, output);
+  for (const target of ['node', 'php']) {
+    const reference = readFileSync(join(output, target, 'REFERENCE.md'), 'utf8');
+    assert.match(
+      reference,
+      /Body model: \[CreateWidgetRequest\]\(MODELS\.md#createwidgetrequest\)/,
+    );
+    const models = readFileSync(join(output, target, 'MODELS.md'), 'utf8');
+    assert.match(models, /## CreateWidgetRequest/);
+  }
+});

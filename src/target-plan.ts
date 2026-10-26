@@ -1157,7 +1157,18 @@ export function compileSdkContract(source: Contract): {
         .join(' | '),
       details: type(c.config.errors.detailsPath),
     };
-    if (plan.node.errorTypes.details !== 'unknown') plan.runtime.typedErrorDetails = true;
+    if (plan.node.errorTypes.details !== 'unknown') {
+      plan.runtime.typedErrorDetails = true;
+      for (const operation of c.operations) {
+        const runtimeOperation = plan.runtime.operations.find((op) => op.id === operation.id)!;
+        for (const [status, response] of Object.entries(operation.responses)) {
+          if (!(Number(status) >= 400 || status === 'default') || !response.schema) continue;
+          const shapes = project(response.schema, c.config.errors.detailsPath?.split('.') ?? []);
+          if (shapes.length)
+            runtimeOperation.responses[status]!.errorDetailsCodecs = shapes.map(compileCodec);
+        }
+      }
+    }
   }
   if (plan.node.eventDeclarations)
     plan.node.eventDeclarations = replaceOutputNames(plan.node.eventDeclarations);

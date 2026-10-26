@@ -168,6 +168,8 @@ export interface CompiledOperation
     string,
     Omit<Operation['responses'][string], 'schema'> & {
       codec?: CodecPlan;
+      /** Node details projections must fit the declared public alternatives. */
+      errorDetailsCodecs?: CodecPlan[];
       phpRepresentation?: PhpRepresentation;
       model?: string;
       variants?: Record<string, string>;
@@ -598,6 +600,13 @@ export function assertRuntimePlan(
     }
     for (const [status, response] of Object.entries(responses)) {
       const result = record(response, `${op.id}.responses.${status}`);
+      if (result.errorDetailsCodecs !== undefined) {
+        if (!Array.isArray(result.errorDetailsCodecs) || !result.errorDetailsCodecs.length)
+          throw new Error(`${op.id}: invalid error details codecs`);
+        result.errorDetailsCodecs.forEach((codec, index) =>
+          assertCodecPlan(codec, `${op.id}.responses.${status}.errorDetailsCodecs.${index}`),
+        );
+      }
       if (
         result.bodyKind !== undefined &&
         !['empty', 'json', 'binary', 'sse'].includes(String(result.bodyKind))

@@ -2954,37 +2954,109 @@ class CompiledRuntime {
   private decode(value: unknown, codec: CodecPlan, context: CodecContext): unknown {
     return executeCodec(value, codec, { ...context, definitions: this.definitions() });
   }
-  decodePayload(id: string, result: Result<unknown>, path: string[]): unknown {
-    const codecs = this.operation(id)?.payloadCodecs;
-    if (!codecs?.length) throw new Error('Missing compiled payload codecs for ' + id);
-    let value: unknown = typeof result.raw === 'string' ? parseJson(result.raw, true) : result.data;
-    for (const key of path) value = field(value, key);
+  private projectionShape(codecs: readonly CodecPlan[]) {
+    const fields = new Map<string, CodecPlan[]>();
+    const elements: CodecPlan[] = [];
+    const visit = (
+      codec: CodecPlan,
+      definitions: Readonly<Record<string, CodecPlan>>,
+      seen: Set<string>,
+    ): void => {
+      definitions = codec.definitions ?? definitions;
+      const scoped = (child: CodecPlan): CodecPlan => ({ ...child, definitions });
+      if (codec.reference) {
+        const target = Object.hasOwn(definitions, codec.reference)
+          ? definitions[codec.reference]
+          : undefined;
+        if (target && !seen.has(codec.reference))
+          visit(target, definitions, new Set([...seen, codec.reference]));
+        return;
+      }
+      for (const [key, child] of Object.entries(codec.fields ?? {})) {
+        if (child.hiddenOutput) continue;
+        fields.set(key, [...(fields.get(key) ?? []), scoped(child)]);
+      }
+      if (codec.element) elements.push(scoped(codec.element));
+      for (const child of codec.every ?? []) visit(child, definitions, seen);
+      if (codec.nullableAlternative !== undefined) {
+        const concrete = (codec.exactlyOne ?? codec.some)?.[codec.nullableAlternative];
+        if (concrete) visit(concrete, definitions, seen);
+      }
+      // Nested alternatives retain their public object/unknown fallback. Only
+      // unconditional and simple nullable fields can narrow by property presence.
+    };
+    for (const codec of codecs) visit(codec, this.definitions(), new Set());
+    return { fields, elements };
+  }
+  private assertProjectionShape(
+    value: unknown,
+    selected: readonly CodecPlan[],
+    alternatives: readonly CodecPlan[],
+    path: string,
+  ): void {
+    if (alternatives.length < 2 || !value || typeof value !== 'object') return;
+    const own = this.projectionShape(selected);
+    const union = this.projectionShape(alternatives);
+    if (Array.isArray(value)) {
+      for (const [index, child] of value.entries())
+        this.assertProjectionShape(child, own.elements, union.elements, `${path}.${index}`);
+      return;
+    }
+    for (const [key, children] of union.fields) {
+      if (!Object.hasOwn(value, key)) continue;
+      const declared = own.fields.get(key);
+      // A foreign known key would let an `in` guard narrow to the wrong member.
+      // Unrelated future fields remain available as ordinary response extras.
+      if (!declared)
+        return bad(`${path}.${key}`, 'field belongs to a different response alternative');
+      this.assertProjectionShape(
+        (value as Record<string, unknown>)[key],
+        declared,
+        children,
+        `${path}.${key}`,
+      );
+    }
+  }
+  private decodeProjection(value: unknown, codecs: readonly CodecPlan[], path: string): unknown {
     let failure: unknown;
     for (const codec of codecs) {
       try {
-        return plainNumbers(
-          this.decode(value, codec, {
-            mode: 'response',
-            path: 'response.' + path.join('.'),
-            redactFields: this.options.redactFields ?? [],
-          }),
-        );
+        const decoded = this.decode(value, codec, {
+          mode: 'response',
+          path,
+          redactFields: this.options.redactFields ?? [],
+        });
+        this.assertProjectionShape(value, [codec], codecs, path);
+        return plainNumbers(decoded);
       } catch (cause) {
         if (!(cause instanceof SdkError && cause.kind === 'validation')) throw cause;
         failure ??= cause;
       }
     }
-    throw createSdkError(
-      'protocol',
-      'Response payload does not match a declared alternative',
-      'response',
-      false,
-      result.meta,
-      undefined,
-      undefined,
-      { cause: failure },
-      typeof result.raw === 'string' ? result.raw : undefined,
-    );
+    if (!failure) throw new Error('Missing compiled projection codecs');
+    throw failure;
+  }
+  decodePayload(id: string, result: Result<unknown>, path: string[]): unknown {
+    const codecs = this.operation(id)?.payloadCodecs;
+    if (!codecs?.length) throw new Error('Missing compiled payload codecs for ' + id);
+    let value: unknown = typeof result.raw === 'string' ? parseJson(result.raw, true) : result.data;
+    for (const key of path) value = field(value, key);
+    try {
+      return this.decodeProjection(value, codecs, 'response.' + path.join('.'));
+    } catch (cause) {
+      if (!(cause instanceof SdkError && cause.kind === 'validation')) throw cause;
+      throw createSdkError(
+        'protocol',
+        'Response payload does not match a declared alternative',
+        'response',
+        false,
+        result.meta,
+        undefined,
+        undefined,
+        { cause },
+        typeof result.raw === 'string' ? result.raw : undefined,
+      );
+    }
   }
   private validateHeaderValue(value: string, codec: CodecPlan, path: string): void {
     // Simple headers carry scalars or comma-separated scalar arrays. Validate
@@ -3675,22 +3747,33 @@ class CompiledRuntime {
           data,
           this.contract.errors?.messagePath ?? 'message',
         );
-        const codec = (op.responses[String(response.status)] ?? op.responses.default)?.codec;
+        const errorResponse = op.responses[String(response.status)] ?? op.responses.default;
+        const codec = errorResponse?.codec;
         const safeBody = redactCodec(data, codec, this.options.redactFields, this.definitions());
+        const detailsValue = this.contract.errors?.detailsPath
+          ? field(safeBody, this.contract.errors.detailsPath)
+          : safeBody;
         let details: unknown;
         if (this.contract.typedErrorDetails) {
           // Only advertise details that fit their emitted schema type after redaction.
           // Malformed bodies remain available through explicit raw recovery.
-          if (codec)
+          if (codec && errorResponse?.errorDetailsCodecs)
             try {
-              const decoded = this.decode(safeBody, codec, { mode: 'response', path: 'error' });
-              details = structuredClone(plainNumbers(decoded));
+              this.decode(safeBody, codec, { mode: 'response', path: 'error' });
+              // An unknown envelope alternative does not certify its projected fields.
+              details = structuredClone(
+                this.decodeProjection(
+                  detailsValue,
+                  errorResponse.errorDetailsCodecs,
+                  'error.details',
+                ),
+              );
             } catch (cause) {
               if (!(cause instanceof SdkError && cause.kind === 'validation')) throw cause;
             }
         }
         const redacted = plainNumbers(safeBody);
-        if (!this.contract.typedErrorDetails) details = redacted;
+        if (!this.contract.typedErrorDetails) details = plainNumbers(detailsValue);
         const publicCode: unknown = field(redacted, this.contract.errors?.codePath ?? 'code');
         const message: unknown = field(redacted, this.contract.errors?.messagePath ?? 'message');
         const signal = this.contract.errors?.retry;
@@ -3718,9 +3801,7 @@ class CompiledRuntime {
           response.status !== 401 && eligible,
           meta,
           typeof code === 'string' && typeof publicCode === 'string' ? publicCode : undefined,
-          this.contract.errors?.detailsPath
-            ? field(details, this.contract.errors.detailsPath)
-            : details,
+          details,
           undefined,
           raw,
         );
