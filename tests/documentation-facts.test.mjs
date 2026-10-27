@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { assertIndependentOracleGraph } from './helpers/oracle-import-graph.mjs';
-import { rawDocumentationInput } from './helpers/raw-documentation.mjs';
+import { rawDocumentationInput, payloadSchemas } from './helpers/raw-documentation.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -460,4 +460,53 @@ $before=$sent;try{$client->api->inlineBranches(['body'=>['blue','red']]);throw n
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('raw payload projection intersects reference siblings before deriving requiredness', () => {
+  const ref = (name) => ({ $ref: '#/components/schemas/' + name });
+  const raw = rawDocumentationInput(
+    {
+      openapi: '3.1.0',
+      components: {
+        schemas: {
+          Payload: {
+            type: 'object',
+            properties: { payment_collection: { type: 'object' } },
+            required: [],
+          },
+          Envelope: { type: 'object', properties: { data: ref('Payload') }, required: ['data'] },
+        },
+      },
+      paths: {
+        '/value': {
+          get: {
+            operationId: 'value',
+            responses: {
+              200: {
+                content: {
+                  'application/json': {
+                    schema: {
+                      allOf: [
+                        ref('Envelope'),
+                        { properties: { data: { required: ['payment_collection'] } } },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    { responses: { return: 'payload', payloadPath: 'data' } },
+  );
+  const schemas = payloadSchemas(raw.operations[0], raw.definitions);
+  assert.equal(schemas.length, 1);
+  assert.equal(
+    expectedFieldFacts(schemas[0], raw.definitions, {}, true).find(
+      (f) => f.field === 'payment_collection',
+    ).presence,
+    'Required',
+  );
 });

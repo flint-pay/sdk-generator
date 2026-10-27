@@ -18,6 +18,7 @@ import {
   normalizedEnums,
 } from './documentation-expectations.mjs';
 import {
+  rawDocumentationInput,
   documentedModels,
   directionalSchema,
   schemaInstruction,
@@ -247,6 +248,7 @@ function fieldFacts(source, path) {
 
 /** Compare unsuppressed operation facts, independently of canonical rendering. */
 export function assertCanonicalOperationDocumentation(directory, contract) {
+  contract = rawDocumentationInput(contract.document, contract.config);
   const definitions = contract.definitions ?? contract.models;
   let suppressed = 0,
     checkedFacts = 0;
@@ -270,11 +272,12 @@ export function assertCanonicalOperationDocumentation(directory, contract) {
         `${operation.name}: ${section.label} must link directly to definitions`,
       );
     }
-    const outputs = op.response?.payloadPath
-      ? payloadSchemas(op, definitions)
-      : Object.entries(op.responses)
-          .filter(([status]) => /^(?:2\d\d|2XX)$/.test(status))
-          .flatMap(([, entry]) => (entry.schema ? [entry.schema] : []));
+    const outputs =
+      op.response?.return === 'payload' && op.response?.payloadPath
+        ? payloadSchemas(op, definitions)
+        : Object.entries(op.responses)
+            .filter(([status]) => /^(?:2\d\d|2XX)$/.test(status))
+            .flatMap(([, entry]) => (entry.schema ? [entry.schema] : []));
     for (const [section, schemas, isResponse] of [
       [request, op.body ? [op.body] : [], false],
       [response, outputs, true],
@@ -492,7 +495,13 @@ function assertConcreteCollectionType(type, schema, definitions, context) {
 export function assertCanonicalBranchDocumentation(directory, contract, report, selectedModels) {
   const target = directory.endsWith('/php') ? 'php' : 'node';
   const c = contract;
-  const { models, inputNames, outputNames, definitions, origins } = documentedModels(directory, c);
+  const { models, inputNames, outputNames, definitions, origins, documentRoots } = documentedModels(
+    directory,
+    c,
+  );
+  const registered = new Set(models.map((m) => m.name));
+  for (const name of documentRoots)
+    assert.ok(registered.has(name), `lost raw source registration for documented model ${name}`);
   const names = (response) => (response ? outputNames : inputNames);
   const files = packageDocuments(directory);
   const sections = new Map();
@@ -508,7 +517,6 @@ export function assertCanonicalBranchDocumentation(directory, contract, report, 
     sections.set(name, section);
     return section;
   };
-  const aliases = new Map();
   const originOwners = new Map();
   for (const model of [...models].sort(
     (a, b) => a.name.length - b.name.length || a.name.localeCompare(b.name),
@@ -536,21 +544,34 @@ export function assertCanonicalBranchDocumentation(directory, contract, report, 
       if (linked?.label !== 'shared fields') return linked;
     }
   };
-  const canonicalLabel = (name, seen = new Set()) => {
-    if (aliases.has(name)) return aliases.get(name);
-    if (seen.has(name) || !models.some((model) => model.name === name)) return name;
-    const owner = originOwners.get(origins.get(name));
-    if (owner && owner !== name) {
-      const canonical = canonicalLabel(owner, new Set(seen).add(name));
-      aliases.set(name, canonical);
-      return canonical;
-    }
-    const section = modelSection(name);
-    const alias = fieldAlias(section);
-    const canonical = alias ? canonicalLabel(alias.heading, new Set(seen).add(name)) : name;
-    aliases.set(name, canonical);
-    return canonical;
+  // Resolve alias components as a whole. Combining independently justified
+  // field-table and declaration aliases can create cycles; traversal-order
+  // caching must never change the identity used by expected/observed facts.
+  const representatives = new Map();
+  const canonicalLabel = (name) => {
+    const parent = representatives.get(name);
+    if (!parent || parent === name) return name;
+    const root = canonicalLabel(parent);
+    representatives.set(name, root);
+    return root;
   };
+  const connect = (left, right) => {
+    left = canonicalLabel(left);
+    right = canonicalLabel(right);
+    if (left === right) return;
+    if (
+      left.length > right.length ||
+      (left.length === right.length && left.localeCompare(right) > 0)
+    )
+      [left, right] = [right, left];
+    representatives.set(right, left);
+  };
+  for (const model of models) {
+    const owner = originOwners.get(origins.get(model.name));
+    if (owner) connect(model.name, owner);
+    const alias = fieldAlias(modelSection(model.name));
+    if (alias) connect(model.name, alias.heading);
+  }
   const canonicalSection = (section, seen = new Set()) => {
     const identity = section.path + '#' + section.heading;
     if (seen.has(identity)) return section;
@@ -565,6 +586,8 @@ export function assertCanonicalBranchDocumentation(directory, contract, report, 
         : [];
     }),
   );
+  if (target === 'php')
+    for (const model of models) if (model.response) objectModels.add(canonicalLabel(model.name));
   const normalizeTree = (tree) => {
     const result = JSON.parse(
       JSON.stringify(tree, (key, value) => (key === 'name' ? canonicalLabel(value) : value)),
@@ -808,6 +831,12 @@ export function assertCanonicalBranchDocumentation(directory, contract, report, 
         const covers = (value, canonical) =>
           [...fieldSignatures(value)].every((key) => fieldSignatures(canonical).has(key));
         const named = (value) =>
+          // The declaration parser registered this complete raw source value
+          // with its concrete class. That class is certified below; local
+          // annotations/presence remain checked at the containing position.
+          Boolean(
+            value['x-oracle-bound-owner'] && canonicalSchemas.has(value['x-oracle-bound-owner']),
+          ) ||
           Boolean(
             names(response)[modelName(value, definitions)] &&
               (!canonicalSchemas.get(names(response)[modelName(value, definitions)]) ||

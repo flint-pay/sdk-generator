@@ -3,7 +3,7 @@ import { protectedAnnotations } from './documentation-publication.mjs';
 // Test-owned OpenAPI/profile derivation. No generated interface, compiler plan,
 // documentation schema, or production semantic helper is an expectation input.
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import ts from 'typescript';
 
@@ -87,6 +87,27 @@ export function readDocumentationProfile(path, seen = new Set()) {
   const { profiles, ...own } = p;
   return merge(result, own);
 }
+export function rawEnumDomain(s, definitions, seen = new Set()) {
+  const sets = [];
+  if (s.enum) sets.push(s.enum);
+  if (Object.hasOwn(s, 'const')) sets.push([s.const]);
+  const ref = s['x-sdk-ref'];
+  if (ref && definitions[ref] && !seen.has(ref)) {
+    const values = rawEnumDomain(definitions[ref], definitions, new Set(seen).add(ref));
+    if (values) sets.push(values);
+  }
+  for (const part of s.allOf ?? []) {
+    const values = rawEnumDomain(part, definitions, seen);
+    if (values) sets.push(values);
+  }
+  for (const key of ['oneOf', 'anyOf'])
+    if (s[key]) {
+      const groups = s[key].map((part) => rawEnumDomain(part, definitions, seen));
+      if (groups.every(Boolean)) sets.push([...new Set(groups.flat())]);
+    }
+  return sets.length ? sets.reduce((a, b) => a.filter((v) => b.includes(v))) : undefined;
+}
+
 export function rawDocumentationInput(api, profile) {
   const document =
     typeof api === 'string' ? JSON.parse(readFileSync(api, 'utf8')) : structuredClone(api);
@@ -163,6 +184,17 @@ export function rawDocumentationInput(api, profile) {
           'Payload';
         models[name] = normalize(body);
       }
+    }
+  if (config.webhook)
+    for (const [name, schema] of Object.entries(models).filter(([n]) =>
+      n.startsWith('IncomingWebhook'),
+    )) {
+      const values = payloadSchemas(
+        { responses: { 200: { schema } }, response: { payloadPath: config.webhook.typeField } },
+        models,
+      ).flatMap((s) => rawEnumDomain(s, models) ?? []);
+      for (const event of values)
+        if (typeof event === 'string') models['WebhookEvent' + pascal(event)] ??= schema;
     }
   for (const [event, schema] of Object.entries(config.webhook?.events ?? {}))
     models['WebhookEvent' + pascal(event)] ??= normalize(schema);
@@ -271,13 +303,31 @@ export function directionalSchema(s, response) {
   };
 }
 export function payloadSchemas(op, defs) {
-  const project = (s, keys) => {
-    if (!keys.length) return [s];
-    if (s['x-sdk-ref']) return project(defs[s['x-sdk-ref']], keys);
-    if (s.oneOf || s.anyOf) return (s.oneOf ?? s.anyOf).flatMap((s) => project(s, keys));
-    const [key, ...rest] = keys;
-    if (s.properties?.[key]) return project(s.properties[key], rest);
-    return (s.allOf ?? []).flatMap((s) => project(s, keys));
+  const common = (s, seen = new Set()) => {
+    const { allOf, ['x-sdk-ref']: ref, ...own } = s;
+    return [
+      own,
+      ...(allOf ?? []).flatMap((v) => common(v, seen)),
+      ...(ref && defs[ref] && !seen.has(ref) ? common(defs[ref], new Set(seen).add(ref)) : []),
+    ];
+  };
+  const project = (schema, keys) => {
+    if (!keys.length) return [schema];
+    const scopes = common(schema);
+    const index = scopes.findIndex((s) => s.oneOf || s.anyOf);
+    if (index >= 0) {
+      const { oneOf, anyOf, ...own } = scopes[index];
+      return (oneOf ?? anyOf).flatMap((branch) =>
+        project(
+          { allOf: [...scopes.slice(0, index), own, branch, ...scopes.slice(index + 1)] },
+          keys,
+        ),
+      );
+    }
+    const [key, ...rest] = keys,
+      children = scopes.flatMap((s) => (s.properties?.[key] ? [s.properties[key]] : []));
+    if (!children.length) return [];
+    return project(children.length === 1 ? children[0] : { allOf: children }, rest);
   };
   return Object.entries(op.responses)
     .filter(([status]) => /^2\d\d$/.test(status))
@@ -288,12 +338,22 @@ export function payloadSchemas(op, defs) {
     );
 }
 
+function commonScopes(schema, definitions, seen = new Set()) {
+  const { allOf, ['x-sdk-ref']: ref, ...own } = schema;
+  return [
+    own,
+    ...(allOf ?? []).flatMap((s) => commonScopes(s, definitions, seen)),
+    ...(ref && definitions[ref] && !seen.has(ref)
+      ? commonScopes(definitions[ref], definitions, new Set(seen).add(ref))
+      : []),
+  ];
+}
 /** Target naming inventory read from actual declarations, not documentation
  * plans. Alias spelling and hydrated class identities are the ONLY facts read
  * here; semantic nullability, bounds and branches always come from OpenAPI. */
 export function documentedModels(directory, input) {
   assert.equal(input.rawDocumentation, true, 'oracle requires raw OpenAPI + profile');
-  input = { ...input, models: structuredClone(input.models) };
+  input = rawDocumentationInput(input.document, input.config);
   input.definitions = input.models;
   const php = directory.endsWith('/php'),
     source = join(directory, php ? 'src/classes' : 'declarations');
@@ -315,11 +375,12 @@ export function documentedModels(directory, input) {
         const returned = text.match(
           new RegExp('\\b' + op.method + '\\([^\\n]*\\): Promise<([A-Z]\\w*)>;'),
         )?.[1];
-        const values = op.response?.payloadPath
-          ? payloadSchemas(op, input.definitions)
-          : Object.entries(op.responses)
-              .filter(([s]) => /^2\d\d$/.test(s))
-              .flatMap(([, r]) => (r.schema ? [r.schema] : []));
+        const values =
+          op.response?.return === 'payload' && op.response?.payloadPath
+            ? payloadSchemas(op, input.definitions)
+            : Object.entries(op.responses)
+                .filter(([s]) => /^2\d\d$/.test(s))
+                .flatMap(([, r]) => (r.schema ? [r.schema] : []));
         for (const schema of values)
           if (returned && schema['x-sdk-ref'] && returned !== schema['x-sdk-ref'])
             aliases.set(schema['x-sdk-ref'], returned);
@@ -432,6 +493,18 @@ export function documentedModels(directory, input) {
       ? files.map((n) => n.slice(0, -4))
       : texts.flatMap((t) => [...t.matchAll(/export type (\w+) =/g)].map((m) => m[1])),
   );
+  const documentRoots = new Set();
+  const modelTexts = [
+    readFileSync(join(directory, 'MODELS.md'), 'utf8'),
+    ...(existsSync(join(directory, 'models'))
+      ? readdirSync(join(directory, 'models'))
+          .filter((n) => n.endsWith('.md'))
+          .map((n) => readFileSync(join(directory, 'models', n), 'utf8'))
+      : []),
+  ];
+  for (const text of modelTexts)
+    for (const match of text.matchAll(/^## (\w+)\n/gm))
+      if (match[1] !== 'Index') documentRoots.add(match[1]);
   const inputNames = Object.fromEntries(
     Object.keys(input.models)
       .filter((n) => labels.has(n + 'Input'))
@@ -457,8 +530,16 @@ export function documentedModels(directory, input) {
         : s;
   const sourceKeys = new Map();
   const add = (name, schema, response) => {
-    if (!labels.has(name)) return;
-    const key = JSON.stringify(clean(directionalSchema(schema, response)));
+    if (!labels.has(name) || !documentRoots.has(name)) return;
+    const ref = schema['x-sdk-ref'];
+    const origin =
+      ref && input.definitions[ref]
+        ? {
+            ...input.definitions[ref],
+            ...Object.fromEntries(Object.entries(schema).filter(([k]) => k !== 'x-sdk-ref')),
+          }
+        : schema;
+    const key = JSON.stringify([response, clean(directionalSchema(origin, response))]);
     const previous = models.find((m) => m.name === name && m.response === response);
     if (!previous) {
       models.push({
@@ -487,11 +568,48 @@ export function documentedModels(directory, input) {
         .map(([, s]) => directionalSchema(s, true));
       add(name, declarations.length > 1 ? { anyOf: declarations } : declarations[0], true);
     }
+  if (!php)
+    for (const [name, schema] of Object.entries(input.models))
+      if (documentRoots.has(name) && !models.some((m) => m.name === name && m.response))
+        add(name, schema, true);
   // Public operation response class names, including envelope/nested classes.
   for (const op of input.operations)
     for (const [status, r] of Object.entries(op.responses))
       if (r.schema)
-        add(pascal(op.resource) + pascal(op.method) + 'Response' + pascal(status), r.schema, true);
+        add(
+          op.resource[0].toUpperCase() +
+            op.resource.slice(1) +
+            op.method[0].toUpperCase() +
+            op.method.slice(1) +
+            'Response' +
+            status[0].toUpperCase() +
+            status.slice(1),
+          r.schema,
+          true,
+        );
+  if (php)
+    for (const op of input.operations)
+      for (const [status, response] of Object.entries(op.responses))
+        if (response.schema) {
+          const scopes = commonScopes(response.schema, input.definitions),
+            choice = scopes.find((s) => s.oneOf || s.anyOf);
+          if (choice) {
+            const prefix =
+              op.resource[0].toUpperCase() +
+              op.resource.slice(1) +
+              op.method[0].toUpperCase() +
+              op.method.slice(1) +
+              'Response' +
+              status[0].toUpperCase() +
+              status.slice(1);
+            for (const [index, branch] of (choice.oneOf ?? choice.anyOf).entries())
+              add(
+                prefix + 'Variant' + index,
+                { allOf: [...scopes.map(({ oneOf, anyOf, ...s }) => s), branch] },
+                true,
+              );
+          }
+        }
   if (php) {
     const properties = new Map(
       texts.flatMap((t, i) => [
@@ -516,21 +634,52 @@ export function documentedModels(directory, input) {
         .map((m) => m[0])
         .filter((n) => labels.has(n));
       const ref = s['x-sdk-ref'];
-      if (ref && defs[ref] && type.includes('stdClass') && (defs[ref].oneOf || defs[ref].anyOf)) {
-        const source = defs[ref],
-          mapping = source.discriminator?.mapping ?? {};
-        const choices = Object.keys(mapping).sort((a, b) => pascal(b).length - pascal(a).length);
-        for (const label of names) {
-          const tag = choices.find((tag) => label.endsWith(pascal(tag)));
-          const reference = tag && mapping[tag]?.split('/').at(-1);
-          const publicName = reference && (input.config.models?.[reference] ?? reference);
-          const branch = publicName && defs[publicName];
-          if (branch) {
-            const { oneOf, anyOf, ...base } = source;
-            add(label, { allOf: [base, branch] }, true);
+      if (type.includes('stdClass') && names.length) {
+        const parts = commonScopes(s, defs),
+          choice = parts.find((v) => v.oneOf || v.anyOf),
+          discriminator = parts.find((v) => v.discriminator)?.discriminator;
+        if (choice && discriminator) {
+          const mapping = discriminator.mapping ?? {};
+          const branches = choice.oneOf ?? choice.anyOf;
+          const tagBranches = new Map();
+          for (const [tag, reference] of Object.entries(mapping)) {
+            const rawName = reference.split('/').at(-1),
+              name = input.config.models?.[rawName] ?? rawName;
+            if (defs[name]) tagBranches.set(tag, defs[name]);
           }
+          if (!tagBranches.size)
+            for (const branch of branches) {
+              const scalarSchemas = payloadSchemas(
+                {
+                  responses: {
+                    200: {
+                      schema: {
+                        allOf: [...parts.map(({ oneOf, anyOf, ...base }) => base), branch],
+                      },
+                    },
+                  },
+                  response: { payloadPath: discriminator.propertyName },
+                },
+                defs,
+              );
+              for (const tag of scalarSchemas.flatMap((value) => rawEnumDomain(value, defs) ?? []))
+                if (typeof tag === 'string') tagBranches.set(tag, branch);
+            }
+          const choices = [...tagBranches.keys()].sort(
+            (a, b) => pascal(b).length - pascal(a).length,
+          );
+          for (const label of names) {
+            const tag = choices.find((tag) => label.endsWith(pascal(tag))),
+              branch = tagBranches.get(tag);
+            if (branch)
+              add(
+                label,
+                { allOf: [...parts.map(({ oneOf, anyOf, ...base }) => base), branch] },
+                true,
+              );
+          }
+          return s;
         }
-        return s;
       }
       if (
         ref &&
@@ -547,8 +696,8 @@ export function documentedModels(directory, input) {
         );
       }
       if (ref && names.length === 1 && !s.items && !s.additionalProperties) {
-        add(names[0], defs[ref] ?? s, !names[0].endsWith('Input'));
-        return { ...s, 'x-sdk-type-name': names[0] };
+        add(names[0], s, !names[0].endsWith('Input'));
+        return { ...s, 'x-sdk-type-name': names[0], 'x-oracle-bound-owner': names[0] };
       }
       if (s.oneOf || s.anyOf)
         return {
@@ -575,7 +724,7 @@ export function documentedModels(directory, input) {
         };
       if (names.length === 1 && (s.type === 'object' || Object.keys(fields(s)).length)) {
         add(names[0], s, !names[0].endsWith('Input'));
-        return { ...s, 'x-sdk-type-name': names[0] };
+        return { ...s, 'x-sdk-type-name': names[0], 'x-oracle-bound-owner': names[0] };
       }
       return s;
     };
@@ -617,5 +766,13 @@ export function documentedModels(directory, input) {
       Object.fromEntries(models.filter((m) => m.response).map((m) => [m.name, m.name])),
     );
   }
-  return { models, inputNames, outputNames, aliases, definitions: input.definitions, origins };
+  return {
+    models,
+    inputNames,
+    outputNames,
+    aliases,
+    definitions: input.definitions,
+    origins,
+    documentRoots,
+  };
 }

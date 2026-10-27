@@ -99,6 +99,12 @@ export function assertNamedNullabilitySource(directory, inventory) {
       tree.branches = [
         ...new Map(tree.branches.map(signature).map((t) => [JSON.stringify(t), t])).values(),
       ];
+      if (
+        directory.endsWith('/php') &&
+        tree.kind === 'and' &&
+        tree.branches.some((t) => t.kind === 'model')
+      )
+        tree.branches = tree.branches.filter((t) => t.kind !== 'object');
       if (tree.branches.length === 1)
         return { ...tree.branches[0], ...(tree.nullable ? { nullable: true } : {}) };
     }
