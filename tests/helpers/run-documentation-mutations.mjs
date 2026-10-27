@@ -64,7 +64,21 @@ function prepare() {
     writeFileSync(join(root, 'contract.json'), JSON.stringify(contract));
   }
   writeFileSync(join(root, 'raw-input.json'), JSON.stringify(raw));
-  return Object.keys(probe.models).flatMap((n) => [n, n + 'Input']);
+  return [
+    ...Object.keys(probe.models).flatMap((n) => [n, n + 'Input']),
+    ...probe.operations.flatMap((op) =>
+      Object.keys(op.responses).map(
+        (status) =>
+          op.resource[0].toUpperCase() +
+          op.resource.slice(1) +
+          op.method[0].toUpperCase() +
+          op.method.slice(1) +
+          'Response' +
+          status[0].toUpperCase() +
+          status.slice(1),
+      ),
+    ),
+  ];
 }
 const selected = prepare(),
   results = [];
