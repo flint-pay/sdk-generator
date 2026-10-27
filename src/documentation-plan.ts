@@ -50,14 +50,23 @@ function structuralIdentity(value: unknown): string {
   const cache = objectIdentities;
   const saved = cache.get(value);
   if (saved !== undefined) return saved;
-  const entries = Array.isArray(value)
-    ? []
-    : Object.entries(value).filter(([, child]) => child !== undefined);
-  entries.sort(([a], [b]) => a.localeCompare(b, 'en'));
-  const key = Array.isArray(value)
-    ? JSON.stringify(['array', Array.from(value, (child) => structuralIdentity(child ?? null))])
-    : JSON.stringify(['object', entries.map(([name, child]) => [name, structuralIdentity(child)])]);
-  const identity = 'node:' + hash('sha256', key);
+  const parts: string[] = [];
+  if (Array.isArray(value)) {
+    parts.push('[');
+    for (const child of value) parts.push(structuralIdentity(child ?? null), ',');
+    parts.push(']');
+  } else {
+    // Facts and source annotations contain JSON records, never class instances.
+    const record = value as Readonly<Record<string, unknown>>;
+    parts.push('{');
+    for (const name of Object.keys(record).sort((a, b) => a.localeCompare(b, 'en'))) {
+      const child = record[name];
+      if (child !== undefined)
+        parts.push(JSON.stringify(name), ':', structuralIdentity(child), ',');
+    }
+    parts.push('}');
+  }
+  const identity = 'node:' + hash('sha256', parts.join(''));
   cache.set(value, identity);
   return identity;
 }
@@ -432,7 +441,10 @@ export function factAtoms(fact: DocumentationFact): Partial<DocumentationFact>[]
   atoms.set(fact, result);
   return result;
 }
+const assembledAtoms = new WeakMap<readonly Partial<DocumentationFact>[], DocumentationFact>();
 export function factFromAtoms(atoms: readonly Partial<DocumentationFact>[]): DocumentationFact {
+  const saved = assembledAtoms.get(atoms);
+  if (saved) return saved;
   const result = { ...empty },
     additional: DocumentationFact[] = [];
   const assigned = new Set<string>();
@@ -451,7 +463,9 @@ export function factFromAtoms(atoms: readonly Partial<DocumentationFact>[]): Doc
       for (const key of Object.keys(atom)) assigned.add(key);
     }
   }
-  return additional.length ? factConjunction([result, ...additional]) : result;
+  const fact = additional.length ? factConjunction([result, ...additional]) : result;
+  assembledAtoms.set(atoms, fact);
+  return fact;
 }
 
 /** Position inventory shared by declaration comments and documentation certifiers.

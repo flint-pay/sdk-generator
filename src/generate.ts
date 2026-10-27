@@ -171,6 +171,37 @@ const compactRecord = (value: unknown): string =>
       : child,
   ) + '\n';
 
+/** Rendered prose is recovered from the saved interface. Compatibility snapshots
+ * retain declarations and execution facts without duplicating that prose. */
+function storeRecordSnapshot(snapshot: CompiledSnapshot) {
+  const { plan } = snapshot;
+  return storeCompiledSnapshot({
+    ...snapshot,
+    plan: {
+      ...plan,
+      node: {
+        ...plan.node,
+        models: Object.fromEntries(
+          Object.entries(plan.node.models).map(
+            ([name, { documentedInput, documentedOutput, ...model }]) => [name, model],
+          ),
+        ),
+        operations: Object.fromEntries(
+          Object.entries(plan.node.operations).map(
+            ([name, { documentedInput, documentedOutput, ...operation }]) => [name, operation],
+          ),
+        ),
+      },
+      php: {
+        ...plan.php,
+        models: plan.php.models.map(
+          ({ documentationSchema, documentation, description, ...model }) => model,
+        ),
+      },
+    },
+  });
+}
+
 const recordName = '.sdk-generator.json';
 function comparisonBase(before: RecordFile, next: Contract): Contract {
   if (before.baseline?.kind === 'released') return before.baseline.interface;
@@ -2853,19 +2884,19 @@ function writeGeneration(
       join(stage, recordName),
       compactRecord({
         ...record,
-        compiled: storeCompiledSnapshot(current.compiled),
+        compiled: storeRecordSnapshot(current.compiled),
         ...(record.baseline?.kind === 'released'
           ? {
               baseline: {
                 ...record.baseline,
                 ...(record.baseline.compiled
-                  ? { compiled: storeCompiledSnapshot(record.baseline.compiled) }
+                  ? { compiled: storeRecordSnapshot(record.baseline.compiled) }
                   : {}),
               },
             }
           : {}),
         ...(record.compiledComparisonBase
-          ? { compiledComparisonBase: storeCompiledSnapshot(record.compiledComparisonBase) }
+          ? { compiledComparisonBase: storeRecordSnapshot(record.compiledComparisonBase) }
           : {}),
       }),
       { mode: 0o600 },
