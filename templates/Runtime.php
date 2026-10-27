@@ -737,6 +737,9 @@ final class AmbientCredentialProvider implements CredentialProvider
                     return strlen($line);
                 },
             ]);
+            if ($request['method'] === 'GET') {
+                curl_setopt($ch, CURLOPT_PROXY, '');
+            }
             if ($request['method'] === 'POST') {
                 curl_setopt($ch, CURLOPT_POSTFIELDS, $request['body']);
             }

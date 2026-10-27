@@ -698,7 +698,8 @@ catch (Example\\Discovery\\SdkError $e) { if (str_contains($e->getMessage(), 'sy
         process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN = secret;
         if (name !== 'missing-permission')
           process.env.ACTIONS_ID_TOKEN_REQUEST_URL =
-            baseUrl + '/github?existing=retained&audience=old';
+            (language === 'php' ? baseUrl.replace('127.0.0.1', 'localhost') : baseUrl) +
+            '/github?existing=retained&audience=old';
         if (name === 'explicit') process.env.EXAMPLE_OIDC_SOURCE = 'github_actions';
         const expected =
           name === 'success' || name === 'explicit'
@@ -721,7 +722,9 @@ catch (Example\\Discovery\\SdkError $e) { if (str_contains($e->getMessage(), 'sy
           }
           assert.equal(result, expected, name);
         } else {
-          const child = spawn('php', [helper, join(output, 'php'), baseUrl]);
+          const child = spawn('php', [helper, join(output, 'php'), baseUrl], {
+            env: { ...process.env, http_proxy: 'http://127.0.0.1:1', no_proxy: '127.0.0.1' },
+          });
           let stdout = '',
             stderr = '';
           child.stdout.on('data', (chunk) => (stdout += chunk));
