@@ -8,6 +8,11 @@ import {
 } from './documentation-plan.js';
 
 type Definitions = DocumentationContext['definitions'];
+const unnamedTypes = {};
+const typeProjections = new WeakMap<
+  Definitions,
+  WeakMap<object, WeakMap<DocumentationFact, Map<string | undefined, string>>>
+>();
 const anchor = (name: string) =>
   name
     .toLowerCase()
@@ -22,6 +27,30 @@ export function factType(
   seen = new Set<string>(),
   ancestors = new Set<DocumentationFact>(),
   owner?: string,
+): string {
+  if (seen.size || ancestors.size)
+    return renderFactType(fact, definitions, names, seen, ancestors, owner);
+  let contexts = typeProjections.get(definitions);
+  if (!contexts) typeProjections.set(definitions, (contexts = new WeakMap()));
+  const symbols = names ?? unnamedTypes;
+  let facts = contexts.get(symbols);
+  if (!facts) contexts.set(symbols, (facts = new WeakMap()));
+  let projections = facts.get(fact);
+  if (!projections) facts.set(fact, (projections = new Map()));
+  const saved = projections.get(owner);
+  if (saved !== undefined) return saved;
+  const type = renderFactType(fact, definitions, names, seen, ancestors, owner);
+  projections.set(owner, type);
+  return type;
+}
+
+function renderFactType(
+  fact: DocumentationFact,
+  definitions: Definitions,
+  names: Readonly<Record<string, string>> | undefined,
+  seen: Set<string>,
+  ancestors: Set<DocumentationFact>,
+  owner: string | undefined,
 ): string {
   const name = fact.model && (names ? names[fact.model] : fact.model);
   if (name && name !== owner) return `[${name}](MODELS.md#${anchor(name)})`;

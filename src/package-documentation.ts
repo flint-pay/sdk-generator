@@ -185,7 +185,9 @@ export function modelDocuments(
  */
 export function internDocumentationTables(files: Map<string, string>, target: string): void {
   internEnumerationLists(files, target);
-  const markdown = new MarkdownIt();
+  // Table boundaries and heading lines need block tokens, not inline parsing
+  // of every field description and example in the package.
+  const markdown = new MarkdownIt().disable('inline');
   const tables: {
     path: string;
     start: number;

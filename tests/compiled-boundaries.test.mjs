@@ -70,12 +70,14 @@ test('semantic modules have effect-free dependencies and no implementation cycle
         const dependency = node.moduleSpecifier.text.replace(/^\.\//, '').replace(/\.js$/, '');
         // TypeScript's syntax parser is a pure compiler dependency; no program host or I/O.
         if (name === 'public-type-plan' && dependency === 'typescript') return;
-        // Source-use proof uses deterministic hashing, without random or I/O APIs.
-        if (name === 'schema-usage' && dependency === 'node:crypto') {
+        // Source-use proof and documentation identities use deterministic hashing only.
+        if (['schema-usage', 'documentation-plan'].includes(name) && dependency === 'node:crypto') {
           assert(bindings && ts.isNamedImports(bindings));
           assert(
             bindings.elements.every(
-              (binding) => (binding.propertyName ?? binding.name).text === 'createHash',
+              (binding) =>
+                (binding.propertyName ?? binding.name).text ===
+                (name === 'documentation-plan' ? 'hash' : 'createHash'),
             ),
           );
           return;

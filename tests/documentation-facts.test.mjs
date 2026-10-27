@@ -15,7 +15,11 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { generate } from '../dist/index.js';
 import { assertSourceFieldDocumentation, sourceFactRows } from './helpers/source-documentation.mjs';
-import { compileDocumentation, documentationDescriptions } from '../dist/documentation-plan.js';
+import {
+  compileDocumentation,
+  documentationDescriptions,
+  factIdentity,
+} from '../dist/documentation-plan.js';
 import { schemaComment } from '../dist/schema-documentation.js';
 import { compilePhpModel } from '../dist/target-plan.js';
 import { expectedFieldFacts } from './helpers/documentation-expectations.mjs';
@@ -42,6 +46,61 @@ test('certifier expectations cannot import documentation compilers or formatters
     expectations,
     /from ['"][^'"]*(?:sdk-documentation|documentation-format|documentation-plan)/,
   );
+});
+
+test('structural fact identities preserve nested facts and ignore object property order', () => {
+  const fact = compileDocumentation({
+    type: 'array',
+    items: { type: 'string', enum: ['red', 'green'], minLength: 2 },
+  }).root;
+  const reverse = (value) =>
+    Array.isArray(value)
+      ? value.map(reverse)
+      : value && typeof value === 'object'
+        ? Object.fromEntries(
+            Object.entries(value)
+              .reverse()
+              .map(([key, child]) => [key, reverse(child)]),
+          )
+        : value;
+  assert.equal(factIdentity(fact), factIdentity(reverse(fact)));
+  for (const delta of [
+    { nullable: true },
+    { value: { kind: 'safe-integer' } },
+    { checks: { minLength: 3 } },
+    { enum: ['green', 'red'] },
+    { model: 'ReadableModel' },
+    { reference: 'ReadableReference' },
+    { description: 'Distinct annotation.' },
+    { defaultValue: '"red"' },
+    { required: ['extra'] },
+  ])
+    assert.notEqual(
+      factIdentity(fact),
+      factIdentity({ ...fact, item: { ...fact.item, ...delta } }),
+    );
+  assert.notEqual(factIdentity(fact), factIdentity({ ...fact, nullable: true }));
+  assert.equal(factIdentity({}), factIdentity({ model: undefined }));
+});
+
+test('schema fact memoization retains field order and direction', () => {
+  const definitions = {};
+  const first = { type: 'string', description: 'First field.' };
+  const second = { type: 'string', description: 'Second field.', readOnly: true };
+  const schema = { type: 'object', properties: { first, second } };
+  const response = compileDocumentation(schema, definitions, true);
+  assert.equal(compileDocumentation(schema, definitions, true).root, response.root);
+  const reordered = compileDocumentation(
+    { type: 'object', properties: { second, first } },
+    definitions,
+    true,
+  );
+  assert.deepEqual(Object.keys(response.root.fields), ['first', 'second']);
+  assert.deepEqual(Object.keys(reordered.root.fields), ['second', 'first']);
+  assert.equal(factIdentity(response.root), factIdentity(reordered.root));
+  assert.deepEqual(Object.keys(compileDocumentation(schema, definitions, false).root.fields), [
+    'first',
+  ]);
 });
 
 test('hoisted common prose follows compiler conjunctions without leaking branch or child prose', () => {

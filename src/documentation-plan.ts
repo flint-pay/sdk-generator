@@ -1,6 +1,6 @@
+import { hash } from 'node:crypto';
 import type { Json, Schema } from './contract.js';
 import { compileCodec, type CodecPlan, type ValueInstruction } from './codec-plan.js';
-import { stable } from './canonical.js';
 
 /** Documentation's semantic contract. Collection children and union branches are
  * full trees, not rendered type strings. Execution facts come from CodecPlan;
@@ -41,21 +41,34 @@ const modelNames = new WeakMap<object, WeakMap<Schema, string | undefined>>();
 const definitionFacts = new WeakMap<object, Map<string, DocumentationContext['definitions']>>();
 const contexts = new WeakMap<object, Map<string, WeakMap<object, DocumentationContext>>>();
 const emptyDefinitions: Record<string, Schema> = {};
-const schemaIdentities = new WeakMap<Schema, string>();
-function schemaIdentity(schema: Schema): string {
-  let identity = schemaIdentities.get(schema);
-  if (identity === undefined) {
-    identity = stable(schema);
-    schemaIdentities.set(schema, identity);
-  }
+const objectIdentities = new WeakMap<object, string>();
+/** Hash immutable subtrees once; parent keys contain child digests instead of
+ * expanding their contents. Weak keys let completed compilations be collected. */
+function structuralIdentity(value: unknown): string {
+  if (value === undefined) return 'undefined';
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  const cache = objectIdentities;
+  const saved = cache.get(value);
+  if (saved !== undefined) return saved;
+  const entries = Array.isArray(value)
+    ? []
+    : Object.entries(value).filter(([, child]) => child !== undefined);
+  entries.sort(([a], [b]) => a.localeCompare(b, 'en'));
+  const key = Array.isArray(value)
+    ? JSON.stringify(['array', Array.from(value, (child) => structuralIdentity(child ?? null))])
+    : JSON.stringify(['object', entries.map(([name, child]) => [name, structuralIdentity(child)])]);
+  const identity = 'node:' + hash('sha256', key);
+  cache.set(value, identity);
   return identity;
 }
+const schemaIdentity = (schema: Schema): string => String(structuralIdentity(schema));
 
 /** Recover common source prose before declaration hoisting, without rebuilding
  * unrelated field/item trees. Codec conjunctions and references own reachability. */
 export function documentationDescriptions(
   schema: Schema,
   definitions: Readonly<Record<string, Schema>>,
+  plan: CodecPlan = compileCodec(schema),
 ): string[] {
   const descriptions = new Set<string>();
   const references = new Set<string>();
@@ -69,7 +82,7 @@ export function documentationDescriptions(
       visit(resolved, compileCodec(resolved));
     }
   };
-  visit(schema, compileCodec(schema));
+  visit(schema, plan);
   return [...descriptions];
 }
 
@@ -77,6 +90,7 @@ export function compileDocumentation(
   schema: Schema,
   definitions: Readonly<Record<string, Schema>> = emptyDefinitions,
   response?: boolean,
+  codec?: CodecPlan,
 ): DocumentationContext {
   let caches = contexts.get(definitions);
   if (!caches) contexts.set(definitions, (caches = new Map()));
@@ -170,7 +184,7 @@ export function compileDocumentation(
     compiledDefinitions = Object.create(null) as Record<string, DocumentationFact>;
     directions.set(direction, compiledDefinitions);
   }
-  const root = build(schema, compileCodec(schema));
+  const root = build(schema, codec ?? compileCodec(schema));
   const referenced = new Set<string>();
   const visit = (fact: DocumentationFact) => {
     if (fact.reference && definitions[fact.reference] && !referenced.has(fact.reference)) {
@@ -226,33 +240,54 @@ export const factConjunction = (all: readonly DocumentationFact[]): Documentatio
   ...empty,
   all,
 });
-const identities = new WeakMap<Partial<DocumentationFact>, string>();
 export function factIdentity(fact: Partial<DocumentationFact>): string {
-  let identity = identities.get(fact);
-  if (identity === undefined) {
-    identity = stable(fact);
-    identities.set(fact, identity);
-  }
-  return identity;
+  return String(structuralIdentity(fact));
 }
+
+function projectionCache<T>() {
+  const contexts = new WeakMap<
+    DocumentationContext['definitions'],
+    WeakMap<DocumentationFact, T>
+  >();
+  return (definitions: DocumentationContext['definitions']) => {
+    let cache = contexts.get(definitions);
+    if (!cache) contexts.set(definitions, (cache = new WeakMap()));
+    return cache;
+  };
+}
+const partsCache = projectionCache<DocumentationFact[]>();
+const shapeCache = projectionCache<{
+  fields: Record<string, DocumentationFact>;
+  required: Set<string>;
+}>();
+const variantsCache = projectionCache<{ fact: DocumentationFact; conditions: string[] }[]>();
+const enumsCache = projectionCache<DocumentationEnum[]>();
 
 export function factParts(
   fact: DocumentationFact,
   definitions: DocumentationContext['definitions'],
   seen = new Set<string>(),
 ): DocumentationFact[] {
-  return [
+  const cache = seen.size ? undefined : partsCache(definitions);
+  const saved = cache?.get(fact);
+  if (saved) return saved;
+  const parts = [
     fact,
     ...fact.all.flatMap((f) => factParts(f, definitions, seen)),
     ...(fact.reference && definitions[fact.reference] && !seen.has(fact.reference)
       ? factParts(definitions[fact.reference]!, definitions, new Set(seen).add(fact.reference))
       : []),
   ];
+  cache?.set(fact, parts);
+  return parts;
 }
 export function factShape(
   fact: DocumentationFact,
   definitions: DocumentationContext['definitions'],
 ): { fields: Record<string, DocumentationFact>; required: Set<string> } {
+  const cache = shapeCache(definitions);
+  const saved = cache.get(fact);
+  if (saved) return saved;
   const fields: Record<string, DocumentationFact> = Object.create(null);
   const required = new Set<string>();
   for (const part of factParts(fact, definitions)) {
@@ -263,13 +298,18 @@ export function factShape(
           : value;
     for (const key of part.required) required.add(key);
   }
-  return { fields, required };
+  const shape = { fields, required };
+  cache.set(fact, shape);
+  return shape;
 }
 export function factVariants(
   fact: DocumentationFact,
   definitions: DocumentationContext['definitions'],
   seen = new Set<string>(),
 ): { fact: DocumentationFact; conditions: string[] }[] {
+  const cache = seen.size ? undefined : variantsCache(definitions);
+  const saved = cache?.get(fact);
+  if (saved) return saved;
   const common: DocumentationFact[] = [];
   const groups = new Map<string, { keyword: string; branches: readonly DocumentationFact[] }>();
   const references = new Set(seen);
@@ -285,11 +325,16 @@ export function factVariants(
       ['oneOf', part.one],
       ['anyOf', part.any],
     ] as const)
-      if (branches.length) groups.set(keyword + stable(branches), { keyword, branches });
+      if (branches.length)
+        groups.set(keyword + ':' + branches.map(factIdentity).join(','), { keyword, branches });
   };
   collect(fact);
-  if (!groups.size) return [{ fact: factConjunction(common), conditions: [] }];
-  return [...groups.values()].flatMap(({ keyword, branches }, group) =>
+  if (!groups.size) {
+    const variants = [{ fact: factConjunction(common), conditions: [] }];
+    cache?.set(fact, variants);
+    return variants;
+  }
+  const variants = [...groups.values()].flatMap(({ keyword, branches }, group) =>
     branches.flatMap((branch, index) =>
       factVariants(branch, definitions, references).flatMap((variant) => {
         const fact = factConjunction([...common, variant.fact]);
@@ -313,6 +358,8 @@ export function factVariants(
       }),
     ),
   );
+  cache?.set(fact, variants);
+  return variants;
 }
 export interface DocumentationEnum {
   path: string;
@@ -323,6 +370,9 @@ export function factEnums(
   definitions: DocumentationContext['definitions'] = {},
   seen = new Set<string>(),
 ): DocumentationEnum[] {
+  const cache = seen.size ? undefined : enumsCache(definitions);
+  const saved = cache?.get(fact);
+  if (saved) return saved;
   const values = new Map<string, string[]>();
   const merge = (entries: DocumentationEnum[], intersection = true) => {
     for (const entry of entries) {
@@ -353,7 +403,9 @@ export function factEnums(
         ...new Set([...(alternatives.get(entry.path) ?? []), ...entry.values]),
       ]);
   merge([...alternatives].map(([path, values]) => ({ path, values })));
-  return [...values].map(([path, values]) => ({ path, values }));
+  const entries = [...values].map(([path, values]) => ({ path, values }));
+  cache?.set(fact, entries);
+  return entries;
 }
 
 const atoms = new WeakMap<DocumentationFact, Partial<DocumentationFact>[]>();
@@ -389,8 +441,8 @@ export function factFromAtoms(atoms: readonly Partial<DocumentationFact>[]): Doc
       Object.keys(atom).some(
         (key) =>
           assigned.has(key) &&
-          stable(result[key as keyof DocumentationFact]) !==
-            stable(atom[key as keyof DocumentationFact]),
+          structuralIdentity(result[key as keyof DocumentationFact]) !==
+            structuralIdentity(atom[key as keyof DocumentationFact]),
       )
     )
       additional.push({ ...empty, ...atom });

@@ -385,10 +385,14 @@ export function compilePhpModel(
     };
   };
   let documentationSchema = bind(documentationView(declaration), bindings);
+  const codec = compileCodec(schema);
+  // Bindings and publication views change annotations, not codec instructions.
+  const documentationCodec = declaration === schema ? codec : compileCodec(documentationSchema);
   let documentationFacts = compileDocumentation(
     documentationSchema,
     documentationDefinitions,
     response,
+    documentationCodec,
   );
   const existingDescriptions = new Set(
     factParts(documentationFacts.root, documentationFacts.definitions).flatMap((part) =>
@@ -398,7 +402,7 @@ export function compilePhpModel(
   const inheritedDescriptions =
     schema === declaration
       ? []
-      : documentationDescriptions(schema, documentationDefinitions).filter(
+      : documentationDescriptions(schema, documentationDefinitions, codec).filter(
           (description) => !existingDescriptions.has(description),
         );
   if (inheritedDescriptions.length) {
@@ -412,6 +416,7 @@ export function compilePhpModel(
       documentationSchema,
       documentationDefinitions,
       response,
+      documentationCodec,
     );
   }
   declaration = {
@@ -424,7 +429,6 @@ export function compilePhpModel(
   ).fields;
   // Getter bindings overlay one shared inventory, without copying it per field.
   Object.setPrototypeOf(boundNames, modelDocumentationNames(documentationDefinitions, response));
-  const codec = compileCodec(schema);
   const sharedCodec = shared.get(stable(codec));
   return {
     name,

@@ -831,11 +831,21 @@ export function modelReference(
   // A public TypeScript alias proves assignability, not identical validation or
   // annotation facts. Keep each distinct declaration under its exported owner.
   const outputSchemas = new Map<string, Schema>();
+  const declarationsByOwner = new Map<string, [string, Schema][]>();
+  for (const [source, schema] of Object.entries(c.models)) {
+    const owner = exports?.[source]?.output;
+    if (!owner) continue;
+    const declarations = declarationsByOwner.get(owner) ?? [];
+    declarations.push([source, schema]);
+    declarationsByOwner.set(owner, declarations);
+  }
   for (const [name, entry] of Object.entries(exports ?? {})) {
     if (entry.output !== name) continue;
-    const declared = Object.entries(c.models).filter(
-      ([source]) => exports?.[source]?.output === name,
-    );
+    const declared = declarationsByOwner.get(name) ?? [];
+    if (declared.length <= 1) {
+      outputSchemas.set(name, directionalSchema(c.models[name]!, true));
+      continue;
+    }
     const descriptions = declared
       .map(([source, schema]) => `Declared schema ${source}: ${schema.description ?? ''}`)
       .join('\n\n');
