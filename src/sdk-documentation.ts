@@ -289,6 +289,11 @@ export function modelFieldReference(
   );
 }
 
+const fieldSignatures = new WeakMap<
+  DocumentationContext['definitions'],
+  WeakMap<DocumentationFact, string>
+>();
+
 function renderModelFields(
   fact: DocumentationFact,
   definitions: DocumentationContext['definitions'],
@@ -452,7 +457,8 @@ function renderModelFields(
   // Inline unions inside fields, array items and map values need their own
   // tables. Named children already link to their canonical model section.
   const visited = new Set<string>();
-  const signatures = new WeakMap<DocumentationFact, string>();
+  let signatures = fieldSignatures.get(definitions);
+  if (!signatures) fieldSignatures.set(definitions, (signatures = new WeakMap()));
   const signature = (fact: DocumentationFact) => {
     let key = signatures.get(fact);
     if (key) return key;

@@ -15,7 +15,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { generate } from '../dist/index.js';
 import { assertSourceFieldDocumentation, sourceFactRows } from './helpers/source-documentation.mjs';
-import { compileDocumentation } from '../dist/documentation-plan.js';
+import { compileDocumentation, documentationDescriptions } from '../dist/documentation-plan.js';
 import { schemaComment } from '../dist/schema-documentation.js';
 import { compilePhpModel } from '../dist/target-plan.js';
 import { expectedFieldFacts } from './helpers/documentation-expectations.mjs';
@@ -41,6 +41,27 @@ test('certifier expectations cannot import documentation compilers or formatters
   assert.doesNotMatch(
     expectations,
     /from ['"][^'"]*(?:sdk-documentation|documentation-format|documentation-plan)/,
+  );
+});
+
+test('hoisted common prose follows compiler conjunctions without leaking branch or child prose', () => {
+  const definitions = {
+    Common: {
+      type: 'object',
+      description: 'Common description.',
+      properties: { value: { type: 'string', description: 'Child description.' } },
+    },
+  };
+  assert.deepEqual(
+    documentationDescriptions(
+      {
+        description: 'Outer description.',
+        allOf: [{ 'x-sdk-ref': 'Common' }],
+        oneOf: [{ description: 'Branch description.', type: 'object' }],
+      },
+      definitions,
+    ),
+    ['Outer description.', 'Common description.'],
   );
 });
 

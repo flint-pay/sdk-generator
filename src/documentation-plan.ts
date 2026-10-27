@@ -41,6 +41,37 @@ const modelNames = new WeakMap<object, WeakMap<Schema, string | undefined>>();
 const definitionFacts = new WeakMap<object, Map<string, DocumentationContext['definitions']>>();
 const contexts = new WeakMap<object, Map<string, WeakMap<object, DocumentationContext>>>();
 const emptyDefinitions: Record<string, Schema> = {};
+const schemaIdentities = new WeakMap<Schema, string>();
+function schemaIdentity(schema: Schema): string {
+  let identity = schemaIdentities.get(schema);
+  if (identity === undefined) {
+    identity = stable(schema);
+    schemaIdentities.set(schema, identity);
+  }
+  return identity;
+}
+
+/** Recover common source prose before declaration hoisting, without rebuilding
+ * unrelated field/item trees. Codec conjunctions and references own reachability. */
+export function documentationDescriptions(
+  schema: Schema,
+  definitions: Readonly<Record<string, Schema>>,
+): string[] {
+  const descriptions = new Set<string>();
+  const references = new Set<string>();
+  const visit = (source: Schema, plan: CodecPlan) => {
+    if (source.description) descriptions.add(source.description);
+    for (const [index, part] of (plan.every ?? []).entries())
+      visit(source.allOf?.[index] ?? {}, part);
+    if (plan.reference && definitions[plan.reference] && !references.has(plan.reference)) {
+      references.add(plan.reference);
+      const resolved = definitions[plan.reference]!;
+      visit(resolved, compileCodec(resolved));
+    }
+  };
+  visit(schema, compileCodec(schema));
+  return [...descriptions];
+}
 
 export function compileDocumentation(
   schema: Schema,
@@ -58,7 +89,7 @@ export function compileDocumentation(
   if (!index) {
     index = new Map();
     for (const [name, shape] of Object.entries(definitions)) {
-      const identity = stable(shape);
+      const identity = schemaIdentity(shape);
       if (!index.has(identity)) index.set(identity, name);
     }
     indexes.set(definitions, index);
@@ -69,7 +100,7 @@ export function compileDocumentation(
     const child = (value: Schema, plan?: CodecPlan) => build(value, plan ?? compileCodec(value));
     let model = s['x-sdk-type-name'] ?? s['x-sdk-ref'];
     if (!model && index.size) {
-      if (!schemaNames.has(s)) schemaNames.set(s, index.get(stable(s)));
+      if (!schemaNames.has(s)) schemaNames.set(s, index.get(schemaIdentity(s)));
       model = schemaNames.get(s);
     }
     const example = Object.hasOwn(s, 'example')

@@ -4,6 +4,7 @@ import {
   factEnums,
   factShape,
   factParts,
+  documentationDescriptions,
 } from './documentation-plan.js';
 import { factSourceDocumentation, factCollectionNotes } from './documentation-format.js';
 import {
@@ -389,22 +390,17 @@ export function compilePhpModel(
     documentationDefinitions,
     response,
   );
-  const sourceFacts =
-    schema === declaration
-      ? documentationFacts
-      : compileDocumentation(documentationView(schema), documentationDefinitions, response);
   const existingDescriptions = new Set(
     factParts(documentationFacts.root, documentationFacts.definitions).flatMap((part) =>
       part.description ? [part.description] : [],
     ),
   );
-  const inheritedDescriptions = [
-    ...new Set(
-      factParts(sourceFacts.root, sourceFacts.definitions).flatMap((part) =>
-        part.description && !existingDescriptions.has(part.description) ? [part.description] : [],
-      ),
-    ),
-  ];
+  const inheritedDescriptions =
+    schema === declaration
+      ? []
+      : documentationDescriptions(schema, documentationDefinitions).filter(
+          (description) => !existingDescriptions.has(description),
+        );
   if (inheritedDescriptions.length) {
     documentationSchema = {
       ...documentationSchema,
@@ -420,7 +416,7 @@ export function compilePhpModel(
   }
   declaration = {
     ...phpDeclaration(declaration, schema['x-sdk-definitions'] ?? definitions),
-    'x-sdk-definitions': { ...definitions },
+    'x-sdk-definitions': definitions,
   };
   const documentedFields = factShape(
     documentationFacts.root,

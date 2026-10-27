@@ -1,6 +1,7 @@
 import type { Schema } from './contract.js';
 import { compileDocumentation, factEnums, documentationPositions } from './documentation-plan.js';
 import { factNotes, factSourceDocumentation } from './documentation-format.js';
+import type { DocumentationFact } from './documentation-plan.js';
 
 export function schemaLiteral(text: string, table = false): string {
   const value = (table ? text.replaceAll('|', '\\|') : text).replace(/[\r\n]+/g, ' ');
@@ -28,6 +29,7 @@ const symbolNames = new WeakMap<
   object,
   WeakMap<object, Map<boolean, Readonly<Record<string, string>>>>
 >();
+const comments = new WeakMap<DocumentationFact, WeakMap<object, string>>();
 /** Share the target's symbol inventory across field projections. */
 export function modelDocumentationNames(
   definitions: Readonly<Record<string, Schema>>,
@@ -59,13 +61,21 @@ export function schemaComment(
 ): string {
   const names = modelDocumentationNames(definitions, response, aliases);
   const facts = compileDocumentation(s, definitions, response);
+  let projections = comments.get(facts.root);
+  if (!projections) comments.set(facts.root, (projections = new WeakMap()));
+  const saved = projections.get(names);
+  if (saved !== undefined) return saved;
   const notes = factSourceDocumentation(
     facts.root,
     facts.definitions,
     documentationPositions(facts.root, facts.definitions),
     names,
   );
-  return notes ? '\n/** ' + notes.replaceAll('*/', '* /').replace(/[\r\n]+/g, ' ') + ' */\n' : '';
+  const comment = notes
+    ? '\n/** ' + notes.replaceAll('*/', '* /').replace(/[\r\n]+/g, ' ') + ' */\n'
+    : '';
+  projections.set(names, comment);
+  return comment;
 }
 
 export interface SchemaEnumValues {
