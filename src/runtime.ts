@@ -254,7 +254,7 @@ export interface CredentialProvider {
   invalidate?(): void;
 }
 
-export type WorkloadIdentitySource = 'auto' | 'none' | 'token' | 'token_file';
+export type WorkloadIdentitySource = 'auto' | 'none' | 'token' | 'token_file' | 'github_actions';
 export interface WorkloadIdentityOptions {
   workloadIdentityId: string;
   source?: WorkloadIdentitySource;
@@ -322,6 +322,7 @@ class AmbientCredentialProvider implements CredentialProvider {
         ...responseTokens,
         process.env[env.apiKey],
         process.env[env.token],
+        process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN,
       ])
         if (token)
           for (const encoded of [token, encodeURIComponent(token)])
@@ -362,7 +363,7 @@ class AmbientCredentialProvider implements CredentialProvider {
       if (!id)
         fail(
           'no_credentials',
-          `Set ${env.apiKey}, ${env.token}, or ${prefix}_WORKLOAD_IDENTITY_ID with ${prefix}_OIDC_TOKEN or ${prefix}_OIDC_TOKEN_FILE`,
+          `Set ${env.apiKey}, ${env.token}, or ${prefix}_WORKLOAD_IDENTITY_ID with ${prefix}_OIDC_TOKEN, ${prefix}_OIDC_TOKEN_FILE, or GitHub Actions permissions: id-token: write`,
         );
     }
     if (typeof id !== 'string' || !id || /[\r\n]/.test(id))
@@ -378,9 +379,20 @@ class AmbientCredentialProvider implements CredentialProvider {
     const audience = this.identity?.audience ?? read('OIDC_AUDIENCE') ?? url.origin;
     const scope = this.identity?.scope ?? read('OIDC_SCOPE');
     const file = read('OIDC_TOKEN_FILE');
-    if (source === 'auto') source = read('OIDC_TOKEN') ? 'token' : file ? 'token_file' : 'none';
-    if (source !== 'token' && source !== 'token_file')
-      fail('source_unavailable', 'Supported sources: token, token_file');
+    if (source === 'auto')
+      source = read('OIDC_TOKEN')
+        ? 'token'
+        : file
+          ? 'token_file'
+          : process.env.GITHUB_ACTIONS === 'true'
+            ? 'github_actions'
+            : 'none';
+    if (!['token', 'token_file', 'github_actions'].includes(source))
+      fail('source_unavailable', 'Supported sources: token, token_file, github_actions');
+    const githubUrl = process.env.ACTIONS_ID_TOKEN_REQUEST_URL;
+    const githubToken = process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
+    if (source === 'github_actions' && (!githubUrl || !githubToken))
+      fail('source_unavailable', 'GitHub Actions requires permissions: id-token: write');
     const sourceKey =
       source === 'token'
         ? process
@@ -388,7 +400,13 @@ class AmbientCredentialProvider implements CredentialProvider {
             .createHash('sha256')
             .update(read('OIDC_TOKEN') ?? '')
             .digest('hex')
-        : file;
+        : source === 'github_actions'
+          ? process
+              .getBuiltinModule('crypto')
+              .createHash('sha256')
+              .update(JSON.stringify([githubUrl, githubToken]))
+              .digest('hex')
+          : file;
     const key = JSON.stringify([
       url.origin,
       this.config.workloadIdentity.tokenPath,
@@ -420,16 +438,78 @@ class AmbientCredentialProvider implements CredentialProvider {
       return credential(value);
     }
     const exchange = async (): Promise<CachedCredential> => {
-      try {
-        subject =
-          source === 'token'
-            ? (read('OIDC_TOKEN') ?? '')
-            : file
-              ? (await process.getBuiltinModule('fs/promises').readFile(file, 'utf8')).trim()
-              : '';
-      } catch {
-        fail('subject_token_request_failed', 'Cannot read the configured token file');
-      }
+      const deadline = context?.deadline ?? performance.now() + 30000;
+      if (source === 'github_actions') {
+        let endpoint: URL;
+        try {
+          endpoint = new URL(githubUrl ?? '');
+          if (
+            endpoint.username ||
+            endpoint.password ||
+            endpoint.hash ||
+            (endpoint.protocol !== 'https:' &&
+              !(
+                endpoint.protocol === 'http:' &&
+                ['localhost', '127.0.0.1', '[::1]'].includes(endpoint.hostname)
+              ))
+          )
+            throw new Error();
+          endpoint.searchParams.set('audience', audience);
+        } catch {
+          return fail(
+            'source_unavailable',
+            'GitHub Actions identity endpoint requires HTTPS or loopback',
+          );
+        }
+        const controller = new AbortController();
+        const abort = () => controller.abort();
+        context?.signal?.addEventListener('abort', abort, { once: true });
+        if (context?.signal?.aborted || deadline <= performance.now()) controller.abort();
+        const timer = schedule(abort, Math.max(0, deadline - performance.now()));
+        try {
+          const response = await abortable(
+            (context?.transport ?? fetch)(endpoint, {
+              method: 'GET',
+              headers: { authorization: 'Bearer ' + githubToken, accept: 'application/json' },
+              redirect: 'manual',
+              signal: controller.signal,
+            }),
+            controller.signal,
+          );
+          if (response.status !== 200)
+            return fail(
+              'subject_token_request_failed',
+              'GitHub Actions identity request failed; check permissions: id-token: write',
+            );
+          const payload: unknown = JSON.parse(await abortable(response.text(), controller.signal));
+          if (
+            !payload ||
+            typeof payload !== 'object' ||
+            !('value' in payload) ||
+            typeof payload.value !== 'string'
+          )
+            return fail('subject_token_request_failed', 'Invalid GitHub Actions identity response');
+          subject = payload.value;
+        } catch {
+          return fail(
+            'subject_token_request_failed',
+            'GitHub Actions identity request failed; check permissions: id-token: write',
+          );
+        } finally {
+          timer.cancel();
+          context?.signal?.removeEventListener('abort', abort);
+        }
+      } else
+        try {
+          subject =
+            source === 'token'
+              ? (read('OIDC_TOKEN') ?? '')
+              : file
+                ? (await process.getBuiltinModule('fs/promises').readFile(file, 'utf8')).trim()
+                : '';
+        } catch {
+          fail('subject_token_request_failed', 'Cannot read the configured token file');
+        }
       if (!subject) fail('source_unavailable', 'The selected token source is empty');
       try {
         const parts = subject.split('.');
@@ -466,7 +546,6 @@ class AmbientCredentialProvider implements CredentialProvider {
         [this.config.workloadIdentity.credentialParameter]: id ?? fail('source_unavailable'),
         ...(scope === undefined ? {} : { scope }),
       });
-      const deadline = context?.deadline ?? performance.now() + 30000;
       for (let attempt = 0; attempt < 3; attempt++) {
         const remaining = deadline - performance.now();
         if (remaining <= 0) fail('exchange_unavailable', 'Exchange deadline exceeded');

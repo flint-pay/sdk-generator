@@ -692,6 +692,11 @@ function exampleCredentials(c: Contract, op: Operation): ExampleCredentials {
   const { mode, shortcut } = exampleAuthentication(c, op);
   const authentication = mode ? c.authentication?.[mode] : undefined;
   const required = op.authenticated;
+  const defaults =
+    c.config.auth && 'defaultCredentials' in c.config.auth
+      ? c.config.auth.defaultCredentials
+      : undefined;
+  if (defaults && mode === defaults.mode) return { required, kind: 'none' };
   if (shortcut)
     return {
       required,
@@ -1065,7 +1070,9 @@ function packageReadme(
   ].map((env) => '`' + env + '`');
   const errorSnippet = errorClassExample(c, target);
   const authLink = c.authentication ? ' ([authentication](RUNTIME.md#authentication))' : '';
-  const setup = `Set ${markdownList(['`API_BASE_URL`', ...environment])}${authLink}, then replace the sample values with your own. Choose your sandbox or local mock URL explicitly${c.defaultBaseUrl !== undefined ? `; the API declares ${c.defaultBaseUrl} as its default server` : ''}.`;
+  const ambient =
+    c.config.auth && 'defaultCredentials' in c.config.auth && c.config.auth.defaultCredentials;
+  const setup = `Set ${markdownList(['`API_BASE_URL`', ...environment])}${authLink}${ambient ? ' and configure default credentials as described in the authentication guide' : ''}, then replace the sample values with your own. Choose your sandbox or local mock URL explicitly${c.defaultBaseUrl !== undefined ? `; the API declares ${c.defaultBaseUrl} as its default server` : ''}.`;
   const resultData = node ? 'result.data' : '$result->data';
   const resultMeta = node ? 'result.meta' : '$result->meta';
   const returnMode =
@@ -1665,7 +1672,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     if (phpContract.defaultCredentials)
       put(
         'src/credentials.php',
-        `<?php\ndeclare(strict_types=1);\nnamespace ${ns};\nfunction defaultCredentials(): CredentialProvider { return new AmbientCredentialProvider(${'json_decode(' + php(JSON.stringify(phpContract.defaultCredentials)) + ', true)'}, null, ${c.defaultBaseUrl === undefined ? 'null' : php(c.defaultBaseUrl)}); }\n/** @param array{workloadIdentityId: string, source?: 'auto'|'none'|'token'|'token_file', audience?: string, scope?: string} $options */\nfunction workloadIdentityCredentials(array $options): CredentialProvider { return new AmbientCredentialProvider(${'json_decode(' + php(JSON.stringify(phpContract.defaultCredentials)) + ', true)'}, $options, ${c.defaultBaseUrl === undefined ? 'null' : php(c.defaultBaseUrl)}); }\n`,
+        `<?php\ndeclare(strict_types=1);\nnamespace ${ns};\nfunction defaultCredentials(): CredentialProvider { return new AmbientCredentialProvider(${'json_decode(' + php(JSON.stringify(phpContract.defaultCredentials)) + ', true)'}, null, ${c.defaultBaseUrl === undefined ? 'null' : php(c.defaultBaseUrl)}); }\n/** @param array{workloadIdentityId: string, source?: 'auto'|'none'|'token'|'token_file'|'github_actions', audience?: string, scope?: string} $options */\nfunction workloadIdentityCredentials(array $options): CredentialProvider { return new AmbientCredentialProvider(${'json_decode(' + php(JSON.stringify(phpContract.defaultCredentials)) + ', true)'}, $options, ${c.defaultBaseUrl === undefined ? 'null' : php(c.defaultBaseUrl)}); }\n`,
       );
     put('custom/.gitkeep', '');
     put(
@@ -3590,7 +3597,7 @@ function runtimeGuide(
     (node ? '' : ' and closures') +
     ' never trigger this refresh retry. Provider exceptions become authentication errors without retaining potentially sensitive causes.\n\n' +
     (c.config.auth && 'defaultCredentials' in c.config.auth && c.config.auth.defaultCredentials
-      ? 'Default credential discovery is lazy: explicit credentials, then configured API key/access token environment variables (both set is ambiguous_credentials), then configured workload identity. Set ambientCredentials: false to disable it. defaultCredentials() and workloadIdentityCredentials(options) return providers supporting token and token_file sources and cached refresh.\n\n'
+      ? 'Default credential discovery is lazy: explicit credentials, then configured API key/access token environment variables (both set is ambiguous_credentials), then configured workload identity. Set ambientCredentials: false to disable it. defaultCredentials() and workloadIdentityCredentials(options) return providers supporting token, token_file and github_actions sources and cached refresh.\n\n'
       : 'This SDK does not discover credentials from environment variables. The example scripts explicitly read API_BASE_URL and their named credential variables.\n\n') +
     `## Responses and errors\n\nPayload methods return the decoded body or configured payload path directly. WithResponse companions return SdkResponse with body, meta and raw without unwrapping. Each invocation makes its own request; choose one form per action. Result-mode methods return Result with data (the complete body), meta and raw. API envelopes remain inside that body. Pagination Pages and polling Wait follow the base return mode; their WithResponse companions expose the complete body and metadata. Items yields individual items.\n\n${node ? 'Metadata uses properties, and binary bodies are Uint8Array.' : 'Metadata uses array keys, and binary bodies are binary-safe strings.'} Raw JSON is buffered text and may contain sensitive data.\n\n### Errors\n\n` +
     snippet(errorClassExample(c, target)) +
