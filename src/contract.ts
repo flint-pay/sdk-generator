@@ -982,7 +982,7 @@ function checkRepresentations(s: Schema, p: string, explicitNumbers = false): vo
           : type,
     );
   };
-  const disjoint = (left: Schema[], right: Schema[], relation: Relation): boolean => {
+  const disjointAtRoot = (left: Schema[], right: Schema[], relation: Relation): boolean => {
     for (const a of left)
       for (const b of right) {
         const at = representationTypes(a, relation),
@@ -998,6 +998,10 @@ function checkRepresentations(s: Schema, p: string, explicitNumbers = false): vo
         )
           return true;
       }
+    return false;
+  };
+  const disjoint = (left: Schema[], right: Schema[], relation: Relation): boolean => {
+    if (disjointAtRoot(left, right, relation)) return true;
     const required = new Set([...left, ...right].flatMap((shape) => shape.required ?? []));
     for (const key of required) {
       const children = (shapes: Schema[]) =>
@@ -1047,6 +1051,41 @@ function checkRepresentations(s: Schema, p: string, explicitNumbers = false): vo
   };
   const compared = new Set<string>();
   let representationVersion = 0;
+  // Overlap checks can only reject (or annotate) pairs involving an exact
+  // number. Ignore annotation payloads and unrelated schema constraints when
+  // proving that a subtree cannot contain such a representation conflict.
+  const representationKinds = new WeakMap<Schema, number>();
+  const exact = 1,
+    native = 2,
+    string = 4;
+  const kindsIn = (shape: Schema): number => {
+    // Legacy configured reference metadata can bypass child schema validation.
+    if (!shape || typeof shape !== 'object') return 0;
+    const previous = representationKinds.get(shape);
+    if (previous !== undefined) return previous;
+    const kind = scalar(shape);
+    let kinds =
+      kind === 'exact-number'
+        ? exact
+        : kind === 'native-number'
+          ? native
+          : kind === 'string'
+            ? string
+            : 0;
+    for (const child of [
+      ...Object.values(shape.properties ?? {}),
+      ...(shape.allOf ?? []),
+      ...(shape.oneOf ?? []),
+      ...(shape.anyOf ?? []),
+      ...(shape.items ? [shape.items] : []),
+      ...(typeof shape.additionalProperties === 'object' ? [shape.additionalProperties] : []),
+    ])
+      kinds |= kindsIn(child);
+    // Comparisons only turn exact numbers into wrapped numbers, so a cached
+    // summary remains a conservative overestimate after that annotation.
+    representationKinds.set(shape, kinds);
+    return kinds;
+  };
   const checkOverlap = (
     left: Schema[],
     right: Schema[],
@@ -1054,6 +1093,11 @@ function checkRepresentations(s: Schema, p: string, explicitNumbers = false): vo
     relation: Relation = 'alternatives',
   ): void => {
     if (!left.length || !right.length) return;
+    if (disjointAtRoot(left, right, relation)) return;
+    const a = left.reduce((kinds, shape) => kinds | kindsIn(shape), 0);
+    const b = right.reduce((kinds, shape) => kinds | kindsIn(shape), 0);
+    const other = relation === 'intersection' ? native : string;
+    if (!((a & exact && b & other) || (b & exact && a & other))) return;
     // Cache only a completed comparison of this relation. Individually valid
     // alternatives can still have incompatible cross-branch intersections.
     const key = JSON.stringify([relation, left.map(fingerprint), right.map(fingerprint)]);
