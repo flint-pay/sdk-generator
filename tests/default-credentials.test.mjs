@@ -97,6 +97,12 @@ const envKeys = [
 ];
 function clearEnv() {
   for (const key of envKeys) delete process.env['EXAMPLE_' + key];
+  for (const key of [
+    'GITHUB_ACTIONS',
+    'ACTIONS_ID_TOKEN_REQUEST_URL',
+    'ACTIONS_ID_TOKEN_REQUEST_TOKEN',
+  ])
+    delete process.env[key];
 }
 
 test('shared default credential conformance in Node and PHP', async () => {
@@ -600,4 +606,143 @@ new Client(new ClientOptions(apiKey: workloadIdentityCredentials(['workloadIdent
     { encoding: 'utf8' },
   );
   assert.equal(result.status, 0, result.stdout + result.stderr);
+});
+
+test('GitHub Actions source in Node and PHP: auto, single exchange, permission and audience failures', async () => {
+  const { createServer } = await import('node:http');
+  const { spawn } = await import('node:child_process');
+  let baseUrl, scenario, requests, exchanges, calls;
+  const secret = 'synthetic-github-request-secret';
+  const server = createServer(async (req, res) => {
+    const url = new URL(req.url, baseUrl);
+    if (url.pathname === '/github') {
+      requests++;
+      assert.equal(req.method, 'GET');
+      assert.equal(req.headers.authorization, 'Bearer ' + secret);
+      assert.equal(url.searchParams.get('audience'), baseUrl);
+      assert.equal(url.searchParams.get('existing'), 'retained');
+      if (scenario === 'denied') {
+        res.writeHead(403);
+        res.end(secret);
+        return;
+      }
+      if (scenario === 'redirect') {
+        res.writeHead(302, { location: '/leaked' });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          value: jwt(
+            {
+              aud: scenario === 'wrong-audience' ? 'wrong' : baseUrl,
+              expOffset: scenario === 'expired' ? -1 : 3600,
+            },
+            Date.now(),
+          ),
+        }),
+      );
+    } else if (url.pathname === '/v1/oauth/token') {
+      exchanges++;
+      let body = '';
+      for await (const chunk of req) body += chunk;
+      const form = new URLSearchParams(body);
+      const claims = JSON.parse(Buffer.from(form.get('subject_token').split('.')[1], 'base64url'));
+      assert.equal(claims.aud, baseUrl);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          access_token: 'synthetic-github-access',
+          token_type: 'Bearer',
+          issued_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+          expires_in: 3600,
+        }),
+      );
+    } else {
+      assert.equal(url.pathname, '/read', 'redirect must not be followed');
+      calls++;
+      assert.equal(req.headers.authorization, 'Bearer synthetic-github-access');
+      res.writeHead(204);
+      res.end();
+    }
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  baseUrl = 'http://127.0.0.1:' + server.address().port;
+  const helper = join(root, 'github.php');
+  writeFileSync(
+    helper,
+    `<?php
+require $argv[1] . '/src/autoload.php';
+$client = new Example\\Discovery\\Client(new Example\\Discovery\\ClientOptions(baseUrl: $argv[2], allowInsecureHttp: true));
+try { for ($i = 0; $i < 100; $i++) $client->api->read(); echo 'ok'; }
+catch (Example\\Discovery\\SdkError $e) { if (str_contains($e->getMessage(), 'synthetic-github-request-secret')) exit(2); echo $e->errorCode; }
+`,
+  );
+  try {
+    for (const language of ['node', 'php'])
+      for (const name of [
+        'success',
+        'explicit',
+        'missing-permission',
+        'denied',
+        'wrong-audience',
+        'expired',
+        'redirect',
+      ]) {
+        clearEnv();
+        scenario = name;
+        requests = exchanges = calls = 0;
+        process.env.EXAMPLE_WORKLOAD_IDENTITY_ID = 'wid_github_' + language + '_' + name;
+        process.env.GITHUB_ACTIONS = 'true';
+        process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN = secret;
+        if (name !== 'missing-permission')
+          process.env.ACTIONS_ID_TOKEN_REQUEST_URL =
+            (language === 'php' ? baseUrl.replace('127.0.0.1', 'localhost') : baseUrl) +
+            '/github?existing=retained&audience=old';
+        if (name === 'explicit') process.env.EXAMPLE_OIDC_SOURCE = 'github_actions';
+        const expected =
+          name === 'success' || name === 'explicit'
+            ? 'ok'
+            : name === 'missing-permission'
+              ? 'source_unavailable'
+              : name === 'wrong-audience' || name === 'expired'
+                ? 'audience_mismatch'
+                : 'subject_token_request_failed';
+        if (language === 'node') {
+          let result = 'ok';
+          try {
+            const client = new sdk.Client({ baseUrl, allowInsecureHttp: true });
+            if (expected === 'ok')
+              await Promise.all(Array.from({ length: 100 }, () => client.api.read()));
+            else await client.api.read();
+          } catch (e) {
+            result = e.code;
+            assert.ok(!e.message.includes(secret));
+          }
+          assert.equal(result, expected, name);
+        } else {
+          const child = spawn('php', [helper, join(output, 'php'), baseUrl], {
+            env: { ...process.env, http_proxy: 'http://127.0.0.1:1', no_proxy: '127.0.0.1' },
+          });
+          let stdout = '',
+            stderr = '';
+          child.stdout.on('data', (chunk) => (stdout += chunk));
+          child.stderr.on('data', (chunk) => (stderr += chunk));
+          const code = await new Promise((resolve, reject) => {
+            child.on('error', reject);
+            child.on('close', resolve);
+          });
+          assert.equal(code, 0, stderr);
+          assert.equal(stdout, expected, name);
+        }
+        assert.equal(requests, name === 'missing-permission' ? 0 : 1, name);
+        assert.equal(exchanges, expected === 'ok' ? 1 : 0, name);
+        assert.equal(calls, expected === 'ok' ? 100 : 0, name);
+      }
+  } finally {
+    clearEnv();
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
 });

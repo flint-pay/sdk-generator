@@ -262,6 +262,7 @@ final class AmbientCredentialProvider implements CredentialProvider
                     ...$responseTokens,
                     getenv($environment['apiKey']),
                     getenv($environment['token']),
+                    getenv('ACTIONS_ID_TOKEN_REQUEST_TOKEN'),
                 ]
                 as $secret
             ) {
@@ -332,7 +333,7 @@ final class AmbientCredentialProvider implements CredentialProvider
                         $prefix .
                         '_OIDC_TOKEN or ' .
                         $prefix .
-                        '_OIDC_TOKEN_FILE',
+                        '_OIDC_TOKEN_FILE, or GitHub Actions permissions: id-token: write',
                 );
             }
         }
@@ -365,12 +366,28 @@ final class AmbientCredentialProvider implements CredentialProvider
         $scope = $this->identity['scope'] ?? $read('OIDC_SCOPE');
         $file = $read('OIDC_TOKEN_FILE');
         if ($source === 'auto') {
-            $source = $read('OIDC_TOKEN') ? 'token' : ($file ? 'token_file' : 'none');
+            $source = $read('OIDC_TOKEN')
+                ? 'token'
+                : ($file
+                    ? 'token_file'
+                    : (getenv('GITHUB_ACTIONS') === 'true'
+                        ? 'github_actions'
+                        : 'none'));
         }
-        if (!in_array($source, ['token', 'token_file'], true)) {
-            $fail('source_unavailable', 'Supported sources: token, token_file');
+        if (!in_array($source, ['token', 'token_file', 'github_actions'], true)) {
+            $fail('source_unavailable', 'Supported sources: token, token_file, github_actions');
         }
-        $sourceKey = $source === 'token' ? hash('sha256', $read('OIDC_TOKEN') ?? '') : $file;
+        $githubUrl = getenv('ACTIONS_ID_TOKEN_REQUEST_URL');
+        $githubToken = getenv('ACTIONS_ID_TOKEN_REQUEST_TOKEN');
+        if ($source === 'github_actions' && (!$githubUrl || !$githubToken)) {
+            $fail('source_unavailable', 'GitHub Actions requires permissions: id-token: write');
+        }
+        $sourceKey =
+            $source === 'token'
+                ? hash('sha256', $read('OIDC_TOKEN') ?? '')
+                : ($source === 'github_actions'
+                    ? hash('sha256', json_encode([$githubUrl, $githubToken]))
+                    : $file);
         $key = hash(
             'sha256',
             json_encode([
@@ -448,7 +465,74 @@ final class AmbientCredentialProvider implements CredentialProvider
         $flight = (object) ['done' => false, 'result' => null, 'error' => null];
         self::$active[$key] = $flight;
         try {
-            if ($source === 'token') {
+            if ($source === 'github_actions') {
+                $endpoint = parse_url($githubUrl);
+                if (
+                    $endpoint === false ||
+                    isset($endpoint['user']) ||
+                    isset($endpoint['pass']) ||
+                    isset($endpoint['fragment']) ||
+                    !(
+                        ($endpoint['scheme'] ?? '') === 'https' ||
+                        (($endpoint['scheme'] ?? '') === 'http' &&
+                            in_array(
+                                $endpoint['host'] ?? '',
+                                ['localhost', '127.0.0.1', '[::1]'],
+                                true,
+                            ))
+                    )
+                ) {
+                    $fail(
+                        'source_unavailable',
+                        'GitHub Actions identity endpoint requires HTTPS or loopback',
+                    );
+                }
+                parse_str($endpoint['query'] ?? '', $query);
+                $query['audience'] = $audience;
+                $endpointUrl =
+                    explode('?', $githubUrl, 2)[0] .
+                    '?' .
+                    http_build_query($query, '', '&', PHP_QUERY_RFC3986);
+                $remaining = $deadline - hrtime(true) / 1e6;
+                if ($remaining <= 0 || ($context['cancellation'] ?? null)?->isCancelled()) {
+                    $fail(
+                        'subject_token_request_failed',
+                        'GitHub Actions identity request deadline exceeded or cancelled',
+                    );
+                }
+                $request = [
+                    'url' => $endpointUrl,
+                    'method' => 'GET',
+                    'headers' => [
+                        'authorization' => 'Bearer ' . $githubToken,
+                        'accept' => 'application/json',
+                    ],
+                    'body' => '',
+                    'timeoutMs' => max(1, (int) ceil($remaining)),
+                    'cancellation' => $context['cancellation'] ?? null,
+                ];
+                try {
+                    $response = isset($context['transport'])
+                        ? $context['transport']($request)
+                        : self::send($request);
+                } catch (\Throwable) {
+                    $fail('subject_token_request_failed', 'GitHub Actions identity request failed');
+                }
+                if (($response['failureCode'] ?? null) || $response['status'] !== 200) {
+                    $fail(
+                        'subject_token_request_failed',
+                        'GitHub Actions identity request failed; check permissions: id-token: write',
+                    );
+                }
+                $payload = json_decode($response['body'] ?? '', true);
+                if (!is_array($payload) || !is_string($payload['value'] ?? null)) {
+                    $fail(
+                        'subject_token_request_failed',
+                        'Invalid GitHub Actions identity response',
+                    );
+                }
+                $subject = $payload['value'];
+            } elseif ($source === 'token') {
                 $subject = $read('OIDC_TOKEN') ?? '';
             } else {
                 $value = $file ? @file_get_contents($file) : '';
@@ -630,15 +714,15 @@ final class AmbientCredentialProvider implements CredentialProvider
         try {
             curl_setopt_array($ch, [
                 CURLOPT_URL => $request['url'],
-                CURLOPT_POST => true,
+                CURLOPT_CUSTOMREQUEST => $request['method'],
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_FOLLOWLOCATION => false,
                 CURLOPT_TIMEOUT_MS => $request['timeoutMs'],
-                CURLOPT_POSTFIELDS => $request['body'],
-                CURLOPT_HTTPHEADER => [
-                    'Content-Type: application/x-www-form-urlencoded',
-                    'Accept: application/json',
-                ],
+                CURLOPT_HTTPHEADER => array_map(
+                    static fn($name, $value) => $name . ': ' . $value,
+                    array_keys($request['headers']),
+                    $request['headers'],
+                ),
                 CURLOPT_NOPROGRESS => false,
                 CURLOPT_XFERINFOFUNCTION => static fn() => $request['cancellation']?->isCancelled()
                     ? 1
@@ -653,6 +737,12 @@ final class AmbientCredentialProvider implements CredentialProvider
                     return strlen($line);
                 },
             ]);
+            if ($request['method'] === 'GET') {
+                curl_setopt($ch, CURLOPT_PROXY, '');
+            }
+            if ($request['method'] === 'POST') {
+                curl_setopt($ch, CURLOPT_POSTFIELDS, $request['body']);
+            }
             $body = curl_exec($ch);
             return [
                 'status' => curl_getinfo($ch, CURLINFO_RESPONSE_CODE),

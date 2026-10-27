@@ -4,6 +4,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ## Unreleased (generator 0.1.0)
 
+- Default credential discovery supports GitHub Actions identity tokens in both runtimes, including audience checks, cached exchange and permission errors. Generated merchant examples use configured default credentials when available.
+
 - Update the pinned `markdown-it` runtime dependency to 15.0.3 to fix quadratic parsing denial-of-service vulnerabilities.
 
 - **Generated documentation layout:** `REFERENCE.md` is now a resource index; operation sections move to `reference/<resource>.md`. Large `MODELS.md` references become indexes linking to `models/<name>.md`. Update saved deep links to the new files. Both packages include `llms.txt`. Named responses and shared named request bodies link to canonical model tables; shared calling conventions and idempotency policies live in `RUNTIME.md`. Declared provider error-code lists move to `ERRORS.md` when configured.
