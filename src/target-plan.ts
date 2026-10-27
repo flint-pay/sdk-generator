@@ -348,10 +348,32 @@ export function compilePhpModel(
   }
   documentationDefinitions = definitionView;
   const boundNames: Record<string, string> = {};
+  let bindingChangesStructure = false;
   // Bind model links to the same target representation that emits getter types.
   const bind = (s: Schema, value?: PhpRepresentation): Schema => {
     if (!value) return s;
-    if (value.kind === 'nullable') value = value.value;
+    if (value.kind === 'nullable') {
+      // Entity identity belongs to the concrete value, never its nullable
+      // wrapper. Keep null at the same depth for fields, items and map values.
+      const branches = s.oneOf ?? s.anyOf;
+      if (branches) {
+        const keyword = s.oneOf ? 'oneOf' : 'anyOf';
+        const { ['x-sdk-type-name']: _wrapperName, ...wrapper } = s;
+        return {
+          ...wrapper,
+          [keyword]: branches.map((child) =>
+            child.type === 'null' ? child : bind(child, value.value),
+          ),
+        };
+      }
+      const types = Array.isArray(s.type) ? s.type : [s.type];
+      if (types.includes('null')) return bind(s, value.value);
+      // A composition/reference can carry the nullable value without a local
+      // union node. Its entity identity still describes only the concrete
+      // representation. Retain the compiler's null alternative outside it.
+      bindingChangesStructure = true;
+      return { anyOf: [bind(s, value.value), { type: 'null' }] };
+    }
     if (value.kind === 'entity') boundNames[value.name] = value.name;
     return {
       ...s,
@@ -386,8 +408,9 @@ export function compilePhpModel(
   };
   let documentationSchema = bind(documentationView(declaration), bindings);
   const codec = compileCodec(schema);
-  // Bindings and publication views change annotations, not codec instructions.
-  const documentationCodec = declaration === schema ? codec : compileCodec(documentationSchema);
+  // Reuse instructions only while binding preserves the paired schema layout.
+  const documentationCodec =
+    declaration === schema && !bindingChangesStructure ? codec : compileCodec(documentationSchema);
   let documentationFacts = compileDocumentation(
     documentationSchema,
     documentationDefinitions,

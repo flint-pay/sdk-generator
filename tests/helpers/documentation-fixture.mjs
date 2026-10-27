@@ -63,6 +63,7 @@ export function documentationFixture(directory) {
       ],
     },
     model_items: { type: 'array', items: ref('ModelA') },
+    config: ref('RootConfig'),
     annotations: {
       type: 'string',
       description: 'A synthetic description.',
@@ -75,7 +76,19 @@ export function documentationFixture(directory) {
       ...object({ id: { type: 'string' } }),
       allOf: [{ if: { properties: { id: { const: 'placeholder' } } }, then: { required: ['id'] } }],
     },
+    RootConfig: {
+      type: 'object',
+      minProperties: 1,
+      properties: { label: { type: 'string', minLength: 1 } },
+    },
     Facts: object(fields),
+    Leaf: object({ id: { type: 'string' } }),
+    Envelope: object({
+      single: { anyOf: [ref('Leaf'), { type: 'null' }] },
+      items: { type: 'array', items: { anyOf: [ref('Leaf'), { type: 'null' }] } },
+      map: { type: 'object', additionalProperties: { anyOf: [ref('Leaf'), { type: 'null' }] } },
+      nonnull: ref('Leaf'),
+    }),
     Choice: {
       oneOf: [
         object({
@@ -133,6 +146,21 @@ export function documentationFixture(directory) {
           },
         },
       };
+  paths['/inline-branches'] = {
+    post: {
+      operationId: 'inlineBranches',
+      requestBody: {
+        required: true,
+        content: { 'application/json': { schema: structuredClone(fields.capabilities) } },
+      },
+      responses: {
+        200: {
+          description: 'Synthetic',
+          content: { 'application/json': { schema: ref('Envelope') } },
+        },
+      },
+    },
+  };
   writeFileSync(
     join(directory, 'api.json'),
     JSON.stringify({
@@ -174,12 +202,7 @@ export const documentationMutations = [
     "type = `Array of ${fact.item ? childType(fact.item) : 'any'}`;",
     'type = "Array of any";',
   ],
-  [
-    'model link',
-    'documentation-format.js',
-    'return `[${name}](MODELS.md#${anchor(name)})`;',
-    'return name;',
-  ],
+  ['model link', 'documentation-format.js', '`[${name}](MODELS.md#${anchor(name)})` +', 'name +'],
   [
     'branch constraint',
     'documentation-format.js',
@@ -197,5 +220,70 @@ export const documentationMutations = [
     'sdk-documentation.js',
     'const key = factIdentity(factFromAtoms(factAtoms(shape.fact)));',
     'const key = "merged";',
+  ],
+  [
+    'fact compiler nullability',
+    'documentation-plan.js',
+    'nullable: p.nullable,',
+    'nullable: false,',
+  ],
+  [
+    'dedupe ignores checks',
+    'sdk-documentation.js',
+    'const key = factIdentity(factFromAtoms(factAtoms(shape.fact)));',
+    'const key = factIdentity(JSON.parse(JSON.stringify(factFromAtoms(factAtoms(shape.fact)), (key,value)=>key === "checks" ? {} : value)));',
+  ],
+  [
+    'PHP model links',
+    'package-documentation.js',
+    'export function phpModelReference(',
+    'function _mutatedPhpModelReference(',
+    ['php'],
+  ],
+  [
+    'fact compiler item minimum',
+    'documentation-plan.js',
+    'checks: p.checks,',
+    'checks: Object.fromEntries(Object.entries(p.checks).filter(([key])=>key!=="minimum")),',
+  ],
+  [
+    'PHP projection minLength',
+    'target-plan.js',
+    'default: defaultValue,',
+    'default: defaultValue, minLength: _lostMinLength,',
+    ['php'],
+  ],
+  [
+    'PHP named scalar nullability',
+    'target-plan.js',
+    "bind(child, value?.kind === 'record' ? value.fields[field] : undefined)",
+    "bind(child, value?.kind === 'record' ? (value.fields[field]?.kind === 'nullable' && value.fields[field].value.kind === 'entity' ? value.fields[field].value : value.fields[field]) : undefined)",
+    ['php'],
+  ],
+  [
+    'PHP named item nullability',
+    'target-plan.js',
+    "bind(s.items, value?.kind === 'list' ? value.value : undefined)",
+    "bind(s.items, value?.kind === 'list' ? (value.value.kind === 'nullable' && value.value.value.kind === 'entity' ? value.value.value : value.value) : undefined)",
+    ['php'],
+  ],
+  [
+    'PHP named map nullability',
+    'target-plan.js',
+    "value?.kind === 'map' ? value.value : undefined)",
+    "value?.kind === 'map' ? (value.value.kind === 'nullable' && value.value.value.kind === 'entity' ? value.value.value : value.value) : undefined)",
+    ['php'],
+  ],
+  [
+    'inline item enum merge',
+    'sdk-documentation.js',
+    'enumNotes(factEnums(variant, documentedDefinitions), literal, enumLinks)',
+    'enumNotes(factEnums(fact, documentedDefinitions), literal, enumLinks)',
+  ],
+  [
+    'inline item enum association',
+    'sdk-documentation.js',
+    'enumNotes(factEnums(variant, documentedDefinitions), literal, enumLinks)',
+    '""',
   ],
 ];

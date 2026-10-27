@@ -790,7 +790,7 @@ export function bodyReference(
         output += `#### ${title}\n\n${factNotes(variant, { literal, examples: false })}\n\n`;
         output +=
           document(variant, title, seen, parent) ||
-          `Body shape: ${factType(variant, documentedDefinitions, names)}.\n\n`;
+          `Value shape: ${factType(variant, documentedDefinitions, names)}. ${factCollectionNotes(variant, { literal, examples: false })} ${enumNotes(factEnums(variant, documentedDefinitions), literal, enumLinks)}\n\n`;
       }
     // Composition-only wrappers can hide unions several allOf/reference levels
     // deep. Keep the complete common field view while following each wrapper.

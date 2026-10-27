@@ -1,3 +1,4 @@
+import { rawDocumentationInput } from './helpers/raw-documentation.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -237,6 +238,10 @@ test('canonical union tables retain effective branch fields, presence, types and
       }),
     );
     const contract = loadContract(join(directory, 'api.json'), join(directory, 'sdk.json'));
+    const oracleInput = rawDocumentationInput(
+      join(directory, 'api.json'),
+      join(directory, 'sdk.json'),
+    );
     const compiled = compileSdkContract(contract).plan;
     const annotated = structuredClone(compiled);
     for (const model of annotated.php.models)
@@ -255,11 +260,11 @@ test('canonical union tables retain effective branch fields, presence, types and
       const root = join(output, target);
       assertPackageLinks(root);
       assertUniqueFieldTables(root);
-      const branches = assertCanonicalBranchDocumentation(root, contract);
+      const branches = assertCanonicalBranchDocumentation(root, oracleInput);
       assert.ok(branches.checkedBranches > 10);
       assert.ok(branches.checkedFacts > 30);
       (target === 'node' ? assertDocumentedModelExports : assertDocumentedPhpExports)(root);
-      const coverage = assertCanonicalOperationDocumentation(root, contract);
+      const coverage = assertCanonicalOperationDocumentation(root, oracleInput);
       assert.ok(
         coverage.suppressed >= 3,
         `${target}: cover shared request and named response suppression`,
@@ -347,7 +352,7 @@ test('canonical union tables retain effective branch fields, presence, types and
         ),
       );
       assert.throws(
-        () => assertCanonicalBranchDocumentation(root, contract),
+        () => assertCanonicalBranchDocumentation(root, oracleInput),
         /concrete collection degraded to any/,
       );
       writeFileSync(collectionDoc.path, collectionOriginal);
@@ -360,7 +365,7 @@ test('canonical union tables retain effective branch fields, presence, types and
       ]) {
         assert.ok(collectionOriginal.includes(before));
         writeFileSync(collectionDoc.path, collectionOriginal.replace(before, after));
-        assert.throws(() => assertCanonicalBranchDocumentation(root, contract), diagnostic);
+        assert.throws(() => assertCanonicalBranchDocumentation(root, oracleInput), diagnostic);
         writeFileSync(collectionDoc.path, collectionOriginal);
       }
       const directional = operationDocuments(root).find((op) => op.name.endsWith('.directional'));
@@ -393,7 +398,7 @@ test('canonical union tables retain effective branch fields, presence, types and
         ),
       );
       assert.throws(
-        () => assertCanonicalOperationDocumentation(root, contract),
+        () => assertCanonicalOperationDocumentation(root, oracleInput),
         /lost.*eligibility/,
       );
       writeFileSync(branchDoc.path, original);
@@ -405,7 +410,7 @@ test('canonical union tables retain effective branch fields, presence, types and
         ),
       );
       assert.throws(
-        () => assertCanonicalOperationDocumentation(root, contract),
+        () => assertCanonicalOperationDocumentation(root, oracleInput),
         /lost.*eligibility/,
       );
       writeFileSync(branchDoc.path, original);
@@ -432,7 +437,7 @@ test('canonical union tables retain effective branch fields, presence, types and
     broken.generate(contract, brokenOutput);
     for (const target of ['node', 'php'])
       assert.throws(
-        () => assertCanonicalBranchDocumentation(join(brokenOutput, target), contract),
+        () => assertCanonicalBranchDocumentation(join(brokenOutput, target), oracleInput),
         /concrete collection degraded to any/,
       );
   } finally {

@@ -1,3 +1,6 @@
+import { assertNamedNullabilitySource } from './helpers/source-documentation.mjs';
+import { documentedModels } from './helpers/raw-documentation.mjs';
+import { rawDocumentationInput } from './helpers/raw-documentation.mjs';
 import { checkResponseExamples } from './helpers/flint-response-examples.mjs';
 import { assertUniqueFieldTables, packageDocuments } from './helpers/package-docs.mjs';
 import {
@@ -90,9 +93,7 @@ assert.deepEqual(preview(restored,${JSON.stringify(output)}).changes,[],'full ex
       run(process.execPath, [script]);
       assertDocumentedModelExports(join(output, 'node'));
       assertDocumentedPhpExports(join(output, 'php'));
-      const documentedContract = JSON.parse(
-        readFileSync(join(output, '.sdk-generator.json'), 'utf8'),
-      ).interface;
+      const documentedContract = rawDocumentationInput(api, config);
       for (const target of ['node', 'php']) {
         const modelDocs = packageDocuments(join(output, target))
           .filter((path) => /(?:MODELS|models\/[^/]+)\.md$/.test(path))
@@ -116,6 +117,12 @@ assert.deepEqual(preview(restored,${JSON.stringify(output)}).changes,[],'full ex
         );
         assert.ok(branches.checkedBranches > 100, `${target}: full branch fact coverage`);
         console.log(target + ' canonical branch facts ' + JSON.stringify(branches));
+        const sourceCount = assertNamedNullabilitySource(
+          join(output, target),
+          documentedModels(join(output, target), documentedContract),
+        );
+        assert.ok(sourceCount > 50, `${target}: native nullable named-source witnesses`);
+        console.log(target + ' nullable named source facts ' + sourceCount);
         const coverage = assertCanonicalOperationDocumentation(
           join(output, target),
           documentedContract,

@@ -1,6 +1,5 @@
-// Independent certifier input: codec instructions and finalized annotations only.
-// Deliberately imports no documentation compiler, renderer or formatter.
-import { compileCodec } from '../../dist/codec-plan.js';
+// All expectations are test-owned raw OpenAPI keyword derivations.
+import { schemaInstruction } from './raw-documentation.mjs';
 const identity = (value) =>
   JSON.stringify(value, (_, v) =>
     v && !Array.isArray(v) && typeof v === 'object'
@@ -9,6 +8,7 @@ const identity = (value) =>
   );
 const modelIndexes = new WeakMap();
 export function modelName(schema, definitions) {
+  if (schema['x-oracle-inline']) return undefined;
   if (schema['x-sdk-ref'] || schema['x-sdk-type-name'])
     return schema['x-sdk-type-name'] ?? schema['x-sdk-ref'];
   let index = modelIndexes.get(definitions);
@@ -43,8 +43,8 @@ export function schemaFields(schema, definitions, seen = new Set(), intersect = 
   }
   return { fields, required };
 }
-/** Independent compiler facts for graph identity; no backend-only annotations. */
-export function expectedDocumentationFacts(s, definitions, response, p = compileCodec(s)) {
+/** Independent raw-schema facts for graph identity; no backend annotations. */
+export function expectedDocumentationFacts(s, definitions, response, p = schemaInstruction(s)) {
   const child = (schema, plan) => expectedDocumentationFacts(schema, definitions, response, plan);
   return {
     value: p.value,
@@ -148,18 +148,44 @@ function combine(kind, branches) {
     return { ...branches.find((b) => b.kind !== 'null'), nullable: true };
   return { kind, branches: branches.sort((a, b) => identity(a).localeCompare(identity(b))) };
 }
-/** Derive the type tree directly from execution plans; metadata only supplies
- * public symbol identities and annotations absent from execution descriptors. */
+/** Derive the type tree from OpenAPI keywords; parsed declaration metadata
+ * supplies only public symbol spelling. */
 export function expectedType(schema, definitions, names, seen = new Set(), structural) {
   const name = modelName(schema, definitions),
     label = names[name];
+  if (schema['x-oracle-inline']) structural = () => true;
+  if (label && Array.isArray(schema.type) && schema.type.includes('null') && !structural?.(label))
+    return { kind: 'model', name: label, nullable: true };
   if (label && !structural?.(label)) return { kind: 'model', name: label };
   const ref = schema['x-sdk-ref'];
   if (ref && definitions[ref] && !seen.has(ref))
     return expectedType(definitions[ref], definitions, names, new Set(seen).add(ref), structural);
-  const plan = compileCodec(schema);
+  const plan = schemaInstruction(schema);
   if (plan.every?.length) {
-    const nodes = parts(schema, definitions, seen),
+    if (
+      schema.description &&
+      !schema.type &&
+      !schema.properties &&
+      schema.allOf.every(
+        (s) =>
+          s['x-sdk-ref'] &&
+          ['string', 'number', 'integer', 'boolean'].includes(definitions[s['x-sdk-ref']]?.type),
+      )
+    )
+      structural = () => true;
+    const typeParts = (s, refs = new Set()) => {
+      const label = names[modelName(s, definitions)];
+      if (label && !structural?.(label)) return [s];
+      const ref = s['x-sdk-ref'];
+      return [
+        s,
+        ...(s.allOf ?? []).flatMap((v) => typeParts(v, refs)),
+        ...(ref && definitions[ref] && !refs.has(ref)
+          ? typeParts(definitions[ref], new Set(refs).add(ref))
+          : []),
+      ];
+    };
+    const nodes = typeParts(schema, seen),
       itemSchemas = nodes.flatMap((n) => (n.items ? [n.items] : [])),
       valueSchemas = nodes.flatMap((n) =>
         typeof n.additionalProperties === 'object' ? [n.additionalProperties] : [],
@@ -177,8 +203,8 @@ export function expectedType(schema, definitions, names, seen = new Set(), struc
             modelName(n, definitions),
         )
         .map((n) => {
-          const own = compileCodec(n),
-            concrete = nodes.map(compileCodec).filter((p) => p.value.kind !== 'dynamic');
+          const own = schemaInstruction(n),
+            concrete = nodes.map(schemaInstruction).filter((p) => p.value.kind !== 'dynamic');
           const type =
             !n.type && concrete.length
               ? concrete.every((p) => p.nullable)
@@ -304,7 +330,7 @@ export function expectedEnums(schema, definitions, seen = new Set()) {
       );
     }
   };
-  const plan = compileCodec(schema);
+  const plan = schemaInstruction(schema);
   if (plan.members) merge([{ path: '', values: plan.members.map((v) => JSON.stringify(v)) }]);
   if (plan.literal !== undefined) merge([{ path: '', values: [plan.literal] }]);
   if (plan.element)
@@ -330,7 +356,7 @@ export function expectedEnums(schema, definitions, seen = new Set()) {
   return [...result].map(([path, values]) => ({ path, values }));
 }
 export function expectedConstraints(schema, definitions, seen = new Set(), path = '') {
-  const plan = compileCodec(schema);
+  const plan = schemaInstruction(schema);
   const own = [
     ...Object.entries(plan.checks).map(([k, v]) => `${path}:${k.toLowerCase()}:${v}`),
     ...(schema.format ? [`${path}:format:${schema.format}`] : []),
@@ -340,6 +366,12 @@ export function expectedConstraints(schema, definitions, seen = new Set(), path 
     ...new Set([
       ...own,
       ...(schema.allOf ?? []).flatMap((s) => expectedConstraints(s, definitions, seen, path)),
+      ...((schema.oneOf ?? schema.anyOf)?.length === 2 &&
+      (schema.oneOf ?? schema.anyOf).some((s) => s.type === 'null')
+        ? (schema.oneOf ?? schema.anyOf)
+            .filter((s) => s.type !== 'null')
+            .flatMap((s) => expectedConstraints(s, definitions, seen, path))
+        : []),
       ...(ref && definitions[ref] && !seen.has(ref)
         ? expectedConstraints(definitions[ref], definitions, new Set(seen).add(ref), path)
         : []),
@@ -361,7 +393,7 @@ function planShape(plan, definitions, response, refs = new Set()) {
   const nested = [...(plan.every ?? [])];
   if (plan.reference && definitions[plan.reference] && !refs.has(plan.reference)) {
     refs = new Set(refs).add(plan.reference);
-    nested.push(compileCodec(definitions[plan.reference]));
+    nested.push(schemaInstruction(definitions[plan.reference]));
   }
   for (const child of nested) {
     const shape = planShape(child, definitions, response, refs);
@@ -379,8 +411,10 @@ export function expectedAnnotations(schema, definitions) {
     if (seen.has(key)) return;
     seen.add(key);
     for (const part of parts(schema, definitions)) {
-      if (part.description) descriptions.add(part.description);
-      if (Object.hasOwn(part, 'default')) defaults.add(JSON.stringify(part.default));
+      if (part.description && (part === schema || !schema.description))
+        descriptions.add(part.description);
+      if (Object.hasOwn(part, 'default') && (part === schema || !Object.hasOwn(schema, 'default')))
+        defaults.add(JSON.stringify(part.default));
       if (part.items) visit(part.items);
       if (typeof part.additionalProperties === 'object') visit(part.additionalProperties);
     }
@@ -390,7 +424,7 @@ export function expectedAnnotations(schema, definitions) {
 }
 export function expectedFieldFacts(schema, definitions, names, response) {
   const shape = schemaFields(schema, definitions, new Set(), true);
-  const declared = planShape(compileCodec(schema), definitions, response);
+  const declared = planShape(schemaInstruction(schema), definitions, response);
   return Object.entries(shape.fields)
     .filter(([field]) => declared.fields.has(field))
     .map(([field, s]) => {
@@ -426,7 +460,7 @@ export function expectedPositions(
   const constraints = [
     ...new Set(
       ownParts.flatMap((s) => [
-        ...Object.entries(compileCodec(s).checks).map(([k, v]) => `${k.toLowerCase()}:${v}`),
+        ...Object.entries(schemaInstruction(s).checks).map(([k, v]) => `${k.toLowerCase()}:${v}`),
         ...(s.format ? [`format:${s.format}`] : []),
       ]),
     ),

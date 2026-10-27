@@ -1,5 +1,14 @@
 import assert from 'node:assert/strict';
-import { expectedPositions, parsedType } from './documentation-expectations.mjs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import ts from 'typescript';
+import {
+  expectedPositions,
+  parsedType,
+  schemaFields,
+  expectedType,
+  typeLinks,
+} from './documentation-expectations.mjs';
 
 /** Read visible JSDoc/PHPDoc prose, rather than trusting renderer metadata. */
 export function sourceFactRows(source) {
@@ -65,4 +74,102 @@ export function assertSourceFieldDocumentation(source, schema, definitions, name
     `source documentation lost a fact: ${JSON.stringify(expected)}`,
   );
   return expected.length;
+}
+
+/** Certify nullable named values in their own declaration/getter comments.
+ * Optional-getter return null is separate from schema-value nullability. */
+export function assertNamedNullabilitySource(directory, inventory) {
+  const { models, definitions, outputNames } = inventory;
+  const hasModel = (t) =>
+    t.kind === 'model' ||
+    !!(t.item && hasModel(t.item)) ||
+    !!(t.value && hasModel(t.value)) ||
+    (t.branches ?? []).some(hasModel);
+  const hasNull = (t) =>
+    !!t.nullable ||
+    t.kind === 'null' ||
+    !!(t.item && hasNull(t.item)) ||
+    !!(t.value && hasNull(t.value)) ||
+    (t.branches ?? []).some(hasNull);
+  const signature = (t) => {
+    const { name, ...tree } = t;
+    if (tree.item) tree.item = signature(tree.item);
+    if (tree.value) tree.value = signature(tree.value);
+    if (tree.branches) {
+      tree.branches = [
+        ...new Map(tree.branches.map(signature).map((t) => [JSON.stringify(t), t])).values(),
+      ];
+      if (tree.branches.length === 1)
+        return { ...tree.branches[0], ...(tree.nullable ? { nullable: true } : {}) };
+    }
+    return tree;
+  };
+  const declarations = new Map();
+  if (!directory.endsWith('/php'))
+    for (const file of readdirSync(join(directory, 'declarations')).filter((n) =>
+      n.endsWith('.d.ts'),
+    )) {
+      const source = ts.createSourceFile(
+        file,
+        readFileSync(join(directory, 'declarations', file), 'utf8'),
+        ts.ScriptTarget.Latest,
+        true,
+        ts.ScriptKind.TS,
+      );
+      for (const node of source.statements)
+        if (ts.isTypeAliasDeclaration(node)) declarations.set(node.name.text, node.type);
+    }
+  let checked = 0;
+  for (const model of models) {
+    if (!model.response) continue;
+    const fields = schemaFields(model.schema, definitions, new Set(), true).fields;
+    const comments = sourceModelFields(directory, model.name, declarations);
+    for (const [field, schema] of Object.entries(fields)) {
+      if (schema.writeOnly) continue;
+      const type = expectedType(schema, definitions, outputNames);
+      if (!hasModel(type) || !hasNull(type)) continue;
+      const candidates = (comments.get(field) ?? [])
+        .flatMap(sourceFactRows)
+        .map((rows) => rows.find((r) => r.path === '$'))
+        .filter(Boolean);
+      assert.ok(
+        candidates.some(
+          (row) =>
+            JSON.stringify(signature(row.type)) === JSON.stringify(signature(type)) &&
+            row.links.length >= typeLinks(type).length,
+        ),
+        `${model.name}.${field}: source documentation lost nullable named value`,
+      );
+      checked++;
+    }
+  }
+  return checked;
+}
+
+function sourceModelFields(directory, name, declarations) {
+  const result = new Map();
+  const add = (field, text) => {
+    const rows = result.get(field) ?? [];
+    rows.push(text);
+    result.set(field, rows);
+  };
+  if (directory.endsWith('/php')) {
+    const text = readFileSync(join(directory, 'src/classes', name + '.php'), 'utf8');
+    for (const m of text.matchAll(
+      /(\/\*\*[\s\S]*?\*\/)\s*public function \w+\(\): [^{]+\{ return \$this->get\('([^']+)'\); \}/g,
+    ))
+      add(m[2], m[1]);
+  } else {
+    const seen = new Set();
+    const visit = (node) => {
+      if (seen.has(node)) return;
+      seen.add(node);
+      if (ts.isPropertySignature(node)) add(node.name.text, node.getFullText(node.getSourceFile()));
+      else if (ts.isTypeReferenceNode(node) && declarations.has(node.typeName.getText()))
+        visit(declarations.get(node.typeName.getText()));
+      else ts.forEachChild(node, visit);
+    };
+    if (declarations.has(name)) visit(declarations.get(name));
+  }
+  return result;
 }

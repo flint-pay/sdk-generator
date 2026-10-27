@@ -53,7 +53,13 @@ function renderFactType(
   owner: string | undefined,
 ): string {
   const name = fact.model && (names ? names[fact.model] : fact.model);
-  if (name && name !== owner) return `[${name}](MODELS.md#${anchor(name)})`;
+  if (name && name !== owner)
+    return (
+      `[${name}](MODELS.md#${anchor(name)})` +
+      (fact.nullable && fact.value.kind !== 'dynamic' && fact.value.kind !== 'null'
+        ? ' or null'
+        : '')
+    );
   if (ancestors.has(fact)) {
     const reference = fact.model ?? fact.reference;
     return reference

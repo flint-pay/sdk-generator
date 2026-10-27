@@ -1,3 +1,6 @@
+import { spawnSync } from 'node:child_process';
+import { assertIndependentOracleGraph } from './helpers/oracle-import-graph.mjs';
+import { rawDocumentationInput } from './helpers/raw-documentation.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -26,6 +29,8 @@ import { expectedFieldFacts } from './helpers/documentation-expectations.mjs';
 import {
   assertCanonicalBranchDocumentation,
   assertCanonicalOperationDocumentation,
+  operationDocuments,
+  linkedModelSections,
 } from './helpers/canonical-docs.mjs';
 import {
   assertPackageLinks,
@@ -37,15 +42,25 @@ import {
   documentationMutations as mutations,
 } from './helpers/documentation-fixture.mjs';
 
-test('certifier expectations cannot import documentation compilers or formatters', () => {
-  const expectations = readFileSync(
-    new URL('./helpers/documentation-expectations.mjs', import.meta.url),
-    'utf8',
-  );
-  assert.doesNotMatch(
-    expectations,
-    /from ['"][^'"]*(?:sdk-documentation|documentation-format|documentation-plan)/,
-  );
+test('the entire oracle import graph excludes all production modules', () => {
+  const paths = assertIndependentOracleGraph([
+    'tests/helpers/canonical-docs.mjs',
+    'tests/helpers/source-documentation.mjs',
+  ]);
+  assert.ok(paths.some((p) => p.endsWith('/raw-documentation.mjs')));
+  const dir = mkdtempSync(join(tmpdir(), 'sdk-oracle-boundary-'));
+  try {
+    mkdirSync(join(dir, 'dist'));
+    writeFileSync(join(dir, 'dist', 'documentation-plan.js'), '');
+    writeFileSync(join(dir, 'indirect.mjs'), "export * from './dist/documentation-plan.js';");
+    writeFileSync(join(dir, 'entry.mjs'), "import './indirect.mjs';");
+    assert.throws(
+      () => assertIndependentOracleGraph([join(dir, 'entry.mjs')]),
+      /reaches production/,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('structural fact identities preserve nested facts and ignore object property order', () => {
@@ -194,16 +209,20 @@ test('independent certifier covers value branches, nested collections and declar
   const directory = mkdtempSync(join(tmpdir(), 'sdk-documentation-facts-'));
   try {
     const contract = fixture(directory);
+    const oracleInput = rawDocumentationInput(
+      join(directory, 'api.json'),
+      join(directory, 'sdk.json'),
+    );
     const output = join(directory, 'out');
     generate(contract, output);
     for (const target of ['node', 'php']) {
       const root = join(output, target);
       assertPackageLinks(root);
       assertUniqueFieldTables(root);
-      const result = assertCanonicalBranchDocumentation(root, contract);
+      const result = assertCanonicalBranchDocumentation(root, oracleInput);
       assert.ok(result.checkedBranches >= 10);
       assert.ok(result.checkedFacts >= 10);
-      assertCanonicalOperationDocumentation(root, contract);
+      assertCanonicalOperationDocumentation(root, oracleInput);
       const docs = packageDocuments(root)
         .map((p) => readFileSync(p, 'utf8'))
         .join('\n');
@@ -218,11 +237,11 @@ test('independent certifier covers value branches, nested collections and declar
         .filter((name) => /\.(?:d\.ts|php)$/.test(name))
         .map((name) => readFileSync(join(sourceDir, name), 'utf8'))
         .join('\n');
-      const definitions = contract.definitions ?? contract.models;
+      const definitions = oracleInput.definitions;
       const names = Object.fromEntries(
         Object.keys(definitions).map((name) => [name, name + 'Input']),
       );
-      for (const field of Object.values(contract.models.Facts.properties))
+      for (const field of Object.values(oracleInput.models.Facts.properties))
         assertSourceFieldDocumentation(source, field, definitions, names);
       assert.match(source, /Shape \$/);
       assert.match(source, /minItems: 2/);
@@ -247,7 +266,7 @@ test('independent certifier covers value branches, nested collections and declar
         assert.ok(changed.length, `${target}: annotation mutation applies`);
         for (const [path, text] of changed) writeFileSync(path, text.replaceAll(annotation, ''));
         try {
-          assert.throws(() => assertCanonicalBranchDocumentation(root, contract), failure);
+          assert.throws(() => assertCanonicalBranchDocumentation(root, oracleInput), failure);
         } finally {
           for (const [path, text] of changed) writeFileSync(path, text);
         }
@@ -258,11 +277,15 @@ test('independent certifier covers value branches, nested collections and declar
   }
 });
 
-test('all seven coupled renderer mutations fail the independent oracle in both targets', async (t) => {
+test('every coupled compiler, projection and renderer mutation fails the raw-schema oracle', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'sdk-documentation-mutations-'));
   try {
     const contract = fixture(directory);
-    for (const [label, file, before, after] of mutations)
+    const oracleInput = rawDocumentationInput(
+      join(directory, 'api.json'),
+      join(directory, 'sdk.json'),
+    );
+    for (const [label, file, before, after, affected = ['node', 'php']] of mutations)
       await t.test(label, async () => {
         const isolated = join(directory, label.replaceAll(' ', '-'));
         mkdirSync(isolated);
@@ -275,26 +298,37 @@ test('all seven coupled renderer mutations fail the independent oracle in both t
         const path = join(isolated, 'dist', file),
           original = readFileSync(path, 'utf8');
         assert.ok(original.includes(before), label + ': mutation applies');
-        writeFileSync(path, original.replace(before, after));
+        let changed = original.replace(before, after);
+        if (label === 'PHP model links')
+          changed +=
+            '\nexport function phpModelReference(...args){return _mutatedPhpModelReference(...args).replace(/\\[([^\\]]+)\\]\\(MODELS\\.md#[^)]+\\)/g,"$1");}\n';
+        writeFileSync(path, changed);
         const generator = await import(pathToFileURL(join(isolated, 'dist/index.js')).href);
         const oracle = await import(
           pathToFileURL(join(isolated, 'tests/helpers/canonical-docs.mjs')).href
         );
         const output = join(isolated, 'out');
         generator.generate(contract, output);
-        for (const target of ['node', 'php'])
-          assert.throws(
-            () => oracle.assertCanonicalBranchDocumentation(join(output, target), contract),
-            /lost|degraded|missing/,
-            `${label}: ${target} must detect the coupled mutation`,
-          );
+        for (const target of ['node', 'php']) {
+          const certify = () => {
+            oracle.assertCanonicalBranchDocumentation(join(output, target), oracleInput);
+            oracle.assertCanonicalOperationDocumentation(join(output, target), oracleInput);
+          };
+          if (affected.includes(target))
+            assert.throws(
+              certify,
+              /lost|degraded|missing/,
+              `${label}: ${target} must detect the coupled mutation`,
+            );
+          else assert.doesNotThrow(certify, `${label}: ${target} clean control`);
+        }
         if (label === 'constraint-only merge')
           for (const target of ['node', 'php'])
             assert.throws(
               () =>
                 oracle.assertCanonicalBranchDocumentation(
                   join(output, target),
-                  contract,
+                  oracleInput,
                   undefined,
                   new Set(['ConstraintOnly', 'ConstraintOnlyInput']),
                 ),
@@ -323,13 +357,13 @@ test('all seven coupled renderer mutations fail the independent oracle in both t
               .filter((name) => /\.(?:d\.ts|php)$/.test(name))
               .map((name) => readFileSync(join(sourceDir, name), 'utf8'))
               .join('\n');
-            const definitions = contract.definitions ?? contract.models;
+            const definitions = oracleInput.definitions;
             const names = Object.fromEntries(
               Object.keys(definitions).map((name) => [name, name + 'Input']),
             );
             assert.throws(
               () => {
-                for (const field of Object.values(contract.models.Facts.properties))
+                for (const field of Object.values(oracleInput.models.Facts.properties))
                   sourceOracle.assertSourceFieldDocumentation(source, field, definitions, names);
               },
               /lost a fact/,
@@ -338,6 +372,91 @@ test('all seven coupled renderer mutations fail the independent oracle in both t
           }
         }
       });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('nullable named response positions and inline item enums match both clients', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'sdk-round6-facts-'));
+  try {
+    const contract = fixture(directory),
+      output = join(directory, 'out');
+    generate(contract, output);
+    const raw = rawDocumentationInput(join(directory, 'api.json'), join(directory, 'sdk.json'));
+    for (const target of ['node', 'php']) {
+      const root = join(output, target);
+      assertCanonicalBranchDocumentation(root, raw);
+      assertCanonicalOperationDocumentation(root, raw);
+      const op = operationDocuments(root).find((o) => o.name === 'api.inlineBranches');
+      const response = linkedModelSections(
+        op.path,
+        op.source.split('#### Response')[1].split('#### Errors')[0],
+      )[0];
+      for (const [field, type] of [
+        ['single', '\\[[^\\]]+\\]\\([^)]+\\) or null'],
+        ['items', 'Array of \\(\\[[^\\]]+\\]\\([^)]+\\) or null\\)'],
+        ['map', 'Map of \\(\\[[^\\]]+\\]\\([^)]+\\) or null\\)'],
+      ])
+        assert.match(
+          response.source,
+          new RegExp('\\| `' + field + '` \\| Required \\| ' + type + ' \\|'),
+        );
+      assert.match(response.source, /\| `nonnull` \| Required \| \[[^\]]+\]\([^)]+\) \|/);
+      assert.match(
+        op.source,
+        /Value shape: Array of string\. minItems: `2`\. maxItems: `2`\. uniqueItems: `true`\. Items values: `"red"`, `"green"`\./,
+      );
+      assert.match(
+        op.source,
+        /Value shape: Array of string\. minItems: `3`\. maxItems: `3`\. uniqueItems: `true`\. Items values: `"red"`, `"green"`, `"blue"`\./,
+      );
+    }
+    const payload = {
+      single: null,
+      items: [null],
+      map: { placeholder: null },
+      nonnull: { id: 'placeholder' },
+    };
+    const { Client } = await import(pathToFileURL(join(output, 'node/index.js')).href);
+    let sent = 0;
+    const client = new Client({
+      baseUrl: 'http://localhost:9876',
+      allowInsecureHttp: true,
+      transport: async () => {
+        sent++;
+        return new Response(JSON.stringify(payload), {
+          headers: { 'content-type': 'application/json' },
+        });
+      },
+    });
+    for (const body of [
+      ['red', 'green'],
+      ['red', 'green', 'blue'],
+    ])
+      assert.deepEqual(
+        JSON.parse(JSON.stringify(await client.api.inlineBranches({ body }))),
+        payload,
+      );
+    const before = sent;
+    await assert.rejects(
+      client.api.inlineBranches({ body: ['blue', 'red'] }),
+      (e) => e.kind === 'validation',
+    );
+    assert.equal(sent, before);
+    const script = join(directory, 'runtime.php');
+    writeFileSync(
+      script,
+      `<?php
+require ${JSON.stringify(join(output, 'php/src/Client.php'))};
+$sent=0;
+$client=new \\Example\\Facts\\Client(new \\Example\\Facts\\ClientOptions(baseUrl:'http://localhost:9876', allowInsecureHttp:true, transport:function($request)use(&$sent){$sent++;return ['status'=>200,'headers'=>['content-type'=>'application/json'],'body'=>${JSON.stringify(JSON.stringify(payload))}];}));
+foreach([['red','green'],['red','green','blue']] as $body){$response=$client->api->inlineBranches(['body'=>$body]);if($response->getSingle()!==null||$response->getItems()!==[null]||$response->getMap()!==['placeholder'=>null])throw new \\RuntimeException('valid nullable response');}
+$before=$sent;try{$client->api->inlineBranches(['body'=>['blue','red']]);throw new \\RuntimeException('invalid body accepted');}catch(\\Example\\Facts\\SdkError $e){if($e->kind!=='validation')throw $e;}if($sent!==$before)throw new \\RuntimeException('dispatched invalid body');
+`,
+    );
+    const result = spawnSync('php', [script], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr + result.stdout);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

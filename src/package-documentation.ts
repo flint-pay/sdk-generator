@@ -1,5 +1,6 @@
-import { compileDocumentation } from './documentation-plan.js';
-import { type EnumLinks } from './schema-documentation.js';
+import { compileDocumentation, factParts, factShape } from './documentation-plan.js';
+import { factNotes } from './documentation-format.js';
+import { schemaLiteral, type EnumLinks } from './schema-documentation.js';
 import {
   DocumentationFragments,
   modelFieldReference,
@@ -586,6 +587,19 @@ export function phpModelReference(
           ? compileDocumentation(schema, definitions, plan.response)
           : undefined;
         const { model, ...facts } = context?.root ?? {};
+        const valueNotes =
+          context && Object.keys(factShape(context.root, context.definitions).fields).length
+            ? [
+                ...new Set(
+                  factParts(context.root, context.definitions)
+                    .map((part) => {
+                      const { description, ...value } = part;
+                      return factNotes(value, { literal: schemaLiteral, examples: false });
+                    })
+                    .filter(Boolean),
+                ),
+              ].join(' ')
+            : '';
         const identity = JSON.stringify([plan.response, facts]);
         const previous = shapes.get(identity);
         if (!previous) shapes.set(identity, plan.name);
@@ -607,7 +621,7 @@ export function phpModelReference(
               )
             : '';
         return (
-          `## ${plan.name}\n\n${schema ? modelDescriptions(schema, definitions, plan.response) : (plan.description ?? '')}\n\n${plan.response ? 'Response model.' : 'Request input.'}\n\n` +
+          `## ${plan.name}\n\n${schema ? modelDescriptions(schema, definitions, plan.response) : (plan.description ?? '')}${valueNotes ? '\n\n' + valueNotes : ''}\n\n${plan.response ? 'Response model.' : 'Request input.'}\n\n` +
           (previous
             ? `Fields, types, descriptions and enum values: [${previous}](MODELS.md#${docAnchor(previous)}).\n\n`
             : fields)
