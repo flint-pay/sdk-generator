@@ -1,3 +1,4 @@
+import { readReference } from './helpers/package-docs.mjs';
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
@@ -418,7 +419,7 @@ echo json_encode(verifyWebhookRequest(new Example\Webhooks\Client(new Example\We
         readFileSync(join(out, target, 'README.md'), 'utf8'),
         /verifyWebhook examples and errors/,
       );
-      assert.match(readFileSync(join(out, target, 'REFERENCE.md'), 'utf8'), /## verifyWebhook/);
+      assert.match(readReference(out, target), /## verifyWebhook/);
     }
     const keyedSecretsRunner = docRunner.replace(
       "$request,$f['secret']",

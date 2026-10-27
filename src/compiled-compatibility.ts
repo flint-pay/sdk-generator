@@ -524,15 +524,31 @@ export function compareCompiledContracts(
 /** Public API additions are compared above, separately from execution descriptors. */
 function executionDescriptors(target: CompiledSdkContract['node'] | CompiledSdkContract['php']) {
   const { errorClasses, webhookReasons, standaloneWebhook, ...execution } = target;
-  return 'eventDeclarations' in execution
-    ? {
-        ...execution,
-        eventDeclarations: execution.eventDeclarations?.replace(
-          '; reason: "unknown_event" | "unmatched_envelope"',
-          '',
-        ),
-      }
-    : execution;
+  if ('runtime' in execution)
+    return {
+      ...execution,
+      models: execution.models.map(
+        ({ documentationSchema, documentation, description, ...model }) => model,
+      ),
+    };
+  return {
+    ...execution,
+    models: Object.fromEntries(
+      Object.entries(execution.models).map(
+        ([name, { documentedInput, documentedOutput, ...model }]) => [name, model],
+      ),
+    ),
+    operations: Object.fromEntries(
+      Object.entries(execution.operations).map(([name, { documentedInput, ...operation }]) => [
+        name,
+        operation,
+      ]),
+    ),
+    eventDeclarations: execution.eventDeclarations?.replace(
+      '; reason: "unknown_event" | "unmatched_envelope"',
+      '',
+    ),
+  };
 }
 
 /** Historical raw objects and dictionaries did not have representation graphs. */

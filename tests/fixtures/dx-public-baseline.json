@@ -6,28 +6,28 @@
       "name": "library",
       "api": "examples/library.openapi.json",
       "config": "examples/library.sdk.json",
-      "nodeDeclarationsSha256": "3e6629c8b4154384a1ca2bb111dc1050fd540295cf2857d391ea5184779cba75",
+      "nodeDeclarationsSha256": "a40c49a87eb116e85b179aa6736c3ad9594bb06f0dc0f6ddf212c4a18ad70a0c",
       "phpDeclarationsSha256": "fd70bd7cf04debb85daa22834d8b27dcf4bdad647c65cfe89a7a02bf42de6905"
     },
     {
       "name": "payment",
       "api": "tests/fixtures/payment-api.json",
       "config": "tests/fixtures/payment-sdk.json",
-      "nodeDeclarationsSha256": "e19d48a1cdef6ad90bd93871897ab3704a7263cfe94cbc65fa398ca35c40b39f",
+      "nodeDeclarationsSha256": "bd8ba9570cdf1889cb0b9a2f1e4b248aaed2cb6e1d19efc980f39850d42fb1f3",
       "phpDeclarationsSha256": "d1e87eea5638e46c1798459cff928d9d42ed5ef44553d14c098acd2a4a020f89"
     },
     {
       "name": "flint",
       "api": "tests/providers/flint/openapi.json",
       "config": "tests/providers/flint/sdk.json",
-      "nodeDeclarationsSha256": "ebd4b0221dd22c347b22bae60dcee0f796be72fb08cd228d072c1c5294af99dd",
+      "nodeDeclarationsSha256": "8deb3d3d9accac849d191eb86db383191420321a3a78d16932ef62feb1c40d70",
       "phpDeclarationsSha256": "1dd88962f4242c8bd96107622b4490e08a5c4fcb116062e42b3b8ce15969fc88"
     },
     {
       "name": "risk",
       "api": "tests/providers/flint/risk-openapi.json",
       "config": "tests/providers/flint/risk-sdk.json",
-      "nodeDeclarationsSha256": "2b607062bb996a41ea56f2f7c385cc404ac65abcc3b5020e01434ec08023affc",
+      "nodeDeclarationsSha256": "a57a1e9d8875c80360cf585b01b818555951ad9ff76ea02bb67fc9265c24bdf3",
       "phpDeclarationsSha256": "73f372c16f7bab5cb06da114c4b70a708ab9d50694d74b12d65a260d2d98721e"
     }
   ]

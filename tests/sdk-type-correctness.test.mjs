@@ -1,3 +1,4 @@
+import { readReference } from './helpers/package-docs.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
@@ -202,12 +203,12 @@ test('identical response shapes share a canonical name while PHP identities rema
   assert.equal(a.plan.responseReturns.createBeta.nodeDocumentation, 'BetaResult');
   assert.equal(a.plan.documentation.getAlpha.nodeOutput, 'BetaResult');
   assert.doesNotMatch(
-    readFileSync(join(f.output, 'node/REFERENCE.md'), 'utf8'),
+    readReference(join(f.output, 'node')),
     /(?:Returned payload|Response):[^\n]*AlphaResult/,
   );
   assert.match(
     readFileSync(join(f.output, 'node/declarations/BetaResult.d.ts'), 'utf8'),
-    /export type BetaResult = \{\s*"id": string;\s*\};/,
+    /export type BetaResult = \{\s*(?:\/\*\*[^*]*\*\/\s*)?"id": string;\s*\};/,
   );
   const consumer = join(f.output, 'node/consumer.ts');
   const constrained = typescriptType(
@@ -651,7 +652,7 @@ for (const style of ['object', 'positional']) {
     for (const name of ['Idempotency-Key', 'X-Request-Id', 'X-Tenant'])
       assert.ok(Object.hasOwn(input.properties, name), name);
     for (const target of ['node', 'php']) {
-      const docs = readFileSync(join(f.output, target, 'REFERENCE.md'), 'utf8');
+      const docs = readReference(f.output, target);
       for (const name of ['x-session-id', 'X-Session-Secret', 'X-Api-Version'])
         assert.ok(!docs.includes('`' + name + '`'), name);
       assert.match(docs, /`X-Request-Id`/);

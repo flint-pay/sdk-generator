@@ -666,6 +666,7 @@ final class AmbientCredentialProvider implements CredentialProvider
     }
 }
 
+/** Per-call overrides, passed as the final argument. See RUNTIME.md#requestoptions. */
 final class RequestOptions
 {
     public function __construct(
@@ -715,6 +716,7 @@ final class RequestOptions
         );
     }
 }
+/** Client environment, credentials and transport defaults. See RUNTIME.md#clientoptions. */
 final class ClientOptions
 {
     public function __construct(

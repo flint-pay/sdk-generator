@@ -1,3 +1,5 @@
+import { replacePhpExampleAutoload } from './local-example.mjs';
+import { readReference } from './helpers/package-docs.mjs';
 import { before } from 'node:test';
 import { declarations } from './helpers/generated-source.mjs';
 import test, { after } from 'node:test';
@@ -130,12 +132,12 @@ test('reference explains response envelopes, numeric units, models and every con
     /Amount in the currency's minor unit[\s\S]*?\*\/\s*"amount": `\$\{bigint\}`/,
   );
   assert.match(read('node/MODELS.md'), /minor unit/);
-  assert.match(read('node/MODELS.md'), /Example: `100`/);
+  assert.match(read('node/MODELS.md'), /Example: `"100"`/);
   for (const target of ['node', 'php']) {
-    const ref = read(`${target}/REFERENCE.md`);
+    const ref = readReference(output, target);
     for (const method of ['listAllItems', 'listAllPages', 'retrieveWait'])
-      assert.ok(ref.includes('payments.' + method));
-    assert.match(ref, /Result.data is the full decoded API response body/);
+      assert.ok(ref.includes(method));
+    assert.match(read(`${target}/RUNTIME.md`), /data \(the complete body\)/);
     assert.match(read(`${target}/RUNTIME.md`), /API_IDEMPOTENCY_KEY/);
     assert.match(read(`${target}/RUNTIME.md`), /BearerAuth/);
   }
@@ -163,11 +165,21 @@ test('pagination and polling recipes run in both generated SDKs', () => {
   const body = JSON.stringify({ id: 'p_1', amount: 100, status: 'succeeded' });
   const list = JSON.stringify({ items: [JSON.parse(body)], next: null });
   for (const target of ['node', 'php']) {
-    const reference = read(`${target}/REFERENCE.md`);
+    const reference = read(`${target}/RUNTIME.md`);
+    const setup = read(
+      `${target}/examples/payments-listAll.${target === 'node' ? 'mjs' : 'php'}`,
+    ).split(target === 'node' ? 'const result = await' : '$input =')[0];
     const snippets = [...reference.matchAll(/```(?:typescript|php)\n([\s\S]*?)```/g)]
       .map((m) => m[1])
-      .filter((source) => source.includes('new Client'));
-    assert.equal(snippets.length, 5);
+      .filter((source) => source.includes('for await') || source.includes('foreach ('));
+    assert.equal(snippets.length, 1);
+    snippets[0] = setup + snippets[0];
+    snippets.push(
+      target === 'node'
+        ? setup + "await client.payments.retrieveWait({id: 'p_placeholder'}, {deadlineMs: 5000});"
+        : setup +
+            "$client->payments->retrieveWait(['id' => 'p_placeholder'], new RequestOptions(deadlineMs: 5000));",
+    );
     for (const [index, snippet] of snippets.entries()) {
       if (target === 'node') {
         const source = snippet.replace(
@@ -184,7 +196,10 @@ test('pagination and polling recipes run in both generated SDKs', () => {
           },
         });
       } else {
-        const source = snippet
+        const source = replacePhpExampleAutoload(
+          snippet,
+          `require ${JSON.stringify(output + '/php/src/Runtime.php')};require ${JSON.stringify(output + '/php/src/Client.php')};`,
+        )
           .replace('<?php', '')
           .replace(
             "require __DIR__ . '/vendor/autoload.php';",

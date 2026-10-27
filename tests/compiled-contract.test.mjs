@@ -615,3 +615,41 @@ test('shared snapshot storage is deterministic, lossless, bounded, and rejects c
   ])
     assert.throws(() => restoreCompiledSnapshot(corrupted), /compiled snapshot/i);
 });
+
+test('private records omit duplicate rendered prose and restore identical package documentation', () => {
+  const schema = {
+    type: 'object',
+    properties: {
+      label: {
+        type: 'string',
+        description: 'Synthetic documentation storage witness.',
+        enum: ['red', 'green'],
+      },
+    },
+  };
+  const f = fixture('documentation-storage', schema);
+  const api = JSON.parse(readFileSync(f.source, 'utf8'));
+  api.components = { schemas: { StorageWitness: schema } };
+  api.paths['/value'].get.responses['200'].content['application/json'].schema = {
+    $ref: '#/components/schemas/StorageWitness',
+  };
+  writeFileSync(f.source, JSON.stringify(api));
+  f.contract = loadContract(f.source, f.profile);
+  const current = compileSdkContract(f.contract).plan;
+  assert.ok(Object.values(current.node.models).some((model) => model.documentedOutput));
+  assert.ok(current.php.models.some((model) => model.documentationSchema));
+  generate(f.contract, f.output);
+  const record = readRecord(join(f.output, '.sdk-generator.json'));
+  for (const model of Object.values(record.compiled.plan.node.models)) {
+    assert.equal(model.documentedInput, undefined);
+    assert.equal(model.documentedOutput, undefined);
+  }
+  for (const model of record.compiled.plan.php.models) {
+    assert.equal(model.documentationSchema, undefined);
+    assert.equal(model.documentation, undefined);
+    assert.equal(model.description, undefined);
+  }
+  const restored = JSON.parse(JSON.stringify(record.interface));
+  assert.deepEqual(preview(restored, f.output).changes, []);
+  assert.deepEqual(preview(restored, f.output).compatibility, []);
+});

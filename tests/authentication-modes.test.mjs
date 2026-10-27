@@ -1,3 +1,4 @@
+import { readReference } from './helpers/package-docs.mjs';
 import { before } from 'node:test';
 import { declarations } from './helpers/generated-source.mjs';
 import { test, after } from 'node:test';
@@ -593,9 +594,7 @@ test('documentation.authShortcut selects example credentials, which fail fast wh
     );
     assert.doesNotMatch(code, /API_TOKEN/);
     const ext = target === 'node' ? 'mjs' : 'php';
-    const examples = readFileSync(join(output, target, 'REFERENCE.md'), 'utf8').match(
-      /\(examples\/([^)]+)\)/g,
-    );
+    const examples = readReference(output, target).match(/\(examples\/([^)]+)\)/g);
     const script = (call) =>
       examples
         .map((link) => link.slice(1, -1))

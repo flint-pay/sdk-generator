@@ -1,3 +1,4 @@
+import { readReference } from './helpers/package-docs.mjs';
 import { replacePhpExampleAutoload } from './local-example.mjs';
 import { before } from 'node:test';
 import test, { after } from 'node:test';
@@ -541,10 +542,17 @@ catch(\InvalidArgumentException $e){}}
 
 test('operation references explain automatic keys and code-specific retries', () => {
   for (const target of ['node', 'php']) {
-    const reference = readFileSync(join(output, target, 'REFERENCE.md'), 'utf8');
-    assert.match(reference, /When no key is supplied, the SDK generates one for this call/);
+    const reference = readReference(output, target);
+    assert.match(reference, /Idempotent: key automatic/);
+    assert.match(
+      readFileSync(join(output, target, 'RUNTIME.md'), 'utf8'),
+      /the SDK creates one per call/,
+    );
     assert.match(reference, /Code-specific retries: HTTP 409 \(`in_progress`\)/);
-    assert.match(reference, /Without an optional idempotency key, mutations send once/);
+    assert.match(
+      readFileSync(join(output, target, 'RUNTIME.md'), 'utf8'),
+      /Mutations with optional idempotency keys send once when no key is supplied/,
+    );
     assert.doesNotMatch(reference, /[\t ]+\r?$/m);
   }
 });

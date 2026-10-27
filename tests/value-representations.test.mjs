@@ -125,17 +125,31 @@ test('numeric hover and model reference guidance follow the declared value repre
   ]) {
     for (const representation of [type, [type], [type, 'null']]) {
       const s = { type: representation, format };
-      assert.match(schemaNotes(s), /Use an exact numeric string, not a floating-point number\./);
+      assert.match(
+        schemaNotes(s),
+        format === 'decimal'
+          ? /Use an exact numeric string, not a floating-point number\./
+          : /Use an integer string \(decimal digits\), not a floating-point number\./,
+      );
       assert.match(
         schemaNotes({ ...s, 'x-sdk-number-input': 'explicit' }),
         /Use ExactNumber for an exact JSON number\./,
       );
     }
   }
-  const input = readFileSync(join(out, 'node/declarations/ValueInput.d.ts'), 'utf8');
+  const input = readFileSync(join(out, 'node/declarations/ValueInput.d.ts'), 'utf8').replace(
+    /\n\s*\*(?!\/) ?/g,
+    ' ',
+  );
   assert.match(input, /"latitude"\?: number;/);
-  assert.match(input, /\/\*\* Format: float\. \*\/\s*"float_number"\?: number;/);
-  assert.match(input, /\/\*\* Format: double\. \*\/\s*"change_percent"\?: number;/);
+  assert.match(
+    input,
+    /\/\*\* Shape \$ \(Value\): number\. Format: float\.[^*]*\*\/\s*"float_number"\?: number;/,
+  );
+  assert.match(
+    input,
+    /\/\*\* Shape \$ \(Value\): number\. Format: double\.[^*]*\*\/\s*"change_percent"\?: number;/,
+  );
   assert.match(input, /"nullable_number"\?: number \| null;/);
   assert.doesNotMatch(
     input,
@@ -145,7 +159,11 @@ test('numeric hover and model reference guidance follow the declared value repre
     assert.match(
       input,
       new RegExp(
-        '/\\*\\* Use an exact numeric string, not a floating-point number\\.[^*]*\\*/\\s*"' +
+        '/\\*\\* Shape \\$ \\(Value\\): [^*]*?' +
+          (['large', 'unsigned'].includes(field)
+            ? 'Use an integer string \\(decimal digits\\), not a floating-point number'
+            : 'Use an exact numeric string, not a floating-point number') +
+          '\\.[^*]*\\*/\\s*"' +
           field +
           '"\\?: ' +
           (['large', 'unsigned'].includes(field) ? '`\\$\\{bigint\\}`' : 'string'),
@@ -162,8 +180,18 @@ test('numeric hover and model reference guidance follow the declared value repre
     for (const field of ['decimal', 'large', 'unsigned', 'nullable_decimal']) {
       const row = docs.split('\n').find((line) => line.startsWith('| `' + field + '` |'));
       assert.ok(row, target + ': ' + field);
-      assert.match(row, /\| exact numeric string(?: or null)? \|/);
-      assert.match(row, /Use an exact numeric string, not a floating-point number\./);
+      assert.match(
+        row,
+        ['large', 'unsigned'].includes(field)
+          ? /\| integer string \|/
+          : /\| exact numeric string(?: or null)? \|/,
+      );
+      assert.match(
+        row,
+        ['large', 'unsigned'].includes(field)
+          ? /Use an integer string \(decimal digits\), not a floating-point number\./
+          : /Use an exact numeric string, not a floating-point number\./,
+      );
     }
   }
 });

@@ -1,45 +1,113 @@
 import type { Schema } from './contract.js';
-import { exactValue, valueInstruction } from './codec-plan.js';
+import { compileDocumentation, factEnums, documentationPositions } from './documentation-plan.js';
+import { factNotes, factSourceDocumentation } from './documentation-format.js';
+import type { DocumentationFact } from './documentation-plan.js';
 
+export function schemaLiteral(text: string, table = false): string {
+  const value = (table ? text.replaceAll('|', '\\|') : text).replace(/[\r\n]+/g, ' ');
+  const delimiter = '`'.repeat(
+    Math.max(0, ...[...value.matchAll(/`+/g)].map((m) => m[0].length)) + 1,
+  );
+  const padding =
+    value.startsWith('`') ||
+    value.endsWith('`') ||
+    (value.startsWith(' ') && value.endsWith(' ') && !/^ +$/.test(value))
+      ? ' '
+      : '';
+  return `${delimiter}${padding}${value}${padding}${delimiter}`;
+}
 /** Human-facing field semantics; kept out of codec and compatibility plans. */
 export function schemaNotes(
   s: Schema,
   formatting: { literal?: (text: string) => string; description?: (text: string) => string } = {},
 ): string {
-  const literal = formatting.literal ?? ((text: string) => text);
-  const notes = s.description
-    ? [(formatting.description ?? ((text: string) => text))(s.description)]
-    : [];
-  const types = Array.isArray(s.type) ? s.type : [s.type];
-  if (types.some((type) => exactValue(valueInstruction(type, s.format))))
-    notes.push(
-      s['x-sdk-number-input'] === 'explicit'
-        ? 'Use ExactNumber for an exact JSON number.'
-        : 'Use an exact numeric string, not a floating-point number.',
-    );
-  if (s.format) notes.push('Format: ' + literal(s.format) + '.');
-  for (const key of [
-    'minimum',
-    'maximum',
-    'exclusiveMinimum',
-    'exclusiveMaximum',
-    'multipleOf',
-    'minLength',
-    'maxLength',
-    'minItems',
-    'maxItems',
-    'pattern',
-  ] as const)
-    if (s[key] !== undefined) notes.push(key + ': ' + literal(String(s[key])) + '.');
-  const example = Object.hasOwn(s, 'example')
-    ? s.example
-    : Array.isArray(s.examples)
-      ? s.examples[0]
-      : undefined;
-  if (example !== undefined) notes.push('Example: ' + literal(JSON.stringify(example)) + '.');
-  return notes.join(' ');
+  return factNotes(compileDocumentation(s).root, formatting);
 }
-export function schemaComment(s: Schema): string {
-  const notes = schemaNotes(s);
-  return notes ? '\n/** ' + notes.replaceAll('*/', '* /').replace(/[\r\n]+/g, ' ') + ' */\n' : '';
+
+const noAliases: Readonly<Record<string, string>> = {};
+const symbolNames = new WeakMap<
+  object,
+  WeakMap<object, Map<boolean, Readonly<Record<string, string>>>>
+>();
+const comments = new WeakMap<DocumentationFact, WeakMap<object, string>>();
+/** Share the target's symbol inventory across field projections. */
+export function modelDocumentationNames(
+  definitions: Readonly<Record<string, Schema>>,
+  response: boolean,
+  aliases: Readonly<Record<string, string>> = noAliases,
+): Readonly<Record<string, string>> {
+  let inventories = symbolNames.get(definitions);
+  if (!inventories) symbolNames.set(definitions, (inventories = new WeakMap()));
+  let directions = inventories.get(aliases);
+  if (!directions) inventories.set(aliases, (directions = new Map()));
+  let names = directions.get(response);
+  if (!names) {
+    names = Object.fromEntries(
+      Object.keys(definitions).map((name) => [
+        name,
+        (aliases[name] ?? name) + (response ? '' : 'Input'),
+      ]),
+    );
+    directions.set(response, names);
+  }
+  return names;
+}
+
+export function schemaComment(
+  s: Schema,
+  definitions: Readonly<Record<string, Schema>> = {},
+  response = false,
+  aliases: Readonly<Record<string, string>> = noAliases,
+): string {
+  const names = modelDocumentationNames(definitions, response, aliases);
+  const facts = compileDocumentation(s, definitions, response);
+  let projections = comments.get(facts.root);
+  if (!projections) comments.set(facts.root, (projections = new WeakMap()));
+  const saved = projections.get(names);
+  if (saved !== undefined) return saved;
+  const notes = factSourceDocumentation(
+    facts.root,
+    facts.definitions,
+    documentationPositions(facts.root, facts.definitions),
+    names,
+  );
+  const comment = notes
+    ? '\n/** ' + notes.replaceAll('*/', '* /').replace(/[\r\n]+/g, ' ') + ' */\n'
+    : '';
+  projections.set(names, comment);
+  return comment;
+}
+
+export interface SchemaEnumValues {
+  /** Empty for the value itself; [] for items and .* for dictionary values. */
+  path: string;
+  values: string[];
+}
+export type EnumLinks = ReadonlyMap<string, string>;
+export const enumIdentity = (values: readonly string[]) => JSON.stringify([...values].sort());
+
+/** Read declared enum metadata through references, compositions and collection elements. */
+export function schemaEnumValues(
+  schema: Schema,
+  definitions: Readonly<Record<string, Schema>> = {},
+  seen = new Set<string>(),
+): SchemaEnumValues[] {
+  const facts = compileDocumentation(schema, schema['x-sdk-definitions'] ?? definitions);
+  return factEnums(facts.root, facts.definitions, seen);
+}
+
+export function enumNotes(
+  entries: readonly SchemaEnumValues[],
+  literal: (text: string) => string = (text) => text,
+  links?: EnumLinks,
+): string {
+  return entries
+    .map(({ path, values }) => {
+      const label = path
+        ? `${path.startsWith('[]') ? 'Items' : 'Map'}${path.slice(2)} values`
+        : 'Values';
+      const link = links?.get(enumIdentity(values));
+      return `${label}: ${link ? `[${values.length} declared values](${link})` : values.map(literal).join(', ')}.`;
+    })
+    .join(' ');
 }

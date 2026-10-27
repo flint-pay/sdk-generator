@@ -132,7 +132,7 @@ function phpstan(f, source) {
 }
 
 // Expected names below are independent consumer contracts, not refreshed snapshots.
-test('PHP field pins retain exact concrete classes, isolate other refs, and leave Node and docs unchanged', async () => {
+test('PHP field pins retain exact concrete classes, isolate other refs, and update PHP docs only', async () => {
   const fields = {
     location: ref('Location', { description: 'Mailing location' }),
     other: ref('Location'),
@@ -153,7 +153,8 @@ test('PHP field pins retain exact concrete classes, isolate other refs, and leav
     [...before].filter(([file]) => file.startsWith('node/')),
     [...after].filter(([file]) => file.startsWith('node/')),
   );
-  assert.equal(after.get('php/MODELS.md'), before.get('php/MODELS.md'));
+  assert.match(before.get('php/MODELS.md'), /\| `location` \| [^\n]*\[Place\]/);
+  assert.match(after.get('php/MODELS.md'), /\| `location` \| [^\n]*\[Location\]/);
   generate(pinned.load(), pinned.output);
   const data = {
     data: { location: { id: 'pinned' }, other: { id: 'plain' }, newlyDescribed: { id: 'new' } },

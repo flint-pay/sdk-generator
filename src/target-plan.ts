@@ -1,4 +1,20 @@
 import {
+  compileDocumentation,
+  documentationPositions,
+  factEnums,
+  factShape,
+  factParts,
+  documentationDescriptions,
+} from './documentation-plan.js';
+import { factSourceDocumentation, factCollectionNotes } from './documentation-format.js';
+import {
+  schemaNotes,
+  modelDocumentationNames,
+  schemaLiteral,
+  schemaEnumValues,
+  type SchemaEnumValues,
+} from './schema-documentation.js';
+import {
   publicTypePlanner,
   publicTypeDeclarations,
   RUNTIME_ERROR_DETAILS,
@@ -6,7 +22,11 @@ import {
 import type { TypeCertificate } from './type-certificate.js';
 import { REQUEST_OPTIONS } from './request-options.js';
 import { responseOnlyModels } from './schema-usage.js';
-import { omitProtectedExamples } from './example-protection.js';
+import {
+  omitProtectedExamples,
+  markProtectedDocumentation,
+  hasProtectedDocumentation,
+} from './example-protection.js';
 import { reservePublicSymbols } from './public-symbols.js';
 import { pascalWords, webhookEventTypeName, isReservedTypeName } from './naming.js';
 import {
@@ -107,7 +127,7 @@ export function operationInputType(
   return `{ ${Object.entries(schema.properties!)
     .map(
       ([key, value]) =>
-        `${documentation ? schemaComment(value) : ''}${JSON.stringify(key)}${schema.required!.includes(key) ? '' : '?'}: ${schema.required!.includes(key) ? `InputValue<${namedType(value, models, false, documentation)}>` : optionalPropertyType(key, `InputValue<${namedType(value, models, false, documentation)}>`)};`,
+        `${documentation ? schemaComment(value, models) : ''}${JSON.stringify(key)}${schema.required!.includes(key) ? '' : '?'}: ${schema.required!.includes(key) ? `InputValue<${namedType(value, models, false, documentation)}>` : optionalPropertyType(key, `InputValue<${namedType(value, models, false, documentation)}>`)};`,
     )
     .join(' ')} }`;
 }
@@ -225,6 +245,13 @@ export interface PhpModelPlan {
   constructorDoc: string;
   defaultObject: boolean;
   getters: { field: string; method: string; type: string; doc: string }[];
+  documentation?: Record<
+    string,
+    { description: string; markdown?: string; enums?: SchemaEnumValues[]; required: boolean }
+  >;
+  description?: string;
+  /** Source alternatives retained for documentation, before getter projection. */
+  documentationSchema?: Schema;
   codec: CodecPlan;
   sharedCodec?: string;
   representation?: PhpRepresentation;
@@ -241,6 +268,13 @@ function nullablePhpAccessor(type: string): string {
   return type.includes('|') ? type + '|null' : '?' + type;
 }
 
+const exampleDocumentationViews = new WeakMap<Schema, Schema>();
+const responseDocumentationViews = new WeakMap<Schema, Schema>();
+const documentationDefinitionViews = new WeakMap<
+  object,
+  Map<boolean, Readonly<Record<string, Schema>>>
+>();
+
 export function compilePhpModel(
   name: string,
   schema: Schema,
@@ -248,22 +282,213 @@ export function compilePhpModel(
   shared: ReadonlyMap<string, string>,
   declaration: Schema = schema,
   definitions: Readonly<Record<string, Schema>> = {},
+  includeExamples = true,
+  bindings?: PhpRepresentation,
+  documentationDefinitions: Readonly<Record<string, Schema>> = definitions,
 ): PhpModelPlan {
+  const views = includeExamples ? exampleDocumentationViews : responseDocumentationViews;
+  const documentationView = (s: Schema): Schema => {
+    const cached = views.get(s);
+    if (cached) return cached;
+    const {
+      ['x-sdk-definitions']: _definitions,
+      example,
+      examples,
+      default: defaultValue,
+      ...view
+    } = s;
+    const result = {
+      ...view,
+      ...(!hasProtectedDocumentation(s) && Object.hasOwn(s, 'default')
+        ? { default: defaultValue }
+        : {}),
+      ...(includeExamples
+        ? { ...(example !== undefined ? { example } : {}), ...(examples ? { examples } : {}) }
+        : {}),
+      ...(s.properties
+        ? {
+            properties: Object.fromEntries(
+              Object.entries(s.properties).map(([field, child]) => [
+                field,
+                documentationView(child),
+              ]),
+            ),
+          }
+        : {}),
+      ...(s.items ? { items: documentationView(s.items) } : {}),
+      ...(typeof s.additionalProperties === 'object'
+        ? { additionalProperties: documentationView(s.additionalProperties) }
+        : {}),
+      ...Object.fromEntries(
+        (['allOf', 'oneOf', 'anyOf'] as const).flatMap((keyword) =>
+          s[keyword] ? [[keyword, s[keyword]!.map(documentationView)]] : [],
+        ),
+      ),
+      ...Object.fromEntries(
+        (['not', 'contains', 'if', 'then', 'else', 'propertyNames'] as const).flatMap((keyword) =>
+          s[keyword] ? [[keyword, documentationView(s[keyword])]] : [],
+        ),
+      ),
+    };
+    views.set(s, result);
+    return result;
+  };
+  let definitionViews = documentationDefinitionViews.get(documentationDefinitions);
+  if (!definitionViews)
+    documentationDefinitionViews.set(documentationDefinitions, (definitionViews = new Map()));
+  let definitionView = definitionViews.get(includeExamples);
+  if (!definitionView) {
+    definitionView = Object.fromEntries(
+      Object.entries(documentationDefinitions).map(([name, value]) => [
+        name,
+        documentationView(value),
+      ]),
+    );
+    definitionViews.set(includeExamples, definitionView);
+  }
+  documentationDefinitions = definitionView;
+  const boundNames: Record<string, string> = {};
+  let bindingChangesStructure = false;
+  // Bind model links to the same target representation that emits getter types.
+  const bind = (s: Schema, value?: PhpRepresentation): Schema => {
+    if (!value) return s;
+    if (value.kind === 'nullable') {
+      // Entity identity belongs to the concrete value, never its nullable
+      // wrapper. Keep null at the same depth for fields, items and map values.
+      const branches = s.oneOf ?? s.anyOf;
+      if (branches) {
+        const keyword = s.oneOf ? 'oneOf' : 'anyOf';
+        const { ['x-sdk-type-name']: _wrapperName, ...wrapper } = s;
+        return {
+          ...wrapper,
+          [keyword]: branches.map((child) =>
+            child.type === 'null' ? child : bind(child, value.value),
+          ),
+        };
+      }
+      const types = Array.isArray(s.type) ? s.type : [s.type];
+      if (types.includes('null')) return bind(s, value.value);
+      // A composition/reference can carry the nullable value without a local
+      // union node. Its entity identity still describes only the concrete
+      // representation. Retain the compiler's null alternative outside it.
+      bindingChangesStructure = true;
+      return { anyOf: [bind(s, value.value), { type: 'null' }] };
+    }
+    if (value.kind === 'entity') boundNames[value.name] = value.name;
+    return {
+      ...s,
+      ...(value?.kind === 'entity' ? { 'x-sdk-type-name': value.name } : {}),
+      ...(s.properties
+        ? {
+            properties: Object.fromEntries(
+              Object.entries(s.properties).map(([field, child]) => [
+                field,
+                bind(child, value?.kind === 'record' ? value.fields[field] : undefined),
+              ]),
+            ),
+          }
+        : {}),
+      ...(s.items
+        ? { items: bind(s.items, value?.kind === 'list' ? value.value : undefined) }
+        : {}),
+      ...(typeof s.additionalProperties === 'object'
+        ? {
+            additionalProperties: bind(
+              s.additionalProperties,
+              value?.kind === 'map' ? value.value : undefined,
+            ),
+          }
+        : {}),
+      ...Object.fromEntries(
+        (['allOf', 'oneOf', 'anyOf'] as const).flatMap((key) =>
+          s[key] ? [[key, s[key].map((child) => bind(child, value))]] : [],
+        ),
+      ),
+    };
+  };
+  let documentationSchema = bind(documentationView(declaration), bindings);
+  const codec = compileCodec(schema);
+  // Reuse instructions only while binding preserves the paired schema layout.
+  const documentationCodec =
+    declaration === schema && !bindingChangesStructure ? codec : compileCodec(documentationSchema);
+  let documentationFacts = compileDocumentation(
+    documentationSchema,
+    documentationDefinitions,
+    response,
+    documentationCodec,
+  );
+  const existingDescriptions = new Set(
+    factParts(documentationFacts.root, documentationFacts.definitions).flatMap((part) =>
+      part.description ? [part.description] : [],
+    ),
+  );
+  const inheritedDescriptions =
+    schema === declaration
+      ? []
+      : documentationDescriptions(schema, documentationDefinitions, codec).filter(
+          (description) => !existingDescriptions.has(description),
+        );
+  if (inheritedDescriptions.length) {
+    documentationSchema = {
+      ...documentationSchema,
+      description: [documentationSchema.description, ...inheritedDescriptions]
+        .filter(Boolean)
+        .join('\n\n'),
+    };
+    documentationFacts = compileDocumentation(
+      documentationSchema,
+      documentationDefinitions,
+      response,
+      documentationCodec,
+    );
+  }
   declaration = {
     ...phpDeclaration(declaration, schema['x-sdk-definitions'] ?? definitions),
-    'x-sdk-definitions': { ...definitions },
+    'x-sdk-definitions': definitions,
   };
-  const codec = compileCodec(schema);
+  const documentedFields = factShape(
+    documentationFacts.root,
+    documentationFacts.definitions,
+  ).fields;
+  // Getter bindings overlay one shared inventory, without copying it per field.
+  Object.setPrototypeOf(boundNames, modelDocumentationNames(documentationDefinitions, response));
   const sharedCodec = shared.get(stable(codec));
   return {
     name,
     response,
+    documentationSchema,
+    ...(declaration.description ? { description: declaration.description } : {}),
     constructorType: phpType(declaration, response),
     constructorDoc:
       declaration.type === 'object'
         ? phpShape(declaration, response)
         : phpDocType(declaration, response),
     defaultObject: declaration.type === 'object',
+    documentation: Object.fromEntries(
+      Object.entries(declaration.properties ?? {}).map(([field, originalChild]) => {
+        const fact =
+          documentedFields[field] ??
+          compileDocumentation(documentationView(originalChild), documentationDefinitions, response)
+            .root;
+        return [
+          field,
+          {
+            required: declaration.required?.includes(field) ?? false,
+            enums: factEnums(fact, documentationFacts.definitions),
+            markdown: factCollectionNotes(fact, {
+              literal: schemaLiteral,
+            }),
+            description: factSourceDocumentation(
+              fact,
+              documentationFacts.definitions,
+              documentationPositions(fact, documentationFacts.definitions),
+              boundNames,
+              'see',
+            ),
+          },
+        ];
+      }),
+    ),
     getters: Object.entries(declaration.properties ?? {})
       .filter(([, child]) => (response ? !child.writeOnly : !child.readOnly))
       .map(([field, child]) => {
@@ -382,7 +607,7 @@ function compileAuthentication(c: Contract): NodeAuthenticationPlan | undefined 
     )
     .join(
       '\n',
-    )}\n}\nexport type AuthMode = keyof Credentials;\nexport type RequestOptions<M extends AuthMode = AuthMode> = Omit<RuntimeRequestOptions, 'authMode' | 'credentials'> & ${requestShortcuts ? '{ ' + requestShortcuts + ' } & ' : ''}({ authMode?: undefined; credentials?: Credentials[M] } | { [K in M]: { authMode: K; credentials?: Credentials[K] } }[M]);\n`;
+    )}\n}\nexport type AuthMode = keyof Credentials;\n/** Per-call authentication and request overrides. See RUNTIME.md#requestoptions. */\nexport type RequestOptions<M extends AuthMode = AuthMode> = Omit<RuntimeRequestOptions, 'authMode' | 'credentials'> & ${requestShortcuts ? '{ ' + requestShortcuts + ' } & ' : ''}({ authMode?: undefined; credentials?: Credentials[M] } | { [K in M]: { authMode: K; credentials?: Credentials[K] } }[M]);\n`;
   return { declarations, modes };
 }
 
@@ -409,12 +634,12 @@ function operationOptions(
 function compileClientOptions(c: Contract): string {
   const baseUrl = `baseUrl${c.defaultBaseUrl !== undefined ? '?' : ''}: string;`;
   if (!c.authentication)
-    return `export type ClientOptions = Omit<RuntimeClientOptions, 'baseUrl'> & { ${baseUrl} };\n`;
+    return `/** Client configuration. See RUNTIME.md#clientoptions. */\nexport type ClientOptions = Omit<RuntimeClientOptions, 'baseUrl'> & { ${baseUrl} };\n`;
   const shortcuts = Object.keys(c.authShortcuts ?? {})
     .sort()
     .map((name) => `${JSON.stringify(name)}?: string | CredentialProvider;`)
     .join(' ');
-  return `export type ClientOptions = Omit<RuntimeClientOptions, 'baseUrl' | 'token' | 'authMode' | 'credentials'> & { ${baseUrl} ${shortcuts} authMode?: AuthMode; credentials?: Partial<Credentials> };\n`;
+  return `/** Client configuration. See RUNTIME.md#clientoptions. */\nexport type ClientOptions = Omit<RuntimeClientOptions, 'baseUrl' | 'token' | 'authMode' | 'credentials'> & { ${baseUrl} ${shortcuts} authMode?: AuthMode; credentials?: Partial<Credentials> };\n`;
 }
 
 const js = (v: unknown) => JSON.stringify(v, null, 2)?.replaceAll('"__proto__":', '["__proto__"]:');
@@ -1103,7 +1328,13 @@ export function compileSdkContract(source: Contract): {
   const replaceOutputNames = (type: string): string =>
     type.replace(
       /\/\*[\s\S]*?\*\/|\/\/[^\r\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|[A-Za-z_$][\w$]*/g,
-      (token) => outputAliases.get(token) ?? token,
+      (token) =>
+        token.startsWith('/*')
+          ? token.replace(
+              /\{@(link|see) (\w+)\}/g,
+              (_, tag: string, name: string) => `{@${tag} ${outputAliases.get(name) ?? name}}`,
+            )
+          : (outputAliases.get(token) ?? token),
     );
   // Repeating after each grouping also collapses envelopes whose children became aliases.
   for (;;) {
@@ -1376,6 +1607,10 @@ export function compileSdkContract(source: Contract): {
         true,
         sharedNames,
         entity.declaration,
+        {},
+        false,
+        entity.representation,
+        semantic.definitions,
       );
       model.representation = entity.representation;
       const required = new Set(
@@ -1454,6 +1689,7 @@ export function prepareTargetContract(c: Contract): Contract {
 function targetContract(c: Contract, purpose: 'semantic' | 'publication'): Contract {
   c = JSON.parse(stable(c)) as Contract;
   if (purpose === 'publication') omitProtectedExamples(c);
+  else markProtectedDocumentation(c);
   // Share named nested shapes in recursive graphs. Expanding a provider's graph
   // into every operation, factory and declaration otherwise grows exponentially.
   if (c.definitions && c.config.schemaSharing !== 'named') {

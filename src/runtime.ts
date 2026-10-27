@@ -62,6 +62,7 @@ export type RuntimeErrorDetails =
       error_description: string;
     };
 
+/** SDK failure with outcome and recovery metadata. See RUNTIME.md#error-reference. */
 export class SdkError extends Error {
   idempotencyKey?: string;
   retryAfterMs?: number;
@@ -616,6 +617,7 @@ async function resolveCredential(
   return value;
 }
 
+/** Per-call overrides; pass as the final method argument. See RUNTIME.md#requestoptions. */
 export interface RequestOptions extends RequestOptionValues {
   streamIdleTimeoutMs?: number;
   streamLifetimeMs?: number;
@@ -631,6 +633,7 @@ export interface RequestOptions extends RequestOptionValues {
   maxPages?: number;
   maxItems?: number;
 }
+/** Client environment, credentials and transport defaults. See RUNTIME.md#clientoptions. */
 export interface ClientOptions {
   ambientCredentials?: boolean;
   baseUrl?: string;

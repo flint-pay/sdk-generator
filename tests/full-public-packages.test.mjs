@@ -1,5 +1,12 @@
-import { assertDocumentedModelExports } from './helpers/docs-exports.mjs';
+import { assertNamedNullabilitySource } from './helpers/source-documentation.mjs';
+import { documentedModels } from './helpers/raw-documentation.mjs';
+import { rawDocumentationInput } from './helpers/raw-documentation.mjs';
 import { checkResponseExamples } from './helpers/flint-response-examples.mjs';
+import { assertUniqueFieldTables, packageDocuments } from './helpers/package-docs.mjs';
+import {
+  assertDocumentedModelExports,
+  assertDocumentedPhpExports,
+} from './helpers/docs-exports.mjs';
 import { npmPackResult } from '../dist/distribution.js';
 import { measureSdkWeight } from './helpers/sdk-weight.mjs';
 import { measureWebhookTypes } from './helpers/webhook-types.mjs';
@@ -18,6 +25,10 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { createHmac } from 'node:crypto';
+import {
+  assertCanonicalOperationDocumentation,
+  assertCanonicalBranchDocumentation,
+} from './helpers/canonical-docs.mjs';
 
 const fixture = resolve('tests/providers/flint');
 const api = join(fixture, 'full-openapi.json');
@@ -69,9 +80,11 @@ import {readFileSync,writeFileSync} from 'node:fs';
 import {webhookEventTypeName} from ${JSON.stringify(new URL('../dist/naming.js', import.meta.url).href)};
 const started=performance.now();
 const c=loadContract(${JSON.stringify(api)},${JSON.stringify(config)});
+const loaded=performance.now();
 generate(c,${JSON.stringify(output)});
+const generated=performance.now();
 writeFileSync(${JSON.stringify(join(dir, 'webhook-names.json'))},JSON.stringify(Object.fromEntries(Object.keys(c.config.webhook.events).map(event=>[event,webhookEventTypeName(event)]))));
-writeFileSync(${JSON.stringify(join(dir, 'summary.json'))},JSON.stringify({operations:c.operations.map(o=>o.id),methods:c.operations.map(o=>({resource:o.resource,method:o.method,payload:o.response?.return==='payload',pagination:Boolean(o.pagination),polling:Boolean(o.polling)})),incoming:c.incoming.map(o=>({name:o.name,model:o.model})),events:Object.keys(c.config.webhook.events),modes:c.authentication,elapsedMs:performance.now()-started,maxRSS:process.resourceUsage().maxRSS,definitions:Object.keys(c.definitions).length}));
+writeFileSync(${JSON.stringify(join(dir, 'summary.json'))},JSON.stringify({operations:c.operations.map(o=>o.id),methods:c.operations.map(o=>({resource:o.resource,method:o.method,payload:o.response?.return==='payload',pagination:Boolean(o.pagination),polling:Boolean(o.polling)})),incoming:c.incoming.map(o=>({name:o.name,model:o.model})),events:Object.keys(c.config.webhook.events),modes:c.authentication,loadMs:loaded-started,generateMs:generated-loaded,elapsedMs:performance.now()-started,maxRSS:process.resourceUsage().maxRSS,definitions:Object.keys(c.definitions).length}));
 const savedRecord=JSON.parse(readFileSync(${JSON.stringify(join(output, '.sdk-generator.json'))},'utf8'));
 const restored=JSON.parse(JSON.stringify(savedRecord.interface));
 assert.deepEqual(preview(restored,${JSON.stringify(output)}).changes,[],'full export saved interface must render every Node/PHP file identically');
@@ -79,7 +92,53 @@ assert.deepEqual(preview(restored,${JSON.stringify(output)}).changes,[],'full ex
       );
       run(process.execPath, [script]);
       assertDocumentedModelExports(join(output, 'node'));
+      assertDocumentedPhpExports(join(output, 'php'));
+      const documentedContract = rawDocumentationInput(api, config);
+      for (const target of ['node', 'php']) {
+        const modelDocs = packageDocuments(join(output, target))
+          .filter((path) => /(?:MODELS|models\/[^/]+)\.md$/.test(path))
+          .map((path) => readFileSync(path, 'utf8'))
+          .join('\n');
+        for (const name of [
+          'CheckoutSession',
+          'OnboardingAdvanceRequestInput',
+          'CreateReturnPreviewRequestInput',
+          'UpdateDeliveryMethodRequestInput',
+        ])
+          assert.match(
+            modelDocs,
+            new RegExp('^## ' + name + '$', 'm'),
+            `${target}: named regression witness ${name}`,
+          );
+        assertUniqueFieldTables(join(output, target));
+        const branches = assertCanonicalBranchDocumentation(
+          join(output, target),
+          documentedContract,
+        );
+        assert.ok(branches.checkedBranches > 100, `${target}: full branch fact coverage`);
+        console.log(target + ' canonical branch facts ' + JSON.stringify(branches));
+        const sourceCount = assertNamedNullabilitySource(
+          join(output, target),
+          documentedModels(join(output, target), documentedContract),
+        );
+        assert.ok(sourceCount > 50, `${target}: native nullable named-source witnesses`);
+        console.log(target + ' nullable named source facts ' + sourceCount);
+        const coverage = assertCanonicalOperationDocumentation(
+          join(output, target),
+          documentedContract,
+        );
+        assert.ok(coverage.suppressed > 100, `${target}: full canonical operation coverage`);
+      }
       const summary = JSON.parse(readFileSync(join(dir, 'summary.json')));
+      console.log(
+        'Full generation ' +
+          JSON.stringify({
+            loadMs: summary.loadMs,
+            generateMs: summary.generateMs,
+            elapsedMs: summary.elapsedMs,
+            maxRSS: summary.maxRSS,
+          }),
+      );
       const inventory = JSON.parse(readFileSync(join(fixture, 'full-inventory.json')));
       assert.deepEqual(
         summary.operations.slice().sort(),
@@ -503,7 +562,12 @@ $streaming->close();
         weight.bundles.webhooks < 3 * 1024 * 1024,
         'webhook bundle includes excess descriptors',
       );
-      assert.ok(weight.sizes.node.files < 4000, 'Node package file count budget exceeded');
+      // Canonical documentation has one page per model/resource. Keep the
+      // existing code/metadata budget independent of that required split.
+      assert.ok(
+        weight.sizes.node.files - packageDocuments(join(output, 'node')).length < 4000,
+        'Node non-documentation package file count budget exceeded',
+      );
       assert.ok(weight.sizes.php['.json'] < 18 * 1024 * 1024, 'PHP includes duplicate raw schemas');
       assert.ok(weight.sizes.node['.js'] < 24 * 1024 * 1024, 'Node source size budget exceeded');
       assert.ok(weight.sizes.node['.d.ts'] < 13 * 1024 * 1024, 'declaration size budget exceeded');

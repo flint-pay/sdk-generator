@@ -1,3 +1,4 @@
+import { readReference } from './helpers/package-docs.mjs';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
@@ -179,10 +180,7 @@ import type {_SdkWebhookHeaders} from './index.js';
   assert.match(guide, /const verified: VerifiedWebhook/);
   assert.match(guide, /Extract<KnownWebhookEvent/);
   assert.match(guide, /\['data'\]/);
-  assert.match(
-    readFileSync(join(f.output, 'node/REFERENCE.md'), 'utf8'),
-    /return type is `VerifiedWebhook`/,
-  );
+  assert.match(readReference(join(f.output, 'node')), /return type is `VerifiedWebhook`/);
 });
 
 test('dotted event paths use named types and Extract, while oneOf envelopes remain closed unions', () => {
