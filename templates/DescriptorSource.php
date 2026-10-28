@@ -137,13 +137,26 @@ final class DescriptorSource
     }
     public function validateAll(): void
     {
-        foreach (array_keys($this->routes) as $id) {
-            $this->operation((string) $id);
+        // Each resource group and the models load into a fresh source, so peak
+        // memory follows the largest group rather than the whole contract.
+        $groups = [];
+        foreach ($this->routes as $id => $resource) {
+            if (!is_string($resource)) {
+                $this->operation((string) $id);
+            }
+            $groups[$resource][] = (string) $id;
         }
-        foreach ($this->read('models') as $name) {
-            $this->model($name);
+        foreach ($groups as $ids) {
+            $source = new self($this->directory, $this->hasWebhook);
+            foreach ($ids as $id) {
+                $source->operation($id);
+            }
         }
-        $this->webhook();
+        $source = new self($this->directory, $this->hasWebhook);
+        foreach ($source->read('models') as $name) {
+            $source->model($name);
+        }
+        $source->webhook();
     }
     public function settings(): array
     {
