@@ -35,6 +35,7 @@ import {
   successStatus,
   isAuthShortcutName,
   isDefaultBaseUrl,
+  webhookJwtIssue,
   assertDefaultCredentials,
 } from './runtime-plan.js';
 import { visitIntersectedProperties } from './schema-intersections.js';
@@ -179,7 +180,19 @@ export interface AuthenticationMode {
   schemes: (Auth & { name: string })[];
   operations?: string[];
 }
-export interface Webhook {
+export interface WebhookJwt {
+  header: string;
+  scheme: 'Bearer';
+  algorithm: 'ES256';
+  typ: string;
+  issuer: string;
+  jwksPath: string;
+  bodyHashClaim: string;
+  bodyHashEncoding: 'base64url';
+  lifetimeSeconds: number;
+  leewaySeconds: number;
+}
+export interface WebhookHmac {
   algorithm: 'hmac-sha256';
   format?: 'hex' | 'standard-webhooks' | 'timestamped-hex';
   idHeader?: string;
@@ -187,9 +200,14 @@ export interface Webhook {
   timestampHeader?: string;
   separator: string;
   toleranceSeconds: number;
+}
+export type WebhookSigning =
+  | (WebhookHmac & { jwt?: WebhookJwt })
+  | ({ jwt: WebhookJwt } & { [K in keyof WebhookHmac]?: never });
+export type Webhook = WebhookSigning & {
   events: Record<string, Schema>;
   typeField: string;
-}
+};
 type DefaultCapability = 'idempotency' | 'retry' | 'pagination';
 export type CapabilityOverride = Omit<Capability, DefaultCapability> & {
   [K in DefaultCapability]?:
@@ -2617,7 +2635,7 @@ function loadContractInput(
     if (key.startsWith('schema:')) annotate(entry.value, 'schema');
   for (const forbidden of ['callbacks'])
     if (doc[forbidden])
-      fail(`/${forbidden}`, 'declare supported HMAC webhooks in the SDK configuration');
+      fail(`/${forbidden}`, 'declare supported webhooks in the SDK configuration');
   const models: Record<string, Schema> = {};
   for (const [original, value] of Object.entries(doc.components?.schemas ?? {}) as [
     string,
@@ -3493,6 +3511,7 @@ function loadContractInput(
     keys(
       w,
       [
+        'jwt',
         'algorithm',
         'format',
         'idHeader',
@@ -3505,35 +3524,70 @@ function loadContractInput(
       ],
       'config/webhook',
     );
-    if (
-      w.algorithm !== 'hmac-sha256' ||
-      !Number.isFinite(w.toleranceSeconds) ||
-      w.toleranceSeconds < 0 ||
-      typeof w.separator !== 'string' ||
-      typeof w.typeField !== 'string' ||
-      !w.typeField
-    )
-      fail(
-        'config/webhook',
-        'declare hmac-sha256, a literal separator, typeField, and nonnegative toleranceSeconds',
+    if (typeof w.typeField !== 'string' || !w.typeField)
+      fail('config/webhook/typeField', 'declare a nonempty typeField');
+    if (w.jwt !== undefined) {
+      const j = w.jwt;
+      keys(
+        j,
+        [
+          'header',
+          'scheme',
+          'algorithm',
+          'typ',
+          'issuer',
+          'jwksPath',
+          'bodyHashClaim',
+          'bodyHashEncoding',
+          'lifetimeSeconds',
+          'leewaySeconds',
+        ],
+        'config/webhook/jwt',
       );
-    header(w.header, 'config/webhook/header');
-    if (w.format !== 'timestamped-hex') header(w.timestampHeader, 'config/webhook/timestampHeader');
-    else if (w.timestampHeader !== undefined)
-      fail(
-        'config/webhook/timestampHeader',
-        'timestamped-hex embeds the timestamp in the signature header',
-      );
-    if (
-      w.format !== undefined &&
-      !['hex', 'standard-webhooks', 'timestamped-hex'].includes(w.format)
-    )
-      fail('config/webhook/format', 'expected hex, standard-webhooks, or timestamped-hex');
-    if (w.format === 'standard-webhooks') header(w.idHeader, 'config/webhook/idHeader');
-    else if (w.idHeader !== undefined)
-      fail('config/webhook/idHeader', 'only standard-webhooks uses an event ID header');
-    if (w.format && w.format !== 'hex' && w.separator !== '.')
-      fail('config/webhook/separator', 'this signature format requires a dot separator');
+      const issue = webhookJwtIssue(j);
+      if (issue) fail('config/webhook/jwt' + (issue.field ? '/' + issue.field : ''), issue.message);
+    }
+    const hmacFields = [
+      'algorithm',
+      'format',
+      'idHeader',
+      'header',
+      'timestampHeader',
+      'separator',
+      'toleranceSeconds',
+    ] as const;
+    if (!w.jwt || hmacFields.some((name) => w[name] !== undefined)) {
+      if (w.algorithm !== 'hmac-sha256')
+        fail(
+          'config/webhook/algorithm',
+          'unsupported signing algorithm ' + String(w.algorithm) + '; expected hmac-sha256',
+        );
+      if (
+        typeof w.toleranceSeconds !== 'number' ||
+        !Number.isFinite(w.toleranceSeconds) ||
+        w.toleranceSeconds < 0 ||
+        typeof w.separator !== 'string'
+      )
+        fail('config/webhook', 'declare a literal separator and nonnegative toleranceSeconds');
+      header(w.header, 'config/webhook/header');
+      if (w.format !== 'timestamped-hex')
+        header(w.timestampHeader, 'config/webhook/timestampHeader');
+      else if (w.timestampHeader !== undefined)
+        fail(
+          'config/webhook/timestampHeader',
+          'timestamped-hex embeds the timestamp in the signature header',
+        );
+      if (
+        w.format !== undefined &&
+        !['hex', 'standard-webhooks', 'timestamped-hex'].includes(w.format)
+      )
+        fail('config/webhook/format', 'expected hex, standard-webhooks, or timestamped-hex');
+      if (w.format === 'standard-webhooks') header(w.idHeader, 'config/webhook/idHeader');
+      else if (w.idHeader !== undefined)
+        fail('config/webhook/idHeader', 'only standard-webhooks uses an event ID header');
+      if (w.format && w.format !== 'hex' && w.separator !== '.')
+        fail('config/webhook/separator', 'this signature format requires a dot separator');
+    }
     if (!w.events || typeof w.events !== 'object' || Array.isArray(w.events))
       fail('config/webhook/events', 'expected an event schema map');
     const eventTypes = (

@@ -102,6 +102,9 @@ export function reservePublicSymbols(
     reserve('KnownWebhookEvent', 'webhook');
     reserve('VerifiedWebhook', 'webhook');
     reserve('verifyWebhook', 'webhook');
+    reserve('verifyWebhookAsync', 'webhook');
+    reserve('verifyWebhookDelivery', 'webhook');
+    reserve('WebhookVerificationOptions', 'webhook');
     for (const event of Object.keys(c.config.webhook.events))
       reserve(webhookEventTypeName(event), 'webhook.events.' + event);
   }

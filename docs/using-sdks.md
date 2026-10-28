@@ -379,6 +379,61 @@ Conditional calls send the declared precondition header and surface conflicts wi
 
 ## Webhook verification
 
+### JWT deliveries
+
+Providers declaring `webhook.jwt` support per-delivery ES256 JWTs without a shared secret. In Node, use `verifyWebhookAsync(rawBody, headers, options)` from the package root or `webhooks` subpath, or `client.verifyWebhookAsync`. PHP provides `Webhooks::verifyDelivery($rawBody, $headers, $options)` and `$client->verifyWebhookDelivery`. Both return the existing verified result plus `signingMethod: 'jwt' | 'hmac'` in Node or `signing_method` in PHP.
+
+Supply your receiving endpoint ID, such as `whep_example` or `dcb_example`. This is the webhook endpoint's ID, not the event ID. The trusted issuer comes from the declared literal issuer or the configured API base URL's origin, without a trailing slash. Never derive it from the token. Standalone verification with `issuer: "baseUrl"` requires `baseUrl` (PHP `base_url`); the client methods default it from their client. Node also defaults `fetch` from the client's `transport`.
+
+Register Express raw middleware before JSON middleware. Persist the delivery before acknowledging it:
+
+```js
+import { verifyWebhookAsync } from '@example/payments/webhooks';
+
+app.post('/webhooks', express.raw({ type: 'application/json' }), async (req, res, next) => {
+  try {
+    const verified = await verifyWebhookAsync(req.body, req.headers, {
+      endpointIds: ['whep_example'],
+      baseUrl: 'https://api.withflintpay.com',
+    });
+    await receiveVerified(verified, req, res, next);
+  } catch (error) {
+    next(error);
+  }
+});
+app.use(express.json());
+```
+
+```php
+use Example\Payments\Webhooks;
+
+// $cache is your application's PSR-16 cache; see key caching below.
+$verified = Webhooks::verifyDelivery(file_get_contents('php://input'), getallheaders(), [
+  'endpoint_ids' => ['whep_example'],
+  'base_url' => 'https://api.withflintpay.com',
+  'cache' => $cache,
+]);
+// Persist the delivery and durable work before acknowledging it.
+```
+
+Apache does not pass the `Authorization` header to PHP-FPM or CGI by default. Enable `CGIPassAuth On` (Apache 2.4.13 and later) for the webhook route, or copy the header with `RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]`. Without it, JWT deliveries fail with `webhook_missing_header`.
+
+Node options are `endpointIds?: string | string[]`, `secrets?: string | string[]`, `jwks?: { keys: object[] }`, `baseUrl?: string`, `fetch?: typeof fetch`, and `nowSeconds?: number`. PHP uses `endpoint_ids`, `secrets`, `jwks`, `base_url`, and `now_seconds`, with optional `cache` (PSR-16), `http_client` (PSR-18), and `request_factory` (PSR-17). Supply at least one of endpoint IDs or secrets. PHP requires `ext-openssl` for JWT verification. PSR packages are optional Composer suggestions; supplying a PSR HTTP client also requires a request factory. Without one, PHP uses the SDK transport. The receiver owns injected transports and must configure PSR clients with a timeout of at most five seconds and redirects disabled; PSR-18 has no portable timeout or redirect setting.
+
+If a bearer token is present and endpoint IDs are supplied, JWT alone decides. Invalid JWTs never fall back to HMAC. Otherwise, secrets and all declared HMAC headers select HMAC; missing headers produce `webhook_missing_header`. Existing synchronous `verifyWebhook` (PHP `Webhooks::verify`) remains HMAC-only. During migration, pass both endpoint IDs and secrets to the new verifier.
+
+Verification matches Flint's reference verifier. The protected header must contain exactly `alg: "ES256"`, a nonempty `kid`, and the declared `typ`, so `crit`, token-supplied `jku`, `x5u`, `jwk`, and `x5c`, and every other header member are rejected. Header and claims must be JSON objects without duplicate member names. Claims require the exact declared issuer, a string `aud` matching a supplied endpoint ID, integer `iat` and `exp`, a `jti` that is not blank, and the body hash claim. A `sub` claim is rejected; other claims are ignored. Verification checks the signature and `iat`/`exp` with the declared lifetime and leeway, a hard maximum lifetime of 300 seconds, and at most 60 seconds leeway, and compares the SHA-256 of the exact body bytes in constant time. It parses the body as JSON only after authentication. Application storage still owns replay and duplicate handling.
+
+Keys come from `<trusted issuer>/.well-known/jwks.json` (or the declared path). The JWKS must be a JSON object with a `keys` array whose entries are objects with a string `kid`. Keys with other IDs are ignored, whatever their type, so a shared key set can also publish RSA, OKP, or encryption keys. The key selected by `kid` must be unique and be an EC P-256 key whose `alg` is absent or `ES256` and whose `use` is absent or `sig`. A malformed fetched set, or one in which the token's `kid` names more than one key, produces `webhook_jwks_unavailable`; for an explicit `jwks`, these produce `webhook_invalid_input`. A `kid` naming exactly one unusable key produces `webhook_invalid_token`, never an outage code, so forged tokens cannot cause 5xx responses. An explicit `jwks` bypasses HTTP and caching entirely, useful for pinned keys and deterministic tests.
+
+The key cache shares one in-flight fetch per URL; PHP Fiber waiters yield their monotonic `deadline` in milliseconds and a `cancellation` of `null`, and the application's scheduler must resume them. TTL follows `Cache-Control: max-age`, clamped to five minutes through 24 hours, with 15 minutes by default. Unknown keys trigger at most one refresh per minute per URL. When a refresh fails, verification uses the previously fetched set for up to 24 hours after its successful fetch and retries at most once a minute meanwhile. Requests have a five-second timeout and a 256 KiB response limit.
+
+Node keeps one cache per process. PHP keeps its key cache in the supplied PSR-16 `cache`; without one, it uses APCu when the extension is loaded and enabled (`apcu_enabled()`), and otherwise a static cache that lasts only as long as the PHP process. Under PHP-FPM, pass `cache` or enable APCu: a per-process cache refetches keys in every worker and cannot enforce the refresh limits or stale-key reuse across requests, so forged tokens could push your server's address into the provider's JWKS rate limit. Treat the PSR-16 cache or APCu as a trust store. Anyone who can write to it can inject verification keys, so do not share it with untrusted code or tenants. APCu is shared by every pool under the same PHP-FPM master, so deployments hosting mutually untrusted applications under one master should pass their own `cache`. Shared entries with implausible future times are ignored. Single-flight is per process, since neither PSR-16 nor APCu entries supply an atomic locking operation here.
+
+Answer **5xx** for `webhook_jwks_unavailable` so the provider retries. Do not acknowledge an unverified delivery during a key-service outage. Treat signature, audience, time and body failures as authentication failures; log only error kind and code.
+
+### HMAC deliveries
+
 Node verification accepts original `Buffer`, `Uint8Array` and `ArrayBuffer` bytes. Pass `nowSeconds` in seconds; millisecond-scale values raise an input error explaining the conversion.
 
 Packages with webhook verification declared expose a standalone verifier through the `webhooks` subpath, which loads webhook codecs without operation descriptors. The root `verifyWebhook` export and client method remain available. It requires no client options, base URL or API credentials; the client method delegates to the same verification implementation.
@@ -486,15 +541,21 @@ Secret and header rules:
 
 Failures throw `SdkError`, with the code in `code` (Node) or `errorCode` (PHP):
 
-| Kind             | Code                                 | Action                                                        |
-| ---------------- | ------------------------------------ | ------------------------------------------------------------- |
-| `validation`     | `webhook_invalid_input`              | Supply original body bytes and supported headers/time values. |
-| `validation`     | `webhook_invalid_secret`             | Supply at least one correctly formatted nonempty secret.      |
-| `authentication` | `webhook_missing_header`             | Forward the configured signing headers.                       |
-| `authentication` | `webhook_invalid_timestamp`          | Supply one integer timestamp in seconds.                      |
-| `authentication` | `webhook_timestamp_out_of_tolerance` | Check the server clock and delivery age.                      |
-| `authentication` | `webhook_invalid_signature`          | Check the signing secret and original request bytes.          |
-| `protocol`       | `webhook_invalid_json`               | The authenticated bytes are not valid UTF-8 JSON.             |
+| Kind             | Code                                 | Action                                                                          |
+| ---------------- | ------------------------------------ | ------------------------------------------------------------------------------- |
+| `validation`     | `webhook_invalid_input`              | Supply original body bytes and supported options, headers and Unix seconds.     |
+| `validation`     | `webhook_invalid_secret`             | Supply at least one correctly formatted nonempty secret.                        |
+| `authentication` | `webhook_missing_header`             | Forward the configured signing headers.                                         |
+| `authentication` | `webhook_invalid_timestamp`          | Supply one integer timestamp in seconds.                                        |
+| `authentication` | `webhook_timestamp_out_of_tolerance` | Check the server clock and delivery age.                                        |
+| `authentication` | `webhook_invalid_signature`          | Check the signing secret and original request bytes.                            |
+| `authentication` | `webhook_invalid_token`              | Malformed JWT, bad alg/typ/issuer/signature, or kid naming an unusable key.     |
+| `authentication` | `webhook_invalid_audience`           | Check the configured receiving endpoint IDs.                                    |
+| `authentication` | `webhook_token_expired`              | Check JWT timestamps, lifetime, leeway and the server clock.                    |
+| `authentication` | `webhook_body_mismatch`              | Preserve the exact original request bytes.                                      |
+| `authentication` | `webhook_unknown_key`                | The trusted key set has no matching signing key.                                |
+| `transport`      | `webhook_jwks_unavailable`           | Respond with 5xx so the provider retries; check key-service and key-set health. |
+| `protocol`       | `webhook_invalid_json`               | The authenticated bytes are not valid UTF-8 JSON.                               |
 
 ```js
 try {

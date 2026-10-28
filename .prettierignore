@@ -5,3 +5,5 @@ node_modules/
 package-lock.json
 # Preserve the pinned upstream export byte-for-byte.
 tests/providers/flint/full-openapi.json
+# Preserve the shared cross-language JWT vectors byte for byte.
+tests/fixtures/jwt_vectors.json

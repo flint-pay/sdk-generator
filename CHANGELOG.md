@@ -4,6 +4,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ## Unreleased (generator 0.1.0)
 
+- Add optional ES256 webhook JWT signing alongside HMAC, with Node `verifyWebhookAsync` and PHP `Webhooks::verifyDelivery` / `Client::verifyWebhookDelivery`. Both verify trusted issuer keys, endpoint audiences, bounded token lifetimes and exact body hashes, and share bounded JWKS caching with rotation refresh and stale-on-outage handling. Verification matches Flint's reference verifier: it rejects duplicate JSON members, header members other than `alg`, `kid` and `typ`, a `sub` claim, non-string `aud` and non-integer `iat`/`exp`, and it ignores JWKS keys other than the one selected by `kid`. A `kid` naming an unusable key fails with `webhook_invalid_token`; a malformed fetched set or a repeated `kid` produces `webhook_jwks_unavailable`. PHP shares the key cache through a supplied PSR-16 cache or, without one, APCu when enabled. JWT-only providers may omit HMAC settings; existing synchronous HMAC verification is unchanged. Regenerate SDKs with `webhook.jwt` configured to enable JWT delivery verification.
+
 - Default credential discovery supports GitHub Actions identity tokens in both runtimes, including audience checks, cached exchange and permission errors. Generated merchant examples use configured default credentials when available.
 
 - Update the pinned `markdown-it` runtime dependency to 15.0.3 to fix quadratic parsing denial-of-service vulnerabilities.
