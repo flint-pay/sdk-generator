@@ -220,7 +220,8 @@ function strictParsingCases() {
     { claims: JSON.stringify({ ...claims, body_sha256: 1 }), code: invalid },
     // Unknown claims, including nested duplicate members, are ignored as in Go.
     { claims: claimsWith('"nbf":1,"extra":{"a":1,"a":2}') },
-    { claims: payload.replace('{', '{ ').replace('"iss":', '"iss" :') },
+    // Whitespace around the first brace and a colon is still the same JSON.
+    { claims: '{ ' + payload.slice(1).replaceAll('"iss":', '"iss" :') },
   ].map((c) => ({
     ...c,
     authorization: 'Bearer ' + signedToken(c.head ?? head, c.claims ?? payload),
