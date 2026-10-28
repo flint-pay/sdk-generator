@@ -2873,18 +2873,21 @@ function webhookJwks(text: string): WebhookJwk[] {
   });
 }
 
-/** Select the key for kid; other keys, including unsupported key types, are ignored. */
+/**
+ * Select the key for kid; other keys, including unsupported key types, are ignored. A duplicate
+ * kid makes the trusted set ambiguous; a unique but unusable key fails only the token naming it.
+ */
 async function webhookSelectKey(
   keys: WebhookJwk[],
   kid: string,
-): Promise<CryptoKey | 'unknown' | 'invalid'> {
+): Promise<CryptoKey | 'unknown' | 'duplicate' | 'unusable'> {
   const matches = keys.filter((key) => key.kid === kid);
   const key = matches[0]?.members;
   if (!key) return 'unknown';
+  if (matches.length !== 1) return 'duplicate';
   const x = webhookJsonString(key, 'x');
   const y = webhookJsonString(key, 'y');
   if (
-    matches.length !== 1 ||
     x === undefined ||
     y === undefined ||
     webhookJsonString(key, 'kty') !== 'EC' ||
@@ -2894,7 +2897,7 @@ async function webhookSelectKey(
     (key.has('alg') && webhookJsonString(key, 'alg') !== 'ES256') ||
     (key.has('use') && webhookJsonString(key, 'use') !== 'sig')
   )
-    return 'invalid';
+    return 'unusable';
   try {
     return await crypto.subtle.importKey(
       'jwk',
@@ -2904,7 +2907,7 @@ async function webhookSelectKey(
       ['verify'],
     );
   } catch {
-    return 'invalid';
+    return 'unusable';
   }
 }
 
@@ -2990,7 +2993,7 @@ async function webhookJwtKey(
       webhookError(
         'validation',
         'invalid_input',
-        'Webhook jwks must be a JWKS object whose selected key is an EC P-256 verification key',
+        'Webhook jwks must be a JWKS object with a string kid on every key and unique key IDs',
       );
     let keys: WebhookJwk[];
     try {
@@ -2999,7 +3002,7 @@ async function webhookJwtKey(
       return invalidJwks();
     }
     key = await webhookSelectKey(keys, kid);
-    if (key === 'invalid') return invalidJwks();
+    if (key === 'duplicate') return invalidJwks();
   } else {
     const transport = options.fetch ?? fetch;
     let entry = webhookKeySets.get(url);
@@ -3018,9 +3021,12 @@ async function webhookJwtKey(
     )
       entry = await webhookFetchKeys(url, transport);
     key = await webhookSelectKey(entry.keys, kid);
-    // Like a malformed trusted set, an ambiguous or unsupported selected key is a provider fault.
-    if (key === 'invalid') return webhookKeysUnavailable();
+    // Like a malformed trusted set, a duplicate kid is a provider fault and retryable.
+    if (key === 'duplicate') return webhookKeysUnavailable();
   }
+  // A token naming an unusable key is invalid, never an outage, so forged tokens cannot cause 5xx.
+  if (key === 'unusable')
+    return webhookError('authentication', 'invalid_token', 'Invalid webhook JWT');
   return key === 'unknown'
     ? webhookError('authentication', 'unknown_key', 'Webhook signing key is unknown')
     : key;

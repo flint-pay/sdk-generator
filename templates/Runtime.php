@@ -6111,20 +6111,23 @@ class Runtime
         return $result;
     }
     /**
-     * Select the PEM key for kid, ignoring other keys including unsupported key types.
-     * Returns null for an unknown kid and false for a duplicate or unusable selected key.
+     * Select the PEM key for kid, ignoring other keys including unsupported key types. A duplicate
+     * kid makes the trusted set ambiguous; a unique but unusable key fails only the token naming it.
+     * @return array{0: 'key'|'unknown'|'duplicate'|'unusable', 1: ?string}
      */
-    private static function webhookSelectKey(array $keys, string $kid): string|false|null
+    private static function webhookSelectKey(array $keys, string $kid): array
     {
         $matches = array_values(array_filter($keys, fn($key) => $key['kid'] === $kid));
         if (!$matches) {
-            return null;
+            return ['unknown', null];
+        }
+        if (count($matches) !== 1) {
+            return ['duplicate', null];
         }
         $key = $matches[0]['members'];
         $x = self::webhookBase64url(self::webhookJsonString($key, 'x'));
         $y = self::webhookBase64url(self::webhookJsonString($key, 'y'));
         if (
-            count($matches) !== 1 ||
             $x === null ||
             $y === null ||
             strlen($x) !== 32 ||
@@ -6134,7 +6137,7 @@ class Runtime
             (array_key_exists('alg', $key) && self::webhookJsonString($key, 'alg') !== 'ES256') ||
             (array_key_exists('use', $key) && self::webhookJsonString($key, 'use') !== 'sig')
         ) {
-            return false;
+            return ['unusable', null];
         }
         $pem =
             "-----BEGIN PUBLIC KEY-----\n" .
@@ -6146,7 +6149,7 @@ class Runtime
                 "\n",
             ) .
             "-----END PUBLIC KEY-----\n";
-        return openssl_pkey_get_public($pem) === false ? false : $pem;
+        return openssl_pkey_get_public($pem) === false ? ['unusable', null] : ['key', $pem];
     }
     private static function webhookApcu(): bool
     {
@@ -6348,18 +6351,18 @@ class Runtime
     ): string {
         if (array_key_exists('jwks', $options)) {
             try {
-                $key = self::webhookSelectKey(
+                [$status, $pem] = self::webhookSelectKey(
                     self::webhookJwks(json_encode($options['jwks'], JSON_THROW_ON_ERROR)),
                     $kid,
                 );
             } catch (\Exception) {
-                $key = false;
+                [$status, $pem] = ['duplicate', null];
             }
-            if ($key === false) {
+            if ($status === 'duplicate') {
                 self::webhookError(
                     'validation',
                     'invalid_input',
-                    'Webhook jwks must be a JWKS whose selected key is an EC P-256 verification key',
+                    'Webhook jwks must be a JWKS object with a string kid on every key and unique key IDs',
                 );
             }
         } else {
@@ -6380,9 +6383,9 @@ class Runtime
             ) {
                 $state = self::webhookFetchKeys($url, $options, $send);
             }
-            $key = self::webhookSelectKey($state['keys'], $kid);
-            // Like a malformed trusted set, an ambiguous or unsupported selected key is a provider fault.
-            if ($key === false) {
+            [$status, $pem] = self::webhookSelectKey($state['keys'], $kid);
+            // Like a malformed trusted set, a duplicate kid is a provider fault and retryable.
+            if ($status === 'duplicate') {
                 self::webhookError(
                     'transport',
                     'jwks_unavailable',
@@ -6390,10 +6393,15 @@ class Runtime
                 );
             }
         }
-        if ($key === null) {
-            self::webhookError('authentication', 'unknown_key', 'Webhook signing key is unknown');
+        // A token naming an unusable key is invalid, never an outage, so forged tokens cannot cause 5xx.
+        if ($status === 'unusable' || $pem === null) {
+            self::webhookError(
+                'authentication',
+                $status === 'unknown' ? 'unknown_key' : 'invalid_token',
+                $status === 'unknown' ? 'Webhook signing key is unknown' : 'Invalid webhook JWT',
+            );
         }
-        return $key;
+        return $pem;
     }
     /** @param array<string, mixed> $options @return array<string, mixed> */
     public function verifyWebhookDelivery(mixed $rawBody, mixed $headers, array $options): array

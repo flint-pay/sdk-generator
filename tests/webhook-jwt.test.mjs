@@ -430,7 +430,7 @@ test('bad verifier options use validation errors in both targets', async () => {
   );
 });
 
-test('JWKS selection ignores unrelated keys and validates only the selected kid, as in Go', async () => {
+test('JWKS selection ignores unrelated keys; unusable selected keys fail only the token', async () => {
   const rsa = generateKeyPairSync('rsa', { modulusLength: 2048 }).publicKey.export({
     format: 'jwk',
   });
@@ -450,13 +450,15 @@ test('JWKS selection ignores unrelated keys and validates only the selected kid,
     { jwks: keyText([{ ...ec, kid }]) },
     { jwks: keyText([{ ...selected, d: 'AAAA', key_ops: ['sign'] }]) },
     { jwks: keyText([...unrelated]), code: 'unknown_key' },
-    { jwks: keyText([{ ...selected, use: 'enc' }]), code: 'invalid' },
-    { jwks: keyText([{ ...selected, use: null }]), code: 'invalid' },
-    { jwks: keyText([{ ...selected, alg: 'ES384' }]), code: 'invalid' },
-    { jwks: keyText([{ ...rsa, kid }]), code: 'invalid' },
-    { jwks: keyText([{ ...selected, crv: 'P-384' }]), code: 'invalid' },
-    { jwks: keyText([{ ...selected, x: selected.x + '=' }]), code: 'invalid' },
-    { jwks: keyText([{ ...selected, y: selected.x }]), code: 'invalid' },
+    { jwks: keyText([selected, { ...rsa, kid: 'repeated' }, { ...okp, kid: 'repeated' }]) },
+    { jwks: keyText([{ kty: 'EC', crv: 'P-256', kid }]), code: 'unusable' },
+    { jwks: keyText([{ ...selected, use: 'enc' }]), code: 'unusable' },
+    { jwks: keyText([{ ...selected, use: null }]), code: 'unusable' },
+    { jwks: keyText([{ ...selected, alg: 'ES384' }]), code: 'unusable' },
+    { jwks: keyText([{ ...rsa, kid }]), code: 'unusable' },
+    { jwks: keyText([{ ...selected, crv: 'P-384' }]), code: 'unusable' },
+    { jwks: keyText([{ ...selected, x: selected.x + '=' }]), code: 'unusable' },
+    { jwks: keyText([{ ...selected, y: selected.x }]), code: 'unusable' },
     { jwks: keyText([selected, { ...rsa, kid }]), code: 'invalid' },
     { jwks: keyText([selected, selected]), code: 'invalid' },
     { jwks: keyText([selected, { ...rsa }]), code: 'invalid' },
@@ -482,9 +484,12 @@ test('JWKS selection ignores unrelated keys and validates only the selected kid,
       ? 'jwt'
       : c.code === 'unknown_key'
         ? 'authentication:webhook_unknown_key'
-        : fetched
-          ? 'transport:webhook_jwks_unavailable'
-          : 'validation:webhook_invalid_input';
+        : // A unique but unusable selected key fails the token, never as a retryable outage.
+          c.code === 'unusable'
+          ? 'authentication:webhook_invalid_token'
+          : fetched
+            ? 'transport:webhook_jwks_unavailable'
+            : 'validation:webhook_invalid_input';
   const issuer = (index) => 'https://selection' + index + '.example';
   const rows = cases.map((c, index) => ({
     ...c,
