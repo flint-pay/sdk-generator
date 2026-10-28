@@ -198,6 +198,9 @@ function strictParsingCases() {
     { head: JSON.stringify({ alg: 'ES256', typ: jwt.typ, kid: 1 }), code: invalid },
     { head: JSON.stringify({ alg: 'ES256', typ: jwt.typ, kid: '' }), code: invalid },
     { head: '[' + head + ']', code: invalid },
+    // Go's encoding/json rejects a byte order mark; TextDecoder strips it unless told not to.
+    { head: '\uFEFF' + head, code: invalid },
+    { claims: '\uFEFF' + payload, code: invalid },
     { claims: claimsWith('"aud":"other"'), code: invalid },
     { claims: '{"aud":"other",' + payload.slice(1), code: invalid },
     { claims: claimsWith('"jti":"replayed"'), code: invalid },
@@ -466,6 +469,7 @@ test('JWKS selection ignores unrelated keys; unusable selected keys fail only th
     { jwks: keyText([selected, 'not a key']), code: 'invalid' },
     { jwks: JSON.stringify({ keys: null }), code: 'invalid' },
     { jwks: '[' + keyText([selected]) + ']', code: 'invalid' },
+    { jwks: '\uFEFF' + keyText([selected]), code: 'invalid', fetchedOnly: true },
     // Duplicate members cannot be expressed by a caller's JWKS object, only by a fetched document.
     { jwks: '{"keys":[],' + keyText([selected]).slice(1), code: 'invalid', fetchedOnly: true },
     {
@@ -756,7 +760,7 @@ test('PHP optional PSR-16/18/17 integrations use real interfaces without generat
     now: vectors.now,
     autoload: resolve('.generated/phpstan-vendor/autoload.php'),
   });
-  assert.deepEqual(rows, Array(6).fill(true));
+  assert.deepEqual(rows, Array(14).fill(true));
   const composer = JSON.parse(readFileSync(join(out, 'php/composer.json'), 'utf8'));
   assert.equal(
     Object.keys(composer.require).some((name) => name.startsWith('psr/')),

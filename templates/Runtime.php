@@ -6155,36 +6155,59 @@ class Runtime
     {
         return function_exists('apcu_fetch') && function_exists('apcu_enabled') && \apcu_enabled();
     }
+    /**
+     * Read the shared JWKS state, ignoring implausible values that could pin a key set or block
+     * refreshes: fetchedAt over 60 seconds ahead, more than a 24-hour TTL, or throttles more than
+     * two minutes ahead.
+     */
+    private static function webhookSharedKeyState(?object $cache, string $key): array
+    {
+        $shared =
+            $cache !== null ? $cache->get($key) : (self::webhookApcu() ? \apcu_fetch($key) : null);
+        if (!is_array($shared)) {
+            return [];
+        }
+        $now = microtime(true);
+        $state = [];
+        if (
+            is_string($shared['jwks'] ?? null) &&
+            is_numeric($shared['fetchedAt'] ?? null) &&
+            is_numeric($shared['expiresAt'] ?? null) &&
+            $shared['fetchedAt'] <= $now + 60 &&
+            $shared['expiresAt'] <= $shared['fetchedAt'] + 86400
+        ) {
+            $state = [
+                'jwks' => $shared['jwks'],
+                'fetchedAt' => (float) $shared['fetchedAt'],
+                'expiresAt' => (float) $shared['expiresAt'],
+            ];
+        }
+        foreach (['attempt', 'retryAfter'] as $name) {
+            if (is_numeric($shared[$name] ?? null) && $shared[$name] <= $now + 120) {
+                $state[$name] = (float) $shared[$name];
+            }
+        }
+        return $state;
+    }
     /** Shared state uses the PSR-16 cache when supplied, else APCu when enabled, else this process. */
     private static function webhookKeyState(?object $cache, string $url): array
     {
         $state = self::$webhookKeyStates[$url] ?? [];
-        $key = hash('sha256', 'webhook-jwks:' . $url);
         try {
-            $shared =
-                $cache !== null
-                    ? $cache->get($key)
-                    : (self::webhookApcu()
-                        ? \apcu_fetch($key)
-                        : null);
-            if (
-                is_array($shared) &&
-                is_string($shared['jwks'] ?? null) &&
-                is_numeric($shared['fetchedAt'] ?? null) &&
-                is_numeric($shared['expiresAt'] ?? null) &&
-                $shared['fetchedAt'] > ($state['fetchedAt'] ?? 0)
-            ) {
+            $shared = self::webhookSharedKeyState($cache, hash('sha256', 'webhook-jwks:' . $url));
+            if (isset($shared['jwks']) && $shared['fetchedAt'] > ($state['fetchedAt'] ?? 0)) {
                 $state =
-                    [
-                        'jwks' => $shared['jwks'],
-                        'keys' => self::webhookJwks($shared['jwks']),
-                        'fetchedAt' => (float) $shared['fetchedAt'],
-                        'expiresAt' => (float) $shared['expiresAt'],
-                    ] + $state;
+                    ['keys' => self::webhookJwks($shared['jwks'])] +
+                    array_intersect_key($shared, [
+                        'jwks' => 0,
+                        'fetchedAt' => 0,
+                        'expiresAt' => 0,
+                    ]) +
+                    $state;
             }
             foreach (['attempt', 'retryAfter'] as $name) {
-                if (is_numeric($shared[$name] ?? null)) {
-                    $state[$name] = max((float) $shared[$name], $state[$name] ?? 0);
+                if (isset($shared[$name])) {
+                    $state[$name] = max($shared[$name], $state[$name] ?? 0);
                 }
             }
         } catch (\Exception) {
@@ -6198,9 +6221,20 @@ class Runtime
         unset($state['keys']);
         $key = hash('sha256', 'webhook-jwks:' . $url);
         try {
+            if ($cache === null && !self::webhookApcu()) {
+                return;
+            }
+            // Another worker may have stored a newer set since this one read it; keep that set.
+            $shared = self::webhookSharedKeyState($cache, $key);
+            if (isset($shared['jwks']) && $shared['fetchedAt'] > ($state['fetchedAt'] ?? 0)) {
+                foreach (['attempt', 'retryAfter'] as $name) {
+                    $shared[$name] = max($shared[$name] ?? 0, $state[$name] ?? 0);
+                }
+                $state = $shared;
+            }
             if ($cache !== null) {
                 $cache->set($key, $state, 86400);
-            } elseif (self::webhookApcu()) {
+            } else {
                 \apcu_store($key, $state, 86400);
             }
         } catch (\Exception) {
@@ -6238,10 +6272,11 @@ class Runtime
         $flight = (object) ['done' => false, 'result' => null, 'error' => null];
         self::$webhookKeyFlights[$url] = $flight;
         $cache = $options['cache'] ?? null;
-        $state = self::webhookKeyState($cache, $url);
-        $state['attempt'] = microtime(true);
-        self::webhookStoreKeyState($cache, $url, $state);
         try {
+            // Inside the try, so even an \Error from a cache clears this flight.
+            $state = self::webhookKeyState($cache, $url);
+            $state['attempt'] = microtime(true);
+            self::webhookStoreKeyState($cache, $url, $state);
             $deadline = hrtime(true) / 1e6 + 5000;
             if (isset($options['http_client'])) {
                 $request = $options['request_factory']

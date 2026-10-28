@@ -2948,7 +2948,7 @@ async function webhookFetchKeys(url: string, transport: typeof fetch): Promise<W
         void reader.cancel().catch(() => {});
       }
       const keys = webhookJwks(
-        new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)),
+        new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(Buffer.concat(chunks)),
       );
       const match = /(?:^|,)\s*max-age\s*=\s*"?(\d+)"?(?=\s*(?:,|$))/i.exec(
         response.headers.get('cache-control') ?? '',
@@ -3137,7 +3137,8 @@ export async function verifyWebhookAsyncFromPlan(
     const headerBytes = webhookBase64url(encodedHeader);
     const claimBytes = webhookBase64url(encodedClaims);
     if (!headerBytes || !claimBytes) return invalid();
-    const decoder = new TextDecoder('utf-8', { fatal: true });
+    // Keep a BOM so JSON parsing rejects it, as Go's encoding/json does.
+    const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
     jose = webhookJsonObject(decoder.decode(headerBytes));
     claims = webhookJsonObject(decoder.decode(claimBytes));
   } catch {
