@@ -277,7 +277,8 @@ export function scopedNodeClients(code: string): (group: string) => string {
           `constructor(options = {}) {\n${statements.map((s) => s.getText(source)).join('\n')}\n}`,
         ];
       }
-      if (member.name?.getText(source) === 'verifyWebhook') return [];
+      if (['verifyWebhook', 'verifyWebhookAsync'].includes(member.name?.getText(source) ?? ''))
+        return [];
       return [member.getText(source)];
     });
     return `export class Client {\n${members.join('\n')}\n}\n`;
@@ -365,7 +366,9 @@ export function splitNodeDeclarations(
     roots.set(group, names);
     const resourceName = group[0]?.toUpperCase() + group.slice(1) + 'Resource';
     const common = client.members.filter(
-      (m) => !ts.isPropertyDeclaration(m) && m.name?.getText(source) !== 'verifyWebhook',
+      (m) =>
+        !ts.isPropertyDeclaration(m) &&
+        !['verifyWebhook', 'verifyWebhookAsync'].includes(m.name?.getText(source) ?? ''),
     );
     const memberRefs = refs(common, 'Client');
     put(

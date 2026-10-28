@@ -208,7 +208,7 @@ const webhookError = (
   throw createSdkError(kind, message, 'not_sent', false, undefined, 'webhook_' + code);
 };
 
-function webhookHeaderValues(headers: WebhookHeaders, name: string): string[] {
+function webhookHeaderValues(headers: WebhookHeaders, name: string, optional = false): string[] {
   if (!headers || typeof headers !== 'object' || Array.isArray(headers))
     return webhookError(
       'validation',
@@ -228,12 +228,14 @@ function webhookHeaderValues(headers: WebhookHeaders, name: string): string[] {
       );
     values.push(...parts);
   }
-  if (!values.length || values.every((value) => !value.trim()))
+  if (!values.length || values.every((value) => !value.trim())) {
+    if (optional) return [];
     return webhookError(
       'authentication',
       'missing_header',
       'Missing webhook signing header: ' + name,
     );
+  }
   return values;
 }
 
@@ -2765,6 +2767,367 @@ export type WebhookVerification =
   | { known: true; event: unknown }
   | { known: false; event: unknown; reason: 'unknown_event' | 'unmatched_envelope' };
 
+export interface WebhookVerificationOptions {
+  endpointIds?: string | string[];
+  secrets?: string | string[];
+  jwks?: { keys: object[] };
+  baseUrl?: string;
+  fetch?: typeof fetch;
+  nowSeconds?: number;
+}
+
+type WebhookJwk = JsonWebKey & { kid: string };
+type WebhookKeySet = { keys: WebhookJwk[]; fetchedAt: number; expiresAt: number };
+const webhookKeySets = new Map<string, WebhookKeySet>();
+const webhookKeyFlights = new Map<string, Promise<WebhookKeySet>>();
+const webhookKeyAttempts = new Map<string, number>();
+const webhookRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value);
+
+function webhookBase64url(value: unknown): Buffer | undefined {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]+$/.test(value)) return undefined;
+  const bytes = Buffer.from(value, 'base64url');
+  return bytes.toString('base64url') === value ? bytes : undefined;
+}
+
+async function webhookJwks(value: unknown): Promise<WebhookJwk[]> {
+  if (!webhookRecord(value) || !Array.isArray(value.keys)) throw new Error('Invalid JWKS');
+  const keys: WebhookJwk[] = [];
+  const ids = new Set<string>();
+  for (const key of value.keys) {
+    if (
+      !webhookRecord(key) ||
+      key.kty !== 'EC' ||
+      key.crv !== 'P-256' ||
+      typeof key.kid !== 'string' ||
+      !key.kid ||
+      ids.has(key.kid) ||
+      webhookBase64url(key.x)?.length !== 32 ||
+      webhookBase64url(key.y)?.length !== 32 ||
+      (key.alg !== undefined && key.alg !== 'ES256') ||
+      (key.use !== undefined && key.use !== 'sig') ||
+      key.d !== undefined ||
+      (key.key_ops !== undefined &&
+        (!Array.isArray(key.key_ops) || key.key_ops.length !== 1 || key.key_ops[0] !== 'verify'))
+    )
+      throw new Error('Invalid EC P-256 verification key');
+    const publicKey: WebhookJwk = {
+      kty: 'EC',
+      crv: 'P-256',
+      kid: key.kid,
+      x: String(key.x),
+      y: String(key.y),
+    };
+    await crypto.subtle.importKey('jwk', publicKey, { name: 'ECDSA', namedCurve: 'P-256' }, false, [
+      'verify',
+    ]);
+    ids.add(key.kid);
+    keys.push(publicKey);
+  }
+  return keys;
+}
+
+async function webhookFetchKeys(url: string, transport: typeof fetch): Promise<WebhookKeySet> {
+  const active = webhookKeyFlights.get(url);
+  if (active) return active;
+  const flight = (async () => {
+    // Publish the flight before invoking a caller-owned transport, which can reenter.
+    await Promise.resolve();
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new Error('JWKS timeout'));
+      }, 5000);
+    });
+    const work = (async () => {
+      const response = await transport(url, {
+        signal: controller.signal,
+        redirect: 'error',
+        credentials: 'omit',
+        headers: { accept: 'application/json' },
+      });
+      if (response.status !== 200 || !response.body) throw new Error('JWKS HTTP failure');
+      const reader = response.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let length = 0;
+      try {
+        for (;;) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          length += chunk.value.byteLength;
+          if (length > 256 * 1024) throw new Error('JWKS response too large');
+          chunks.push(chunk.value);
+        }
+      } finally {
+        void reader.cancel().catch(() => {});
+      }
+      const keys = await webhookJwks(
+        JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks))),
+      );
+      const match = /(?:^|,)\s*max-age\s*=\s*"?(\d+)"?(?=\s*(?:,|$))/i.exec(
+        response.headers.get('cache-control') ?? '',
+      );
+      const ttl = match ? Math.min(86400, Math.max(300, Number(match[1]))) : 900;
+      const fetchedAt = Date.now() / 1000;
+      return { keys, fetchedAt, expiresAt: fetchedAt + ttl };
+    })();
+    try {
+      const entry = await Promise.race([work, timeout]);
+      webhookKeySets.set(url, entry);
+      return entry;
+    } catch {
+      const previous = webhookKeySets.get(url);
+      if (previous && Date.now() / 1000 - previous.fetchedAt <= 86400) return previous;
+      throw createSdkError(
+        'transport',
+        'Webhook JWKS unavailable; respond with 5xx so delivery can retry',
+        'not_sent',
+        false,
+        undefined,
+        'webhook_jwks_unavailable',
+      );
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      controller.abort();
+    }
+  })();
+  webhookKeyFlights.set(url, flight);
+  webhookKeyAttempts.set(url, Date.now() / 1000);
+  try {
+    return await flight;
+  } finally {
+    webhookKeyFlights.delete(url);
+  }
+}
+
+async function webhookJwtKey(
+  url: string,
+  kid: string,
+  options: WebhookVerificationOptions,
+): Promise<WebhookJwk> {
+  let keys: WebhookJwk[];
+  if (options.jwks !== undefined) {
+    try {
+      keys = await webhookJwks(options.jwks);
+    } catch {
+      return webhookError(
+        'validation',
+        'invalid_input',
+        'Webhook jwks must contain EC P-256 public verification keys',
+      );
+    }
+  } else {
+    let entry = webhookKeySets.get(url);
+    const active = webhookKeyFlights.get(url);
+    if (active) entry = await active;
+    else if (!entry || entry.expiresAt <= Date.now() / 1000)
+      entry = await webhookFetchKeys(url, options.fetch ?? fetch);
+    if (
+      !entry.keys.some((key) => key.kid === kid) &&
+      Date.now() / 1000 - (webhookKeyAttempts.get(url) ?? -Infinity) >= 60
+    )
+      entry = await webhookFetchKeys(url, options.fetch ?? fetch);
+    keys = entry.keys;
+  }
+  const key = keys.find((key) => key.kid === kid);
+  return key ?? webhookError('authentication', 'unknown_key', 'Webhook signing key is unknown');
+}
+
+/** JWT takes precedence whenever the caller supplies endpoint IDs and a bearer token. */
+export async function verifyWebhookAsyncFromPlan(
+  source: DescriptorSource | CompiledRuntimePlan,
+  rawBody: Uint8Array | ArrayBuffer,
+  headers: WebhookHeaders,
+  options: WebhookVerificationOptions,
+  redactFields: string[] = [],
+): Promise<WebhookVerification & { signingMethod: 'jwt' | 'hmac' }> {
+  const w = source instanceof DescriptorSource ? source.webhook() : source.webhook;
+  if (!w) return bad('webhook', 'capability is not declared');
+  if (
+    !webhookRecord(options) ||
+    Object.keys(options).some(
+      (key) => !['endpointIds', 'secrets', 'jwks', 'baseUrl', 'fetch', 'nowSeconds'].includes(key),
+    )
+  )
+    return webhookError('validation', 'invalid_input', 'Supply webhook verification options');
+  const strings = (value: unknown): string[] => {
+    const values: unknown[] =
+      typeof value === 'string' ? [value] : Array.isArray(value) ? value : [];
+    if (
+      !values.length ||
+      !values.every((item): item is string => typeof item === 'string' && item.length > 0)
+    )
+      return webhookError(
+        'validation',
+        'invalid_input',
+        'Supply a nonempty string or array of nonempty strings',
+      );
+    return values;
+  };
+  const endpointIds = options.endpointIds === undefined ? undefined : strings(options.endpointIds);
+  const secrets = options.secrets === undefined ? undefined : strings(options.secrets);
+  if (!endpointIds && options.secrets === undefined)
+    return webhookError('validation', 'invalid_input', 'Supply endpointIds or secrets');
+  if (options.fetch !== undefined && typeof options.fetch !== 'function')
+    return webhookError('validation', 'invalid_input', 'Webhook fetch must be a function');
+  const now = options.nowSeconds === undefined ? Date.now() / 1000 : options.nowSeconds;
+  if (typeof now !== 'number' || !Number.isFinite(now) || Math.abs(now) >= 100_000_000_000)
+    return webhookError(
+      'validation',
+      'invalid_input',
+      'Webhook nowSeconds must be finite Unix seconds, not milliseconds',
+    );
+  if (rawBody instanceof ArrayBuffer) rawBody = new Uint8Array(rawBody);
+  if (!(rawBody instanceof Uint8Array))
+    return webhookError(
+      'validation',
+      'invalid_input',
+      'Webhook body must be original Buffer, Uint8Array or ArrayBuffer bytes',
+    );
+  // Own the bytes across asynchronous key fetching and signature verification.
+  const body = Buffer.from(rawBody);
+  const authorization = webhookHeaderValues(headers, w.jwt?.header ?? 'authorization', true);
+  const bearer = authorization.some((value) =>
+    /(?:^|,)[ \t]*Bearer(?:[ \t]|$)/i.test(value.trim()),
+  );
+  if (!bearer || !endpointIds) {
+    if (
+      options.secrets !== undefined &&
+      w.algorithm === 'hmac-sha256' &&
+      w.header &&
+      webhookHeaderValues(headers, w.header, true).length &&
+      (w.format === 'timestamped-hex' ||
+        (w.timestampHeader && webhookHeaderValues(headers, w.timestampHeader, true).length)) &&
+      (w.format !== 'standard-webhooks' ||
+        (w.idHeader && webhookHeaderValues(headers, w.idHeader, true).length))
+    )
+      return {
+        ...verifyWebhookFromPlan(source, body, headers, secrets ?? [], now, redactFields),
+        signingMethod: 'hmac',
+      };
+    return webhookError('authentication', 'missing_header', 'Missing webhook signing headers');
+  }
+  const j = w.jwt;
+  if (!j)
+    return webhookError('validation', 'invalid_input', 'JWT webhook verification is not declared');
+  let issuer: string;
+  if (j.issuer === 'baseUrl') {
+    if (!isBaseUrlSyntax(options.baseUrl) || !/^https?:/i.test(options.baseUrl))
+      return webhookError(
+        'validation',
+        'invalid_input',
+        'Supply a trusted API baseUrl for JWT verification',
+      );
+    try {
+      issuer = new URL(options.baseUrl).origin;
+    } catch {
+      return webhookError('validation', 'invalid_input', 'Supply a trusted API baseUrl');
+    }
+  } else issuer = j.issuer;
+  const invalid = (): never =>
+    webhookError('authentication', 'invalid_token', 'Invalid webhook JWT');
+  if (authorization.length !== 1) return invalid();
+  const match = /^Bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/i.exec(
+    authorization[0]?.trim() ?? '',
+  );
+  if (!match || !match[1] || match[1].length > 16384) return invalid();
+  const [encodedHeader, encodedClaims, encodedSignature] = match[1].split('.');
+  let jose: unknown;
+  let claims: unknown;
+  try {
+    const headerBytes = webhookBase64url(encodedHeader);
+    const claimBytes = webhookBase64url(encodedClaims);
+    if (!headerBytes || !claimBytes) return invalid();
+    const decoder = new TextDecoder('utf-8', { fatal: true });
+    jose = JSON.parse(decoder.decode(headerBytes));
+    claims = JSON.parse(decoder.decode(claimBytes));
+  } catch {
+    return invalid();
+  }
+  const signature = webhookBase64url(encodedSignature);
+  if (
+    !webhookRecord(jose) ||
+    jose.alg !== 'ES256' ||
+    jose.typ !== j.typ ||
+    typeof jose.kid !== 'string' ||
+    !jose.kid ||
+    !signature ||
+    signature.length !== 64 ||
+    ['crit', 'jku', 'x5u', 'jwk', 'x5c'].some((key) => Object.hasOwn(jose, key)) ||
+    !webhookRecord(claims) ||
+    claims.iss !== issuer ||
+    typeof claims.jti !== 'string' ||
+    !claims.jti
+  )
+    return invalid();
+  const key = await webhookJwtKey(issuer.replace(/\/$/, '') + j.jwksPath, jose.kid, options);
+  try {
+    const publicKey = await crypto.subtle.importKey(
+      'jwk',
+      key,
+      { name: 'ECDSA', namedCurve: 'P-256' },
+      false,
+      ['verify'],
+    );
+    if (
+      !(await crypto.subtle.verify(
+        { name: 'ECDSA', hash: 'SHA-256' },
+        publicKey,
+        Uint8Array.from(signature),
+        new TextEncoder().encode(encodedHeader + '.' + encodedClaims),
+      ))
+    )
+      return invalid();
+  } catch {
+    return invalid();
+  }
+  const audiences = typeof claims.aud === 'string' ? [claims.aud] : claims.aud;
+  if (
+    !Array.isArray(audiences) ||
+    !audiences.length ||
+    !audiences.every((aud) => typeof aud === 'string' && aud.length > 0) ||
+    !audiences.some((aud) => endpointIds.includes(aud))
+  )
+    return webhookError(
+      'authentication',
+      'invalid_audience',
+      'Webhook JWT audience does not match this endpoint',
+    );
+  const { iat, exp } = claims;
+  if (
+    typeof iat !== 'number' ||
+    typeof exp !== 'number' ||
+    !Number.isSafeInteger(iat) ||
+    !Number.isSafeInteger(exp) ||
+    iat < 0 ||
+    exp <= iat ||
+    exp - iat > Math.min(300, j.lifetimeSeconds) ||
+    iat > now + j.leewaySeconds ||
+    now >= exp + j.leewaySeconds
+  )
+    return webhookError(
+      'authentication',
+      'token_expired',
+      'Webhook JWT timestamps are outside the permitted lifetime or leeway',
+    );
+  const actualHash = webhookBase64url(claims[j.bodyHashClaim]);
+  const { createHash, timingSafeEqual } = process.getBuiltinModule('crypto');
+  const expectedHash = createHash('sha256').update(body).digest();
+  if (
+    !actualHash ||
+    actualHash.length !== expectedHash.length ||
+    !timingSafeEqual(expectedHash, actualHash)
+  )
+    return webhookError(
+      'authentication',
+      'body_mismatch',
+      'Webhook JWT does not match the original body bytes',
+    );
+  return { ...decodeWebhookFromPlan(source, body, redactFields), signingMethod: 'jwt' };
+}
+
 /** Verify compiled webhook descriptors without constructing an HTTP runtime. */
 export function verifyWebhookFromPlan(
   source: DescriptorSource | CompiledRuntimePlan,
@@ -2774,14 +3137,9 @@ export function verifyWebhookFromPlan(
   nowSeconds = Date.now() / 1000,
   redactFields: string[] = [],
 ): WebhookVerification {
-  const decode = (value: unknown, codec: CodecPlan, context: CodecContext): unknown =>
-    executeCodec(value, codec, {
-      ...context,
-      definitions:
-        source instanceof DescriptorSource ? source.definitions() : (source.definitions ?? {}),
-    });
   const w = source instanceof DescriptorSource ? source.webhook() : source.webhook;
-  if (!w) return bad('webhook', 'capability is not declared');
+  if (!w || w.algorithm !== 'hmac-sha256' || !w.header || w.toleranceSeconds === undefined)
+    return bad('webhook', 'HMAC capability is not declared');
   if (rawBody instanceof ArrayBuffer) rawBody = new Uint8Array(rawBody);
   if (!(rawBody instanceof Uint8Array))
     return webhookError(
@@ -2898,6 +3256,22 @@ export function verifyWebhookFromPlan(
       'invalid_signature',
       'Invalid webhook signature; check the signing secret and preserve the original request body bytes without reserializing JSON',
     );
+  return decodeWebhookFromPlan(source, rawBody, redactFields);
+}
+
+function decodeWebhookFromPlan(
+  source: DescriptorSource | CompiledRuntimePlan,
+  rawBody: Uint8Array,
+  redactFields: string[],
+): WebhookVerification {
+  const decode = (value: unknown, codec: CodecPlan, context: CodecContext): unknown =>
+    executeCodec(value, codec, {
+      ...context,
+      definitions:
+        source instanceof DescriptorSource ? source.definitions() : (source.definitions ?? {}),
+    });
+  const w = source instanceof DescriptorSource ? source.webhook() : source.webhook;
+  if (!w) return bad('webhook', 'capability is not declared');
   let event: unknown;
   try {
     event = parseJson(
@@ -4076,6 +4450,20 @@ class CompiledRuntime {
       headers,
       secrets,
       nowSeconds,
+      this.options.redactFields ?? [],
+    );
+  }
+
+  verifyWebhookAsync(
+    rawBody: Uint8Array | ArrayBuffer,
+    headers: WebhookHeaders,
+    options: WebhookVerificationOptions,
+  ): Promise<WebhookVerification & { signingMethod: 'jwt' | 'hmac' }> {
+    return verifyWebhookAsyncFromPlan(
+      this.descriptors ?? this.contract,
+      rawBody,
+      headers,
+      { baseUrl: this.base.origin, fetch: this.options.transport ?? fetch, ...options },
       this.options.redactFields ?? [],
     );
   }

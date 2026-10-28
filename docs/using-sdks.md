@@ -379,6 +379,53 @@ Conditional calls send the declared precondition header and surface conflicts wi
 
 ## Webhook verification
 
+### JWT deliveries
+
+Providers declaring `webhook.jwt` support per-delivery ES256 JWTs without a shared secret. In Node, use `verifyWebhookAsync(rawBody, headers, options)` from the package root or `webhooks` subpath, or `client.verifyWebhookAsync`. PHP provides `Webhooks::verifyDelivery($rawBody, $headers, $options)` and `$client->verifyWebhookDelivery`. Both return the existing verified result plus `signingMethod: 'jwt' | 'hmac'` in Node or `signing_method` in PHP.
+
+Supply your receiving endpoint ID, such as `whep_example` or `dcb_example`. This is the webhook endpoint's ID, not the event ID. The trusted issuer comes from the declared literal issuer or the configured API base URL's origin, without a trailing slash. Never derive it from the token. Standalone verification with `issuer: "baseUrl"` requires `baseUrl` (PHP `base_url`); the client methods default it from their client. Node also defaults `fetch` from the client's `transport`.
+
+Register Express raw middleware before JSON middleware. Persist the delivery before acknowledging it:
+
+```js
+import { verifyWebhookAsync } from '@example/payments/webhooks';
+
+app.post('/webhooks', express.raw({ type: 'application/json' }), async (req, res, next) => {
+  try {
+    const verified = await verifyWebhookAsync(req.body, req.headers, {
+      endpointIds: ['whep_example'],
+      baseUrl: 'https://api.withflintpay.com',
+    });
+    await receiveVerified(verified, req, res, next);
+  } catch (error) {
+    next(error);
+  }
+});
+app.use(express.json());
+```
+
+```php
+use Example\Payments\Webhooks;
+
+$verified = Webhooks::verifyDelivery(file_get_contents('php://input'), getallheaders(), [
+  'endpoint_ids' => ['whep_example'],
+  'base_url' => 'https://api.withflintpay.com',
+]);
+// Persist the delivery and durable work before acknowledging it.
+```
+
+Node options are `endpointIds?: string | string[]`, `secrets?: string | string[]`, `jwks?: { keys: object[] }`, `baseUrl?: string`, `fetch?: typeof fetch`, and `nowSeconds?: number`. PHP uses `endpoint_ids`, `secrets`, `jwks`, `base_url`, and `now_seconds`, with optional `cache` (PSR-16), `http_client` (PSR-18), and `request_factory` (PSR-17). Supply at least one of endpoint IDs or secrets. PHP requires `ext-openssl` for JWT verification. PSR packages are optional Composer suggestions; supplying a PSR HTTP client also requires a request factory. Without one, PHP uses the SDK transport. The receiver owns injected transports and must configure PSR clients with a timeout of at most five seconds and redirects disabled; PSR-18 has no portable timeout or redirect setting.
+
+If a bearer token is present and endpoint IDs are supplied, JWT alone decides. Invalid JWTs never fall back to HMAC. Otherwise, secrets and all declared HMAC headers select HMAC; missing headers produce `webhook_missing_header`. Existing synchronous `verifyWebhook` (PHP `Webhooks::verify`) remains HMAC-only. During migration, pass both endpoint IDs and secrets to the new verifier.
+
+Verification accepts only ES256, an exact declared `typ` and issuer, and an audience matching a supplied endpoint ID. It rejects `crit` and token-supplied `jku`, `x5u`, `jwk`, and `x5c`. It selects a trusted EC P-256 key by `kid`, checks the signature and `iat`/`exp` with the declared lifetime and leeway, a hard maximum lifetime of 300 seconds, and at most 60 seconds leeway, and compares the SHA-256 of the exact body bytes in constant time. It parses JSON only after authentication. A nonempty `jti` is required; application storage still owns replay and duplicate handling.
+
+Keys come from `<trusted issuer>/.well-known/jwks.json` (or the declared path). An explicit `jwks` bypasses HTTP and caching entirely, useful for pinned keys and deterministic tests. The process cache shares one in-flight fetch per URL; PHP Fibers require the application's scheduler to resume waiters. TTL follows `Cache-Control: max-age`, clamped to five minutes through 24 hours, with 15 minutes by default. Unknown keys trigger at most one refresh per minute per URL. Failed fetches may use a previously fetched set for up to 24 hours after its successful fetch. Requests have a five-second timeout and a 256 KiB response limit. PHP's optional PSR-16 cache can share entries across workers; single-flight is per process, since PSR-16 supplies no atomic locking operation.
+
+Answer **5xx** for `webhook_jwks_unavailable` so the provider retries. Do not acknowledge an unverified delivery during a key-service outage. Treat signature, audience, time and body failures as authentication failures; log only error kind and code.
+
+### HMAC deliveries
+
 Node verification accepts original `Buffer`, `Uint8Array` and `ArrayBuffer` bytes. Pass `nowSeconds` in seconds; millisecond-scale values raise an input error explaining the conversion.
 
 Packages with webhook verification declared expose a standalone verifier through the `webhooks` subpath, which loads webhook codecs without operation descriptors. The root `verifyWebhook` export and client method remain available. It requires no client options, base URL or API credentials; the client method delegates to the same verification implementation.
@@ -486,15 +533,21 @@ Secret and header rules:
 
 Failures throw `SdkError`, with the code in `code` (Node) or `errorCode` (PHP):
 
-| Kind             | Code                                 | Action                                                        |
-| ---------------- | ------------------------------------ | ------------------------------------------------------------- |
-| `validation`     | `webhook_invalid_input`              | Supply original body bytes and supported headers/time values. |
-| `validation`     | `webhook_invalid_secret`             | Supply at least one correctly formatted nonempty secret.      |
-| `authentication` | `webhook_missing_header`             | Forward the configured signing headers.                       |
-| `authentication` | `webhook_invalid_timestamp`          | Supply one integer timestamp in seconds.                      |
-| `authentication` | `webhook_timestamp_out_of_tolerance` | Check the server clock and delivery age.                      |
-| `authentication` | `webhook_invalid_signature`          | Check the signing secret and original request bytes.          |
-| `protocol`       | `webhook_invalid_json`               | The authenticated bytes are not valid UTF-8 JSON.             |
+| Kind             | Code                                 | Action                                                                          |
+| ---------------- | ------------------------------------ | ------------------------------------------------------------------------------- |
+| `validation`     | `webhook_invalid_input`              | Supply original body bytes and supported options, headers and Unix seconds.     |
+| `validation`     | `webhook_invalid_secret`             | Supply at least one correctly formatted nonempty secret.                        |
+| `authentication` | `webhook_missing_header`             | Forward the configured signing headers.                                         |
+| `authentication` | `webhook_invalid_timestamp`          | Supply one integer timestamp in seconds.                                        |
+| `authentication` | `webhook_timestamp_out_of_tolerance` | Check the server clock and delivery age.                                        |
+| `authentication` | `webhook_invalid_signature`          | Check the signing secret and original request bytes.                            |
+| `authentication` | `webhook_invalid_token`              | Reject malformed JWTs, wrong algorithm/type/issuer or invalid signatures.       |
+| `authentication` | `webhook_invalid_audience`           | Check the configured receiving endpoint IDs.                                    |
+| `authentication` | `webhook_token_expired`              | Check JWT timestamps, lifetime, leeway and the server clock.                    |
+| `authentication` | `webhook_body_mismatch`              | Preserve the exact original request bytes.                                      |
+| `authentication` | `webhook_unknown_key`                | The trusted key set has no matching signing key.                                |
+| `transport`      | `webhook_jwks_unavailable`           | Respond with 5xx so the provider retries; investigate key-service availability. |
+| `protocol`       | `webhook_invalid_json`               | The authenticated bytes are not valid UTF-8 JSON.                               |
 
 ```js
 try {

@@ -356,7 +356,7 @@ Conversion takes an exact major-unit decimal string and returns an exact minor-u
 
 ## Webhooks
 
-Top level `webhook`: an HMAC-SHA256 signing format and event schemas. Other signing protocols fail with a diagnostic naming the protocol.
+Top level `webhook`: HMAC-SHA256 signing, optional ES256 JWT signing, and event schemas. Unsupported signing algorithms fail with a diagnostic naming the algorithm.
 
 ```json
 {
@@ -387,7 +387,7 @@ Top level `webhook`: an HMAC-SHA256 signing format and event schemas. Other sign
 | `standard-webhooks` | `header: "webhook-signature"`, `timestampHeader: "webhook-timestamp"`, `idHeader: "webhook-id"`, `separator: "."` | Space-separated `v1,<base64>` over `id.timestamp.rawBody`, keyed by the 32 bytes decoded from a canonical `whsec_` secret.                                  |
 | `timestamped-hex`   | `header` (for example `"X-Signature"`), no `timestampHeader`, `separator: "."`                                    | `t=<timestamp>,v1=<hex>` over `timestamp.rawBody` using the full UTF-8 secret. Multiple signatures allow rotation; duplicate timestamp fields are rejected. |
 
-- Required: `algorithm: "hmac-sha256"`, `header`, `separator`, `toleranceSeconds`, `typeField` and `events`.
+- Required for HMAC: `algorithm: "hmac-sha256"`, `header`, `separator`, `toleranceSeconds`, `typeField` and `events`.
 - Select the provider's format with `format`; a plain hex signature is not interchangeable with a structured signature header.
 - Verification checks every supplied rotation secret, timestamp tolerance and payload parsing.
 - Top-level OpenAPI `webhooks` are incoming contracts and never generate client methods. Effective literal event types bind incoming payload schemas to the verifier; incompatible explicit bindings fail diagnosis.
@@ -399,6 +399,35 @@ Each event gets a Node type named `WebhookEvent` plus its PascalCase words, usin
 When `webhook` is configured, `KnownWebhookEvent`, `VerifiedWebhook`, `verifyWebhook` and every per-event type name are reserved alongside other generated symbols. A clash with a model, resource or operation helper fails diagnosis, including for PHP-only generation. Customize the conflicting model/resource/method name or change the event declaration.
 
 Declared verification also emits a Node root `verifyWebhook(rawBody, headers, secrets, nowSeconds?)` function and PHP `Webhooks::verify($rawBody, $headers, $secrets, $nowSeconds = null)` method, usable without client configuration. If a generated model uses the `Webhooks` class name (case insensitive), it keeps its name and PHP omits the standalone verifier class; use `Client::verifyWebhook` instead. Node's standalone verifier remains available. The exact Node root identifier `errors` is reserved; models named `Errors`, `ValidationError` and `ApiError` retain their names in both targets. Both targets return `reason: 'unknown_event' | 'unmatched_envelope'` when `known` is false; known deliveries have no reason. See [webhook verification](using-sdks.md#webhook-verification).
+
+### JWT signing
+
+Declare `webhook.jwt` alongside HMAC settings to enable per-delivery JWT verification. A JWT-only provider can omit every HMAC setting; `typeField` and `events` remain required. Partial HMAC declarations are rejected.
+
+For Flint SDK profiles, including `spec/profiles/full-common-sdk.json` in the downstream SDK repository, add this object to the existing `webhook` declaration and retain its HMAC settings and events:
+
+```json
+{
+  "jwt": {
+    "header": "authorization",
+    "scheme": "Bearer",
+    "algorithm": "ES256",
+    "typ": "flint-webhook+jwt",
+    "issuer": "baseUrl",
+    "jwksPath": "/.well-known/jwks.json",
+    "bodyHashClaim": "body_sha256",
+    "bodyHashEncoding": "base64url",
+    "lifetimeSeconds": 300,
+    "leewaySeconds": 60
+  }
+}
+```
+
+Every JWT field is required when `jwt` is present. `algorithm` accepts only `ES256`, `scheme` only `Bearer`, and `bodyHashEncoding` only `base64url`. Other algorithms produce a diagnostic naming the unsupported algorithm. `lifetimeSeconds` is an integer from 1 through 3600; `leewaySeconds` is an integer from 0 through 60. Flint profiles use 300 and 60 respectively. Verification always enforces Flint's 300-second wire maximum; a smaller declared lifetime tightens it. `typ` and `bodyHashClaim` are nonempty tokens. `header` is a valid HTTP header name and matches case insensitively.
+
+`issuer: "baseUrl"` uses the SDK client's configured API base URL's origin with no trailing slash. Standalone calls supply that trusted URL explicitly. Alternatively, declare a literal HTTPS URL without credentials, query or fragment; literal issuer claims must match it exactly. `jwksPath` must be an absolute path on that origin, without a query, fragment or dot segments. Token headers and claims never supply the JWKS location. The OpenAPI `x-flint-webhooks.signing.jwt` annotation documents the wire contract; enable the generator capability explicitly in the profile.
+
+The Node `verifyWebhookAsync` root/subpath export and client method and PHP `Webhooks::verifyDelivery` and `Client::verifyWebhookDelivery` select JWT or HMAC. Existing synchronous verifiers retain their HMAC contract. `verifyWebhookAsync`, `verifyWebhookDelivery` and `WebhookVerificationOptions` join the reserved webhook symbols. The existing PHP `Webhooks` model collision rule applies to both standalone methods.
 
 ### Webhook inbox examples
 

@@ -271,6 +271,51 @@
         },
         "typeField": {
           "type": "string"
+        },
+        "jwt": {
+          "type": "object",
+          "properties": {
+            "header": {
+              "type": "string",
+              "minLength": 1
+            },
+            "scheme": {
+              "const": "Bearer"
+            },
+            "algorithm": {
+              "const": "ES256"
+            },
+            "typ": {
+              "type": "string",
+              "minLength": 1
+            },
+            "issuer": {
+              "type": "string",
+              "pattern": "^(baseUrl|[hH][tT][tT][pP][sS]://[^\\s?#@]+)$"
+            },
+            "jwksPath": {
+              "type": "string",
+              "pattern": "^/(?!/)[A-Za-z0-9/._~-]+$"
+            },
+            "bodyHashClaim": {
+              "type": "string",
+              "minLength": 1
+            },
+            "bodyHashEncoding": {
+              "const": "base64url"
+            },
+            "lifetimeSeconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3600
+            },
+            "leewaySeconds": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 60
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
