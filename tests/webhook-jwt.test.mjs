@@ -77,7 +77,7 @@ before(async () => {
   sdk = await import(pathToFileURL(join(out, 'node/index.js')));
   subpath = await import(pathToFileURL(join(out, 'node/webhooks.js')));
 });
-function php(script, input = {}) {
+function php(script, input = {}, phpArgs = []) {
   const program = join(root, 'run-' + Math.random().toString(36).slice(2) + '.php');
   writeFileSync(
     program,
@@ -85,7 +85,7 @@ function php(script, input = {}) {
   );
   const data = program + '.json';
   writeFileSync(data, JSON.stringify(input));
-  const r = spawnSync('php', [program, join(out, 'php'), data], { encoding: 'utf8' });
+  const r = spawnSync('php', [...phpArgs, program, join(out, 'php'), data], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   return JSON.parse(r.stdout);
 }
@@ -155,11 +155,10 @@ const claims = {
   jti: 'delivery_fixture',
   body_sha256: createHash('sha256').update(body).digest('base64url'),
 };
-function token(overrides = {}, headers = {}) {
-  const head = Buffer.from(
-    JSON.stringify({ alg: 'ES256', typ: jwt.typ, kid, ...headers }),
-  ).toString('base64url');
-  const payload = Buffer.from(JSON.stringify({ ...claims, ...overrides })).toString('base64url');
+/** Sign exact header and claims JSON text, so tests can express duplicate members and floats. */
+function signedToken(headerText, claimsText) {
+  const head = Buffer.from(headerText).toString('base64url');
+  const payload = Buffer.from(claimsText).toString('base64url');
   return (
     head +
     '.' +
@@ -171,7 +170,59 @@ function token(overrides = {}, headers = {}) {
     }).toString('base64url')
   );
 }
+function token(overrides = {}, headers = {}) {
+  return signedToken(
+    JSON.stringify({ alg: 'ES256', typ: jwt.typ, kid, ...headers }),
+    JSON.stringify({ ...claims, ...overrides }),
+  );
+}
 const options = { endpointIds: 'whep_fixture', jwks, baseUrl: claims.iss, nowSeconds: vectors.now };
+
+/**
+ * Tokens Flint's Go VerifyFlintWebhookJWT rejects (or accepts) because of JSON shape: duplicate
+ * members, header members other than alg/kid/typ, sub, non-string aud and non-integer times.
+ */
+function strictParsingCases() {
+  const head = JSON.stringify({ alg: 'ES256', typ: jwt.typ, kid });
+  const payload = JSON.stringify(claims);
+  const claimsWith = (text) => payload.slice(0, -1) + ',' + text + '}';
+  const headerWith = (text) => head.slice(0, -1) + ',' + text + '}';
+  const invalid = 'invalid_token';
+  return [
+    { head: headerWith('"kid":' + JSON.stringify(kid)), code: invalid },
+    { head: headerWith('"\\u0061lg":"ES256"'), code: invalid },
+    { head: '{"alg":"none",' + head.slice(1), code: invalid },
+    { head: headerWith('"cty":"JWT"'), code: invalid },
+    { head: headerWith('"b64":true'), code: invalid },
+    { head: JSON.stringify({ alg: 'ES256', typ: jwt.typ }), code: invalid },
+    { head: JSON.stringify({ alg: 'ES256', typ: jwt.typ, kid: 1 }), code: invalid },
+    { head: JSON.stringify({ alg: 'ES256', typ: jwt.typ, kid: '' }), code: invalid },
+    { head: '[' + head + ']', code: invalid },
+    { claims: claimsWith('"aud":"other"'), code: invalid },
+    { claims: '{"aud":"other",' + payload.slice(1), code: invalid },
+    { claims: claimsWith('"jti":"replayed"'), code: invalid },
+    { claims: claimsWith('"sub":"merchant_fixture"'), code: invalid },
+    { claims: claimsWith('"sub":null'), code: invalid },
+    { claims: JSON.stringify({ ...claims, aud: [claims.aud] }), code: invalid },
+    { claims: JSON.stringify({ ...claims, aud: null }), code: invalid },
+    { claims: JSON.stringify({ ...claims, iat: claims.iat + 0.5 }), code: invalid },
+    { claims: payload.replace('"iat":' + claims.iat, '"iat":' + claims.iat + '.0'), code: invalid },
+    {
+      claims: payload.replace('"exp":' + claims.exp, '"exp":' + claims.exp / 100 + 'e2'),
+      code: invalid,
+    },
+    { claims: JSON.stringify({ ...claims, iat: String(claims.iat) }), code: invalid },
+    { claims: JSON.stringify({ ...claims, exp: null }), code: invalid },
+    { claims: JSON.stringify({ ...claims, jti: ' \t' }), code: invalid },
+    { claims: JSON.stringify({ ...claims, body_sha256: 1 }), code: invalid },
+    // Unknown claims, including nested duplicate members, are ignored as in Go.
+    { claims: claimsWith('"nbf":1,"extra":{"a":1,"a":2}') },
+    { claims: payload.replace('{', '{ ').replace('"iss":', '"iss" :') },
+  ].map((c) => ({
+    ...c,
+    authorization: 'Bearer ' + signedToken(c.head ?? head, c.claims ?? payload),
+  }));
+}
 const headers = { Authorization: 'Bearer ' + token() };
 const secret = 'synthetic-hmac-secret';
 const hmacHeaders = {
@@ -249,16 +300,14 @@ test('signed claims, JOSE restrictions, time boundaries, exact bytes and decodin
       jose: { [name]: name === 'crit' ? [] : 'untrusted' },
       code: 'invalid_token',
     })),
-    { claims: { aud: ['other', claims.aud] } },
-    { claims: { aud: [] }, code: 'invalid_audience' },
-    { claims: { aud: [1, claims.aud] }, code: 'invalid_audience' },
+    { claims: { aud: 'other' }, code: 'invalid_audience' },
     { claims: { iat: vectors.now + 60, exp: vectors.now + 360 } },
     { claims: { iat: vectors.now + 61, exp: vectors.now + 361 }, code: 'token_expired' },
     { claims: { iat: vectors.now - 359, exp: vectors.now - 59 } },
     { claims: { iat: vectors.now - 360, exp: vectors.now - 60 }, code: 'token_expired' },
     { claims: { exp: vectors.now + 301 }, code: 'token_expired' },
     { claims: { exp: vectors.now }, code: 'token_expired' },
-    { claims: { iat: '1700000000' }, code: 'token_expired' },
+    { claims: { iat: 0, exp: 300 }, code: 'token_expired' },
     { claims: { body_sha256: claims.body_sha256 + '=' }, code: 'body_mismatch' },
     { raw: body.toString() + ' ', code: 'body_mismatch' },
     {
@@ -268,6 +317,7 @@ test('signed claims, JOSE restrictions, time boundaries, exact bytes and decodin
       kind: 'protocol',
     },
   ].map((c) => ({ ...c, authorization: 'Bearer ' + token(c.claims, c.jose) }));
+  cases.push(...strictParsingCases());
   for (const c of cases) {
     const result = sdk.verifyWebhookAsync(
       Buffer.from(c.raw ?? body),
@@ -380,6 +430,107 @@ test('bad verifier options use validation errors in both targets', async () => {
   );
 });
 
+test('JWKS selection ignores unrelated keys and validates only the selected kid, as in Go', async () => {
+  const rsa = generateKeyPairSync('rsa', { modulusLength: 2048 }).publicKey.export({
+    format: 'jwk',
+  });
+  const okp = generateKeyPairSync('ed25519').publicKey.export({ format: 'jwk' });
+  const ec = { kty: 'EC', crv: 'P-256', x: exported.x, y: exported.y };
+  const selected = jwks.keys[0];
+  const unrelated = [
+    { ...rsa, kid: 'rsa-key', alg: 'RS256', use: 'sig' },
+    { ...okp, kid: 'okp-key', alg: 'EdDSA' },
+    { ...ec, kid: 'enc-key', use: 'enc' },
+    { ...ec, kid: 'p384-key', crv: 'P-384', alg: 'ES384' },
+    { kty: 'oct', kid: 'oct-key' },
+  ];
+  const keyText = (keys) => JSON.stringify({ keys });
+  const cases = [
+    { jwks: keyText([...unrelated, selected]) },
+    { jwks: keyText([{ ...ec, kid }]) },
+    { jwks: keyText([{ ...selected, d: 'AAAA', key_ops: ['sign'] }]) },
+    { jwks: keyText([...unrelated]), code: 'unknown_key' },
+    { jwks: keyText([{ ...selected, use: 'enc' }]), code: 'invalid' },
+    { jwks: keyText([{ ...selected, use: null }]), code: 'invalid' },
+    { jwks: keyText([{ ...selected, alg: 'ES384' }]), code: 'invalid' },
+    { jwks: keyText([{ ...rsa, kid }]), code: 'invalid' },
+    { jwks: keyText([{ ...selected, crv: 'P-384' }]), code: 'invalid' },
+    { jwks: keyText([{ ...selected, x: selected.x + '=' }]), code: 'invalid' },
+    { jwks: keyText([{ ...selected, y: selected.x }]), code: 'invalid' },
+    { jwks: keyText([selected, { ...rsa, kid }]), code: 'invalid' },
+    { jwks: keyText([selected, selected]), code: 'invalid' },
+    { jwks: keyText([selected, { ...rsa }]), code: 'invalid' },
+    { jwks: keyText([selected, { ...okp, kid: 7 }]), code: 'invalid' },
+    { jwks: keyText([selected, 'not a key']), code: 'invalid' },
+    { jwks: JSON.stringify({ keys: null }), code: 'invalid' },
+    { jwks: '[' + keyText([selected]) + ']', code: 'invalid' },
+    // Duplicate members cannot be expressed by a caller's JWKS object, only by a fetched document.
+    { jwks: '{"keys":[],' + keyText([selected]).slice(1), code: 'invalid', fetchedOnly: true },
+    {
+      jwks: keyText([selected, { ...rsa, kid: 'rsa-key' }]).replace('"e":', '"e":"AQAB","e":'),
+      code: 'invalid',
+      fetchedOnly: true,
+    },
+    {
+      jwks: keyText([selected]).replace('"kty":"EC"', '"kty":"RSA","kty":"EC"'),
+      code: 'invalid',
+      fetchedOnly: true,
+    },
+  ];
+  const outcome = (c, fetched) =>
+    c.code === undefined
+      ? 'jwt'
+      : c.code === 'unknown_key'
+        ? 'authentication:webhook_unknown_key'
+        : fetched
+          ? 'transport:webhook_jwks_unavailable'
+          : 'validation:webhook_invalid_input';
+  const issuer = (index) => 'https://selection' + index + '.example';
+  const rows = cases.map((c, index) => ({
+    ...c,
+    issuer: issuer(index),
+    authorization: 'Bearer ' + token({ iss: issuer(index) }),
+  }));
+  const node = [];
+  for (const c of rows) {
+    for (const fetched of [false, true]) {
+      if (!fetched && c.fetchedOnly) continue;
+      const settle = async () => {
+        try {
+          return (
+            await sdk.verifyWebhookAsync(
+              body,
+              { authorization: c.authorization },
+              {
+                endpointIds: claims.aud,
+                baseUrl: c.issuer,
+                nowSeconds: vectors.now,
+                ...(fetched
+                  ? { fetch: async () => new Response(c.jwks) }
+                  : { jwks: JSON.parse(c.jwks) }),
+              },
+            )
+          ).signingMethod;
+        } catch (error) {
+          return error.kind + ':' + error.code;
+        }
+      };
+      node.push(await settle());
+    }
+  }
+  const expected = rows.flatMap((c) =>
+    c.fetchedOnly ? [outcome(c, true)] : [outcome(c, false), outcome(c, true)],
+  );
+  assert.deepEqual(node, expected);
+  assert.deepEqual(
+    php(
+      `$rows=[];foreach($input['rows'] as $c){foreach([false,true] as $fetched){if(!$fetched&&!empty($c['fetchedOnly']))continue;$o=['endpoint_ids'=>$input['aud'],'base_url'=>$c['issuer'],'now_seconds'=>$input['now']];if(!$fetched)$o['jwks']=json_decode($c['jwks'],true);$client=new Client(new ClientOptions(baseUrl:$c['issuer'],transport:fn($r)=>['status'=>200,'headers'=>[],'body'=>$c['jwks']]));try{$rows[]=$client->verifyWebhookDelivery($input['body'],['authorization'=>$c['authorization']],$o)['signing_method'];}catch(SdkError $e){$rows[]=$e->kind.':'.$e->errorCode;}}}echo json_encode($rows);`,
+      { rows, aud: claims.aud, now: vectors.now, body: body.toString() },
+    ),
+    expected,
+  );
+});
+
 test('JWT config bounds, incomplete HMAC and reserved names fail with specific diagnostics', () => {
   for (const [field, value] of [
     ['algorithm', 'RS256'],
@@ -473,6 +624,9 @@ test('Node JWKS cache single-flight, TTL clamps, rotation throttle and stale-on-
       fail: () => {
         failure = true;
       },
+      recover: () => {
+        failure = false;
+      },
       keys: (value) => {
         keys = value;
       },
@@ -527,6 +681,21 @@ test('Node JWKS cache single-flight, TTL clamps, rotation throttle and stale-on-
   );
   assert.ok(staleResults.every((result) => result.signingMethod === 'jwt'));
   assert.equal(stale.count(), 2, 'all stale callers share the failed refresh');
+  await sdk.verifyWebhookAsync(body, stale.auth, stale.opts);
+  clock += 59;
+  await sdk.verifyWebhookAsync(body, stale.auth, stale.opts);
+  assert.equal(stale.count(), 2, 'a failed refresh is retried only after 60 seconds');
+  clock += 1;
+  await sdk.verifyWebhookAsync(body, stale.auth, stale.opts);
+  assert.equal(stale.count(), 3);
+  clock += 60;
+  stale.recover();
+  await sdk.verifyWebhookAsync(body, stale.auth, stale.opts);
+  await sdk.verifyWebhookAsync(body, stale.auth, stale.opts);
+  assert.equal(stale.count(), 4, 'a successful refresh clears the retry delay');
+  clock += 901;
+  stale.fail();
+  await sdk.verifyWebhookAsync(body, stale.auth, stale.opts);
   clock += 86400;
   await assert.rejects(sdk.verifyWebhookAsync(body, stale.auth, stale.opts), {
     kind: 'transport',
@@ -565,7 +734,7 @@ test('PHP process-wide JWKS cache, Fiber single-flight, TTL clamps, rotation and
     body: body.toString(),
     now: vectors.now,
   });
-  assert.equal(rows.length, 19);
+  assert.equal(rows.length, 24);
   assert.ok(rows.every(Boolean), JSON.stringify(rows));
 });
 
@@ -590,6 +759,27 @@ test('PHP optional PSR-16/18/17 integrations use real interfaces without generat
   );
   for (const name of ['psr/simple-cache', 'psr/http-client', 'psr/http-factory', 'ext-openssl'])
     assert.ok(composer.suggest[name]);
+});
+
+test('PHP shares JWKS state through APCu when no PSR-16 cache is supplied', () => {
+  const program = readFileSync('tests/fixtures/webhook-jwt-apcu.php', 'utf8').replace(
+    /^<\?php\s*/,
+    '',
+  );
+  const rows = php(
+    program,
+    {
+      issuer: 'https://apcu.example',
+      authorization: 'Bearer ' + token({ iss: 'https://apcu.example' }),
+      jwks,
+      body: body.toString(),
+      now: vectors.now,
+      autoload: resolve('.generated/phpstan-vendor/autoload.php'),
+    },
+    ['-d', 'apc.enable_cli=1'],
+  );
+  assert.ok(rows.length >= 8, JSON.stringify(rows));
+  assert.ok(rows.every(Boolean), JSON.stringify(rows));
 });
 
 test('JWKS timeout remains bounded even when an injected Node fetch ignores cancellation', async () => {

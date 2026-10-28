@@ -2776,13 +2776,26 @@ export interface WebhookVerificationOptions {
   nowSeconds?: number;
 }
 
-type WebhookJwk = JsonWebKey & { kid: string };
+// JWKS members keep their raw JSON text; only the key selected by kid is fully validated.
+type WebhookJwk = { kid: string; members: Map<string, string> };
 type WebhookKeySet = { keys: WebhookJwk[]; fetchedAt: number; expiresAt: number };
 const webhookKeySets = new Map<string, WebhookKeySet>();
 const webhookKeyFlights = new Map<string, Promise<WebhookKeySet>>();
 const webhookKeyAttempts = new Map<string, number>();
+// After a failed refresh while serving stale keys, wait before blocking requests again.
+const webhookKeyRetryAfter = new Map<string, number>();
 const webhookRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
+const webhookKeysUnavailable = (): never => {
+  throw createSdkError(
+    'transport',
+    'Webhook JWKS unavailable; respond with 5xx so delivery can retry',
+    'not_sent',
+    false,
+    undefined,
+    'webhook_jwks_unavailable',
+  );
+};
 
 function webhookBase64url(value: unknown): Buffer | undefined {
   if (typeof value !== 'string' || !/^[A-Za-z0-9_-]+$/.test(value)) return undefined;
@@ -2790,41 +2803,109 @@ function webhookBase64url(value: unknown): Buffer | undefined {
   return bytes.toString('base64url') === value ? bytes : undefined;
 }
 
-async function webhookJwks(value: unknown): Promise<WebhookJwk[]> {
-  if (!webhookRecord(value) || !Array.isArray(value.keys)) throw new Error('Invalid JWKS');
-  const keys: WebhookJwk[] = [];
-  const ids = new Set<string>();
-  for (const key of value.keys) {
-    if (
-      !webhookRecord(key) ||
-      key.kty !== 'EC' ||
-      key.crv !== 'P-256' ||
-      typeof key.kid !== 'string' ||
-      !key.kid ||
-      ids.has(key.kid) ||
-      webhookBase64url(key.x)?.length !== 32 ||
-      webhookBase64url(key.y)?.length !== 32 ||
-      (key.alg !== undefined && key.alg !== 'ES256') ||
-      (key.use !== undefined && key.use !== 'sig') ||
-      key.d !== undefined ||
-      (key.key_ops !== undefined &&
-        (!Array.isArray(key.key_ops) || key.key_ops.length !== 1 || key.key_ops[0] !== 'verify'))
-    )
-      throw new Error('Invalid EC P-256 verification key');
-    const publicKey: WebhookJwk = {
-      kty: 'EC',
-      crv: 'P-256',
-      kid: key.kid,
-      x: String(key.x),
-      y: String(key.y),
-    };
-    await crypto.subtle.importKey('jwk', publicKey, { name: 'ECDSA', namedCurve: 'P-256' }, false, [
-      'verify',
-    ]);
-    ids.add(key.kid);
-    keys.push(publicKey);
+/** Index just past the JSON string literal starting at `start` in already-valid JSON. */
+function webhookJsonStringEnd(text: string, start: number): number {
+  let index = start + 1;
+  while (text[index] !== '"') index += text[index] === '\\' ? 2 : 1;
+  return index + 1;
+}
+
+/** Raw text of each direct member or element of the outer container of already-valid JSON. */
+function webhookJsonItems(text: string): string[] {
+  const items: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index];
+    if (char === '"') index = webhookJsonStringEnd(text, index) - 1;
+    else if (char === '{' || char === '[') {
+      if (depth++ === 0) start = index + 1;
+    } else if ((char === ',' && depth === 1) || ((char === '}' || char === ']') && --depth === 0)) {
+      const item = text.slice(start, index).trim();
+      if (item) items.push(item);
+      start = index + 1;
+    }
   }
-  return keys;
+  return items;
+}
+
+/** One JSON object with unique direct member names, mapped to raw member text. */
+function webhookJsonObject(text: string): Map<string, string> | undefined {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (!webhookRecord(value)) return undefined;
+  const members = new Map<string, string>();
+  for (const item of webhookJsonItems(text)) {
+    const end = webhookJsonStringEnd(item, 0);
+    const name: unknown = JSON.parse(item.slice(0, end));
+    if (typeof name !== 'string' || members.has(name)) return undefined;
+    members.set(name, item.slice(item.indexOf(':', end) + 1).trim());
+  }
+  return members;
+}
+
+const webhookJsonString = (members: Map<string, string>, name: string): string | undefined => {
+  const raw = members.get(name);
+  const value: unknown = raw?.startsWith('"') ? JSON.parse(raw) : undefined;
+  return typeof value === 'string' ? value : undefined;
+};
+
+const webhookJsonInteger = (members: Map<string, string>, name: string): number | undefined => {
+  const raw = members.get(name);
+  if (raw === undefined || !/^-?(?:0|[1-9][0-9]*)$/.test(raw)) return undefined;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) ? value : undefined;
+};
+
+/** Validate a JWKS document's shape: unique members, a keys array, and a string kid per key. */
+function webhookJwks(text: string): WebhookJwk[] {
+  const raw = webhookJsonObject(text)?.get('keys');
+  if (!raw?.startsWith('[')) throw new Error('Invalid JWKS');
+  return webhookJsonItems(raw).map((item) => {
+    const members = webhookJsonObject(item);
+    const kid = members && webhookJsonString(members, 'kid');
+    if (!members || kid === undefined) throw new Error('Invalid JWK');
+    return { kid, members };
+  });
+}
+
+/** Select the key for kid; other keys, including unsupported key types, are ignored. */
+async function webhookSelectKey(
+  keys: WebhookJwk[],
+  kid: string,
+): Promise<CryptoKey | 'unknown' | 'invalid'> {
+  const matches = keys.filter((key) => key.kid === kid);
+  const key = matches[0]?.members;
+  if (!key) return 'unknown';
+  const x = webhookJsonString(key, 'x');
+  const y = webhookJsonString(key, 'y');
+  if (
+    matches.length !== 1 ||
+    x === undefined ||
+    y === undefined ||
+    webhookJsonString(key, 'kty') !== 'EC' ||
+    webhookJsonString(key, 'crv') !== 'P-256' ||
+    webhookBase64url(x)?.length !== 32 ||
+    webhookBase64url(y)?.length !== 32 ||
+    (key.has('alg') && webhookJsonString(key, 'alg') !== 'ES256') ||
+    (key.has('use') && webhookJsonString(key, 'use') !== 'sig')
+  )
+    return 'invalid';
+  try {
+    return await crypto.subtle.importKey(
+      'jwk',
+      { kty: 'EC', crv: 'P-256', x, y },
+      { name: 'ECDSA', namedCurve: 'P-256' },
+      false,
+      ['verify'],
+    );
+  } catch {
+    return 'invalid';
+  }
 }
 
 async function webhookFetchKeys(url: string, transport: typeof fetch): Promise<WebhookKeySet> {
@@ -2863,8 +2944,8 @@ async function webhookFetchKeys(url: string, transport: typeof fetch): Promise<W
       } finally {
         void reader.cancel().catch(() => {});
       }
-      const keys = await webhookJwks(
-        JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks))),
+      const keys = webhookJwks(
+        new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)),
       );
       const match = /(?:^|,)\s*max-age\s*=\s*"?(\d+)"?(?=\s*(?:,|$))/i.exec(
         response.headers.get('cache-control') ?? '',
@@ -2876,18 +2957,14 @@ async function webhookFetchKeys(url: string, transport: typeof fetch): Promise<W
     try {
       const entry = await Promise.race([work, timeout]);
       webhookKeySets.set(url, entry);
+      webhookKeyRetryAfter.delete(url);
       return entry;
     } catch {
       const previous = webhookKeySets.get(url);
-      if (previous && Date.now() / 1000 - previous.fetchedAt <= 86400) return previous;
-      throw createSdkError(
-        'transport',
-        'Webhook JWKS unavailable; respond with 5xx so delivery can retry',
-        'not_sent',
-        false,
-        undefined,
-        'webhook_jwks_unavailable',
-      );
+      const now = Date.now() / 1000;
+      if (!previous || now - previous.fetchedAt > 86400) return webhookKeysUnavailable();
+      webhookKeyRetryAfter.set(url, now + 60);
+      return previous;
     } finally {
       if (timer !== undefined) clearTimeout(timer);
       controller.abort();
@@ -2906,33 +2983,47 @@ async function webhookJwtKey(
   url: string,
   kid: string,
   options: WebhookVerificationOptions,
-): Promise<WebhookJwk> {
-  let keys: WebhookJwk[];
+): Promise<CryptoKey> {
+  let key: Awaited<ReturnType<typeof webhookSelectKey>>;
   if (options.jwks !== undefined) {
-    try {
-      keys = await webhookJwks(options.jwks);
-    } catch {
-      return webhookError(
+    const invalidJwks = (): never =>
+      webhookError(
         'validation',
         'invalid_input',
-        'Webhook jwks must contain EC P-256 public verification keys',
+        'Webhook jwks must be a JWKS object whose selected key is an EC P-256 verification key',
       );
+    let keys: WebhookJwk[];
+    try {
+      keys = webhookJwks(JSON.stringify(options.jwks));
+    } catch {
+      return invalidJwks();
     }
+    key = await webhookSelectKey(keys, kid);
+    if (key === 'invalid') return invalidJwks();
   } else {
+    const transport = options.fetch ?? fetch;
     let entry = webhookKeySets.get(url);
     const active = webhookKeyFlights.get(url);
+    const now = Date.now() / 1000;
     if (active) entry = await active;
-    else if (!entry || entry.expiresAt <= Date.now() / 1000)
-      entry = await webhookFetchKeys(url, options.fetch ?? fetch);
+    else if (
+      !entry ||
+      (entry.expiresAt <= now &&
+        (now >= (webhookKeyRetryAfter.get(url) ?? 0) || now - entry.fetchedAt > 86400))
+    )
+      entry = await webhookFetchKeys(url, transport);
     if (
       !entry.keys.some((key) => key.kid === kid) &&
       Date.now() / 1000 - (webhookKeyAttempts.get(url) ?? -Infinity) >= 60
     )
-      entry = await webhookFetchKeys(url, options.fetch ?? fetch);
-    keys = entry.keys;
+      entry = await webhookFetchKeys(url, transport);
+    key = await webhookSelectKey(entry.keys, kid);
+    // Like a malformed trusted set, an ambiguous or unsupported selected key is a provider fault.
+    if (key === 'invalid') return webhookKeysUnavailable();
   }
-  const key = keys.find((key) => key.kid === kid);
-  return key ?? webhookError('authentication', 'unknown_key', 'Webhook signing key is unknown');
+  return key === 'unknown'
+    ? webhookError('authentication', 'unknown_key', 'Webhook signing key is unknown')
+    : key;
 }
 
 /** JWT takes precedence whenever the caller supplies endpoint IDs and a bearer token. */
@@ -3034,47 +3125,50 @@ export async function verifyWebhookAsyncFromPlan(
   );
   if (!match || !match[1] || match[1].length > 16384) return invalid();
   const [encodedHeader, encodedClaims, encodedSignature] = match[1].split('.');
-  let jose: unknown;
-  let claims: unknown;
+  let jose: Map<string, string> | undefined;
+  let claims: Map<string, string> | undefined;
   try {
     const headerBytes = webhookBase64url(encodedHeader);
     const claimBytes = webhookBase64url(encodedClaims);
     if (!headerBytes || !claimBytes) return invalid();
     const decoder = new TextDecoder('utf-8', { fatal: true });
-    jose = JSON.parse(decoder.decode(headerBytes));
-    claims = JSON.parse(decoder.decode(claimBytes));
+    jose = webhookJsonObject(decoder.decode(headerBytes));
+    claims = webhookJsonObject(decoder.decode(claimBytes));
   } catch {
     return invalid();
   }
   const signature = webhookBase64url(encodedSignature);
+  const kid = jose && webhookJsonString(jose, 'kid');
+  // Header members are exactly alg, kid and typ; claims are typed as in Flint's reference verifier.
+  const jti = claims && webhookJsonString(claims, 'jti');
+  const aud = claims && webhookJsonString(claims, 'aud');
+  const iat = claims && webhookJsonInteger(claims, 'iat');
+  const exp = claims && webhookJsonInteger(claims, 'exp');
+  const bodyHash = claims && webhookJsonString(claims, j.bodyHashClaim);
   if (
-    !webhookRecord(jose) ||
-    jose.alg !== 'ES256' ||
-    jose.typ !== j.typ ||
-    typeof jose.kid !== 'string' ||
-    !jose.kid ||
+    !jose ||
+    jose.size !== 3 ||
+    webhookJsonString(jose, 'alg') !== 'ES256' ||
+    webhookJsonString(jose, 'typ') !== j.typ ||
+    !kid ||
     !signature ||
     signature.length !== 64 ||
-    ['crit', 'jku', 'x5u', 'jwk', 'x5c'].some((key) => Object.hasOwn(jose, key)) ||
-    !webhookRecord(claims) ||
-    claims.iss !== issuer ||
-    typeof claims.jti !== 'string' ||
-    !claims.jti
+    !claims ||
+    webhookJsonString(claims, 'iss') !== issuer ||
+    aud === undefined ||
+    iat === undefined ||
+    exp === undefined ||
+    !jti?.trim() ||
+    bodyHash === undefined ||
+    claims.has('sub')
   )
     return invalid();
-  const key = await webhookJwtKey(issuer.replace(/\/$/, '') + j.jwksPath, jose.kid, options);
+  const key = await webhookJwtKey(issuer.replace(/\/$/, '') + j.jwksPath, kid, options);
   try {
-    const publicKey = await crypto.subtle.importKey(
-      'jwk',
-      key,
-      { name: 'ECDSA', namedCurve: 'P-256' },
-      false,
-      ['verify'],
-    );
     if (
       !(await crypto.subtle.verify(
         { name: 'ECDSA', hash: 'SHA-256' },
-        publicKey,
+        key,
         Uint8Array.from(signature),
         new TextEncoder().encode(encodedHeader + '.' + encodedClaims),
       ))
@@ -3083,25 +3177,14 @@ export async function verifyWebhookAsyncFromPlan(
   } catch {
     return invalid();
   }
-  const audiences = typeof claims.aud === 'string' ? [claims.aud] : claims.aud;
-  if (
-    !Array.isArray(audiences) ||
-    !audiences.length ||
-    !audiences.every((aud) => typeof aud === 'string' && aud.length > 0) ||
-    !audiences.some((aud) => endpointIds.includes(aud))
-  )
+  if (!endpointIds.includes(aud))
     return webhookError(
       'authentication',
       'invalid_audience',
       'Webhook JWT audience does not match this endpoint',
     );
-  const { iat, exp } = claims;
   if (
-    typeof iat !== 'number' ||
-    typeof exp !== 'number' ||
-    !Number.isSafeInteger(iat) ||
-    !Number.isSafeInteger(exp) ||
-    iat < 0 ||
+    iat <= 0 ||
     exp <= iat ||
     exp - iat > Math.min(300, j.lifetimeSeconds) ||
     iat > now + j.leewaySeconds ||
@@ -3112,7 +3195,7 @@ export async function verifyWebhookAsyncFromPlan(
       'token_expired',
       'Webhook JWT timestamps are outside the permitted lifetime or leeway',
     );
-  const actualHash = webhookBase64url(claims[j.bodyHashClaim]);
+  const actualHash = webhookBase64url(bodyHash);
   const { createHash, timingSafeEqual } = process.getBuiltinModule('crypto');
   const expectedHash = createHash('sha256').update(body).digest();
   if (

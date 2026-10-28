@@ -5995,9 +5995,9 @@ class Runtime
         }
         return trim($values[0]);
     }
-    private static array $webhookKeySets = [];
+    /** Per-URL JWKS state: jwks document, parsed keys, fetchedAt, expiresAt, attempt, retryAfter. */
+    private static array $webhookKeyStates = [];
     private static array $webhookKeyFlights = [];
-    private static array $webhookKeyAttempts = [];
 
     private static function webhookBase64url(mixed $value): ?string
     {
@@ -6010,79 +6010,197 @@ class Runtime
             ? $decoded
             : null;
     }
-    private static function webhookPem(array $key): string
+    /** Index just past the JSON string literal starting at $start in already-valid JSON. */
+    private static function webhookJsonStringEnd(string $text, int $start): int
     {
-        return "-----BEGIN PUBLIC KEY-----\n" .
+        $index = $start + 1;
+        while ($text[$index] !== '"') {
+            $index += $text[$index] === '\\' ? 2 : 1;
+        }
+        return $index + 1;
+    }
+    /** @return list<string> Raw direct members or elements of already-valid JSON's outer container. */
+    private static function webhookJsonItems(string $text): array
+    {
+        $items = [];
+        $depth = 0;
+        $start = 0;
+        for ($index = 0, $length = strlen($text); $index < $length; $index++) {
+            $char = $text[$index];
+            if ($char === '"') {
+                $index = self::webhookJsonStringEnd($text, $index) - 1;
+            } elseif ($char === '{' || $char === '[') {
+                if ($depth++ === 0) {
+                    $start = $index + 1;
+                }
+            } elseif (
+                ($char === ',' && $depth === 1) ||
+                (($char === '}' || $char === ']') && --$depth === 0)
+            ) {
+                $item = trim(substr($text, $start, $index - $start));
+                if ($item !== '') {
+                    $items[] = $item;
+                }
+                $start = $index + 1;
+            }
+        }
+        return $items;
+    }
+    /**
+     * One JSON object with unique direct member names, mapped to raw member text.
+     * json_decode() otherwise accepts duplicate members and keeps the last value.
+     * @return ?array<string, string>
+     */
+    private static function webhookJsonObject(string $text): ?array
+    {
+        try {
+            if (!(json_decode($text, false, 512, JSON_THROW_ON_ERROR) instanceof \stdClass)) {
+                return null;
+            }
+        } catch (\JsonException) {
+            return null;
+        }
+        $members = [];
+        foreach (self::webhookJsonItems($text) as $item) {
+            $end = self::webhookJsonStringEnd($item, 0);
+            $name = (string) json_decode(substr($item, 0, $end), false, 512, JSON_THROW_ON_ERROR);
+            if (array_key_exists($name, $members)) {
+                return null;
+            }
+            $members[$name] = ltrim(substr($item, strpos($item, ':', $end) + 1));
+        }
+        return $members;
+    }
+    private static function webhookJsonString(?array $members, string $name): ?string
+    {
+        $raw = $members[$name] ?? null;
+        if (!is_string($raw) || !str_starts_with($raw, '"')) {
+            return null;
+        }
+        $value = json_decode($raw, false, 512, JSON_THROW_ON_ERROR);
+        return is_string($value) ? $value : null;
+    }
+    private static function webhookJsonInteger(?array $members, string $name): ?int
+    {
+        $raw = $members[$name] ?? null;
+        if (!is_string($raw) || !preg_match('/^-?(?:0|[1-9][0-9]*)$/D', $raw)) {
+            return null;
+        }
+        $value = json_decode($raw, false, 512, JSON_THROW_ON_ERROR);
+        return is_int($value) && abs($value) <= 9007199254740991 ? $value : null;
+    }
+    /**
+     * Validate a JWKS document's shape: unique members, a keys array, and a string kid per key.
+     * @return list<array{kid: string, members: array<string, string>}>
+     */
+    private static function webhookJwks(string $document): array
+    {
+        $keys = self::webhookJsonObject($document)['keys'] ?? null;
+        if (!is_string($keys) || !str_starts_with($keys, '[')) {
+            throw new \RuntimeException('Invalid JWKS');
+        }
+        $result = [];
+        foreach (self::webhookJsonItems($keys) as $item) {
+            $members = self::webhookJsonObject($item);
+            $kid = self::webhookJsonString($members, 'kid');
+            if ($members === null || $kid === null) {
+                throw new \RuntimeException('Invalid JWK');
+            }
+            $result[] = ['kid' => $kid, 'members' => $members];
+        }
+        return $result;
+    }
+    /**
+     * Select the PEM key for kid, ignoring other keys including unsupported key types.
+     * Returns null for an unknown kid and false for a duplicate or unusable selected key.
+     */
+    private static function webhookSelectKey(array $keys, string $kid): string|false|null
+    {
+        $matches = array_values(array_filter($keys, fn($key) => $key['kid'] === $kid));
+        if (!$matches) {
+            return null;
+        }
+        $key = $matches[0]['members'];
+        $x = self::webhookBase64url(self::webhookJsonString($key, 'x'));
+        $y = self::webhookBase64url(self::webhookJsonString($key, 'y'));
+        if (
+            count($matches) !== 1 ||
+            $x === null ||
+            $y === null ||
+            strlen($x) !== 32 ||
+            strlen($y) !== 32 ||
+            self::webhookJsonString($key, 'kty') !== 'EC' ||
+            self::webhookJsonString($key, 'crv') !== 'P-256' ||
+            (array_key_exists('alg', $key) && self::webhookJsonString($key, 'alg') !== 'ES256') ||
+            (array_key_exists('use', $key) && self::webhookJsonString($key, 'use') !== 'sig')
+        ) {
+            return false;
+        }
+        $pem =
+            "-----BEGIN PUBLIC KEY-----\n" .
             chunk_split(
                 base64_encode(
-                    hex2bin('3059301306072a8648ce3d020106082a8648ce3d03010703420004') .
-                        self::webhookBase64url($key['x']) .
-                        self::webhookBase64url($key['y']),
+                    hex2bin('3059301306072a8648ce3d020106082a8648ce3d03010703420004') . $x . $y,
                 ),
                 64,
                 "\n",
             ) .
             "-----END PUBLIC KEY-----\n";
+        return openssl_pkey_get_public($pem) === false ? false : $pem;
     }
-    private static function webhookJwks(mixed $value): array
+    private static function webhookApcu(): bool
     {
-        if (is_object($value)) {
-            $value = (array) $value;
-        }
-        if (
-            !is_array($value) ||
-            !is_array($value['keys'] ?? null) ||
-            !array_is_list($value['keys'])
-        ) {
-            throw new \RuntimeException('Invalid JWKS');
-        }
-        $keys = [];
-        $ids = [];
-        foreach ($value['keys'] as $key) {
-            if (is_object($key)) {
-                $key = (array) $key;
-            }
+        return function_exists('apcu_fetch') && function_exists('apcu_enabled') && \apcu_enabled();
+    }
+    /** Shared state uses the PSR-16 cache when supplied, else APCu when enabled, else this process. */
+    private static function webhookKeyState(?object $cache, string $url): array
+    {
+        $state = self::$webhookKeyStates[$url] ?? [];
+        $key = hash('sha256', 'webhook-jwks:' . $url);
+        try {
+            $shared =
+                $cache !== null
+                    ? $cache->get($key)
+                    : (self::webhookApcu()
+                        ? \apcu_fetch($key)
+                        : null);
             if (
-                !is_array($key) ||
-                ($key['kty'] ?? null) !== 'EC' ||
-                ($key['crv'] ?? null) !== 'P-256' ||
-                !is_string($key['kid'] ?? null) ||
-                $key['kid'] === '' ||
-                isset($ids[$key['kid']]) ||
-                strlen(self::webhookBase64url($key['x'] ?? null) ?? '') !== 32 ||
-                strlen(self::webhookBase64url($key['y'] ?? null) ?? '') !== 32 ||
-                (array_key_exists('alg', $key) && $key['alg'] !== 'ES256') ||
-                (array_key_exists('use', $key) && $key['use'] !== 'sig') ||
-                array_key_exists('d', $key) ||
-                (array_key_exists('key_ops', $key) && $key['key_ops'] !== ['verify'])
+                is_array($shared) &&
+                is_string($shared['jwks'] ?? null) &&
+                is_numeric($shared['fetchedAt'] ?? null) &&
+                is_numeric($shared['expiresAt'] ?? null) &&
+                $shared['fetchedAt'] > ($state['fetchedAt'] ?? 0)
             ) {
-                throw new \RuntimeException('Invalid EC P-256 verification key');
+                $state =
+                    [
+                        'jwks' => $shared['jwks'],
+                        'keys' => self::webhookJwks($shared['jwks']),
+                        'fetchedAt' => (float) $shared['fetchedAt'],
+                        'expiresAt' => (float) $shared['expiresAt'],
+                    ] + $state;
             }
-            if (openssl_pkey_get_public(self::webhookPem($key)) === false) {
-                throw new \RuntimeException('Invalid EC P-256 point');
+            foreach (['attempt', 'retryAfter'] as $name) {
+                if (is_numeric($shared[$name] ?? null)) {
+                    $state[$name] = max((float) $shared[$name], $state[$name] ?? 0);
+                }
             }
-            $ids[$key['kid']] = true;
-            $keys[] = $key;
+        } catch (\Exception) {
+            /* Ignore a malformed or unavailable optional shared cache entry. */
         }
-        return $keys;
+        return self::$webhookKeyStates[$url] = $state;
     }
-    private static function webhookCacheGet(?object $cache, string $key): mixed
+    private static function webhookStoreKeyState(?object $cache, string $url, array $state): void
     {
+        self::$webhookKeyStates[$url] = $state;
+        unset($state['keys']);
+        $key = hash('sha256', 'webhook-jwks:' . $url);
         try {
-            return $cache?->get($key);
-        } catch (\Throwable) {
-            return null;
-        }
-    }
-    private static function webhookCacheSet(
-        ?object $cache,
-        string $key,
-        mixed $value,
-        int $ttl,
-    ): void {
-        try {
-            $cache?->set($key, $value, $ttl);
-        } catch (\Throwable) {
+            if ($cache !== null) {
+                $cache->set($key, $state, 86400);
+            } elseif (self::webhookApcu()) {
+                \apcu_store($key, $state, 86400);
+            }
+        } catch (\Exception) {
             /* A cache outage must not prevent trusted HTTP key retrieval. */
         }
     }
@@ -6090,7 +6208,6 @@ class Runtime
     {
         if (isset(self::$webhookKeyFlights[$url])) {
             $flight = self::$webhookKeyFlights[$url];
-            $deadline = microtime(true) + 5;
             if (\Fiber::getCurrent() === null) {
                 self::webhookError(
                     'transport',
@@ -6098,15 +6215,17 @@ class Runtime
                     'Reentrant JWKS fetch requires a Fiber scheduler',
                 );
             }
+            // Like credential exchange waiters, yield a monotonic deadline in milliseconds.
+            $deadline = hrtime(true) / 1e6 + 5000;
             while (!$flight->done) {
-                if (microtime(true) >= $deadline) {
+                if (hrtime(true) / 1e6 >= $deadline) {
                     self::webhookError(
                         'transport',
                         'jwks_unavailable',
                         'Webhook JWKS wait timed out',
                     );
                 }
-                \Fiber::suspend(['deadline' => $deadline]);
+                \Fiber::suspend(['deadline' => $deadline, 'cancellation' => null]);
             }
             if ($flight->error !== null) {
                 throw $flight->error;
@@ -6116,16 +6235,11 @@ class Runtime
         $flight = (object) ['done' => false, 'result' => null, 'error' => null];
         self::$webhookKeyFlights[$url] = $flight;
         $cache = $options['cache'] ?? null;
-        $cacheKey = hash('sha256', 'webhook-jwks:' . $url);
-        self::$webhookKeyAttempts[$url] = microtime(true);
-        self::webhookCacheSet(
-            $cache,
-            hash('sha256', 'webhook-jwks-attempt:' . $url),
-            self::$webhookKeyAttempts[$url],
-            60,
-        );
+        $state = self::webhookKeyState($cache, $url);
+        $state['attempt'] = microtime(true);
+        self::webhookStoreKeyState($cache, $url, $state);
         try {
-            $started = microtime(true);
+            $deadline = hrtime(true) / 1e6 + 5000;
             if (isset($options['http_client'])) {
                 $request = $options['request_factory']
                     ->createRequest('GET', $url)
@@ -6135,7 +6249,7 @@ class Runtime
                 $body = '';
                 try {
                     while (true) {
-                        if (microtime(true) - $started >= 5) {
+                        if (hrtime(true) / 1e6 >= $deadline) {
                             throw new \RuntimeException('JWKS timeout');
                         }
                         $chunk = $stream->read(min(8192, 256 * 1024 + 1 - strlen($body)));
@@ -6170,7 +6284,7 @@ class Runtime
                 ]);
             }
             if (
-                microtime(true) - $started >= 5 ||
+                hrtime(true) / 1e6 >= $deadline ||
                 ($result['status'] ?? null) !== 200 ||
                 !empty($result['failureCode']) ||
                 !is_string($result['body'] ?? null) ||
@@ -6178,9 +6292,7 @@ class Runtime
             ) {
                 throw new \RuntimeException('JWKS HTTP failure');
             }
-            $keys = self::webhookJwks(
-                json_decode($result['body'], false, 512, JSON_THROW_ON_ERROR),
-            );
+            $keys = self::webhookJwks($result['body']);
             $control = '';
             foreach ($result['headers'] ?? [] as $name => $value) {
                 if (strtolower($name) === 'cache-control') {
@@ -6195,14 +6307,24 @@ class Runtime
                 ? min(86400, max(300, (float) $match[1]))
                 : 900;
             $now = microtime(true);
-            $entry = ['keys' => $keys, 'fetchedAt' => $now, 'expiresAt' => $now + $ttl];
-            self::$webhookKeySets[$url] = $entry;
-            self::webhookCacheSet($cache, $cacheKey, $entry, 86400);
-            return $flight->result = $entry;
-        } catch (\Throwable) {
-            $previous = self::$webhookKeySets[$url] ?? null;
-            if ($previous && microtime(true) - $previous['fetchedAt'] <= 86400) {
-                return $flight->result = $previous;
+            $state = [
+                'jwks' => $result['body'],
+                'keys' => $keys,
+                'fetchedAt' => $now,
+                'expiresAt' => $now + $ttl,
+                'attempt' => $state['attempt'],
+                'retryAfter' => 0,
+            ];
+            self::webhookStoreKeyState($cache, $url, $state);
+            return $flight->result = $state;
+        } catch (\Exception | \Psr\Http\Client\ClientExceptionInterface) {
+            // Serve the last successful set for 24 hours, retrying at most once a minute.
+            $state = self::webhookKeyState($cache, $url);
+            $now = microtime(true);
+            if (isset($state['keys']) && $now - $state['fetchedAt'] <= 86400) {
+                $state['retryAfter'] = $now + 60;
+                self::webhookStoreKeyState($cache, $url, $state);
+                return $flight->result = $state;
             }
             $flight->error = SdkError::create(
                 'transport',
@@ -6210,6 +6332,9 @@ class Runtime
                 errorCode: 'webhook_jwks_unavailable',
             );
             throw $flight->error;
+        } catch (\Throwable $error) {
+            // Programming errors propagate unchanged, to Fiber waiters as well.
+            throw ($flight->error = $error);
         } finally {
             $flight->done = true;
             unset(self::$webhookKeyFlights[$url]);
@@ -6220,65 +6345,55 @@ class Runtime
         string $kid,
         array $options,
         \Closure $send,
-    ): array {
+    ): string {
         if (array_key_exists('jwks', $options)) {
             try {
-                $keys = self::webhookJwks($options['jwks']);
-            } catch (\Throwable) {
+                $key = self::webhookSelectKey(
+                    self::webhookJwks(json_encode($options['jwks'], JSON_THROW_ON_ERROR)),
+                    $kid,
+                );
+            } catch (\Exception) {
+                $key = false;
+            }
+            if ($key === false) {
                 self::webhookError(
                     'validation',
                     'invalid_input',
-                    'Webhook jwks must contain EC P-256 public verification keys',
+                    'Webhook jwks must be a JWKS whose selected key is an EC P-256 verification key',
                 );
             }
         } else {
             $cache = $options['cache'] ?? null;
-            $cacheKey = hash('sha256', 'webhook-jwks:' . $url);
-            $external = self::webhookCacheGet($cache, $cacheKey);
-            if (
-                is_array($external) &&
-                is_numeric($external['fetchedAt'] ?? null) &&
-                is_numeric($external['expiresAt'] ?? null)
-            ) {
-                try {
-                    $external['keys'] = self::webhookJwks(['keys' => $external['keys'] ?? null]);
-                    if ($external['fetchedAt'] > (self::$webhookKeySets[$url]['fetchedAt'] ?? 0)) {
-                        self::$webhookKeySets[$url] = $external;
-                    }
-                } catch (\Throwable) {
-                    /* Ignore a malformed optional cache entry. */
-                }
-            }
-            $entry = self::$webhookKeySets[$url] ?? null;
+            $state = self::webhookKeyState($cache, $url);
+            $now = microtime(true);
             if (
                 isset(self::$webhookKeyFlights[$url]) ||
-                !$entry ||
-                $entry['expiresAt'] <= microtime(true)
+                !isset($state['keys']) ||
+                ($state['expiresAt'] <= $now &&
+                    ($now >= ($state['retryAfter'] ?? 0) || $now - $state['fetchedAt'] > 86400))
             ) {
-                $entry = self::webhookFetchKeys($url, $options, $send);
+                $state = self::webhookFetchKeys($url, $options, $send);
             }
-            $keys = $entry['keys'];
-            $attempt = self::webhookCacheGet(
-                $cache,
-                hash('sha256', 'webhook-jwks-attempt:' . $url),
-            );
-            $lastAttempt = max(
-                self::$webhookKeyAttempts[$url] ?? 0,
-                is_numeric($attempt) ? (float) $attempt : 0,
-            );
             if (
-                !array_filter($keys, fn($key) => $key['kid'] === $kid) &&
-                microtime(true) - $lastAttempt >= 60
+                !array_filter($state['keys'], fn($key) => $key['kid'] === $kid) &&
+                microtime(true) - ($state['attempt'] ?? 0) >= 60
             ) {
-                $keys = self::webhookFetchKeys($url, $options, $send)['keys'];
+                $state = self::webhookFetchKeys($url, $options, $send);
+            }
+            $key = self::webhookSelectKey($state['keys'], $kid);
+            // Like a malformed trusted set, an ambiguous or unsupported selected key is a provider fault.
+            if ($key === false) {
+                self::webhookError(
+                    'transport',
+                    'jwks_unavailable',
+                    'Webhook JWKS unavailable; respond with 5xx so delivery can retry',
+                );
             }
         }
-        foreach ($keys as $key) {
-            if ($key['kid'] === $kid) {
-                return $key;
-            }
+        if ($key === null) {
+            self::webhookError('authentication', 'unknown_key', 'Webhook signing key is unknown');
         }
-        self::webhookError('authentication', 'unknown_key', 'Webhook signing key is unknown');
+        return $key;
     }
     /** @param array<string, mixed> $options @return array<string, mixed> */
     public function verifyWebhookDelivery(mixed $rawBody, mixed $headers, array $options): array
@@ -6479,36 +6594,38 @@ class Runtime
         ) {
             $invalid();
         }
-        try {
-            $jose = json_decode(
-                self::webhookBase64url($parts[1]) ?? '',
-                false,
-                512,
-                JSON_THROW_ON_ERROR,
-            );
-            $claims = json_decode(
-                self::webhookBase64url($parts[2]) ?? '',
-                false,
-                512,
-                JSON_THROW_ON_ERROR,
-            );
-        } catch (\Throwable) {
-            $invalid();
-        }
+        $jsonPart = static function (string $part): ?array {
+            $text = self::webhookBase64url($part);
+            return $text === null ? null : self::webhookJsonObject($text);
+        };
+        $jose = $jsonPart($parts[1]);
+        $claims = $jsonPart($parts[2]);
         $signature = self::webhookBase64url($parts[3]);
+        $kid = self::webhookJsonString($jose, 'kid');
+        // Header members are exactly alg, kid and typ; claims are typed as in Flint's reference verifier.
+        $jti = self::webhookJsonString($claims, 'jti');
+        $aud = self::webhookJsonString($claims, 'aud');
+        $iat = self::webhookJsonInteger($claims, 'iat');
+        $exp = self::webhookJsonInteger($claims, 'exp');
+        $bodyHash = self::webhookJsonString($claims, $j['bodyHashClaim']);
         if (
-            !($jose instanceof \stdClass) ||
-            ($jose->alg ?? null) !== 'ES256' ||
-            ($jose->typ ?? null) !== $j['typ'] ||
-            !is_string($jose->kid ?? null) ||
-            $jose->kid === '' ||
+            $jose === null ||
+            count($jose) !== 3 ||
+            self::webhookJsonString($jose, 'alg') !== 'ES256' ||
+            self::webhookJsonString($jose, 'typ') !== $j['typ'] ||
+            $kid === null ||
+            $kid === '' ||
             $signature === null ||
             strlen($signature) !== 64 ||
-            array_intersect(['crit', 'jku', 'x5u', 'jwk', 'x5c'], array_keys((array) $jose)) ||
-            !($claims instanceof \stdClass) ||
-            ($claims->iss ?? null) !== $issuer ||
-            !is_string($claims->jti ?? null) ||
-            $claims->jti === ''
+            $claims === null ||
+            self::webhookJsonString($claims, 'iss') !== $issuer ||
+            $aud === null ||
+            $iat === null ||
+            $exp === null ||
+            $jti === null ||
+            trim($jti) === '' ||
+            $bodyHash === null ||
+            array_key_exists('sub', $claims)
         ) {
             $invalid();
         }
@@ -6527,12 +6644,7 @@ class Runtime
                 $runtime->close();
             }
         };
-        $key = self::webhookJwtKey(
-            rtrim($issuer, '/') . $j['jwksPath'],
-            $jose->kid,
-            $options,
-            $send,
-        );
+        $key = self::webhookJwtKey(rtrim($issuer, '/') . $j['jwksPath'], $kid, $options, $send);
         // JOSE uses fixed-width r||s; OpenSSL expects two signed DER INTEGERs.
         $integers = '';
         foreach ([substr($signature, 0, 32), substr($signature, 32)] as $integer) {
@@ -6543,35 +6655,18 @@ class Runtime
             $integers .= "\x02" . chr(strlen($integer)) . $integer;
         }
         $der = "\x30" . chr(strlen($integers)) . $integers;
-        if (
-            openssl_verify(
-                $parts[1] . '.' . $parts[2],
-                $der,
-                self::webhookPem($key),
-                OPENSSL_ALGO_SHA256,
-            ) !== 1
-        ) {
+        if (openssl_verify($parts[1] . '.' . $parts[2], $der, $key, OPENSSL_ALGO_SHA256) !== 1) {
             $invalid();
         }
-        $audiences = is_string($claims->aud ?? null) ? [$claims->aud] : $claims->aud ?? null;
-        if (
-            !is_array($audiences) ||
-            !$audiences ||
-            array_filter($audiences, fn($aud) => !is_string($aud) || $aud === '') ||
-            !array_intersect($audiences, $endpointIds)
-        ) {
+        if (!in_array($aud, $endpointIds, true)) {
             self::webhookError(
                 'authentication',
                 'invalid_audience',
                 'Webhook JWT audience does not match this endpoint',
             );
         }
-        $iat = $claims->iat ?? null;
-        $exp = $claims->exp ?? null;
         if (
-            !is_int($iat) ||
-            !is_int($exp) ||
-            $iat < 0 ||
+            $iat <= 0 ||
             $exp <= $iat ||
             $exp - $iat > min(300, $j['lifetimeSeconds']) ||
             $iat > $now + $j['leewaySeconds'] ||
@@ -6583,7 +6678,7 @@ class Runtime
                 'Webhook JWT timestamps are outside the permitted lifetime or leeway',
             );
         }
-        $actualHash = self::webhookBase64url($claims->{$j['bodyHashClaim']} ?? null);
+        $actualHash = self::webhookBase64url($bodyHash);
         if ($actualHash === null || !hash_equals(hash('sha256', $rawBody, true), $actualHash)) {
             self::webhookError(
                 'authentication',

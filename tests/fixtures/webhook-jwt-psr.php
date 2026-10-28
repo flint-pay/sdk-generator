@@ -84,20 +84,24 @@ $options = [
     'request_factory' => new Nyholm\Psr7\Factory\Psr17Factory(),
 ];
 $headers = ['authorization' => $input['authorization']];
-$sets = (new ReflectionClass(Example\Jwt\Runtime::class))->getProperty('webhookKeySets');
+$sets = (new ReflectionClass(Example\Jwt\Runtime::class))->getProperty('webhookKeyStates');
 $rows = [];
 $rows[] = Webhooks::verifyDelivery($input['body'], $headers, $options)['signing_method'] === 'jwt';
 $rows[] = $http->requests === 1;
-$rows[] = in_array(86400, $cache->ttls, true) && in_array(60, $cache->ttls, true);
+// One 64-character key holds the document and refresh times; the PSR-16 cache is a trust store.
+$rows[] =
+    array_values($cache->ttls) === [86400] &&
+    strlen(array_key_first($cache->values)) === 64 &&
+    is_string(reset($cache->values)['jwks']) &&
+    !isset(reset($cache->values)['keys']);
 // A new worker can restore the public set from PSR-16 without HTTP.
 $sets->setValue(null, []);
 $rows[] =
     Webhooks::verifyDelivery($input['body'], $headers, $options)['known'] && $http->requests === 1;
 // The recorded refresh throttle also survives a worker restart.
 foreach ($cache->values as $key => &$entry) {
-    if (is_array($entry) && isset($entry['keys'])) {
-        $entry['keys'] = [];
-    }
+    $entry['jwks'] = '{"keys":[]}';
+    $entry['fetchedAt'] += 1;
 }
 unset($entry);
 $sets->setValue(null, []);
