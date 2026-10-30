@@ -957,6 +957,10 @@ Generated clients send a User-Agent with the configured package name, package ve
 
 `numericUnions: "explicit"` and `schemaSharing: "named"` are deprecated aliases for automatic behavior; omit them. They are still accepted, invalid values fail diagnosis, and the CLI prints a deprecation warning on stderr. Library callers receive warnings through `loadContract(..., { onWarning })`.
 
+### Operation response names
+
+Responses that reference a declared component use that component's public type in Node and PHP. PHP reuses its model class instead of generating a second operation class. Inline responses keep operation-derived names; when one collides with a declared component, the generated type uses an `OperationResponse` suffix (then a numeric suffix if needed). `diagnose` reports these fallbacks in `responseTypeRenames`.
+
 ### Integer representations
 
 Set `"integers": { "mode": "number", "exactComponents": ["Money"] }` to represent int64/uint64 counters as Node `number` and PHP `int`. Both runtimes reject values outside ±(2^53 − 1), without rounding: requests raise `InvalidInputError` (`invalid_value`) before sending and responses raise `UnexpectedResponseError`. The shorthand `"integers": "number"` has no component exceptions.

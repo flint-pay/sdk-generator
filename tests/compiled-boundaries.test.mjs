@@ -31,6 +31,7 @@ const semantic = new Set([
   'value-guarantee',
   'response-plan',
   'response-return',
+  'response-type-names',
   'request-style',
   'query-arrays',
   'integer-policy',

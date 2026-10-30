@@ -214,6 +214,8 @@ Payload methods return the decoded object, or the configured object payload insi
 
 `ResponseInfo` contains `status`, lowercase `headers`, optional `requestId`, ordered `requestIds`, optional `idempotencyKey`, `attempts`, `durationMs` and `body`. `body` is the complete decoded body with the operation's declared response type. Read `order.lastResponse.requestId` in Node or `$order->lastResponse()?->requestId` in PHP. No second request is needed.
 
+A response body declared as a component uses that component's type in both SDKs. PHP reuses the component's model class. Inline operation response names use `OperationResponse` when their ordinary name is already a declared component.
+
 Result-mode methods return `Result` with `data` and `raw`, plus `lastResponse` in Node or `lastResponse()` in PHP. A provider `data` envelope stays inside `data`: use `result.data.data` (PHP `$result->data->data`). Success raw text is retained only in result mode. Check unknown response enums and variants before treating a result as a known successful business state.
 
 ### Omitted and null values

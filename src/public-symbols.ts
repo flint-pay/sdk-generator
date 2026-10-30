@@ -2,6 +2,7 @@ import { positional, hasParams } from './request-style.js';
 import type { Contract } from './contract.js';
 import { Diagnostic } from './diagnostic.js';
 import { eventTypeName } from './webhook-names.js';
+import { responseComponent, responseTypeNames } from './response-type-names.js';
 const pascal = (s: string) => s[0]!.toUpperCase() + s.slice(1);
 
 /** Reserve shared public identities before target-specific class compilation. */
@@ -92,11 +93,23 @@ export function reservePublicSymbols(
     reserve(name, 'models.' + name);
     reserve(name + 'Input', 'models.' + name + '.input');
   }
+  const responses = responseTypeNames(c, modelNames).names;
+  const reservedResponses = new Map<string, string>();
   for (const op of c.operations) {
     reserve(pascal(op.resource) + pascal(op.method) + 'Input', op.id + '.input');
     if (positional(op) && hasParams(op))
       reserve(pascal(op.resource) + pascal(op.method) + 'Params', op.id + '.params');
-    reserve(pascal(op.resource) + pascal(op.method) + 'Response', op.id + '.response');
+    for (const [status, response] of Object.entries(op.responses)) {
+      const name = responses.get(op.id + '/' + status);
+      if (
+        name &&
+        !responseComponent(response.schema, modelNames) &&
+        reservedResponses.get(name) !== op.id
+      ) {
+        reserve(name, op.id + '.response');
+        reservedResponses.set(name, op.id);
+      }
+    }
     if (knownOperations.has(op.id))
       reserve(pascal(op.resource) + pascal(op.method) + 'ResponseKnown');
   }

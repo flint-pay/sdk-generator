@@ -166,13 +166,7 @@ test('events and audience models use event names; request names and PHP response
   );
   assert.match(f.declarations, /Partial<PaymentIntent>/);
   const classes = readdirSync(join(f.output, 'php/src/classes'));
-  for (const name of [
-    'OrdersCreateResponse',
-    'CustomersCreateResponse',
-    'PaymentIntentsCreateResponse',
-    'OrderPaidMerchantEvent',
-    'CustomerUpdatedEvent',
-  ])
+  for (const name of ['Order', 'OrderPaidMerchantEvent', 'CustomerUpdatedEvent'])
     assert.ok(classes.includes(name + '.php'), name);
   assert.ok(!classes.some((n) => /Response201/.test(n)));
   const consumer = join(f.output, 'node/consumer.ts');
@@ -234,7 +228,7 @@ declare const client:Client; const verified=client.verifyWebhook(new Uint8Array(
     ],
     { encoding: 'utf8' },
   );
-  assert.equal(php, 'TypeNames\\OrdersCreateResponse');
+  assert.equal(php, 'TypeNames\\Order');
 });
 
 test('event/model collisions use WebhookEvent fallback and double collisions fail', (t) => {

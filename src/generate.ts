@@ -21,6 +21,7 @@ import {
 } from './generation-cleanup.js';
 import { removesPublishedExamples } from './example-protection.js';
 import { reservePublicSymbols } from './public-symbols.js';
+import { responseTypeNames } from './response-type-names.js';
 import {
   formatNodeDeclaration,
   nodeDescriptors,
@@ -1285,8 +1286,26 @@ function checkCompilation(compilation: ReturnType<typeof compileSdkContract>): v
 }
 
 /** Diagnose compilation and runnable inputs without allocating rendered package files. */
-export function diagnoseContract(contract: Contract): void {
-  checkCompilation(compileSdkContract(contract));
+export function diagnoseContract(contract: Contract) {
+  const compilation = compileSdkContract(contract);
+  checkCompilation(compilation);
+  const responseNames = responseTypeNames(
+    compilation.source,
+    Object.keys(compilation.plan.node.models),
+  );
+  const renames = responseNames.renames;
+  for (const op of compilation.source.operations) {
+    const from = pascal(op.resource) + pascal(op.method) + 'Response';
+    const to = responseNames.aliases.get(op.id);
+    if (
+      to &&
+      to !== from &&
+      compilation.plan.node.operations[op.id]?.responseType === to &&
+      !renames.some((rename) => rename.operation === op.id && rename.from === from)
+    )
+      renames.push({ operation: op.id, status: 'combined', from, to });
+  }
+  return renames.length ? { responseTypeRenames: renames } : {};
 }
 
 function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map<string, string> {
@@ -1743,9 +1762,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     // Each PHP event class reuses its reserved Node identity once. Other
     // response classes with that name must still produce a collision.
     const reservedEventModels = new Set(Object.values(eventModels));
-    const reservedResponses = new Set(
-      c.operations.map((op) => pascal(op.resource) + pascal(op.method) + 'Response'),
-    );
+    const reservedResponses = new Set(responseTypeNames(c, Object.keys(models)).names.values());
     for (const model of targetPlan.php.models.filter((model) => model.response))
       if (
         !Object.hasOwn(models, model.name) &&
