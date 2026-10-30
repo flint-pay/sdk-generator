@@ -4,6 +4,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ## Unreleased
 
+- PHP representation-link validation no longer creates self-referential closures that retain descriptor sources, keeping full package validation within its memory budget without relying on cyclic garbage collection.
+
 - Breaking: per-operation wire `*Input` aliases are no longer exported from Node root or resource entry points. Positional `*Params` and component input types stay public. PHP retains the wire classes with `@internal` docblocks. Generated runtime guides use the public `credential_conflict` code for conflicting ambient credentials.
 - PHP descriptor validation releases each model and its codec dependencies before validating the next model, preserving the 128 MiB package-validation budget for large contracts. Every model and the webhook group are still validated.
 
