@@ -1,6 +1,6 @@
 import type { Operation, Schema } from './contract.js';
 import { Diagnostic, pointerSegment } from './diagnostic.js';
-import { objectConstraint } from './target-types.js';
+import { objectBodyConstraint } from './target-types.js';
 import { valueScopes } from './schema-intersections.js';
 
 export interface RequestStyle {
@@ -35,12 +35,9 @@ export function validatePositional(op: Operation, definitions: Record<string, Sc
   const body = op.body['x-sdk-ref'] ? definitions[op.body['x-sdk-ref']]! : op.body;
   const scopes = valueScopes(body, definitions);
   const fail = (message: string): never => {
-    throw new Diagnostic(
-      'config/operations/' + pointerSegment(op.id) + '/request',
-      message + '; use request.style: object for this operation',
-    );
+    throw new Diagnostic('config/operations/' + pointerSegment(op.id) + '/request', message);
   };
-  if (!body || objectConstraint(body) !== 'object')
+  if (!body || !objectBodyConstraint(body, definitions))
     fail('positional requests require a non-null object body');
   for (const parameter of op.parameters.filter(
     (p) => p.in !== 'path' && p['x-flint-request-option'] === undefined,

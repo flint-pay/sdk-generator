@@ -669,8 +669,8 @@ test('body references list inline variants, named models, field descriptions and
     });
     for (const target of ['node', 'php']) {
       const source = readReference(files, target);
-      assert.match(source, new RegExp(`${keyword} variant 1`));
-      assert.match(source, new RegExp(`${keyword} variant 2`));
+      assert.match(source, /#### api\.createValue: variant 1/);
+      assert.match(source, /#### api\.createValue: variant 2/);
       assert.match(source, /\| `label` \| Required \| string \| Synthetic label description\./);
       assert.match(source, /\| `optional` \| Optional \| boolean \|/);
       assert.match(source, /\| `count` \| Required \| integer \| Synthetic count description\./);
@@ -734,9 +734,7 @@ for (const keyword of ['oneOf', 'anyOf'])
       });
       for (const target of ['node', 'php']) {
         const reference = readReference(files, target);
-        const first = reference
-          .split(`#### api.createValue body ${keyword} variant 1 fields`)[1]
-          ?.split('####')[0];
+        const first = reference.split(`#### api.createValue: variant 1`)[1]?.split('####')[0];
         assert.ok(first, `${target}: missing first variant table`);
         assert.match(first, /\| `label` \| Required \| string \| Parent label\./);
         assert.match(first, /minLength: `2`\./);
@@ -754,9 +752,7 @@ for (const keyword of ['oneOf', 'anyOf'])
             : /\| `nested` \| Optional \| \[ChildInput\]\(MODELS\.md#childinput\) \|/,
         );
         assert.doesNotMatch(first, /responseOnly/);
-        const second = reference
-          .split(`#### api.createValue body ${keyword} variant 2 fields`)[1]
-          ?.split('####')[0];
+        const second = reference.split(`#### api.createValue: variant 2`)[1]?.split('####')[0];
         assert.match(second, /\| `label` \| Optional \| string \| Parent label\./);
         assert.match(second, /\| `mode` \| Required \| string \| Parent mode\./);
         assert.match(second, /Values: `"second"`\./);
@@ -827,7 +823,7 @@ for (const keyword of ['oneOf', 'anyOf'])
           [2, 'Optional', 'second'],
         ]) {
           const table = reference
-            .split(`#### api.createValue body ${keyword} variant ${index} fields`)[1]
+            .split(`#### api.createValue: variant ${index}`)[1]
             ?.split('####')[0];
           assert.ok(table, `${target}: missing nested ${keyword} variant ${index} table`);
           assert.match(table, /\| `parentId` \| Required \| string \| Outer parent field\./);
@@ -865,11 +861,9 @@ for (const keyword of ['oneOf', 'anyOf'])
         },
       },
     );
-    const first = body
-      .split(`#### values.create body ${keyword} variant 1 fields`)[1]
-      ?.split('####')[0];
+    const first = body.split(`#### values.create: variant 1`)[1]?.split('####')[0];
     assert.match(first, /\| `label` \| Required \| string \|/);
-    assert.equal(body.split(`${keyword} variant 1 fields`).length, 2);
+    assert.equal(body.split(`#### values.create: variant 1`).length, 2);
   });
 
 test('long unions indent their members, preserve Record expressions and retain syntax', () => {

@@ -112,3 +112,5 @@ Undeclared optional capabilities produce no helper. Unsupported or incomplete ca
 `dependentRequired` preserves property dependencies through equivalent conditional constraints. A present trigger requires every listed property; absent triggers impose no requirement. Dependency maps must contain arrays of unique property names.
 
 Operation naming supports tag inference (default) and opt-in path inference in both targets. Path mode checks explicit naming reasons and method verbs during diagnosis, and resolves pagination helper collisions automatically. `void`, `close`, `delete` and `list` are portable method names; `new` remains reserved.
+
+Positional requests support object-only `oneOf` and `anyOf` bodies in both targets, including referenced variants. Query/header parameter conflicts and typed dictionaries are checked in every branch. Per-operation object request overrides are rejected.

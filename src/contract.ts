@@ -218,7 +218,9 @@ export type Webhook = WebhookSigning & {
   typeField: string;
 };
 type DefaultCapability = 'idempotency' | 'retry' | 'pagination';
-export type CapabilityOverride = Omit<Capability, DefaultCapability> & {
+export type CapabilityOverride = Omit<Capability, DefaultCapability | 'request'> & {
+  request?: { style?: 'positional' };
+} & {
   [K in DefaultCapability]?:
     | { [P in keyof NonNullable<Capability[K]>]?: NonNullable<Capability[K]>[P] | null }
     | false;
@@ -3037,6 +3039,11 @@ function loadContractInput(
         }
         if (c.request !== undefined)
           validateRequestStyle(c.request, `config/operations/${pointerSegment(id)}/request`);
+        if (c.request?.style === 'object')
+          fail(
+            cp + '/request/style',
+            'per-operation object requests are no longer supported; use positional path IDs and flat params',
+          );
         const requestStyle =
           c.request?.style ??
           (invalidConfig.has('requests') ? undefined : config.requests?.style) ??

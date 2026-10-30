@@ -4441,9 +4441,6 @@
       "pagination": false
     }
   },
-  "requests": {
-    "style": "object"
-  },
   "responses": {
     "return": "payload",
     "payloadPath": "data"

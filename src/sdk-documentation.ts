@@ -2,6 +2,7 @@ import {
   compileDocumentation,
   factShape,
   factVariants,
+  factVariantName,
   factEnums,
   factParts,
   factIdentity,
@@ -767,7 +768,9 @@ export function bodyReference(
       const previous = tables.get(table);
       if (previous) output += `Fields: [${previous.heading}](${previous.destination}).\n\n`;
       else {
-        const heading = `${label} fields`;
+        const variantFields =
+          label.includes(' with ') || label.startsWith(`${op.resource}.${op.method}: `);
+        const heading = variantFields ? label : `${label} fields`;
         const base = anchor(heading);
         const occurrence = headings.get(base) ?? 0;
         headings.set(base, occurrence + 1);
@@ -775,7 +778,7 @@ export function bodyReference(
           heading,
           destination: '#' + base + (occurrence ? '-' + occurrence : ''),
         });
-        output += `#### ${heading}\n\n${table}`;
+        output += variantFields ? table : `#### ${heading}\n\n${table}`;
       }
     }
     // Carry only the common field view into alternatives. Reusing the enclosing
@@ -786,8 +789,17 @@ export function bodyReference(
       ['anyOf', fact.any],
     ] as const)
       for (const [index, variant] of branches.entries()) {
-        const title = `${label} ${keyword} variant ${index + 1}`;
+        const variantName = factVariantName(fact, variant, index, documentedDefinitions);
+        const scope = `${op.resource}.${op.method}`;
+        const title = variantName.startsWith('with ')
+          ? `${scope} with ${literal(variantName.slice(5))}`
+          : `${scope}: ${variantName}`;
         output += `#### ${title}\n\n${factNotes(variant, { literal, examples: false })}\n\n`;
+        // Named variants link to their canonical field table instead of duplicating it.
+        if (variant.model && names?.[variant.model]) {
+          output += `Body model: ${factType(variant, documentedDefinitions, names)}.\n\n`;
+          continue;
+        }
         output +=
           document(variant, title, seen, parent) ||
           `Value shape: ${factType(variant, documentedDefinitions, names)}. ${factCollectionNotes(variant, { literal, examples: false })} ${enumNotes(factEnums(variant, documentedDefinitions), literal, enumLinks)}\n\n`;

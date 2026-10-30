@@ -59,15 +59,11 @@ The full profiles name all 607 SDK operations in `full-common-sdk.json`, grouped
 Payload-mode calls return the value inside the provider's `data` envelope. Payment-intent create results now return the resource directly, with a required `payment_collection` extension; reads return `PaymentIntentWithCollection` with an optional collection:
 
 ```js
-const created = await client.paymentIntents.create(input, options);
+const created = await client.paymentIntents.create(params, options);
 const paymentIntent = created;
-const retrieved = await client.paymentIntents.get({
-  payment_intent_id: paymentIntent.payment_intent_id,
-});
+const retrieved = await client.paymentIntents.get(paymentIntent.payment_intent_id);
 console.log(retrieved.status);
-const response = await client.paymentIntents.getWithResponse({
-  payment_intent_id: paymentIntent.payment_intent_id,
-});
+const response = await client.paymentIntents.getWithResponse(paymentIntent.payment_intent_id);
 console.log(response.body.request_id, response.meta.requestId);
 ```
 

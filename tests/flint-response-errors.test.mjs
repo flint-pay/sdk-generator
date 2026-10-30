@@ -7,9 +7,12 @@ import { pathToFileURL } from 'node:url';
 import { loadContract, generate } from '../dist/index.js';
 import { checkErrorResponseExamples } from './helpers/flint-response-errors.mjs';
 
-for (const verb of ['get', 'post'])
+for (const [style, verb] of ['object', 'positional'].flatMap((style) =>
+  ['get', 'post'].map((verb) => [style, verb]),
+))
   test(
-    'error-example audit exercises real ' +
+    style +
+      ' error-example audit exercises real ' +
       verb.toUpperCase() +
       ' clients and detects lost details in both runtimes',
     async (t) => {
@@ -100,7 +103,7 @@ for (const verb of ['get', 'post'])
         config,
         JSON.stringify({
           version: '1.0.0',
-          requests: { style: 'object' },
+          requests: { style },
           npm: { name: '@example/error-audit-control' },
           composer: { name: 'example/error-audit-control', namespace: 'Example\\FlintFull' },
           operations: { getItem: { resource: 'entries', method: 'get' } },

@@ -861,3 +861,5 @@ Each package's `examples/` directory has a runnable script for every operation, 
 - See [running operation examples](configuration.md#running-operation-examples) for commands.
 
 Operation names come from the SDK configuration. With `operationNames: "path"`, resources follow API paths and methods retain the operation verb, such as `invoices.void()` and `orders.close()`. Explicit exceptions require a documented naming reason in the profile.
+
+Discriminated request bodies use the same positional calling convention as other operations: `client.paymentIntents.confirm(id, { credential_type: "token", token })`. TypeScript narrows params on the discriminator. In PHP, pass the path ID followed by an associative array or model and optional `RequestOptions`. Variant reference headings identify the discriminator value and link the corresponding model.

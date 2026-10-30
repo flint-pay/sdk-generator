@@ -217,22 +217,23 @@ await client.customers.list({ page_size: 100, page_token: nextPageToken });
 - Required request bodies need a params object, including `{}` / `[]` for an empty object. An omitted optional body sends no body; an explicitly empty params object sends `{}`.
 - With both an optional body and query/header parameters, params containing only those parameters send no body. Use object style to distinguish an empty body in that case.
 - Declared query/header names are reserved for those destinations; remaining params fields go into the body.
-- Positional style requires a non-null object body. Nonobject bodies and body fields colliding with declared query/header parameters fail diagnosis.
+- Positional style accepts a non-null object body or a `oneOf`/`anyOf` whose branches all resolve to non-null object schemas. Params are the body union intersected with the declared query/header fields. A body field colliding with a query/header parameter in any branch fails diagnosis.
 - Typed additional-property dictionaries combined with query/header parameters require object style, because their TypeScript index signatures cannot exclude the parameter keys.
 - Aliases, `WithResponse`, `Pages`, `Items`, `Wait`, `PagesWithResponse` and `WaitWithResponse` use the primary method's argument order. The schema still controls path, query, header and body encoding.
 
-Use object style for the whole SDK or one operation:
+Per-operation `request.style: "object"` is no longer supported. Union-body operations use positional IDs and flat params, just like object-body operations:
 
-```json
-{
-  "requests": { "style": "positional" },
-  "operations": {
-    "replaceRawDocument": { "request": { "style": "object" } }
-  }
-}
+```ts
+await client.paymentIntents.confirm(paymentIntentId, {
+  credential_type: 'token',
+  token: 'synthetic-token',
+});
+await client.orders.pay(orderId, { action: 'pay', token: 'synthetic-token' });
 ```
 
-Object style takes `(input, options)`, with path/query/header fields on `input` and the body under `input.body`. It also accepts the generated PHP operation input classes.
+References identify variants by their discriminator values, such as `with credential_type: "token"`, and link named variants to their model tables. Without a discriminator, headings use the variant's model name or title, falling back to `variant N`.
+
+The legacy SDK-wide `requests.style: "object"` setting remains available for generators with nonobject bodies. It takes `(input, options)`, with path/query/header fields on `input` and the body under `input.body`. Flint's full fixture uses positional calls throughout.
 
 Configuration `example` values, HTTP fixtures and exported operation `Input` shapes always use the canonical `{ pathField, queryField, body }` structure; generated runnable examples translate them to the selected call style. Changing styles or positional path order is a breaking change in compatibility checks. Profiles merge request styles under the usual conflict rules.
 

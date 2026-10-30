@@ -57,7 +57,8 @@ try {
     foreach ($examples as $index => $example) {
         $group = $audit['groups'][$example['operation']];
         // Preserve nested JSON objects (including empty maps) in SDK inputs.
-        $input = (array) json_decode($group['inputJson'], false, 512, JSON_THROW_ON_ERROR);
+        $args = json_decode($group['argsJson'], false, 512, JSON_THROW_ON_ERROR);
+        $args = array_map(static fn($value) => is_object($value) ? (array) $value : $value, $args);
         $options = new RequestOptions(
             ...array_replace($group['options'], [
                 'maxAttempts' => 1,
@@ -68,7 +69,8 @@ try {
         [$kind, $errorClass] = $example['expectedError'];
         $class = 'Example\\FlintFull\\Errors\\' . $errorClass;
         try {
-            $client->{$group['resource']}->{$group['method']}($input, $options);
+            $args[] = $options;
+            $client->{$group['resource']}->{$group['method']}(...$args);
             throw new RuntimeException($example['location'] . ': error response succeeded');
         } catch (SdkError $error) {
             $check = static function (bool $valid, string $field) use ($example): void {

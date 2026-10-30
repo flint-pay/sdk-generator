@@ -85,11 +85,25 @@ function requestGroup(base, operation, plan) {
   assert.ok(call, operation.id + ': missing runnable request example');
   assert.equal(call[1], operation.resource);
   assert.equal(call[2], operation.method);
-  const [input = {}, options = {}] = JSON.parse(
+  const parsed = JSON.parse(
     runInNewContext(`JSON.stringify([${call[3]}])`, {
       idempotencyKey: 'response-example-audit',
     }),
   );
+  const paths = [...operation.path.matchAll(/\{([^}]+)\}/g)].map((match) => match[1]);
+  const positional = operation.request?.style === 'positional';
+  const hasParams = Boolean(
+    operation.body ||
+      operation.parameters.some(
+        (parameter) => parameter.in !== 'path' && parameter.source !== 'request-option',
+      ),
+  );
+  const count = positional ? paths.length + Number(hasParams) : 1;
+  const args = Array.from({ length: count }, (_, index) => parsed[index]);
+  const options = parsed[count] ?? {};
+  const pathValues = positional
+    ? Object.fromEntries(paths.map((name, index) => [name, args[index]]))
+    : args[0];
   const authMode = operation.authModes?.[0];
   if (authMode) {
     options.authMode = authMode;
@@ -100,11 +114,11 @@ function requestGroup(base, operation, plan) {
   return {
     resource: operation.resource,
     method: operation.method,
-    input,
-    inputJson: JSON.stringify(input),
+    args,
+    argsJson: JSON.stringify(args),
     options,
     verb: operation.verb,
-    path: operation.path.replace(/\{([^}]+)\}/g, (_, name) => encodeURIComponent(input[name])),
+    path: operation.path.replace(/\{([^}]+)\}/g, (_, name) => encodeURIComponent(pathValues[name])),
   };
 }
 
@@ -136,7 +150,7 @@ async function nodeErrors(base, audit, entry = 'index.js') {
       const body = JSON.parse(example.json);
       const [kind, errorClass] = example.expectedError;
       await assert.rejects(
-        client[group.resource][group.method](group.input, {
+        client[group.resource][group.method](...group.args, {
           ...group.options,
           maxAttempts: 1,
           headers: { 'x-response-example': String(index) },
