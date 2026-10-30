@@ -5,6 +5,9 @@ import { validateRequestStyle, validatePositional, type RequestStyle } from './r
 import { validateResponseReturn, payloadSchemas, type ResponseReturn } from './response-return.js';
 import {
   operationNames,
+  pathOperationNames,
+  avoidPathHelperCollisions,
+  operationVerbOccurs,
   operationNamingReason,
   modelNames,
   isPublicName,
@@ -110,6 +113,7 @@ export interface Capability {
   response?: ResponseReturn;
   stream?: { events?: Record<string, string>; idleTimeoutMs?: number; maxEventBytes?: number };
   requestMediaType?: string;
+  namingReason?: string;
   resource?: string;
   method?: string;
   audiences?: string[];
@@ -215,6 +219,7 @@ export type CapabilityOverride = Omit<Capability, DefaultCapability> & {
     | false;
 };
 export interface Config {
+  operationNames?: 'tags' | 'path';
   $schema?: string;
   defaults?: { [K in DefaultCapability]?: Partial<NonNullable<Capability[K]>> };
   requests?: RequestStyle;
@@ -1788,6 +1793,7 @@ function loadContractInput(
     keys(
       config,
       [
+        'operationNames',
         'requests',
         'responses',
         'targets',
@@ -1854,6 +1860,10 @@ function loadContractInput(
   diagnostics.check(() => {
     if (config.validation !== undefined && !['encoding', 'schema'].includes(config.validation))
       fail('config/validation', 'expected encoding or schema');
+  });
+  diagnostics.check(() => {
+    if (config.operationNames !== undefined && !['tags', 'path'].includes(config.operationNames))
+      fail('config/operationNames', 'expected tags or path');
   });
   checkConfig(['requests'], () => {
     if (config.requests !== undefined) validateRequestStyle(config.requests, 'config/requests');
@@ -2807,6 +2817,47 @@ function loadContractInput(
   const operations: Operation[] = [];
   const ids = new Set<string>();
   const publicNames = new Set<string>();
+  const pathNames = avoidPathHelperCollisions(
+    config.operationNames === 'path'
+      ? Object.entries(doc.paths ?? {}).flatMap(([path, item]) =>
+          Object.entries(item && typeof item === 'object' ? item : {}).flatMap(([verb, value]) => {
+            if (
+              !['get', 'post', 'put', 'patch', 'delete', 'head', 'options'].includes(verb) ||
+              !value ||
+              typeof value !== 'object'
+            )
+              return [];
+            const id = Reflect.get(value, 'operationId');
+            if (typeof id !== 'string' || !id) return [];
+            const c = own(config.operations, id) ?? {};
+            if (
+              c.hidden ||
+              (config.include && !config.include.includes(id)) ||
+              (config.audiences &&
+                (!Array.isArray(c.audiences) ||
+                  !c.audiences.some((a) => config.audiences?.includes(a))))
+            )
+              return [];
+            if (
+              (c.resource !== undefined && typeof c.resource !== 'string') ||
+              (c.method !== undefined && typeof c.method !== 'string')
+            )
+              return [];
+            const inferred = pathOperationNames(id, path);
+            return [
+              {
+                id,
+                resource: c.resource ?? inferred.resource,
+                method: c.method ?? inferred.method,
+                explicit: c.method !== undefined,
+                pagination:
+                  c.pagination === false ? false : !!(c.pagination ?? config.defaults?.pagination),
+              },
+            ];
+          }),
+        )
+      : [],
+  );
   for (const [path, item] of Object.entries(doc.paths ?? {}) as [string, any][]) {
     if (
       !diagnostics.check(() => {
@@ -2875,6 +2926,7 @@ function loadContractInput(
             'response',
             'resource',
             'method',
+            'namingReason',
             'audiences',
             'hidden',
             'aliases',
@@ -2953,9 +3005,23 @@ function loadContractInput(
           (config.audiences && !c.audiences?.some((a) => config.audiences!.includes(a)))
         )
           continue;
-        const inferred = operationNames(id, op.tags);
+        if (
+          c.namingReason !== undefined &&
+          (typeof c.namingReason !== 'string' || !c.namingReason.trim())
+        )
+          fail(cp + '/namingReason', 'namingReason must be a nonempty explanation');
+        const inferred =
+          config.operationNames === 'path'
+            ? pathOperationNames(id, path)
+            : operationNames(id, op.tags);
         const resource = c.resource ?? inferred.resource;
-        const method = c.method ?? inferred.method;
+        const method = c.method ?? pathNames.get(id)?.method ?? inferred.method;
+        if (config.operationNames === 'path' && !c.namingReason) {
+          if (c.resource !== undefined || c.method !== undefined)
+            fail(cp + '/namingReason', 'explicit path-based operation names require namingReason');
+          if (!operationVerbOccurs(method, id))
+            fail(cp + '/method', 'method verb must occur in operationId or have a namingReason');
+        }
         name(resource, c.resource !== undefined ? cp + '/resource' : p + '/operationId');
         try {
           name(method, c.method !== undefined ? cp + '/method' : p + '/operationId', true);
@@ -2968,7 +3034,11 @@ function loadContractInput(
             );
           throw error;
         }
-        if (inferred.resource === 'api' && c.method === undefined)
+        if (
+          config.operationNames !== 'path' &&
+          inferred.resource === 'api' &&
+          c.method === undefined
+        )
           options.onWarning?.(
             new Diagnostic(
               p + '/operationId',

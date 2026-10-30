@@ -907,3 +907,57 @@ test('pagination and named authentication typos identify the editable field and 
       error.detail.includes('Did you mean "KeyAuth"'),
   );
 });
+
+test('path naming lint is a diagnose error and explained overrides remain possible', (t) => {
+  const f = fixture(t);
+  f.config.operationNames = 'path';
+  f.config.operations = { createWidget: { method: 'invent' } };
+  let result = f.run('diagnose', f.api, f.sdk, '--json');
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /namingReason/);
+  f.config.operations.createWidget.namingReason = 'Use the domain-specific creation verb.';
+  assert.equal(f.run('diagnose', f.api, f.sdk, '--json').status, 0);
+  f.config.operations.createWidget.namingReason = '  ';
+  assert.throws(() => f.load(), /namingReason/);
+  f.config.operations = { createWidget: { resource: 'widgets' } };
+  assert.throws(() => f.load(), /namingReason/);
+  f.config.operations = {};
+  f.config.operationNames = 'invalid';
+  assert.throws(() => f.load(), /expected tags or path/);
+});
+test('void and close methods run in both generated targets', async (t) => {
+  const f = fixture(t);
+  f.config.operationNames = 'path';
+  f.spec.paths = Object.fromEntries(
+    ['void', 'close', 'delete'].map((verb) => [
+      '/v1/widgets/' + verb,
+      { post: { operationId: verb + 'Widget', responses: { 204: { description: 'Done' } } } },
+    ]),
+  );
+  const contract = f.load();
+  assert.deepEqual(contract.operations.map((op) => op.method).sort(), ['close', 'delete', 'void']);
+  generate(contract, f.output);
+  const cases = join(f.dir, 'portable-methods.json');
+  writeFileSync(
+    cases,
+    JSON.stringify(
+      ['void', 'close', 'delete'].map((verb) => ({
+        name: 'portable ' + verb,
+        baseUrl: 'https://api.example.invalid',
+        operation: verb + 'Widget',
+        input: {},
+        expected: { method: 'POST', path: '/v1/widgets/' + verb },
+        responses: [{ status: 204, body: '' }],
+        empty: true,
+      })),
+    ),
+  );
+  assert.deepEqual(await validateFixtures(f.output, cases), [
+    { target: 'node', scenarios: 3 },
+    { target: 'php', scenarios: 3 },
+  ]);
+  f.spec.paths['/v1/widgets/new'] = {
+    post: { operationId: 'newWidget', responses: { 204: { description: 'Done' } } },
+  };
+  assert.throws(() => f.load(), /reserved|portable/);
+});

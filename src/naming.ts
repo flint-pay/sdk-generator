@@ -10,7 +10,7 @@ export function isPublicName(value: unknown, method = false): value is string {
     typeof value === 'string' &&
     identifier.test(value) &&
     (!reserved.has(value.toLowerCase()) ||
-      (method && ['list', 'delete'].includes(value.toLowerCase())))
+      (method && ['list', 'delete', 'void', 'close'].includes(value.toLowerCase())))
   );
 }
 
@@ -96,6 +96,106 @@ export function operationNames(id: string, tags: unknown): { resource: string; m
 /** Explain conservative naming without changing fallback operation IDs. */
 export function operationNamingReason(id: string, tags: unknown): string {
   return inferOperationNames(id, tags).reason ?? 'an explicit public name is required';
+}
+
+/** Preserve operation-ID acronym spelling while matching nouns by spelling. */
+function spelledWords(value: string): string[] {
+  return value
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean);
+}
+function pathSingular(value: string): string {
+  const lower = value.toLowerCase();
+  if (['analytics', 'settings'].includes(lower)) return lower;
+  if (lower === 'refreshes') return 'refresh';
+  return singular(lower);
+}
+
+/** Path naming is opt-in; tags retain their existing conservative inference. */
+export function pathOperationNames(id: string, path: string): { resource: string; method: string } {
+  const segments = path.split('/').filter(Boolean);
+  const afterVersion = segments[0] === 'v1' ? segments.slice(1) : segments;
+  const segment = afterVersion.find((part) => !part.startsWith('{'))?.split('.')[0] ?? '';
+  const noun = words(segment);
+  const resource = camel(noun);
+  const parts = spelledWords(id);
+  const targets = [
+    noun.join(''),
+    noun.map((word, i) => (i === noun.length - 1 ? pathSingular(word) : word)).join(''),
+  ];
+  const result = (remaining: string[]) => ({
+    resource,
+    method: remaining.map((word, i) => (i ? word : word.toLowerCase())).join(''),
+  });
+  for (let start = 1; start < parts.length; start++) {
+    for (let end = start + 1; end <= parts.length; end++) {
+      const run = parts.slice(start, end);
+      const plain = run.join('').toLowerCase();
+      const singularRun = run.slice(0, -1).join('').toLowerCase() + pathSingular(run.at(-1) ?? '');
+      if (targets.includes(plain) || targets.includes(singularRun))
+        return result([...parts.slice(0, start), ...parts.slice(end)]);
+    }
+  }
+  // A shared leading noun is spoken once, immediately after the verb.
+  for (let count = noun.length - 1; count > 0; count--) {
+    if (
+      parts.length > count + 1 &&
+      noun
+        .slice(0, count)
+        .every((word, i) => pathSingular(word) === pathSingular(parts[i + 1] ?? ''))
+    )
+      return result([parts[0] ?? '', ...parts.slice(count + 1)]);
+  }
+  return { resource, method: id };
+}
+
+export function operationVerbOccurs(method: string, id: string): boolean {
+  const verb = words(method)[0];
+  return verb !== undefined && words(id).includes(verb);
+}
+
+/** Resolve pagination helper collisions before contract traversal, independent of path order. */
+export function avoidPathHelperCollisions(
+  entries: readonly {
+    id: string;
+    resource: string;
+    method: string;
+    pagination: boolean;
+    explicit: boolean;
+  }[],
+): Map<string, { resource: string; method: string }> {
+  const names = new Map(entries.map(({ id, resource, method }) => [id, { resource, method }]));
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const helpers = new Set(
+      entries
+        .filter((entry) => entry.pagination)
+        .flatMap((entry) => {
+          const name = names.get(entry.id);
+          return name
+            ? ['Items', 'Pages'].map((suffix) =>
+                (name.resource + '.' + name.method + suffix).toLowerCase(),
+              )
+            : [];
+        }),
+    );
+    for (const entry of entries) {
+      const name = names.get(entry.id);
+      if (
+        name &&
+        !entry.explicit &&
+        name.method !== entry.id &&
+        helpers.has((name.resource + '.' + name.method).toLowerCase())
+      ) {
+        names.set(entry.id, { resource: name.resource, method: entry.id });
+        changed = true;
+      }
+    }
+  }
+  return names;
 }
 
 /** Reserve explicit names first; generated Input helpers must not shadow source models. */
