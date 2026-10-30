@@ -82,6 +82,7 @@ import {
   ExactNumberSample,
   compileSdkContract,
   RETRY_DEFAULTS,
+  ERROR_FIELDS,
   AUTH_SHORTCUT_RESERVED,
   type SampleValidator,
   type CompiledSdkContract,
@@ -1379,7 +1380,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     );
     let runtimeDeclarations = readFileSync(join(here, 'runtime.d.ts'), 'utf8');
     if (targetPlan.node.errorTypes) {
-      const { code, details } = targetPlan.node.errorTypes;
+      const { code, details, type, errorSource, remediation } = targetPlan.node.errorTypes;
       const qualify = (type: string) =>
         type.replace(
           /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|[A-Za-z_$][\w$]*/g,
@@ -1389,8 +1390,11 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       runtimeDeclarations =
         runtimeDeclarations
           .replaceAll('code: string;', 'code: SdkErrorCode;')
-          .replaceAll('details?: unknown', 'details?: SdkErrorDetails') +
-        `\nexport type SdkErrorCode = (${qualify(code)}) & string;\nexport type SdkErrorDetails = ${qualify(details)};\n`;
+          .replaceAll('details: readonly unknown[];', 'details: SdkErrorDetails;')
+          .replaceAll('type?: string;', `type?: ${qualify(type ?? 'string')};`)
+          .replaceAll('errorSource?: string;', `errorSource?: ${qualify(errorSource ?? 'string')};`)
+          .replaceAll('remediation?: ErrorRemediation;', 'remediation?: SdkErrorRemediation;') +
+        `\nexport type SdkErrorCode = (${qualify(code)}) & string;\nexport type SdkErrorDetails = ${qualify(details)};\nexport type SdkErrorRemediation = (${qualify(remediation ?? 'ErrorRemediation')}) & { retry?: ErrorRetry };\n`;
     }
     put('runtime.d.ts', runtimeDeclarations);
     for (const name of [
@@ -1781,6 +1785,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         readFileSync(join(here, '../templates/Runtime.php'), 'utf8').replaceAll('SdkNamespace', ns),
         'src/Runtime.php',
         [
+          ["/* ERROR_FIELDS */ '{}'", php(JSON.stringify(ERROR_FIELDS))],
           [
             "/* REQUEST_OPTION_PLANS */ '{}'",
             php(JSON.stringify(targetPlan.requestOptionPlans ?? {})),
@@ -2010,7 +2015,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       const modifier = name === 'ApiError' || name === 'ConnectionError' ? '' : 'final ';
       put(
         `src/classes/Errors/${name}.php`,
-        `<?php\ndeclare(strict_types=1);\nnamespace ${ns}\\Errors;\n${modifier}class ${name} extends ${base} {${name === 'ApiError' ? '\n    public mixed $details = null;\n' : name === 'ConfigurationError' ? '\n    public mixed $workloadIdentity = null;\n' : name === 'UnexpectedResponseError' ? '\n    public ?array $event = null;\n' : ''}}\n`,
+        `<?php\ndeclare(strict_types=1);\nnamespace ${ns}\\Errors;\n${modifier}class ${name} extends ${base} {${name === 'ApiError' ? "\n    public const RETRY_SAME_REQUEST = 'same_request';\n    public const RETRY_AFTER_REFRESH = 'after_refresh';\n    public const RETRY_NONE = 'none';\n    /** @var list<array<string, mixed>> */\n    public array $details = [];\n    public ?string $type = null;\n    public ?string $errorSource = null;\n    public ?string $docUrl = null;\n    public ?string $requestLogUrl = null;\n    public ?array $remediation = null;\n    public mixed $body = null;\n" : name === 'ConfigurationError' ? '\n    public mixed $workloadIdentity = null;\n' : name === 'UnexpectedResponseError' ? '\n    public ?array $event = null;\n' : ''}}\n`,
       );
       classmap[ns + '\\Errors\\' + name] = 'classes/Errors/' + name + '.php';
     }

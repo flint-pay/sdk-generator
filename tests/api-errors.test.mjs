@@ -14,8 +14,31 @@ function fixture(t, errors, operations) {
   const errorSchema = {
     type: 'object',
     properties: {
-      message: { type: 'string' },
-      explanation: { type: 'string' },
+      code: {
+        anyOf: [
+          { type: 'string' },
+          { type: 'array', items: { type: 'string' } },
+          { type: 'object', properties: { value: { type: 'string' }, 0: { type: 'string' } } },
+        ],
+      },
+      fields: {
+        type: 'array',
+        items: { type: 'object', properties: { reason: { type: 'string' } } },
+      },
+      details: {
+        anyOf: [
+          { type: 'array', items: { type: 'object' } },
+          { type: 'object', properties: { length: { type: 'array', items: { type: 'object' } } } },
+        ],
+      },
+      message: {
+        anyOf: [
+          { type: 'string' },
+          { type: 'array', items: { type: 'string' } },
+          { type: 'object', properties: { value: { type: 'string' }, 0: { type: 'string' } } },
+        ],
+      },
+      explanation: {},
       privateMessage: { type: 'string', 'x-sensitive': true },
       privateDetail: { type: 'string', writeOnly: true },
     },
@@ -60,7 +83,7 @@ function fixture(t, errors, operations) {
       version: '1.0.0',
       npm: { name: '@example/api-errors' },
       composer: { name: 'example/api-errors', namespace: 'Example\\Errors' },
-      ...(errors ? { errors } : {}),
+      errors: errors ?? { objectPath: '' },
       ...(operations ? { operations } : {}),
     }),
   );
@@ -134,9 +157,7 @@ for (const nested of [false, true]) {
       t,
       nested
         ? {
-            codePath: 'error.code',
-            messagePath: 'error.explanation',
-            detailsPath: 'error.fields',
+            fields: { code: 'code', message: 'explanation', details: 'fields' },
             requestIdHeader: 'Trace-Id',
           }
         : undefined,
@@ -154,7 +175,7 @@ for (const nested of [false, true]) {
                   code: c.payload.code,
                   explanation: c.payload.message,
                   message: 'Wrong field',
-                  fields: { reason: 'Missing payment' },
+                  fields: [{ reason: 'Missing payment' }],
                 },
               }
             : c.payload,
@@ -181,12 +202,17 @@ for (const nested of [false, true]) {
         assert.equal(error.status, c.status);
         assert.equal(error.status, c.status);
         assert.equal(error.name, c.kind);
-        assert.equal(error.code, c.payload?.code ?? '');
+        assert.equal(error.code, c.payload?.code ?? 'http_error');
         assert.equal(error.outcome, 'response');
         assert.equal(error.retryAllowed, [408, 429, 500, 502, 503, 504].includes(c.status));
         assert.equal(error.raw, c.raw);
         assert.equal(error.requestId, 'req_000MH8MWQ7PKC0N7TXERB9CJ9P');
-        if (nested && c.payload) assert.deepEqual(error.details, { reason: 'Missing payment' });
+        if (nested && c.payload)
+          assert.deepEqual(
+            error.details,
+            [{ reason: 'Missing payment' }],
+            `HTTP ${c.status}: ${c.message}`,
+          );
         const logged = inspect(error);
         assert.ok(logged.includes('stack:'));
         assert.ok(logged.includes('code:'));
@@ -199,7 +225,7 @@ for (const nested of [false, true]) {
           message: c.message,
           status: c.status,
           kind: c.kind,
-          code: c.payload?.code ?? '',
+          code: c.payload?.code ?? 'http_error',
           details: error.details ?? null,
           raw: c.raw,
         });
@@ -258,9 +284,7 @@ echo json_encode($results);
 
 test('message extraction and debug output honor schema and consumer redaction in both targets', async (t) => {
   const f = fixture(t, {
-    codePath: 'error.privateDetail',
-    messagePath: 'error.privateMessage',
-    detailsPath: 'error',
+    fields: { code: 'privateDetail', message: 'privateMessage' },
   });
   generate(loadContract(f.source, f.config), f.output);
   const { Client } = await import(pathToFileURL(join(f.output, 'node/index.js')));
@@ -281,9 +305,9 @@ test('message extraction and debug output honor schema and consumer redaction in
   await assert.rejects(client.api.readValue(), (error) => {
     assert.equal(error.message, '[REDACTED]');
     assert.equal(error.code, '[REDACTED]');
-    assert.equal(error.details.privateDetail, '[REDACTED]');
-    assert.equal(error.details.customField, '[REDACTED]');
-    assert.ok(inspect(error).includes('Missing payment'));
+    assert.equal(error.body.error.privateDetail, '[REDACTED]');
+    assert.equal(error.body.error.customField, '[REDACTED]');
+    assert.ok(!inspect(error).includes('Missing payment'));
     assert.ok(!inspect(error).includes('hidden-'));
     assert.equal(error.raw, body);
     return true;
@@ -301,7 +325,7 @@ $client=new Example\Errors\Client(new Example\Errors\ClientOptions('https://exam
 try{$client->api->readValue();exit(1);}catch(Example\Errors\SdkError $e){
   if($e->getMessage()!=='[REDACTED]'||$e->code!=='[REDACTED]'||$e->raw!==$body)throw $e;
   ob_start();var_dump($e);$logged=ob_get_clean();
-  if(str_contains($logged,'hidden-')||!str_contains($logged,'Missing payment'))throw new Exception('Invalid redaction');
+  if(str_contains($logged,'hidden-')||str_contains($logged,'Missing payment'))throw new Exception('Invalid redaction');
 }
 `,
       join(f.output, 'php'),
@@ -311,12 +335,12 @@ try{$client->api->readValue();exit(1);}catch(Example\Errors\SdkError $e){
   assert.equal(result.status, 0, result.stderr + result.stdout);
 });
 
-test('messagePath rejects invalid field paths during configuration validation', (t) => {
-  for (const messagePath of ['', '.', 'error..message', 'error[message]', 1, null, {}]) {
-    const f = fixture(t, { messagePath });
+test('fields.message rejects invalid field paths during configuration validation', (t) => {
+  for (const message of ['', '.', 'error..message', 'error[message]', 1, null, {}]) {
+    const f = fixture(t, { fields: { message } });
     assert.throws(
       () => loadContract(f.source, f.config),
-      /config\/errors\/messagePath.*dot-separated/,
+      /config\/errors\/fields\/message.*dot-separated/,
     );
   }
 });
@@ -324,7 +348,7 @@ test('messagePath rejects invalid field paths during configuration validation', 
 test('redacting provider codes does not change code-specific retry eligibility', async (t) => {
   const f = fixture(
     t,
-    { codePath: 'error.privateDetail' },
+    { fields: { code: 'privateDetail' } },
     {
       readValue: {
         retry: {
@@ -367,7 +391,7 @@ $c->api->readValue();echo $attempts;
 });
 
 test('redaction does not turn invalid messages or codes into valid strings', async (t) => {
-  const f = fixture(t, { messagePath: 'error.privateMessage', codePath: 'error.privateDetail' });
+  const f = fixture(t, { fields: { message: 'privateMessage', code: 'privateDetail' } });
   generate(loadContract(f.source, f.config), f.output);
   const { Client } = await import(pathToFileURL(join(f.output, 'node/index.js')));
   const bodies = [null, 42, false, {}, [], '', ' \u00a0\ufeff'].map((value) =>
@@ -375,7 +399,11 @@ test('redaction does not turn invalid messages or codes into valid strings', asy
   );
   const expected = bodies.map((body) => ({
     message: 'API returned HTTP 404',
-    code: typeof JSON.parse(body).error.privateDetail === 'string' ? '[REDACTED]' : '',
+    code:
+      typeof JSON.parse(body).error.privateDetail === 'string' &&
+      JSON.parse(body).error.privateDetail.trim()
+        ? '[REDACTED]'
+        : 'http_error',
   }));
   for (const [i, body] of bodies.entries()) {
     const client = new Client({
@@ -417,9 +445,7 @@ for (const redacted of [false, true]) {
       t,
       redacted
         ? {
-            messagePath: 'error.privateMessage',
-            codePath: 'error.privateDetail',
-            detailsPath: 'error',
+            fields: { message: 'privateMessage', code: 'privateDetail' },
           }
         : undefined,
       {
@@ -448,9 +474,9 @@ for (const redacted of [false, true]) {
           expected: {
             attempts: string ? 2 : 1,
             message: string ? (redacted ? '[REDACTED]' : token) : 'API returned HTTP 503',
-            code: string ? (redacted ? '[REDACTED]' : token) : '',
+            code: string ? (redacted ? '[REDACTED]' : token) : 'http_error',
             retryAllowed: string,
-            details: {
+            body: {
               [redacted ? 'privateMessage' : 'message']: publicValue,
               [redacted ? 'privateDetail' : 'code']: publicValue,
               fields: { fraction: '1.5', wide: '9007199254750393', exponent: '1e400' },
@@ -476,7 +502,7 @@ for (const redacted of [false, true]) {
             message: error.message,
             code: error.code,
             retryAllowed: error.retryAllowed,
-            details: error.details,
+            body: redacted ? error.body.error : error.body,
             raw: error.raw,
           },
           expected,
@@ -493,7 +519,7 @@ require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';$rows=[];
 foreach(json_decode(stream_get_contents(STDIN),true) as $body){
   $attempts=0;
   $c=new Example\Errors\Client(new Example\Errors\ClientOptions('https://example.invalid',transport:function($r)use(&$attempts,$body){$attempts++;return ['status'=>503,'headers'=>[],'body'=>$body];}));
-  try{$c->api->readValue();exit(1);}catch(Example\Errors\SdkError $e){$rows[]=['attempts'=>$attempts,'message'=>$e->getMessage(),'code'=>$e->code,'retryAllowed'=>$e->retryAllowed,'details'=>$e->details,'raw'=>$e->raw];}
+  try{$c->api->readValue();exit(1);}catch(Example\Errors\SdkError $e){$rows[]=['attempts'=>$attempts,'message'=>$e->getMessage(),'code'=>$e->code,'retryAllowed'=>$e->retryAllowed,'body'=>$e->body->error??$e->body,'raw'=>$e->raw];}
 }
 echo json_encode($rows);
 `,
@@ -512,7 +538,7 @@ echo json_encode($rows);
 test('error field paths cannot traverse internal numeric token wrappers in either target', async (t) => {
   const f = fixture(
     t,
-    { messagePath: 'message.value', codePath: 'code.value' },
+    { objectPath: '', fields: { message: 'message.value', code: 'code.value' } },
     {
       readValue: {
         retry: {
@@ -538,7 +564,7 @@ test('error field paths cannot traverse internal numeric token wrappers in eithe
   });
   await assert.rejects(client.api.readValue(), (error) => {
     assert.equal(error.message, 'API returned HTTP 503');
-    assert.equal(error.code, '');
+    assert.equal(error.code, 'http_error');
     assert.equal(error.retryAllowed, false);
     assert.equal(attempts, 1);
     return true;
@@ -559,7 +585,7 @@ try{$c->api->readValue();exit(1);}catch(Example\Errors\SdkError $e){echo json_en
   assert.equal(result.status, 0, result.stderr + result.stdout);
   assert.deepEqual(JSON.parse(result.stdout), {
     message: 'API returned HTTP 503',
-    code: '',
+    code: 'http_error',
     retryAllowed: false,
     attempts: 1,
   });
@@ -568,7 +594,7 @@ try{$c->api->readValue();exit(1);}catch(Example\Errors\SdkError $e){echo json_en
 test('error field paths traverse JSON containers without indexing scalar strings in either target', async (t) => {
   const f = fixture(
     t,
-    { messagePath: 'message.0', codePath: 'code.0' },
+    { objectPath: '', fields: { message: 'message.0', code: 'code.0' } },
     {
       readValue: {
         retry: {
@@ -595,9 +621,9 @@ test('error field paths traverse JSON containers without indexing scalar strings
       expected: {
         attempts: row.message ? 2 : 1,
         message: row.message && !redacted ? row.message : 'API returned HTTP 503',
-        code: row.message && !redacted ? '1' : '',
+        code: row.message && !redacted ? '1' : 'http_error',
         retryAllowed: !!row.message,
-        details: redacted
+        body: redacted
           ? { message: '[REDACTED]', code: '[REDACTED]' }
           : (row.details ?? JSON.parse(row.body)),
         raw: row.body,
@@ -621,12 +647,10 @@ test('error field paths traverse JSON containers without indexing scalar strings
           message: error.message,
           code: error.code,
           retryAllowed: error.retryAllowed,
-          details: error.details,
+          body: error.body,
           raw: error.raw,
         },
-        !redacted && typeof JSON.parse(body).message !== 'string'
-          ? { ...expected, details: undefined }
-          : expected,
+        expected,
       );
       return true;
     });
@@ -640,7 +664,7 @@ require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';$rows=[];
 foreach(json_decode(stream_get_contents(STDIN),true) as $case){
   $attempts=0;$body=$case['body'];
   $c=new Example\Errors\Client(new Example\Errors\ClientOptions('https://example.invalid',redactFields:$case['redacted']?['message','code']:[],transport:function($r)use(&$attempts,$body){$attempts++;return ['status'=>503,'headers'=>[],'body'=>$body];}));
-  try{$c->api->readValue();exit(1);}catch(Example\Errors\SdkError $e){$rows[]=['attempts'=>$attempts,'message'=>$e->getMessage(),'code'=>$e->code,'retryAllowed'=>$e->retryAllowed,'details'=>$e->details,'raw'=>$e->raw];}
+  try{$c->api->readValue();exit(1);}catch(Example\Errors\SdkError $e){$rows[]=['attempts'=>$attempts,'message'=>$e->getMessage(),'code'=>$e->code,'retryAllowed'=>$e->retryAllowed,'body'=>$e->body,'raw'=>$e->raw];}
 }
 echo json_encode($rows);
 `,
@@ -655,14 +679,14 @@ echo json_encode($rows);
   );
 });
 
-test('error detail paths cannot expose array length but retain JSON object members in both targets', async (t) => {
-  const f = fixture(t, { detailsPath: 'details.length' });
+test('error detail paths cannot expose array length but retain JSON object arrays in both targets', async (t) => {
+  const f = fixture(t, { objectPath: '', fields: { details: 'details.length' } });
   generate(loadContract(f.source, f.config), f.output);
   const { Client } = await import(pathToFileURL(join(f.output, 'node/index.js')));
   const cases = [
-    { body: '{"details":["first","second"]}', details: null },
-    { body: '{"details":"scalar"}', details: null },
-    { body: '{"details":{"length":"Declared detail"}}', details: 'Declared detail' },
+    { body: '{"details":["first","second"]}', details: [] },
+    { body: '{"details":"scalar"}', details: [] },
+    { body: '{"details":{"length":[{"param":"name"}]}}', details: [{ param: 'name' }] },
   ];
   for (const { body, details } of cases) {
     const client = new Client({
@@ -673,7 +697,7 @@ test('error detail paths cannot expose array length but retain JSON object membe
     await assert.rejects(client.api.readValue(), (error) => {
       assert.equal(error.name, 'ServerError');
       assert.equal(error.status, 503);
-      assert.equal(error.details ?? null, details);
+      assert.deepEqual(error.details, details);
       assert.equal(error.raw, body);
       return true;
     });

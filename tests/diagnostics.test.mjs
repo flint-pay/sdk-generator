@@ -214,7 +214,7 @@ test('malformed containers do not hide unrelated scalar or spelling errors', (t)
 test('nested config fields report independent findings together', (t) => {
   const f = fixture(t, (c) => {
     c.release = { policy: 'bogus', baseUrl: 'not a URL' };
-    c.errors = { codePath: '!', detailsPath: '!', requestIdHeader: '\n' };
+    c.errors = { objectPath: '', fields: { code: '!', details: '!' }, requestIdHeader: '\n' };
     c.documentation = { overview: 42, examples: 42, guides: [] };
   });
   assert.equal(findings(f.run).length, 8);

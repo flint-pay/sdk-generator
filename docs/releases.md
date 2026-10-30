@@ -5,6 +5,12 @@
 - Preview versions use a SemVer prerelease suffix and npm's `next` tag in the release plan.
 - Commands below use the installed `sdk-generator` executable. From a source checkout, run `npm ci` and `npm run build`, then use `node dist/cli.js`. See the [CLI reference](cli.md) for arguments.
 
+## API error envelope fields
+
+Replace `errors.codePath`, `messagePath` and `detailsPath` with `errors.objectPath` and object-relative `errors.fields` entries. Move `errors.retry.path` to the same object-relative basis; for `{ "error": { "code": "..." } }`, use `objectPath: "error"` and `fields.code: "code"`. Use `objectPath: ""` for top-level envelopes.
+
+Regenerate both targets together. Read API fields directly from `ApiError`: `code`, `type`, `param`, `details`, `remediation`, `errorSource`, `docUrl`, `requestLogUrl` and `body`. Replace optional-detail checks with array checks; absent or invalid details are `[]`. API object keys keep wire spelling. Handle the closed `remediation.retry` values `same_request`, `after_refresh` and `none`; other enum values remain open. Envelope-less responses use `http_error`; OAuth responses retain their RFC 6749 code. `body` is redacted and excluded from inspection, as are `raw` and `headers`.
+
 ## PHP model reads, integer inputs and errors
 
 Regenerate and review PHP consumers before upgrading:
@@ -279,7 +285,7 @@ Regeneration changes the Node type surface. PHP representations and wire behavio
 - Import the canonical response name shown below. Equal declarations share the shortest name, then alphabetical order. The comparison uses effective response declarations after directional and profile rules; different shapes retain separate types. Payload methods use named types or unions. `WithResponse` uses the envelope type and includes HTTP metadata. Unmatched projected alternatives now raise a protocol error; use `WithResponse` when handling future envelope variants explicitly.
 - Request bodies use the referenced component’s `NameInput`; anonymous request bodies stay in the owning operation’s input type. Replace unrelated structural aliases with the operation’s input type, for example `Parameters<typeof client.paymentIntents.cancel>[0]`.
 - Remove response-only `NameInput` and `makeName` imports. Use the response type for reading, or the owning operation’s input type when preparing a request. Models reachable through nested request fields retain their input types and factories.
-- Narrow `SdkError.details` before reading fields. It combines schema-derived API details with runtime failure details; malformed API details and incompatible redacted details are `undefined`. Projected details are checked independently of a future envelope alternative. Projected unions reject fields belonging to a different member so property guards remain safe; success payloads report a protocol error for these incompatible shapes. Explicit `raw` access retains the original response. `SdkError.code` provides known code completions and accepts future strings.
+- Read API detail entries from `ApiError.details`, which is always an array. Malformed API details and incompatible redacted details produce `[]`. Projected details are checked independently of a future envelope alternative. Projected unions reject fields belonging to a different member so property guards remain safe; success payloads report a protocol error for these incompatible shapes. Explicit `raw` access retains the original response. `SdkError.code` provides known code completions and accepts future strings.
 
 Representative Flint replacements from the pinned public fixture:
 

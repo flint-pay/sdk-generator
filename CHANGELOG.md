@@ -4,6 +4,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ## Unreleased (generator 0.1.0)
 
+- Breaking: replace error path options with `errors.objectPath` and object-relative `fields`/`retry.path`. Node and PHP expose matching first-class API envelope fields, always-array details and a redacted decoded `body`, with OAuth and `http_error` fallbacks. `remediation.retry` is closed to `same_request`, `after_refresh` and `none`; other schema enums remain open. Generated `ERRORS.md` uses the same envelope model. See [migration](docs/releases.md#api-error-envelope-fields).
+
 - Name webhook declarations after events (`OrderPaidEvent`) and distinct audiences (`OrderPaidMerchantEvent`); stop exporting hashed incoming payload unions. Single-value event tags narrow exactly, and `x-flint-partial-of` projects Node previous attributes as `Partial<Resource>`. Request names append `Request` once, PHP responses omit redundant status suffixes, and root JSDoc omits shape/type boilerplate.
 
 - Add opt-in native integer counters with `integers: "number"` and exact component exceptions via `{ mode: "number", exactComponents: ["Money"] }`. Both targets enforce the shared safe range; money integers remain exact strings when their component is listed. Codec semantics advance to 5.

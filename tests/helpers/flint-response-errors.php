@@ -87,7 +87,7 @@ try {
             // Node additionally certifies schema-directed typed details.
             $expectedDetails = json_decode(
                 $example['expectedPhpDetailsJson'],
-                false,
+                true,
                 512,
                 JSON_THROW_ON_ERROR,
             );

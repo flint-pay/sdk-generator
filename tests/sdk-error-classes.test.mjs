@@ -98,6 +98,7 @@ function fixture(schemas = {}, webhook = false) {
       composer: { name: 'example/error-classes', namespace: 'Example\\ErrorClasses' },
       requests: { style: 'positional' },
       responses: { return: 'result' },
+      errors: { objectPath: '' },
       operations: { retrieve: { resource: 'values', method: 'retrieve' } },
       ...(webhook
         ? {

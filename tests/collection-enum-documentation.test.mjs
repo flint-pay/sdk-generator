@@ -92,7 +92,7 @@ test('collection enums survive references, nested arrays and maps in both packag
         responses: { return: 'payload' },
         npm: { name: '@example/collections' },
         composer: { name: 'example/collections', namespace: 'Example\\Collections' },
-        errors: { codePath: 'code' },
+        errors: { objectPath: '', fields: { code: 'code' } },
         operations: {
           first: { resource: 'records', method: 'first', idempotency: policy },
           second: { resource: 'records', method: 'second', idempotency: policy },
@@ -163,7 +163,7 @@ test('collection enums survive references, nested arrays and maps in both packag
         );
         assert.match(classes, /\[\]\[\] enum: "api", "dashboard"/);
         assert.match(classes, /\.\* enum: "api", "dashboard"/);
-        assert.match(runtime, /\| client_request_id \|[^\n]*operation declares/i);
+        assert.match(runtime, /\| clientRequestId \|[^\n]*operation declares/i);
       }
     }
   } finally {

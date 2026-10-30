@@ -211,7 +211,7 @@ export function assertCompiledSnapshot(value: unknown): asserts value is Compile
   if (node.errorTypes !== undefined)
     fields(
       object(node.errorTypes, 'node.errorTypes'),
-      ['code', 'details'],
+      ['code', 'details', 'type', 'errorSource', 'remediation'],
       'string',
       'node.errorTypes',
     );

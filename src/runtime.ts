@@ -5,6 +5,7 @@ import type { DefaultCredentials } from './contract.js';
 import type { Transform } from 'node:stream';
 import type { Schema } from './contract.js';
 import {
+  errorMapping,
   compileRuntimePlan,
   assertRuntimePlan,
   isBaseUrlSyntax,
@@ -66,6 +67,14 @@ export interface Result<T> {
   meta: Metadata;
   raw: T extends Uint8Array ? Uint8Array : string;
 }
+function isErrorObject(value: unknown): value is Record<string, unknown> {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    !(value instanceof ParsedNumber)
+  );
+}
 const errorCauses = new WeakMap<SdkError, unknown>();
 const publicErrorDetailsCertificate: TypeCertificate | undefined = undefined;
 
@@ -85,6 +94,22 @@ export interface SdkErrorInit {
   headers?: Record<string, string>;
   raw?: string;
   cause?: unknown;
+}
+export type ErrorRetry = 'same_request' | 'after_refresh' | 'none';
+export interface ErrorRemediation {
+  retry?: ErrorRetry;
+  next_steps?: readonly string[];
+  next_actions?: readonly unknown[];
+  [key: string]: unknown;
+}
+export interface ApiErrorInit extends SdkErrorInit {
+  details?: unknown;
+  type?: string;
+  errorSource?: string;
+  docUrl?: string;
+  requestLogUrl?: string;
+  remediation?: ErrorRemediation;
+  body?: unknown;
 }
 /** SDK failure with flattened call context. */
 export class SdkError extends Error {
@@ -152,7 +177,16 @@ export class SdkError extends Error {
       idempotencyKey: this.idempotencyKey ?? null,
       attempts: this.attempts,
       retryAfterMs: this.retryAfterMs ?? null,
-      ...(this instanceof errors.ApiError ? { details: this.details ?? null } : {}),
+      ...(this instanceof errors.ApiError
+        ? {
+            type: this.type ?? null,
+            param: this.param ?? null,
+            errorSource: this.errorSource ?? null,
+            docUrl: this.docUrl ?? null,
+            remediation: this.remediation ?? null,
+            details: this.details,
+          }
+        : {}),
       cause:
         this.cause instanceof Error
           ? {
@@ -178,11 +212,24 @@ export namespace errors {
   export const SdkError = BaseSdkError;
   export type SdkError = BaseSdkError;
   export class ApiError extends BaseSdkError {
-    details?: unknown;
-    constructor(message: string, init: SdkErrorInit & { details?: unknown } = {}) {
+    details: readonly unknown[];
+    type?: string;
+    errorSource?: string;
+    docUrl?: string;
+    requestLogUrl?: string;
+    remediation?: ErrorRemediation;
+    body?: unknown;
+    constructor(message: string, init: ApiErrorInit = {}) {
       super(message, init);
-      if (!publicErrorDetailsCertificate || certifies(init.details, publicErrorDetailsCertificate))
-        this.details = init.details;
+      this.details =
+        Array.isArray(init.details) &&
+        (!publicErrorDetailsCertificate || certifies(init.details, publicErrorDetailsCertificate))
+          ? init.details
+          : [];
+      for (const key of ['type', 'errorSource', 'docUrl', 'requestLogUrl', 'remediation'] as const)
+        if (init[key] !== undefined)
+          Object.defineProperty(this, key, { value: init[key], writable: true, enumerable: true });
+      Object.defineProperty(this, 'body', { value: init.body, writable: true, enumerable: false });
     }
   }
   export class InvalidRequestError extends ApiError {}
@@ -4497,39 +4544,49 @@ class CompiledRuntime {
                   : response.status >= 500 && response.status < 600
                     ? 'server'
                     : 'api';
-        const code: unknown = field(data, this.contract.errors?.codePath ?? 'code');
-        const originalMessage: unknown = field(
-          data,
-          this.contract.errors?.messagePath ?? 'message',
-        );
+        const mapping = errorMapping(this.contract.errors);
+        const object = (body: unknown) =>
+          mapping.objectPath ? field(body, mapping.objectPath) : body;
+        const envelope = object(data);
+        const oauth = !isErrorObject(envelope) && typeof field(data, 'error') === 'string';
+        const read = (body: unknown, key: keyof typeof mapping.fields): unknown =>
+          oauth
+            ? field(
+                body,
+                key === 'code' ? 'error' : key === 'message' ? 'error_description' : '__absent__',
+              )
+            : field(object(body), mapping.fields[key]);
+        const code = read(data, 'code');
+        const originalMessage = read(data, 'message');
         const errorResponse = op.responses[String(response.status)] ?? op.responses.default;
         const codec = errorResponse?.codec;
         const safeBody = redactCodec(data, codec, this.options.redactFields, this.definitions());
-        const detailsValue = this.contract.errors?.detailsPath
-          ? field(safeBody, this.contract.errors.detailsPath)
-          : safeBody;
-        let details: unknown;
-        if (this.contract.errorDetailsCertificate) {
-          try {
-            const decodedBody = codec
-              ? this.decode(safeBody, codec, { mode: 'response', path: 'error' })
-              : safeBody;
-            const decoded = plainNumbers(
-              this.contract.errors?.detailsPath
-                ? field(decodedBody, this.contract.errors.detailsPath)
-                : decodedBody,
-            );
-            if (certifies(decoded, this.contract.errorDetailsCertificate))
-              details = structuredClone(decoded);
-          } catch (cause) {
-            if (!(cause instanceof SdkError && internalKind(cause) === 'validation')) throw cause;
-          }
-        } else details = plainNumbers(detailsValue);
+        let details: readonly unknown[] = [];
+        try {
+          const decodedBody = codec
+            ? this.decode(safeBody, codec, { mode: 'response', path: 'error' })
+            : safeBody;
+          const detailsValue = plainNumbers(read(decodedBody, 'details'));
+          if (
+            Array.isArray(detailsValue) &&
+            (!this.contract.errorDetailsCertificate ||
+              certifies(detailsValue, this.contract.errorDetailsCertificate))
+          )
+            details = structuredClone(detailsValue);
+        } catch (cause) {
+          if (!(cause instanceof SdkError && internalKind(cause) === 'validation')) throw cause;
+        }
         const redacted = plainNumbers(safeBody);
-        const publicCode: unknown = field(redacted, this.contract.errors?.codePath ?? 'code');
-        const message: unknown = field(redacted, this.contract.errors?.messagePath ?? 'message');
+        const publicCode = read(redacted, 'code');
+        const message = read(redacted, 'message');
+        const envelopeId = read(redacted, 'requestId');
+        if (!meta.requestId && typeof envelopeId === 'string') {
+          meta.requestId = envelopeId;
+          requestIds.push(envelopeId);
+          meta.requestIds = [...requestIds];
+        }
         const signal = this.contract.errors?.retry;
-        const retryValue: unknown = signal ? field(data, signal.path) : undefined;
+        const retryValue: unknown = signal ? field(envelope, signal.path) : undefined;
         const eligible =
           safe &&
           response.status !== 412 &&
@@ -4552,15 +4609,32 @@ class CompiledRuntime {
           'response',
           response.status !== 401 && eligible,
           meta,
-          typeof code === 'string' && typeof publicCode === 'string' ? publicCode : undefined,
+          typeof code === 'string' && code.trim() && typeof publicCode === 'string'
+            ? publicCode
+            : 'http_error',
           details,
           undefined,
           raw,
         );
-        const codePath = this.contract.errors?.codePath ?? 'code';
-        const parent = codePath.split('.').slice(0, -1).join('.');
-        const envelope = parent ? field(data, parent) : data;
-        const reasons: unknown = field(envelope, 'details');
+        if (error instanceof errors.ApiError) {
+          error.body = redacted;
+          for (const key of ['type', 'param', 'errorSource', 'docUrl', 'requestLogUrl'] as const) {
+            const value = read(redacted, key);
+            if (typeof value === 'string') error[key] = value;
+          }
+          const remediation = read(redacted, 'remediation');
+          if (isErrorObject(remediation)) {
+            const mapped = { ...remediation };
+            if (
+              mapped.retry !== undefined &&
+              (typeof mapped.retry !== 'string' ||
+                !['same_request', 'after_refresh', 'none'].includes(mapped.retry))
+            )
+              delete mapped.retry;
+            error.remediation = mapped;
+          }
+        }
+        const reasons = field(envelope, mapping.fields.details);
         const inProgress =
           typeof code === 'string' && (this.contract.errors?.inProgressCodes ?? []).includes(code);
         const uncertainWrite =
@@ -4570,11 +4644,7 @@ class CompiledRuntime {
             field(envelope, 'reason') === 'outcome_unknown' ||
             (Array.isArray(reasons) &&
               reasons.some((detail) => field(detail, 'reason') === 'outcome_unknown')));
-        const hasEnvelope =
-          envelope !== null &&
-          typeof envelope === 'object' &&
-          !Array.isArray(envelope) &&
-          !(envelope instanceof ParsedNumber);
+        const hasEnvelope = isErrorObject(envelope);
         const retryAllowed = signal
           ? (typeof retryValue === 'string' && signal.retryValues.includes(retryValue)) ||
             (!hasEnvelope && policy.statuses.includes(response.status))

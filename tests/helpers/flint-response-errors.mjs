@@ -220,10 +220,11 @@ export async function checkErrorResponseExamples(output, examples, routes, cases
             (!Number.isSafeInteger(value) || /[.eE]/.test(context.source))
               ? context.source
               : value,
-          ).error,
+          ).error.details ?? [],
         ),
         expectedDetailsJson: JSON.stringify(
-          expectedJson(JSON.parse(example.json), [schema], source, example.location).error,
+          expectedJson(JSON.parse(example.json), [schema], source, example.location).error
+            .details ?? [],
         ),
         expectedError:
           kinds[example.status] ??
@@ -239,18 +240,27 @@ export async function checkErrorResponseExamples(output, examples, routes, cases
   // Run the same assertion through a real client with certification deliberately
   // dropping its result. A direct-codec-only audit would accept this mutation.
   const runtime = readFileSync(join(base, 'runtime.js'), 'utf8');
-  const assignment = 'details = structuredClone(decoded);';
-  assert.equal(runtime.split(assignment).length, 2, 'locate error certification mutation');
+  const assignment = /details = structuredClone\(detailsValue\);/;
+  assert.match(runtime, assignment, 'locate error certification mutation');
   const mutantRuntime = '.response-audit-runtime.js';
   const mutantEntry = '.response-audit-client.js';
   try {
-    writeFileSync(join(base, mutantRuntime), runtime.replace(assignment, 'details = undefined;'));
+    writeFileSync(join(base, mutantRuntime), runtime.replace(assignment, 'details = [];'));
     const client = readFileSync(join(base, 'index.js'), 'utf8');
     const mutantClient = client.replaceAll("'./runtime.js'", `'./${mutantRuntime}'`);
     assert.notEqual(mutantClient, client, 'locate client runtime import');
     writeFileSync(join(base, mutantEntry), mutantClient);
     await assert.rejects(
-      nodeErrors(base, { ...audit, examples: audit.examples.slice(0, 1) }, mutantEntry),
+      nodeErrors(
+        base,
+        {
+          ...audit,
+          examples: audit.examples
+            .filter((example) => JSON.parse(example.expectedDetailsJson).length > 0)
+            .slice(0, 1),
+        },
+        mutantEntry,
+      ),
       /certified details/,
       'dropping certified Node error details must fail the client audit',
     );
@@ -280,7 +290,16 @@ export async function checkErrorResponseExamples(output, examples, routes, cases
   assert.equal([...phpRuntime.matchAll(pattern)].length, 1, 'locate PHP error details mutation');
   const mutantPhp = join(dirname(casesFile), 'response-audit-runtime.php');
   try {
-    writeFileSync(mutantPhp, phpRuntime.replace(pattern, 'null,$1'));
+    writeFileSync(mutantPhp, phpRuntime.replace(pattern, '[],$1'));
+    writeFileSync(
+      casesFile,
+      JSON.stringify({
+        ...audit,
+        examples: audit.examples.filter(
+          (example) => JSON.parse(example.expectedPhpDetailsJson).length > 0,
+        ),
+      }),
+    );
     const result = php(mutantPhp);
     assert.notEqual(result.status, 0, 'dropping PHP error details must fail the client audit');
     assert.match(result.stderr, /public error details/);

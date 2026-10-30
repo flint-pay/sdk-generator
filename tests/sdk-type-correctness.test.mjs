@@ -1320,7 +1320,10 @@ test('Node consumers get canonical payload names, closed inputs, integer strings
             properties: {
               code: { type: 'string', enum: ['INVALID_AMOUNT', 'NOT_READY'] },
               message: { type: 'string' },
-              field: { type: 'string' },
+              details: {
+                type: 'array',
+                items: { type: 'object', properties: { field: { type: 'string' } } },
+              },
             },
             required: ['code', 'message'],
           },
@@ -1375,7 +1378,7 @@ test('Node consumers get canonical payload names, closed inputs, integer strings
     },
     {
       responses: { return: 'payload', payloadPath: 'data' },
-      errors: { codePath: 'error.code', messagePath: 'error.message', detailsPath: 'error' },
+      errors: { fields: { code: 'code', message: 'message' } },
       operations: {
         updateThing: { resource: 'things', method: 'update' },
         lookupThing: { resource: 'things', method: 'lookup' },
@@ -1471,7 +1474,8 @@ c.things.lookup({body:{}});
 c.things.lookup({body:{id:'one',expected_version:'2.5'}});
 declare const error: errors.ApiError;
 const code: 'INVALID_AMOUNT' | 'NOT_READY' | (string & {}) | undefined = error.code;
-if (error.details && 'field' in error.details) { const field: string | undefined = error.details.field; }
+const detail = error.details[0];
+if (detail && 'field' in detail) { const field: string | undefined = detail.field; }
 // @ts-expect-error local errors do not expose API details
 new errors.InvalidInputError('synthetic').details;
 // @ts-expect-error response-only factories are absent
@@ -1507,8 +1511,12 @@ const omitted: InputValue<undefined> = undefined;
         return new Response(
           JSON.stringify({
             error: malformed
-              ? { code: 'NOT_READY', message: 42 }
-              : { code: 'INVALID_AMOUNT', message: 'Invalid amount', field: 'amount' },
+              ? { code: 'NOT_READY', message: 42, details: [{ field: 42 }] }
+              : {
+                  code: 'INVALID_AMOUNT',
+                  message: 'Invalid amount',
+                  details: [{ field: 'amount' }],
+                },
           }),
           { status: 400 },
         );
@@ -1582,12 +1590,13 @@ const omitted: InputValue<undefined> = undefined;
   failed = true;
   await assert.rejects(
     client.things.update({ body: { amount: 1n, status: 'pending' } }),
-    (e) => e instanceof sdk.SdkError && e.code === 'INVALID_AMOUNT' && e.details.field === 'amount',
+    (e) =>
+      e instanceof sdk.SdkError && e.code === 'INVALID_AMOUNT' && e.details[0].field === 'amount',
   );
   malformed = true;
   await assert.rejects(
     client.things.update({ body: { amount: 1n, status: 'pending' } }),
-    (e) => e.details === undefined && e.raw.includes('42'),
+    (e) => e.details.length === 0 && e.raw.includes('42'),
   );
 });
 
@@ -1649,12 +1658,17 @@ for (const nesting of ['direct', 'object', 'array', 'nullable']) {
     const access = nesting === 'array' ? '[0]' : nesting === 'object' ? '.content' : '';
     const errorAccess =
       nesting === 'array'
-        ? 'Array.isArray(error.details) && error.details[0]'
+        ? 'error.details[0]?.[0]'
         : nesting === 'object'
-          ? "error.details && 'content' in error.details && error.details.content"
-          : 'error.details';
+          ? "error.details[0] && 'content' in error.details[0] && error.details[0].content"
+          : 'error.details[0]';
     const alternatives = (key) => ({
-      oneOf: [object({ [key]: ref('FirstDetail') }), object({ [key]: ref('SecondDetail') })],
+      oneOf: ['FirstDetail', 'SecondDetail'].map((name) =>
+        object({
+          [key]:
+            key === 'error' ? object({ details: { type: 'array', items: ref(name) } }) : ref(name),
+        }),
+      ),
     });
     const f = fixture(
       t,
@@ -1686,7 +1700,7 @@ for (const nesting of ['direct', 'object', 'array', 'nullable']) {
       },
       {
         responses: { return: 'payload', payloadPath: 'data' },
-        errors: { detailsPath: 'error' },
+        errors: { objectPath: 'error' },
         operations: { choose: { resource: 'choices', method: 'get' } },
       },
     );
@@ -1721,7 +1735,10 @@ export function inspectPayload(value: Awaited<ReturnType<Client['choices']['get'
     const client = new sdk.Client({
       baseUrl: 'https://example.invalid',
       transport: async () =>
-        new Response(JSON.stringify({ [status === 400 ? 'error' : 'data']: value }), { status }),
+        new Response(
+          JSON.stringify(status === 400 ? { error: { details: [value] } } : { data: value }),
+          { status },
+        ),
     });
     for (const [body, expected] of [
       [{ kind: 'future', foo: 42 }, undefined],
@@ -1739,9 +1756,9 @@ export function inspectPayload(value: Awaited<ReturnType<Client['choices']['get'
         assert.ok(error instanceof sdk.SdkError);
         assert.equal(consumer.inspectError(error), expected);
         if (expected === undefined) {
-          assert.equal(error.details, undefined);
-          assert.deepEqual(JSON.parse(error.raw).error, value);
-        } else assert.equal(unwrap(error.details).kind, 'future');
+          assert.deepEqual(error.details, []);
+          assert.deepEqual(JSON.parse(error.raw).error.details, [value]);
+        } else assert.equal(unwrap(error.details[0]).kind, 'future');
         return true;
       });
       status = 200;
@@ -1758,8 +1775,8 @@ export function inspectPayload(value: Awaited<ReturnType<Client['choices']['get'
       // Null fits both envelope branches, so the oneOf envelope is ambiguous.
       value = null;
       await assert.rejects(client.choices.get(), (error) => {
-        assert.equal(error.details, undefined);
-        assert.equal(JSON.parse(error.raw).error, null);
+        assert.deepEqual(error.details, []);
+        assert.deepEqual(JSON.parse(error.raw).error.details, [null]);
         assert.equal(consumer.inspectError(error), undefined);
         return true;
       });
@@ -1809,7 +1826,13 @@ test('nested future alternatives retain uncertainty through property guards on e
                 ...jsonResponse(schema),
                 400: {
                   description: 'Invalid',
-                  content: { 'application/json': { schema: object({ error: payload }) } },
+                  content: {
+                    'application/json': {
+                      schema: object({
+                        error: object({ details: { type: 'array', items: payload } }),
+                      }),
+                    },
+                  },
                 },
               },
             },
@@ -1818,7 +1841,7 @@ test('nested future alternatives retain uncertainty through property guards on e
       },
       {
         responses: { return: 'payload', payloadPath: 'data' },
-        errors: { detailsPath: 'error' },
+        errors: { objectPath: 'error' },
         operations: { read: { resource: 'api', method: 'read' } },
       },
     );
@@ -1827,9 +1850,10 @@ test('nested future alternatives retain uncertainty through property guards on e
       source,
       `import {errors, type Client} from './index.js';
 export function error(e:errors.ApiError) {
- if(e.details && 'content' in e.details && 'foo' in e.details.content) {
+ const detail=e.details[0];
+ if(detail && 'content' in detail && 'foo' in detail.content) {
   // @ts-expect-error future nested alternatives keep foo unknown
-  e.details.content.foo.toUpperCase();
+  detail.content.foo.toUpperCase();
  }
 }
 export function payload(v:Awaited<ReturnType<Client['api']['read']>>) {
@@ -1853,12 +1877,15 @@ export async function full(c:Client) {
     const client = new Client({
       baseUrl: 'https://example.invalid',
       transport: async () =>
-        new Response(JSON.stringify({ [status === 200 ? 'data' : 'error']: value }), { status }),
+        new Response(
+          JSON.stringify(status === 200 ? { data: value } : { error: { details: [value] } }),
+          { status },
+        ),
     });
     assert.deepEqual(JSON.parse(JSON.stringify(await client.api.read())), value);
     status = 400;
     await assert.rejects(client.api.read(), (e) => {
-      assert.deepEqual(e.details, value);
+      assert.deepEqual(e.details, [value]);
       assert.ok(e.raw.includes('42'));
       return true;
     });
@@ -1873,7 +1900,11 @@ test('error certification includes other statuses and operations without local r
   });
   const response = (detail) => ({
     description: 'Invalid',
-    content: { 'application/json': { schema: object({ error: detail }) } },
+    content: {
+      'application/json': {
+        schema: object({ error: object({ details: { type: 'array', items: detail } }) }),
+      },
+    },
   });
   const f = fixture(
     t,
@@ -1902,7 +1933,7 @@ test('error certification includes other statuses and operations without local r
       },
     },
     {
-      errors: { detailsPath: 'error' },
+      errors: { objectPath: 'error' },
       operations: {
         first: { resource: 'api', method: 'first' },
         second: { resource: 'api', method: 'second' },
@@ -1914,7 +1945,7 @@ test('error certification includes other statuses and operations without local r
     source,
     `import {errors} from './index.js';
 export function inspect(e:errors.ApiError) {
- const v=e.details;
+ const v=e.details[0];
  if(!v) return;
  if('foo' in v) v.foo.toUpperCase();
  if('bar' in v) v.bar.toFixed();
@@ -1933,20 +1964,21 @@ export function inspect(e:errors.ApiError) {
   let detail;
   const client = new sdk.Client({
     baseUrl: 'https://example.invalid',
-    transport: async () => new Response(JSON.stringify({ error: detail }), { status: 400 }),
+    transport: async () =>
+      new Response(JSON.stringify({ error: { details: [detail] } }), { status: 400 }),
   });
   for (const extra of [{ bar: 'invalid' }, { baz: 42 }]) {
     detail = { foo: 'safe', ...extra };
     await assert.rejects(client.api.first(), (e) => {
-      assert.equal(e.details, undefined);
-      assert.deepEqual(JSON.parse(e.raw).error, detail);
+      assert.deepEqual(e.details, []);
+      assert.deepEqual(JSON.parse(e.raw).error.details, [detail]);
       assert.doesNotThrow(() => consumer.inspect(e));
       return true;
     });
   }
   detail = { foo: 'safe', future: true };
   await assert.rejects(client.api.first(), (e) => {
-    assert.equal(e.details.foo, 'safe');
+    assert.equal(e.details[0].foo, 'safe');
     assert.doesNotThrow(() => consumer.inspect(e));
     return true;
   });
@@ -2085,7 +2117,12 @@ for (const extra of [true, { type: 'string' }]) {
       required: Object.keys(properties),
     });
     const alternatives = (key) => ({
-      oneOf: [object({ [key]: ref('OpenDetail') }), object({ [key]: ref('ClosedDetail') })],
+      oneOf: ['OpenDetail', 'ClosedDetail'].map((name) =>
+        object({
+          [key]:
+            key === 'error' ? object({ details: { type: 'array', items: ref(name) } }) : ref(name),
+        }),
+      ),
     });
     const f = fixture(
       t,
@@ -2119,7 +2156,7 @@ for (const extra of [true, { type: 'string' }]) {
       },
       {
         responses: { return: 'payload', payloadPath: 'data' },
-        errors: { detailsPath: 'error' },
+        errors: { objectPath: 'error' },
         operations: { choose: { resource: 'choices', method: 'get' } },
       },
     );
@@ -2138,9 +2175,10 @@ export function inspectFuture(v: Awaited<ReturnType<Client['choices']['get']>>) 
  if ('future' in v) return v.foo.toUpperCase();
 }
 export function inspectError(e:errors.ApiError) {
- if(e.details && 'transportCode' in e.details) {
+ const detail=e.details[0];
+ if(detail && 'transportCode' in detail) {
  // @ts-expect-error open API details retain unknown index-signature values
- e.details.transportCode.toUpperCase();
+ detail.transportCode.toUpperCase();
  }
 }
 `,
@@ -2160,7 +2198,10 @@ export function inspectError(e:errors.ApiError) {
     const client = new sdk.Client({
       baseUrl: 'https://example.invalid',
       transport: async () =>
-        new Response(JSON.stringify({ [status === 200 ? 'data' : 'error']: value }), { status }),
+        new Response(
+          JSON.stringify(status === 200 ? { data: value } : { error: { details: [value] } }),
+          { status },
+        ),
     });
     for (const fields of [
       { bar: 'allowed-extra' },
@@ -2175,7 +2216,7 @@ export function inspectError(e:errors.ApiError) {
       assert.doesNotThrow(() => consumer.inspectFuture(decoded));
       status = 400;
       await assert.rejects(client.choices.get(), (error) => {
-        assert.deepEqual({ ...error.details }, value);
+        assert.deepEqual({ ...error.details[0] }, value);
         return true;
       });
     }
@@ -2199,8 +2240,8 @@ export function inspectError(e:errors.ApiError) {
       await assert.rejects(client.choices.get(), { name: 'UnexpectedResponseError' });
       status = 400;
       await assert.rejects(client.choices.get(), (error) => {
-        assert.equal(error.details, undefined);
-        assert.deepEqual(JSON.parse(error.raw).error, value);
+        assert.deepEqual(error.details, []);
+        assert.deepEqual(JSON.parse(error.raw).error.details, [value]);
         return true;
       });
     }
@@ -2214,7 +2255,12 @@ test('canonical integer strings uphold bigint template types in projected respon
     required: Object.keys(properties),
   });
   const alternatives = (key) => ({
-    oneOf: [object({ [key]: ref('IntegerDetail') }), object({ [key]: ref('OtherDetail') })],
+    oneOf: ['IntegerDetail', 'OtherDetail'].map((name) =>
+      object({
+        [key]:
+          key === 'error' ? object({ details: { type: 'array', items: ref(name) } }) : ref(name),
+      }),
+    ),
   });
   const f = fixture(
     t,
@@ -2245,7 +2291,7 @@ test('canonical integer strings uphold bigint template types in projected respon
     },
     {
       responses: { return: 'payload', payloadPath: 'data' },
-      errors: { detailsPath: 'error' },
+      errors: { objectPath: 'error' },
       operations: { choose: { resource: 'choices', method: 'get' } },
     },
   );
@@ -2254,7 +2300,8 @@ test('canonical integer strings uphold bigint template types in projected respon
     source,
     `import {errors,type Client} from './index.js';
 export function inspect(e:errors.ApiError): \`\${bigint}\`|undefined {
- if(e.details && 'amount' in e.details) return e.details.amount;
+ const detail=e.details[0];
+ if(detail && 'amount' in detail) return detail.amount;
 }
 export function payload(v:Awaited<ReturnType<Client['choices']['get']>>): \`\${bigint}\`|undefined {
  if('amount' in v) return v.amount;
@@ -2278,9 +2325,14 @@ const newline: \`\${bigint}\`='1\\n';
   const client = new sdk.Client({
     baseUrl: 'https://example.invalid',
     transport: async () =>
-      new Response(JSON.stringify({ [status === 200 ? 'data' : 'error']: { kind, amount } }), {
-        status,
-      }),
+      new Response(
+        JSON.stringify(
+          status === 200 ? { data: { kind, amount } } : { error: { details: [{ kind, amount }] } },
+        ),
+        {
+          status,
+        },
+      ),
   });
   for (const spelling of ['0', '-0', '1', '-1', '9007199254740993']) {
     amount = spelling;
@@ -2288,7 +2340,7 @@ const newline: \`\${bigint}\`='1\\n';
     assert.equal((await client.choices.get()).amount, spelling);
     status = 400;
     await assert.rejects(client.choices.get(), (e) => {
-      assert.equal(e.details.amount, spelling);
+      assert.equal(e.details[0].amount, spelling);
       return true;
     });
   }
@@ -2302,8 +2354,8 @@ const newline: \`\${bigint}\`='1\\n';
     });
     status = 400;
     await assert.rejects(client.choices.get(), (e) => {
-      assert.equal(e.details, undefined);
-      assert.equal(JSON.parse(e.raw).error.amount, spelling);
+      assert.deepEqual(e.details, []);
+      assert.equal(JSON.parse(e.raw).error.details[0].amount, spelling);
       return true;
     });
   }

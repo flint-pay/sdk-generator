@@ -33,6 +33,12 @@ class SdkError extends \RuntimeException implements \JsonSerializable
         ?\Throwable $previous = null,
         mixed $details = null,
         public ?string $param = null,
+        ?string $type = null,
+        ?string $errorSource = null,
+        ?string $docUrl = null,
+        ?string $requestLogUrl = null,
+        ?array $remediation = null,
+        mixed $body = null,
     ) {
         parent::__construct($message, 0, $previous);
         $this->code = $code;
@@ -40,7 +46,13 @@ class SdkError extends \RuntimeException implements \JsonSerializable
             $this->requestIds = [$requestId];
         }
         if ($this instanceof Errors\ApiError) {
-            $this->details = $details;
+            $this->details = is_array($details) && array_is_list($details) ? $details : [];
+            $this->type = $type;
+            $this->errorSource = $errorSource;
+            $this->docUrl = $docUrl;
+            $this->requestLogUrl = $requestLogUrl;
+            $this->remediation = $remediation;
+            $this->body = $body;
         }
     }
     /** Internal migration adapter; removed when call sites migrate.
@@ -184,7 +196,16 @@ class SdkError extends \RuntimeException implements \JsonSerializable
             'idempotencyKey' => $this->idempotencyKey,
             'attempts' => $this->attempts,
             'retryAfterMs' => $this->retryAfterMs,
-            ...$this instanceof Errors\ApiError ? ['details' => $this->details] : [],
+            ...$this instanceof Errors\ApiError
+                ? [
+                    'type' => $this->type,
+                    'param' => $this->param,
+                    'errorSource' => $this->errorSource,
+                    'docUrl' => $this->docUrl,
+                    'remediation' => $this->remediation,
+                    'details' => $this->details,
+                ]
+                : [],
             'cause' =>
                 $previous !== null
                     ? [
@@ -4004,6 +4025,7 @@ final class Codec
 }
 class Runtime
 {
+    private const ERROR_FIELDS = /* ERROR_FIELDS */ '{}';
     private array $allowed;
     private readonly string $baseUrl;
     protected readonly array $contract;
@@ -4135,12 +4157,35 @@ class Runtime
                 throw new \InvalidArgumentException('Invalid compiled in-progress codes');
             }
         }
+        $objectPath = array_key_exists('objectPath', $contract['errors'] ?? [])
+            ? $contract['errors']['objectPath']
+            : '';
+        if (
+            !is_string($objectPath) ||
+            ($objectPath !== '' &&
+                !preg_match('/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/D', $objectPath))
+        ) {
+            throw new \InvalidArgumentException('Invalid compiled error objectPath');
+        }
+        $fields = array_key_exists('fields', $contract['errors'] ?? [])
+            ? $contract['errors']['fields']
+            : [];
+        if (!is_array($fields)) {
+            throw new \InvalidArgumentException('Invalid compiled error field mapping');
+        }
+        foreach ($fields as $key => $path) {
+            if (
+                !array_key_exists($key, json_decode(self::ERROR_FIELDS, true)) ||
+                !is_string($path) ||
+                !preg_match('/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/D', $path)
+            ) {
+                throw new \InvalidArgumentException('Invalid compiled error field mapping');
+            }
+        }
         if (array_key_exists('retry', $contract['errors'] ?? [])) {
             $signal = $contract['errors']['retry'];
             if (
                 !is_array($signal) ||
-                !is_string($contract['errors']['codePath'] ?? null) ||
-                $contract['errors']['codePath'] === '' ||
                 !is_string($signal['path'] ?? null) ||
                 !preg_match('/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/D', $signal['path']) ||
                 !is_array($signal['retryValues'] ?? null) ||
@@ -5667,32 +5712,53 @@ class Runtime
                     $status >= 500 && $status < 600 => 'server',
                     default => 'api',
                 };
-                $code = self::field($data, $this->contract['errors']['codePath'] ?? 'code');
-                $originalMessage = self::field(
-                    $data,
-                    $this->contract['errors']['messagePath'] ?? 'message',
+                $objectPath = $this->contract['errors']['objectPath'] ?? 'error';
+                $fields = array_replace(
+                    json_decode(self::ERROR_FIELDS, true),
+                    $this->contract['errors']['fields'] ?? [],
                 );
-                // Text fields use their wire kinds; public details keep exact numeric tokens as strings.
-                $details = Codec::redactPlan(
+                $object = fn($body) => $objectPath === '' ? $body : self::field($body, $objectPath);
+                $envelope = $object($data);
+                $oauth =
+                    !($envelope instanceof \stdClass) &&
+                    !(is_array($envelope) && !array_is_list($envelope)) &&
+                    is_string(self::field($data, 'error'));
+                $read = fn($body, $key) => $oauth
+                    ? self::field(
+                        $body,
+                        $key === 'code'
+                            ? 'error'
+                            : ($key === 'message'
+                                ? 'error_description'
+                                : '__absent__'),
+                    )
+                    : self::field($object($body), $fields[$key]);
+                $code = $read($data, 'code');
+                $originalMessage = $read($data, 'message');
+                $safeErrorBody = Codec::redactPlan(
                     Codec::plainNumbers($data),
                     $op['responses'][(string) $status]['codec'] ??
                         ($op['responses']['default']['codec'] ?? []),
                     $this->options->redactFields,
                     $this->definitions(),
                 );
-                $message = self::field(
-                    $details,
-                    $this->contract['errors']['messagePath'] ?? 'message',
-                );
-                $publicCode = self::field(
-                    $details,
-                    $this->contract['errors']['codePath'] ?? 'code',
-                );
-                if (isset($this->contract['errors']['detailsPath'])) {
-                    $details = self::field($details, $this->contract['errors']['detailsPath']);
+                $errorBody = self::errorValue($safeErrorBody);
+                $message = $read($errorBody, 'message');
+                $publicCode = $read($errorBody, 'code');
+                $wireDetails = $read($data, 'details');
+                $details =
+                    is_array($wireDetails) && array_is_list($wireDetails)
+                        ? $read($errorBody, 'details')
+                        : [];
+                $envelopeId = $read($errorBody, 'requestId');
+                if (!isset($meta['requestId']) && is_string($envelopeId)) {
+                    $meta['requestId'] = $envelopeId;
+                    $requestIds[] = $envelopeId;
+                    $meta['requestIds'] = $requestIds;
+                    $context['lastResponse'] = $meta;
                 }
                 $signal = $this->contract['errors']['retry'] ?? null;
-                $retryValue = $signal !== null ? self::field($data, $signal['path']) : null;
+                $retryValue = $signal !== null ? self::field($envelope, $signal['path']) : null;
                 $diagnosticError = $kind;
                 $error = SdkError::create(
                     $kind,
@@ -5720,16 +5786,42 @@ class Runtime
                                         ),
                                     ) > 0)),
                     $meta,
-                    is_string($code) && is_string($publicCode) ? $publicCode : null,
+                    is_string($code) &&
+                    preg_match('/[^\p{Z}\x{0009}-\x{000D}\x{FEFF}]/u', $code) &&
+                    is_string($publicCode)
+                        ? $publicCode
+                        : 'http_error',
                     $details,
                     raw: $raw,
                 );
-                $codePath = $this->contract['errors']['codePath'] ?? 'code';
-                $parent = str_contains($codePath, '.')
-                    ? substr($codePath, 0, strrpos($codePath, '.'))
-                    : '';
-                $envelope = $parent !== '' ? self::field($data, $parent) : $data;
-                $reasons = self::field($envelope, 'details');
+                if ($error instanceof Errors\ApiError) {
+                    $error->body = $safeErrorBody;
+                    foreach (['type', 'param', 'errorSource', 'docUrl', 'requestLogUrl'] as $key) {
+                        $value = $read($errorBody, $key);
+                        if (is_string($value)) {
+                            $error->$key = $value;
+                        }
+                    }
+                    $remediation = $read($errorBody, 'remediation');
+                    if (is_array($remediation)) {
+                        if (
+                            array_key_exists('retry', $remediation) &&
+                            !in_array(
+                                $remediation['retry'],
+                                [
+                                    Errors\ApiError::RETRY_SAME_REQUEST,
+                                    Errors\ApiError::RETRY_AFTER_REFRESH,
+                                    Errors\ApiError::RETRY_NONE,
+                                ],
+                                true,
+                            )
+                        ) {
+                            unset($remediation['retry']);
+                        }
+                        $error->remediation = $remediation;
+                    }
+                }
+                $reasons = self::field($envelope, $fields['details']);
                 $inProgress =
                     is_string($code) &&
                     in_array($code, $this->contract['errors']['inProgressCodes'] ?? [], true);
@@ -6000,6 +6092,13 @@ class Runtime
     public function __destruct()
     {
         $this->close();
+    }
+    /** API object values use wire-keyed arrays, never generated entities. */
+    private static function errorValue(mixed $value): mixed
+    {
+        return is_array($value) || $value instanceof \stdClass
+            ? array_map(self::errorValue(...), (array) $value)
+            : $value;
     }
     private static function field(mixed $value, string $path): mixed
     {

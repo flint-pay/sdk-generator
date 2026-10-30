@@ -564,7 +564,7 @@ try{$c->paymentIntents->get(['payment_intent_id'=>'pi_1']);exit(1);}catch(Exampl
     'NOT_FOUND',
   ]);
   assert.equal(
-    JSON.parse(readFileSync(join(root, 'full-common-sdk.json'))).errors.messagePath,
-    'error.message',
+    JSON.parse(readFileSync(join(root, 'full-common-sdk.json'))).errors.fields.message,
+    'message',
   );
 });
