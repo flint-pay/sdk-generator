@@ -316,6 +316,11 @@ final class SchemaAdapter
             'hiddenOutput' => (bool) ($input['writeOnly'] ?? false),
             'sensitive' =>
                 (bool) (($input['x-sensitive'] ?? false) || ($input['writeOnly'] ?? false)),
+            ...is_string($input['title'] ?? null)
+                ? ['label' => $input['title']]
+                : (is_string($input['x-sdk-type-name'] ?? null)
+                    ? ['label' => $input['x-sdk-type-name']]
+                    : []),
             'checks' => array_intersect_key(
                 $input,
                 array_flip([

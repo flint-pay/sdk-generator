@@ -233,6 +233,12 @@ With `requests.style: "object"`, methods take one input object with path/query/h
 
 ## Errors and retries
 
+Local request validation throws `InvalidInputError` before dispatch, with `code: "INVALID_REQUEST"`, `outcome: "not_sent"` and `details: [{ code, param }]`. Detail codes are `REQUIRED`, `INVALID_VALUE`, `UNKNOWN_FIELD` and `NOT_ALLOWED`. The top-level `param` identifies the same input.
+
+Body paths use `line_items[0].type`; map keys use `metadata.key` or `metadata["a.b"]` when outside `[A-Za-z0-9_-]+`. Query parameters and headers use bare published names, such as `payment_status` and `X-Request-Id`. A query-array message can name `payment_status[0]` while its `param` remains `payment_status`.
+
+Messages name the field and allowed values: `line_items[0].type is required: one of "variant", "bundle", "custom"`. Enum mismatches and unknown fields suggest a name when exactly one candidate is within edit distance 2: `line_items[0].type must be one of "variant", "bundle", "custom"; received "customm" (did you mean "custom"?)`. Only enum mismatches show the received value; sensitive fields show `received a value`. Other failures report the received type, without echoing input. Node and PHP use identical messages.
+
 PHP keeps `OUTCOME_NOT_SENT`, `OUTCOME_RESPONSE` and `OUTCOME_UNKNOWN`. Both `$e->code` and `$e->getCode()` return the string error code; `$e->status` carries the HTTP status. Messages are preserved verbatim; `__toString()` adds status, code and request ID for logs.
 
 Every error after a call resolves an idempotency key exposes `error.idempotencyKey` (Node) or `$error->idempotencyKey` (PHP), including validation and cancellation before sending. `WithResponse` results expose `meta.idempotencyKey` (PHP: `$result->meta['idempotencyKey']`). Keys are included in error inspection. Persist your key across process restarts and application resubmissions; automatically generated UUID v4 keys, including any configured prefix, last for one SDK call and are reused on every attempt.

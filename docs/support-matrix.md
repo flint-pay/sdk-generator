@@ -10,6 +10,8 @@ Node webhook verification returns `VerifiedWebhook`, including `reason` when `kn
 
 Both targets map configurable API envelope fields to matching camelCase error properties, retain redacted decoded bodies, and support OAuth and `http_error` fallbacks. `details` is always an array. `remediation.retry` is closed; other schema enum values accept future strings. PHP `getCode()` returns the string error code and `status` holds the HTTP status.
 
+Local request validation uses `InvalidInputError` with `INVALID_REQUEST`, stage-1 detail codes, API field paths and `outcome: "not_sent"` in both targets. Messages match across Node and PHP, suggest close enum values or field names, and suppress sensitive received values.
+
 `include` selects named operations before validating their wire capabilities and skips operations without a nonempty `operationId`. Without `include`, unnamed operations fail diagnosis; `hidden` and audience declarations need an operation ID. Declared IDs must remain unique throughout the document. Request bodies declaring only unsupported media types fail directly; exclude those operations with `include` or `hidden`.
 
 | Capability                     | Node.js/TypeScript                                                                                           | PHP                                                                                       |

@@ -122,7 +122,7 @@ test('the single upstream response-example defect is pinned to source evidence',
     [defect.operation, defect.status, defect.media, defect.exampleName],
     ['createOrderPaymentIntent', '201', 'application/json', 'example'],
   );
-  assert.equal(defect.error, 'response.data.supported_actions: required field is missing');
+  assert.equal(defect.error, 'response.data.supported_actions is required');
   assert.equal(defect.revision, read('provenance.json').revision);
   assert.equal(
     defect.source,

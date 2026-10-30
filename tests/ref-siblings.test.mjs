@@ -1,3 +1,4 @@
+import { runtimeTemplatePath } from './helpers/runtime-template.mjs';
 import { renderedDeclarations } from './helpers/generated-source.mjs';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -2665,7 +2666,7 @@ c.api.sendValue({body:[[${exact ? "'5'" : '5'}]]});
   }
 });
 
-test('numeric interpretations from invalidated alternatives fail before dispatch', async () => {
+test('numeric interpretations from invalidated alternatives fail before dispatch', async (t) => {
   const numeric = {
     type: 'object',
     properties: { x: { type: 'number', format: 'decimal' } },
@@ -2723,13 +2724,14 @@ test('numeric interpretations from invalidated alternatives fail before dispatch
     [
       '-r',
       String.raw`
-require 'templates/Runtime.php';
+require $argv[1];
 foreach(json_decode(stream_get_contents(STDIN),true) as $schema){
   try { \SdkNamespace\Codec::normalize((object)['x'=>'2','y'=>'1'],$schema); throw new Exception('accepted invalidated contribution'); }
   catch(\SdkNamespace\SdkError $e){ if(\SdkNamespace\SdkError::internalKind($e)!=='validation'||!str_contains($e->getMessage(),'unmatched alternative'))throw $e; }
   if(\SdkNamespace\Codec::encode(\SdkNamespace\Codec::normalize((object)['x'=>'2','y'=>'3'],$schema))!=='{"x":2,"y":3}')throw new Exception('wrong control wire');
 }
 `,
+      runtimeTemplatePath(t),
     ],
     { input: JSON.stringify(cases), encoding: 'utf8' },
   );

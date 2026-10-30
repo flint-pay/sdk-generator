@@ -327,7 +327,9 @@ test('init constructors, parents, minified identities and inspection agree', asy
       assert.doesNotMatch(text, /private-cookie|private-raw/);
     assert.equal('kind' in e, false);
     assert.equal('meta' in e, false);
-    if (!(e instanceof errors.ApiError)) assert.equal('details' in e, false);
+    if (!(e instanceof errors.ApiError) && !(e instanceof errors.InvalidInputError))
+      assert.equal('details' in e, false);
+    if (e instanceof errors.InvalidInputError) assert.deepEqual(e.details, []);
     if (name === 'PermissionError') assert.ok(e instanceof errors.ApiError);
     if (name === 'TimeoutError') assert.ok(e instanceof errors.ConnectionError);
     if (name === 'SdkError') assert.fail();

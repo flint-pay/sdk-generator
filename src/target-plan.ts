@@ -71,6 +71,7 @@ import { compileSchemaPolicy, type SchemaPolicy } from './schema-policy.js';
 export {
   successStatus,
   RETRY_DEFAULTS,
+  VALIDATION_MESSAGES,
   ERROR_FIELDS,
   AUTH_SHORTCUT_RESERVED,
 } from './runtime-plan.js';
@@ -1196,7 +1197,7 @@ export function compileSdkContract(source: Contract): {
       ]),
     ),
     node: {
-      errorSurfaceVersion: 3,
+      errorSurfaceVersion: 4,
       ...(c.config.webhook ? { webhookReasons: true, standaloneWebhook: true } : {}),
       clientOptions: {
         declaration: compileClientOptions(c),
@@ -1290,7 +1291,7 @@ export function compileSdkContract(source: Contract): {
       ...webhookDeclarations(c, models),
     },
     php: {
-      errorSurfaceVersion: 3,
+      errorSurfaceVersion: 4,
       ...(c.config.webhook ? { webhookReasons: true } : {}),
       // PHP class names are case-insensitive. Preserve a public Webhooks model
       // instead of emitting the optional standalone verifier over its class file.

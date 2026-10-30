@@ -1476,8 +1476,13 @@ declare const error: errors.ApiError;
 const code: 'INVALID_AMOUNT' | 'NOT_READY' | (string & {}) | undefined = error.code;
 const detail = error.details[0];
 if (detail && 'field' in detail) { const field: string | undefined = detail.field; }
-// @ts-expect-error local errors do not expose API details
-new errors.InvalidInputError('synthetic').details;
+const localDetail = new errors.InvalidInputError('synthetic').details[0];
+if (localDetail) {
+  const localCode: 'REQUIRED' | 'INVALID_VALUE' | 'UNKNOWN_FIELD' | 'NOT_ALLOWED' = localDetail.code;
+  const localParam: string = localDetail.param;
+  // @ts-expect-error local details do not expose arbitrary API fields
+  localDetail.field;
+}
 // @ts-expect-error response-only factories are absent
 import {makeThing} from './index.js';
 // @ts-expect-error redundant result names are absent
@@ -1563,8 +1568,9 @@ const omitted: InputValue<undefined> = undefined;
   await assert.rejects(
     client.things.lookup({ body: {} }),
     (e) =>
-      /alternative 1:.*id.*required/.test(e.message) &&
-      /alternative 2:.*name.*required/.test(e.message),
+      e.code === 'INVALID_REQUEST' &&
+      e.param === 'id' &&
+      /body matches none of its 2 shapes; closest is shape 1: id is required/.test(e.message),
   );
   assert.deepEqual(
     { ...(await client.things.choose()) },

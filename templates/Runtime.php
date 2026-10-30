@@ -45,6 +45,9 @@ class SdkError extends \RuntimeException implements \JsonSerializable
         if ($requestIds === [] && $requestId !== null) {
             $this->requestIds = [$requestId];
         }
+        if ($this instanceof Errors\InvalidInputError) {
+            $this->details = is_array($details) && array_is_list($details) ? $details : [];
+        }
         if ($this instanceof Errors\ApiError) {
             $this->details = is_array($details) && array_is_list($details) ? $details : [];
             $this->type = $type;
@@ -206,6 +209,7 @@ class SdkError extends \RuntimeException implements \JsonSerializable
                     'details' => $this->details,
                 ]
                 : [],
+            ...$this instanceof Errors\InvalidInputError ? ['details' => $this->details] : [],
             'cause' =>
                 $previous !== null
                     ? [
@@ -1435,6 +1439,7 @@ class Model implements \JsonSerializable
         }
         $normalized = Codec::execute($values, $codec, [
             'mode' => $response ? 'response' : 'request',
+            'redactFields' => $redactFields,
         ]);
         // Store public values: unwrap nested models and exact wire-number wrappers,
         // while retaining the normalized distinction between objects and lists.
@@ -1803,6 +1808,9 @@ final class Codec
         ) {
             $invalid('missing opaque label');
         }
+        if (array_key_exists('label', $value) && !is_string($value['label'])) {
+            $invalid('invalid label');
+        }
         self::wireKind($value['value']);
         foreach (
             ['nullable', 'modelObjectInput', 'rejectInput', 'hiddenOutput', 'sensitive']
@@ -1949,7 +1957,7 @@ final class Codec
         }
         foreach (['element', 'propertyNames', 'exclude', 'includes'] as $key) {
             if (isset($value[$key])) {
-                self::assertPlan($value[$key], "$path.$key", $depth + 1);
+                self::assertPlan($value[$key], self::pathKey($path, $key), $depth + 1);
             }
         }
         if (isset($value['when'])) {
@@ -1975,13 +1983,171 @@ final class Codec
         return self::$validationFailures[$error] ?? null;
     }
 
-    public static function fail(string $path, string $reason, ?string $code = null): never
+    private const VALIDATION_MESSAGES = /* VALIDATION_MESSAGES */ '{}';
+    private static bool $sensitive = false;
+    private static array $redactFields = [];
+
+    private static function param(string $path): string
     {
-        $message = "$path: $reason";
-        $error = SdkError::create('validation', $message, errorCode: $code);
+        return preg_replace('/^input(?:\.|(?=\[)|$)/', '', $path) ?: 'body';
+    }
+    private static function pathKey(string $path, string|int $key): string
+    {
+        return preg_match('/^[A-Za-z0-9_-]+$/D', (string) $key)
+            ? "$path.$key"
+            : $path . '[' . self::jsonValue((string) $key) . ']';
+    }
+    private static function jsonValue(mixed $value): string
+    {
+        return json_encode(
+            $value,
+            JSON_UNESCAPED_UNICODE |
+                JSON_UNESCAPED_LINE_TERMINATORS |
+                JSON_UNESCAPED_SLASHES |
+                JSON_INVALID_UTF8_SUBSTITUTE |
+                JSON_PARTIAL_OUTPUT_ON_ERROR,
+        );
+    }
+    private static function where(string $path): string
+    {
+        $parent = self::param($path);
+        if ($parent === 'body') {
+            return 'this input';
+        }
+        $parent = preg_replace('/\[\d+\]$/', '', $parent);
+        $parts = explode('.', $parent);
+        $name = str_replace('_', ' ', end($parts));
+        return 'this ' . preg_replace('/s$/', '', $name);
+    }
+    private static function suggestion(mixed $value, array $allowed): string
+    {
+        if (!is_string($value)) {
+            return '';
+        }
+        $chars = preg_split('//u', $value, -1, PREG_SPLIT_NO_EMPTY);
+        if ($chars === false || count($chars) > 256) {
+            return '';
+        }
+        $matches = [];
+        foreach ($allowed as $candidate) {
+            if (!is_string($candidate)) {
+                continue;
+            }
+            $other = preg_split('//u', $candidate, -1, PREG_SPLIT_NO_EMPTY);
+            if ($other === false || count($other) > 256 || abs(count($other) - count($chars)) > 2) {
+                continue;
+            }
+            $row = range(0, count($other));
+            foreach ($chars as $i => $char) {
+                $next = [$i + 1];
+                foreach ($other as $j => $c) {
+                    $next[] = min(
+                        $row[$j + 1] + 1,
+                        $next[$j] + 1,
+                        $row[$j] + ($char === $c ? 0 : 1),
+                    );
+                }
+                $row = $next;
+            }
+            if ($row[count($other)] <= 2) {
+                $matches[] = $candidate;
+            }
+        }
+        return count($matches) === 1 ? ' (did you mean ' . self::jsonValue($matches[0]) . '?)' : '';
+    }
+    private static function allowed(array $values): string
+    {
+        $text = implode(', ', array_map(self::jsonValue(...), array_slice($values, 0, 20)));
+        return count($values) > 20 ? $text . ' and ' . (count($values) - 20) . ' more' : $text;
+    }
+    private static function issue(string $path, string $category, array $args = []): never
+    {
+        $param = self::param($path);
+        $templates = json_decode(self::VALIDATION_MESSAGES, true, flags: JSON_THROW_ON_ERROR);
+        $message = $templates[$category];
+        $values = ['param' => $param, ...$args];
+        $message = preg_replace_callback(
+            '/\{(\w+)\}/',
+            fn($match) => (string) ($values[$match[1]] ?? ''),
+            $message,
+        );
+        $code = match ($category) {
+            'required', 'discriminator' => 'REQUIRED',
+            'unknown' => 'UNKNOWN_FIELD',
+            'notAllowed' => 'NOT_ALLOWED',
+            default => 'INVALID_VALUE',
+        };
+        $error = SdkError::create(
+            'validation',
+            $message,
+            errorCode: 'INVALID_REQUEST',
+            details: [['code' => $code, 'param' => $param]],
+        );
+        $error->param = $param;
         self::$validationFailures ??= new \WeakMap();
         self::$validationFailures[$error] = $message;
         throw $error;
+    }
+    private static function enumError(
+        string $path,
+        mixed $value,
+        array $allowed,
+        bool $sensitive = false,
+    ): never {
+        $sensitive = $sensitive || self::$sensitive;
+        preg_match_all(
+            '/(?:^|\.)([^.\[]+)|\["((?:[^"\\\\]|\\\\.)*)"\]/',
+            self::param($path),
+            $segments,
+            PREG_SET_ORDER,
+        );
+        foreach ($segments as $segment) {
+            $key = str_starts_with($segment[0], '[')
+                ? json_decode(substr($segment[0], 1, -1))
+                : $segment[1];
+            $sensitive =
+                $sensitive ||
+                in_array($key, self::$redactFields, true) ||
+                preg_match('/authorization|token|secret|password|api.?key/i', $key);
+        }
+        $encoded = self::jsonValue($value);
+        $chars = preg_split('//u', $encoded, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        self::issue($path, 'enum', [
+            'allowed' => self::allowed($allowed),
+            'value' => $sensitive
+                ? 'a value'
+                : (count($chars) > 40
+                    ? implode('', array_slice($chars, 0, 39)) . '…'
+                    : $encoded),
+            'suggestion' => $sensitive ? '' : self::suggestion($value, $allowed),
+        ]);
+    }
+    private static function typeError(string $path, string $expectation, mixed $value): never
+    {
+        $type = match (true) {
+            $value === null => 'null',
+            is_bool($value) => 'a boolean',
+            is_int($value), is_float($value), $value instanceof ParsedNumber => 'a number',
+            is_string($value) => 'a string',
+            is_array($value) && array_is_list($value) => 'an array',
+            default => 'an object',
+        };
+        self::fail($path, "expected $expectation; received $type");
+    }
+    public static function fail(string $path, string $reason, ?string $code = null): never
+    {
+        if (preg_match('/^required .+ is missing$/D', $reason)) {
+            self::issue($path, 'required');
+        }
+        if ($reason === 'readOnly fields cannot be sent') {
+            self::issue($path, 'notAllowed', ['reason' => 'it is read-only']);
+        }
+        self::issue($path, 'invalid', [
+            'expectation' =>
+                $reason === 'null is not permitted'
+                    ? 'a non-null value'
+                    : preg_replace('/^expected /', '', $reason),
+        ]);
     }
     public static function parse(string $text, bool $preserveNumbers = false): mixed
     {
@@ -2190,7 +2356,12 @@ final class Codec
             foreach (array_unique(array_merge(array_keys($a), array_keys($b))) as $key) {
                 $out[$key] =
                     array_key_exists($key, $a) && array_key_exists($key, $b)
-                        ? self::combine($a[$key], $b[$key], "$path.$key", $original[$key] ?? null)
+                        ? self::combine(
+                            $a[$key],
+                            $b[$key],
+                            self::pathKey($path, $key),
+                            $original[$key] ?? null,
+                        )
                         : (array_key_exists($key, $a)
                             ? $a[$key]
                             : $b[$key]);
@@ -2392,7 +2563,9 @@ final class Codec
                 $path,
             )
         ) {
-            self::fail($path, 'value violates multipleOf');
+            self::issue($path, 'multipleOf', [
+                'limit' => self::jsonValue($s['checks']['multipleOf']),
+            ]);
         }
         foreach (['minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum'] as $keyword) {
             if (!isset($s['checks'][$keyword])) {
@@ -2408,7 +2581,7 @@ final class Codec
                 ($keyword === 'exclusiveMinimum' && $order <= 0) ||
                 ($keyword === 'exclusiveMaximum' && $order >= 0)
             ) {
-                self::fail($path, 'value violates ' . $keyword);
+                self::issue($path, $keyword, ['limit' => self::jsonValue($s['checks'][$keyword])]);
             }
         }
     }
@@ -2444,17 +2617,23 @@ final class Codec
         if (!in_array($mode, ['request', 'response', 'match'], true)) {
             throw new \InvalidArgumentException('Unknown codec execution mode');
         }
-        return self::executeValue(
-            $value,
-            $plan,
-            $context['path'] ?? 'input',
-            ($context['direction'] ?? $mode) === 'response',
-            $mode === 'match',
-            $context['definitions'] ?? [],
-            $context['depth'] ?? 0,
-            $context['validateConstraints'] ?? true,
-            $context['allowUnknownResponseFields'] ?? false,
-        );
+        $previous = self::$redactFields;
+        self::$redactFields = $context['redactFields'] ?? [];
+        try {
+            return self::executeValue(
+                $value,
+                $plan,
+                $context['path'] ?? 'input',
+                ($context['direction'] ?? $mode) === 'response',
+                $mode === 'match',
+                $context['definitions'] ?? [],
+                $context['depth'] ?? 0,
+                $context['validateConstraints'] ?? true,
+                $context['allowUnknownResponseFields'] ?? false,
+            );
+        } finally {
+            self::$redactFields = $previous;
+        }
     }
     public static function wireKind(array $instruction): ?string
     {
@@ -2483,6 +2662,8 @@ final class Codec
         bool $matching,
         bool $allowUnknownResponseFields,
         callable $matches,
+        array $definitions = [],
+        int $depth = 0,
     ): array {
         $tolerateUnknownFields = $allowUnknownResponseFields;
         if (isset($s['nullableAlternative']) && $response && !$matching) {
@@ -2492,12 +2673,34 @@ final class Codec
         if ($keyword === 'exactlyOne' && isset($s['tag'])) {
             $tag = $s['tag'];
             $data = (array) $value;
+            $allowed = [];
+            foreach ($s[$keyword] as $branch) {
+                foreach (
+                    $branch['tagValues'] ?? ($branch['fields'][$tag]['members'] ?? [])
+                    as $member
+                ) {
+                    if (!in_array($member, $allowed, true)) {
+                        $allowed[] = $member;
+                    }
+                }
+            }
+            $tagPath = self::pathKey($path, $tag);
+            if (!array_key_exists($tag, $data)) {
+                self::issue($tagPath, 'discriminator', ['allowed' => self::allowed($allowed)]);
+            }
             if (
-                (!is_object($value) && !is_array($value)) ||
-                !array_key_exists($tag, $data) ||
-                !is_string($data[$tag])
+                !is_string($data[$tag]) ||
+                ((!$response || $matching) && !in_array($data[$tag], $allowed, true))
             ) {
-                self::fail($path, 'expected a string discriminator');
+                self::enumError(
+                    $tagPath,
+                    $data[$tag],
+                    $allowed,
+                    (bool) array_filter(
+                        $s[$keyword],
+                        fn($branch) => $branch['fields'][$tag]['sensitive'] ?? false,
+                    ),
+                );
             }
             $selected = array_filter(
                 $s[$keyword],
@@ -2548,6 +2751,44 @@ final class Codec
                 self::fail($path, 'expected an object response alternative');
             }
         } elseif (!$selected || ($keyword === 'exactlyOne' && count($selected) !== 1)) {
+            if (!$selected && !isset($s['tag'])) {
+                $closest = null;
+                $shape = '';
+                foreach ($s[$keyword] as $index => $branch) {
+                    try {
+                        self::executeNode(
+                            $value,
+                            $branch,
+                            $path,
+                            $response,
+                            true,
+                            $definitions,
+                            $depth + 1,
+                            true,
+                            $allowUnknownResponseFields,
+                        );
+                    } catch (SdkError $error) {
+                        if (self::validationFailureMessage($error) === null) {
+                            throw $error;
+                        }
+                        $level = preg_match_all('/[.\[]/', $error->param ?? '');
+                        if ($closest === null || $level > $closest[0]) {
+                            $closest = [$level, $error];
+                            $shape =
+                                $branch['label'] ??
+                                ($branch['reference'] ?? 'shape ' . ($index + 1));
+                        }
+                    }
+                }
+                if ($closest !== null) {
+                    self::issue($closest[1]->param ?? $path, 'union', [
+                        'param' => self::param($path),
+                        'count' => count($s[$keyword]),
+                        'shape' => $shape,
+                        'failure' => $closest[1]->getMessage(),
+                    ]);
+                }
+            }
             self::fail(
                 $path,
                 $keyword === 'exactlyOne'
@@ -2623,7 +2864,7 @@ final class Codec
                             self::executeNode(
                                 $data[$key],
                                 $field,
-                                "$path.$key",
+                                self::pathKey($path, $key),
                                 $response,
                                 true,
                                 $branch['definitions'] ?? ($codec['definitions'] ?? $definitions),
@@ -2633,7 +2874,7 @@ final class Codec
                     }
                     return true;
                 } catch (SdkError $e) {
-                    if (SdkError::internalKind($e) === 'validation') {
+                    if (self::validationFailureMessage($e) !== null) {
                         return false;
                     }
                     throw $e;
@@ -2731,7 +2972,7 @@ final class Codec
                             );
                             return true;
                         } catch (SdkError $e) {
-                            if (SdkError::internalKind($e) === 'validation') {
+                            if (self::validationFailureMessage($e) !== null) {
                                 return false;
                             }
                             throw $e;
@@ -2746,6 +2987,8 @@ final class Codec
                         $matching,
                         $allowUnknownResponseFields,
                         $matches,
+                        $definitions,
+                        $depth,
                     );
                     if (array_diff_key($branches, $selected)) {
                         return null;
@@ -2755,7 +2998,7 @@ final class Codec
                 }
                 return ['value' => $candidate];
             } catch (SdkError $e) {
-                if ($budget->exhausted || SdkError::internalKind($e) !== 'validation') {
+                if ($budget->exhausted || self::validationFailureMessage($e) === null) {
                     throw $e;
                 }
                 return null;
@@ -2928,12 +3171,14 @@ final class Codec
                             );
                             return true;
                         } catch (SdkError $e) {
-                            if (SdkError::internalKind($e) === 'validation') {
+                            if (self::validationFailureMessage($e) !== null) {
                                 return false;
                             }
                             throw $e;
                         }
                     },
+                    $definitions,
+                    $depth,
                 );
                 array_push($active, ...array_values($selected));
             }
@@ -2971,7 +3216,7 @@ final class Codec
                 $original[$key] ?? null,
                 $child,
                 $children,
-                $list ? $path . '[' . $key . ']' : "$path.$key",
+                $list ? $path . '[' . $key . ']' : self::pathKey($path, $key),
                 $response,
                 $matching,
                 $depth + 1,
@@ -2984,6 +3229,30 @@ final class Codec
      * Each scope carries its own registry, including during alternative matching.
      */
     private static function numericView(
+        mixed $value,
+        array $scopes,
+        string $path,
+        bool $response,
+        bool $matching,
+        int $depth,
+        bool $allowUnknownResponseFields,
+        \stdClass $budget,
+        ?array $previous = null,
+    ): mixed {
+        $previousSensitive = self::$sensitive;
+        self::$sensitive =
+            $previousSensitive ||
+            ((bool) array_filter(
+                self::codecShapes($scopes, $path, $depth),
+                fn($shape) => $shape[0]['sensitive'] ?? false,
+            ));
+        try {
+            return self::numericViewValue(...func_get_args());
+        } finally {
+            self::$sensitive = $previousSensitive;
+        }
+    }
+    private static function numericViewValue(
         mixed $value,
         array $scopes,
         string $path,
@@ -3091,7 +3360,7 @@ final class Codec
                 $out[$key] = self::numericView(
                     $child,
                     $children,
-                    "$path.$key",
+                    self::pathKey($path, $key),
                     $response,
                     $matching,
                     $depth + 1,
@@ -3158,7 +3427,7 @@ final class Codec
                             $candidates[$index] = $candidate;
                             return true;
                         } catch (SdkError $e) {
-                            if (SdkError::internalKind($e) === 'validation') {
+                            if (self::validationFailureMessage($e) !== null) {
                                 return false;
                             }
                             throw $e;
@@ -3173,6 +3442,8 @@ final class Codec
                         $matching,
                         $allowUnknownResponseFields,
                         $matches,
+                        $definitions,
+                        $depth,
                     );
                     if (!$selected) {
                         $deferred[] = $scope;
@@ -3219,7 +3490,7 @@ final class Codec
                         );
                     }
                 } catch (SdkError $e) {
-                    if (SdkError::internalKind($e) !== 'validation') {
+                    if (self::validationFailureMessage($e) === null) {
                         throw $e;
                     }
                     $failure ??= $e;
@@ -3307,7 +3578,7 @@ final class Codec
             );
             return $codec['when']['then'] ?? null;
         } catch (SdkError $error) {
-            if (SdkError::internalKind($error) !== 'validation') {
+            if (self::validationFailureMessage($error) === null) {
                 throw $error;
             }
             return $codec['when']['else'] ?? null;
@@ -3368,6 +3639,25 @@ final class Codec
         bool $validateConstraints = true,
         bool $allowUnknownResponseFields = false,
     ): mixed {
+        $previousSensitive = self::$sensitive;
+        self::$sensitive = $previousSensitive || ($s['sensitive'] ?? false);
+        try {
+            return self::executeNodeValue(...func_get_args());
+        } finally {
+            self::$sensitive = $previousSensitive;
+        }
+    }
+    private static function executeNodeValue(
+        mixed $value,
+        array $s,
+        string $path = 'input',
+        bool $response = false,
+        bool $matching = false,
+        array $definitions = [],
+        int $depth = 0,
+        bool $validateConstraints = true,
+        bool $allowUnknownResponseFields = false,
+    ): mixed {
         if ($depth > 256) {
             self::fail(
                 $path,
@@ -3380,7 +3670,7 @@ final class Codec
             isset($s['literal']) &&
             self::jsonIdentity($value) !== self::jsonIdentity(self::parse($s['literal'], true))
         ) {
-            self::fail($path, 'value is outside the declared const');
+            self::enumError($path, $value, [self::parse($s['literal'])], $s['sensitive'] ?? false);
         }
         $definitions = $s['definitions'] ?? $definitions;
         if (isset($s['reference'])) {
@@ -3453,7 +3743,7 @@ final class Codec
                     $matched[] = [$branch, $allowUnknownFields, $result];
                     return true;
                 } catch (SdkError $e) {
-                    if (SdkError::internalKind($e) === 'validation') {
+                    if (self::validationFailureMessage($e) !== null) {
                         return false;
                     }
                     throw $e;
@@ -3504,6 +3794,8 @@ final class Codec
                     $matching,
                     $allowUnknownResponseFields,
                     $matches,
+                    $definitions,
+                    $depth,
                 );
                 foreach ($selected as $branch) {
                     $reused = false;
@@ -3544,7 +3836,7 @@ final class Codec
                 isset($s['members']) &&
                 !in_array(null, $s['members'], true)
             ) {
-                self::fail($path, 'null is outside the declared enum');
+                self::enumError($path, $value, $s['members'], $s['sensitive'] ?? false);
             }
             if ($s['nullable']) {
                 return null;
@@ -3580,7 +3872,12 @@ final class Codec
                             self::compareDecimal($value->value, self::numberText($v)) === 0,
                     )
                 ) {
-                    self::fail($path, 'value is outside the declared enum');
+                    self::enumError(
+                        $path,
+                        (float) $value->value,
+                        $s['members'],
+                        $s['sensitive'] ?? false,
+                    );
                 }
                 if (!$response || $matching) {
                     self::numericConstraints(
@@ -3621,7 +3918,7 @@ final class Codec
                     )
                 : in_array($value, $s['members'], true))
         ) {
-            self::fail($path, 'value is outside the declared enum');
+            self::enumError($path, $value, $s['members'], $s['sensitive'] ?? false);
         }
         if ($type === 'integer' || $type === 'number') {
             if (self::exactValue($s['value'])) {
@@ -3671,7 +3968,7 @@ final class Codec
             return $value;
         }
         if ($type === 'null') {
-            self::fail($path, 'expected null');
+            self::typeError($path, 'null', $value);
         }
         if (
             $type === 'object' ||
@@ -3686,12 +3983,12 @@ final class Codec
                     $response ||
                     (array_is_list($value) && ($value !== [] || $matching)))
             ) {
-                self::fail($path, 'expected an object');
+                self::typeError($path, 'an object', $value);
             }
             $data = (array) $value;
             foreach ($response ? $s['requiredOutput'] : $s['requiredInput'] as $key) {
                 if (!array_key_exists($key, $data)) {
-                    self::fail("$path.$key", 'required field is missing');
+                    self::fail(self::pathKey($path, $key), 'required field is missing');
                 }
             }
             $out = new \stdClass();
@@ -3719,12 +4016,12 @@ final class Codec
                 }
                 if (isset($s['fields'][$key])) {
                     if (!$response && ($s['fields'][$key]['rejectInput'] ?? false)) {
-                        self::fail("$path.$key", 'readOnly fields cannot be sent');
+                        self::fail(self::pathKey($path, $key), 'readOnly fields cannot be sent');
                     }
                     $out->{$key} = self::executeNode(
                         $v,
                         $s['fields'][$key],
-                        "$path.$key",
+                        self::pathKey($path, $key),
                         $response,
                         $matching,
                         $definitions,
@@ -3736,12 +4033,18 @@ final class Codec
                     (!$response || ($matching && !$allowUnknownResponseFields)) &&
                     ($s['extra'] ?? true) === false
                 ) {
-                    self::fail("$path.$key", 'unknown request field');
+                    self::issue(self::pathKey($path, $key), 'unknown', [
+                        'where' => self::where($path),
+                        'suggestion' => self::suggestion(
+                            (string) $key,
+                            array_keys($s['fields'] ?? []),
+                        ),
+                    ]);
                 } elseif (is_array($s['extra'] ?? null)) {
                     $out->{$key} = self::executeNode(
                         $v,
                         $s['extra'],
-                        "$path.$key",
+                        self::pathKey($path, $key),
                         $response,
                         $matching,
                         $definitions,
@@ -3759,34 +4062,46 @@ final class Codec
                     isset($s['checks']['minProperties']) &&
                     $count < $s['checks']['minProperties']
                 ) {
-                    self::fail($path, 'object violates minProperties');
+                    self::issue($path, 'minProperties', [
+                        'limit' => $s['checks']['minProperties'],
+                        'length' => $count,
+                    ]);
                 }
                 if (
                     isset($s['checks']['maxProperties']) &&
                     $count > $s['checks']['maxProperties']
                 ) {
-                    self::fail($path, 'object violates maxProperties');
+                    self::issue($path, 'maxProperties', [
+                        'limit' => $s['checks']['maxProperties'],
+                        'length' => $count,
+                    ]);
                 }
             }
             return $out;
         }
         if ($type === 'array' || ($type === null && is_array($value) && array_is_list($value))) {
             if (!is_array($value) || !array_is_list($value)) {
-                self::fail($path, 'expected an array');
+                self::typeError($path, 'an array', $value);
             }
             if ((!$response || $matching) && ($validateConstraints || $matching)) {
                 if (isset($s['checks']['minItems']) && count($value) < $s['checks']['minItems']) {
-                    self::fail($path, 'array violates minItems');
+                    self::issue($path, 'minItems', [
+                        'limit' => $s['checks']['minItems'],
+                        'length' => count($value),
+                    ]);
                 }
                 if (isset($s['checks']['maxItems']) && count($value) > $s['checks']['maxItems']) {
-                    self::fail($path, 'array violates maxItems');
+                    self::issue($path, 'maxItems', [
+                        'limit' => $s['checks']['maxItems'],
+                        'length' => count($value),
+                    ]);
                 }
                 if ($s['checks']['uniqueItems'] ?? false) {
                     $seen = [];
                     foreach ($value as $item) {
                         $key = self::jsonIdentity($item);
                         if (isset($seen[$key])) {
-                            self::fail($path, 'array violates uniqueItems');
+                            self::issue($path, 'uniqueItems');
                         }
                         $seen[$key] = true;
                     }
@@ -3809,13 +4124,13 @@ final class Codec
                             $found = true;
                             break;
                         } catch (SdkError $error) {
-                            if (SdkError::internalKind($error) !== 'validation') {
+                            if (self::validationFailureMessage($error) === null) {
                                 throw $error;
                             }
                         }
                     }
                     if (!$found) {
-                        self::fail($path, 'array violates contains');
+                        self::issue($path, 'contains');
                     }
                 }
             }
@@ -3836,7 +4151,7 @@ final class Codec
             );
         }
         if ($type === 'string' && !is_string($value)) {
-            self::fail($path, 'expected a string');
+            self::typeError($path, 'a string', $value);
         }
         if (is_string($value) && (!$response || $matching)) {
             $length = preg_match_all('/./us', $value);
@@ -3845,15 +4160,21 @@ final class Codec
             }
             if ($validateConstraints || $matching) {
                 if (isset($s['checks']['minLength']) && $length < $s['checks']['minLength']) {
-                    self::fail($path, 'string violates minLength');
+                    self::issue($path, 'minLength', [
+                        'limit' => $s['checks']['minLength'],
+                        'length' => $length,
+                    ]);
                 }
                 if (isset($s['checks']['maxLength']) && $length > $s['checks']['maxLength']) {
-                    self::fail($path, 'string violates maxLength');
+                    self::issue($path, 'maxLength', [
+                        'limit' => $s['checks']['maxLength'],
+                        'length' => $length,
+                    ]);
                 }
                 if (isset($s['checks']['pattern'])) {
                     $pattern = $s['phpPattern'];
                     if (preg_match($pattern, $value) !== 1) {
-                        self::fail($path, 'string violates pattern');
+                        self::issue($path, 'pattern');
                     }
                 }
             }
@@ -3870,7 +4191,7 @@ final class Codec
             );
         }
         if ($type === 'boolean' && !is_bool($value)) {
-            self::fail($path, 'expected a boolean');
+            self::typeError($path, 'a boolean', $value);
         }
         return $value;
     }
@@ -4611,7 +4932,14 @@ class Runtime
     }
     private function decode(mixed $value, array $codec, array $context = []): mixed
     {
-        return Codec::execute($value, $codec, $context + ['definitions' => $this->definitions()]);
+        return Codec::execute(
+            $value,
+            $codec,
+            $context + [
+                'definitions' => $this->definitions(),
+                'redactFields' => $this->options->redactFields,
+            ],
+        );
     }
     private function validateHeaderValue(string $value, array $codec, string $path): void
     {
@@ -5004,7 +5332,18 @@ class Runtime
                     $value = [$value];
                 }
             }
-            $v = $this->decode($value, $p['codec'], ['path' => $p['name']]);
+            try {
+                $v = $this->decode($value, $p['codec'], ['path' => $p['name']]);
+            } catch (Errors\InvalidInputError $error) {
+                if (Codec::validationFailureMessage($error) !== null) {
+                    $error->param = $p['name'];
+                    $error->details = array_map(
+                        fn($detail) => [...$detail, 'param' => $p['name']],
+                        $error->details,
+                    );
+                }
+                throw $error;
+            }
             $scalar = fn($v) => $v instanceof RawNumber
                 ? $v->value
                 : (is_bool($v)
@@ -5067,7 +5406,7 @@ class Runtime
             }
             $effective = $value ?? $supplied;
             if ($effective !== null) {
-                $normalized = $this->decode($effective, $p['codec'], ['path' => $name]);
+                $normalized = $this->decode($effective, $p['codec'], ['path' => $p['name']]);
                 $set($p['name'], $normalized);
             }
         }

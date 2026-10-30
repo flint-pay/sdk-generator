@@ -82,6 +82,7 @@ import {
   ExactNumberSample,
   compileSdkContract,
   RETRY_DEFAULTS,
+  VALIDATION_MESSAGES,
   ERROR_FIELDS,
   AUTH_SHORTCUT_RESERVED,
   type SampleValidator,
@@ -1785,6 +1786,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         readFileSync(join(here, '../templates/Runtime.php'), 'utf8').replaceAll('SdkNamespace', ns),
         'src/Runtime.php',
         [
+          ["/* VALIDATION_MESSAGES */ '{}'", php(JSON.stringify(VALIDATION_MESSAGES))],
           ["/* ERROR_FIELDS */ '{}'", php(JSON.stringify(ERROR_FIELDS))],
           [
             "/* REQUEST_OPTION_PLANS */ '{}'",
@@ -1879,8 +1881,8 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
           ? ''
           : ' = []';
         const normalizeInput = positional(op)
-          ? `(new ${inputName}($input))->toInputArray()`
-          : `$input instanceof ${inputName} ? $input->toInputArray() : (new ${inputName}($input))->toInputArray()`;
+          ? '$input'
+          : `$input instanceof ${inputName} ? $input->toInputArray() : $input`;
         const responseType = targetPlan.php.operations[op.id]!.output;
         const payload = payloadReturns[op.id];
         const call = callPlan(op, targetPlan, 'RequestOptions');
@@ -2015,7 +2017,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       const modifier = name === 'ApiError' || name === 'ConnectionError' ? '' : 'final ';
       put(
         `src/classes/Errors/${name}.php`,
-        `<?php\ndeclare(strict_types=1);\nnamespace ${ns}\\Errors;\n${modifier}class ${name} extends ${base} {${name === 'ApiError' ? "\n    public const RETRY_SAME_REQUEST = 'same_request';\n    public const RETRY_AFTER_REFRESH = 'after_refresh';\n    public const RETRY_NONE = 'none';\n    /** @var list<array<string, mixed>> */\n    public array $details = [];\n    public ?string $type = null;\n    public ?string $errorSource = null;\n    public ?string $docUrl = null;\n    public ?string $requestLogUrl = null;\n    public ?array $remediation = null;\n    public mixed $body = null;\n" : name === 'ConfigurationError' ? '\n    public mixed $workloadIdentity = null;\n' : name === 'UnexpectedResponseError' ? '\n    public ?array $event = null;\n' : ''}}\n`,
+        `<?php\ndeclare(strict_types=1);\nnamespace ${ns}\\Errors;\n${modifier}class ${name} extends ${base} {${name === 'ApiError' ? "\n    public const RETRY_SAME_REQUEST = 'same_request';\n    public const RETRY_AFTER_REFRESH = 'after_refresh';\n    public const RETRY_NONE = 'none';\n    /** @var list<array<string, mixed>> */\n    public array $details = [];\n    public ?string $type = null;\n    public ?string $errorSource = null;\n    public ?string $docUrl = null;\n    public ?string $requestLogUrl = null;\n    public ?array $remediation = null;\n    public mixed $body = null;\n" : name === 'InvalidInputError' ? '\n    /** @var list<array{code: string, param: string}> */\n    public array $details = [];\n' : name === 'ConfigurationError' ? '\n    public mixed $workloadIdentity = null;\n' : name === 'UnexpectedResponseError' ? '\n    public ?array $event = null;\n' : ''}}\n`,
       );
       classmap[ns + '\\Errors\\' + name] = 'classes/Errors/' + name + '.php';
     }

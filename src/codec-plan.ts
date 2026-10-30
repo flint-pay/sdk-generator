@@ -19,6 +19,7 @@ export type ValueInstruction =
   | { kind: 'opaque'; label: string };
 
 export interface CodecPlan {
+  readonly label?: string;
   readonly value: ValueInstruction;
   readonly nullable: boolean;
   /** Unmatched alternatives require objects only for the legacy literal type: 'object' form. */
@@ -297,6 +298,11 @@ function compileNode(input: Schema, output: Schema, depth: number): CodecPlan {
     rejectInput: Boolean(input.readOnly),
     hiddenOutput: Boolean(input.writeOnly),
     sensitive: Boolean(input['x-sensitive'] || input.writeOnly),
+    ...(typeof input.title === 'string'
+      ? { label: input.title }
+      : typeof input['x-sdk-type-name'] === 'string'
+        ? { label: input['x-sdk-type-name'] }
+        : {}),
     checks,
     ...(range ? { range } : {}),
     ...(input.properties
@@ -434,6 +440,7 @@ export function assertCodecPlan(
   if (node.numberInput !== undefined && !['decimal', 'exact-integer'].includes(String(op.kind)))
     invalid('number input requires an exact numeric instruction');
   if (op.kind === 'opaque' && typeof op.label !== 'string') invalid('missing opaque label');
+  if (node.label !== undefined && typeof node.label !== 'string') invalid('invalid label');
   for (const key of ['nullable', 'modelObjectInput', 'rejectInput', 'hiddenOutput', 'sensitive'])
     if (typeof node[key] !== 'boolean') invalid('missing boolean ' + key);
   for (const key of ['requiredInput', 'requiredOutput'])

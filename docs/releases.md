@@ -5,6 +5,10 @@
 - Preview versions use a SemVer prerelease suffix and npm's `next` tag in the release plan.
 - Commands below use the installed `sdk-generator` executable. From a source checkout, run `npm ci` and `npm run build`, then use `node dist/cli.js`. See the [CLI reference](cli.md) for arguments.
 
+## Local validation errors
+
+Regenerate both targets together. Handle local `InvalidInputError` using `code: "INVALID_REQUEST"` and `details[]` items with `code` (`REQUIRED`, `INVALID_VALUE`, `UNKNOWN_FIELD`, `NOT_ALLOWED`) and `param`. Replace checks for lowercase local validation codes or internal `input.` paths with these codes and [API field paths](using-sdks.md#errors-and-retries). Local failures retain `outcome: "not_sent"`; messages now name fields and suggest close matches, while sensitive values stay hidden.
+
 ## API error envelope fields
 
 Replace `errors.codePath`, `messagePath` and `detailsPath` with `errors.objectPath` and object-relative `errors.fields` entries. Move `errors.retry.path` to the same object-relative basis; for `{ "error": { "code": "..." } }`, use `objectPath: "error"` and `fields.code: "code"`. Use `objectPath: ""` for top-level envelopes.
