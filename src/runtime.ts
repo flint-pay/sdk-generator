@@ -828,6 +828,26 @@ function credentialOptionsPassed(
   return passed;
 }
 
+/** Preserve own credential keys, including non-enumerable ones, across option copies. */
+function copyCredentialOptions<T extends ClientOptions | RequestOptions>(
+  options: T,
+  shortcuts: readonly string[],
+  client: boolean,
+): T {
+  credentialOptionsPassed(options, shortcuts, client);
+  const copy = { ...options };
+  for (const key of new Set(['token', 'authMode', 'credentials', ...shortcuts])) {
+    if (Object.hasOwn(options, key))
+      Object.defineProperty(copy, key, {
+        value: Reflect.get(options, key),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+  }
+  return copy;
+}
+
 /** Per-call overrides; pass as the final method argument. See RUNTIME.md#requestoptions. */
 export interface RequestOptions extends RequestOptionValues {
   streamIdleTimeoutMs?: number;
@@ -3621,8 +3641,11 @@ class CompiledRuntime {
           `options.${key}`,
           `unknown client option${key === 'maxRetries' ? '; use maxAttempts (total attempts, including the first)' : '; see ClientOptions for supported keys'}`,
         );
-    credentialOptionsPassed(options, Object.keys(this.compiledContract.authShortcuts ?? {}), true);
-    this.options = { ...options };
+    this.options = copyCredentialOptions(
+      options,
+      Object.keys(this.compiledContract.authShortcuts ?? {}),
+      true,
+    );
     this.base = clientBaseUrl(
       options.baseUrl === undefined ? this.compiledContract.defaultBaseUrl : options.baseUrl,
     );
@@ -3762,7 +3785,14 @@ class CompiledRuntime {
         id,
         input,
         typeof key === 'string' && options && typeof options === 'object' && !Array.isArray(options)
-          ? { ...options, idempotencyKey: key }
+          ? {
+              ...copyCredentialOptions(
+                options,
+                Object.keys(this.contract.authShortcuts ?? {}),
+                false,
+              ),
+              idempotencyKey: key,
+            }
           : options,
         continuation,
         context,
@@ -4681,7 +4711,10 @@ class CompiledRuntime {
           'Polling deadline exceeded; remote operation may still be running',
           'unknown',
         );
-      const result = await this.request<T>(id, input, { ...options, deadlineMs: remaining });
+      const result = await this.request<T>(id, input, {
+        ...copyCredentialOptions(options, Object.keys(this.contract.authShortcuts ?? {}), false),
+        deadlineMs: remaining,
+      });
       const state = field(result.data, p.state);
       if (p.success.includes(state)) return result;
       if (p.failure.includes(state))

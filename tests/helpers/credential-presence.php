@@ -49,6 +49,9 @@ foreach (json_decode(file_get_contents($argv[2]), true, flags: JSON_THROW_ON_ERR
     if ($c['otherMode'] ?? false) {
         $args['credentials'] = ['other' => ['Bearer' => 'synthetic-other']];
     }
+    if (($c['nonEnumerable'] ?? '') === 'client') {
+        $args['apiKey'] = 'synthetic-tenant';
+    }
     $error = null;
     $phase = 'construction';
     try {
@@ -65,7 +68,10 @@ foreach (json_decode(file_get_contents($argv[2]), true, flags: JSON_THROW_ON_ERR
                     default => [],
                 };
         // deadlineMs follows the shortcut parameters in a different position.
-        $client->api->read([], new RequestOptions(...['deadlineMs' => 30000] + $request));
+        $client->api->{$c['method'] ?? 'read'}(
+            [],
+            new RequestOptions(...['deadlineMs' => 30000] + $request),
+        );
     } catch (\Throwable $e) {
         $error = $e;
     }

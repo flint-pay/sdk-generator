@@ -30,6 +30,29 @@ for (const level of ['client', 'request']) {
   }
 }
 cases.push(
+  {
+    name: 'non-enumerable client key overrides environment',
+    nonEnumerable: 'client',
+    header: 'Bearer synthetic-tenant',
+  },
+  {
+    name: 'non-enumerable empty request key on idempotent call',
+    nonEnumerable: 'request',
+    method: 'create',
+    level: 'request',
+    key: 'apiKey',
+    value: 'undefined',
+    param: 'apiKey',
+  },
+  {
+    name: 'non-enumerable empty request key while polling',
+    nonEnumerable: 'request',
+    method: 'pollWait',
+    level: 'request',
+    key: 'apiKey',
+    value: 'undefined',
+    param: 'apiKey',
+  },
   { name: 'omitted uses environment', header: 'Bearer synthetic-platform' },
   {
     name: 'omitted uses access token environment',
@@ -74,6 +97,41 @@ test('explicit credential presence fails closed in Node and PHP, including named
         servers: [{ url: 'https://example.invalid' }],
         components: { securitySchemes: { Bearer: { type: 'http', scheme: 'bearer' } } },
         paths: {
+          '/create': {
+            post: {
+              operationId: 'create',
+              security: [{ Bearer: [] }],
+              parameters: [
+                {
+                  name: 'Idempotency-Key',
+                  in: 'header',
+                  required: true,
+                  schema: { type: 'string' },
+                },
+              ],
+              responses: { 204: { description: 'Done' } },
+            },
+          },
+          '/poll': {
+            get: {
+              operationId: 'poll',
+              security: [{ Bearer: [] }],
+              responses: {
+                200: {
+                  description: 'Status',
+                  content: {
+                    'application/json': {
+                      schema: {
+                        type: 'object',
+                        required: ['state'],
+                        properties: { state: { type: 'string' } },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
           '/read': {
             get: {
               operationId: 'read',
@@ -108,7 +166,24 @@ test('explicit credential presence fails closed in Node and PHP, including named
             },
           },
         },
-        operations: { read: { resource: 'api', method: 'read' } },
+        operations: {
+          read: { resource: 'api', method: 'read' },
+          create: {
+            resource: 'api',
+            method: 'create',
+            idempotency: {
+              header: 'Idempotency-Key',
+              retention: '24 hours (fixture only)',
+              scope: 'tenant (fixture only)',
+              auto: true,
+            },
+          },
+          poll: {
+            resource: 'api',
+            method: 'poll',
+            polling: { state: 'state', success: ['done'], failure: ['failed'], intervalMs: 1 },
+          },
+        },
       }),
     );
     const output = join(root, 'sdk');
@@ -132,21 +207,24 @@ test('explicit credential presence fails closed in Node and PHP, including named
         ...(c.level === 'client' ? supplied(c) : {}),
         ...(c.otherMode ? { credentials: { other: { Bearer: 'synthetic-other' } } } : {}),
       };
+      if (c.nonEnumerable === 'client')
+        Object.defineProperty(options, 'apiKey', { value: 'synthetic-tenant' });
       let phase = 'construction',
         error;
       try {
         const client = new sdk.Client(options);
         phase = 'request';
-        await client.api.read(
-          {},
+        const request =
           c.level === 'request'
             ? supplied(c)
             : c.override === 'shortcut'
               ? { checkoutToken: 'synthetic-tenant' }
               : c.override
                 ? { credentials: c.override === 'map' ? { Bearer: 'synthetic-tenant' } : {} }
-                : {},
-        );
+                : {};
+        if (c.nonEnumerable === 'request')
+          Object.defineProperty(request, 'apiKey', { value: undefined, enumerable: false });
+        await client.api[c.method ?? 'read']({}, request);
       } catch (e) {
         error = e;
       }
