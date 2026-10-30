@@ -1,11 +1,18 @@
 import { isModel, modelInputValue, createSdkError } from './runtime.js';
 
-export function requestInput(paths, values, fields, body, required, params) {
+export function requestInput(paths, values, fields, body, required, params, managed = []) {
   if (isModel(params)) params = modelInputValue(params);
   if (params !== undefined && (!params || typeof params !== 'object' || Array.isArray(params)))
     throw createSdkError('validation', 'Expected a params object', 'not_sent');
   const input = Object.fromEntries(paths.map((name, index) => [name, values[index]]));
   const rest = { ...(params ?? {}) };
+  for (const name of Object.keys(rest))
+    if (managed.includes(name.toLowerCase()))
+      throw createSdkError(
+        'validation',
+        'Supply SDK-managed headers through request options',
+        'not_sent',
+      );
   for (const name of fields) {
     if (Object.hasOwn(rest, name)) {
       Object.defineProperty(input, name, { value: rest[name], enumerable: true });

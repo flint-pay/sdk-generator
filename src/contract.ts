@@ -92,6 +92,7 @@ export type Schema = {
 };
 export interface Parameter {
   'x-flint-request-option'?: string;
+  description?: string;
   name: string;
   in: 'path' | 'query' | 'header';
   required?: boolean;

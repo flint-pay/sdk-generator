@@ -81,7 +81,15 @@ export function inputSchema(
   };
   const parameters = op.parameters.filter((p) => parameterSource(op, p, settings) === 'input');
   const properties: Record<string, Schema> = Object.fromEntries(
-    parameters.map((p) => [p.name, p.schema]),
+    parameters.map((p) => [
+      p.name,
+      {
+        ...p.schema,
+        ...(p.schema.description === undefined && p.description
+          ? { description: p.description }
+          : {}),
+      },
+    ]),
   );
   // Managed headers may be supplied outside the operation input. The runtime
   // validates their effective values and requiredness before dispatch.
@@ -103,6 +111,35 @@ export function inputSchema(
   }
   return { type: 'object', properties, required, additionalProperties: false };
 }
+/** Flat public params; canonical operation inputs retain path IDs and the body slot. */
+function paramsSchema(op: Operation, c: Contract): Schema {
+  const input = inputSchema(op, c.config.apiVersion, c);
+  const fields = Object.fromEntries(
+    op.parameters
+      .filter((p) => p.in !== 'path' && Object.hasOwn(input.properties ?? {}, p.name))
+      .map((p) => [p.name, input.properties?.[p.name] ?? {}]),
+  );
+  const required = (input.required ?? []).filter((name) => Object.hasOwn(fields, name));
+  const expand = (schema: Schema, seen = new Set<string>()): Schema => {
+    const ref = schema['x-sdk-ref'];
+    if (ref && c.definitions?.[ref] && !seen.has(ref))
+      return expand(c.definitions[ref], new Set([...seen, ref]));
+    const { ['x-sdk-type-name']: _type, ['x-sdk-ref']: _ref, ...value } = schema;
+    return {
+      ...value,
+      ...(schema.type === 'object' || schema.properties || schema.additionalProperties !== undefined
+        ? { properties: { ...schema.properties, ...fields } }
+        : {}),
+      ...(schema.allOf ? { allOf: schema.allOf.map((s) => expand(s, seen)) } : {}),
+      ...(schema.oneOf ? { oneOf: schema.oneOf.map((s) => expand(s, seen)) } : {}),
+      ...(schema.anyOf ? { anyOf: schema.anyOf.map((s) => expand(s, seen)) } : {}),
+    };
+  };
+  return op.body
+    ? { allOf: [expand(op.body), { type: 'object', properties: fields, required }] }
+    : { type: 'object', properties: fields, required, additionalProperties: false };
+}
+
 export function namedType(
   s: Schema,
   models: Record<string, Schema>,
@@ -648,8 +685,8 @@ function compileRequestCall(op: Operation, c: Contract, optionsType: string) {
   );
   const requiredFields = new Set(input.required);
   const paramsRequired = op.bodyRequired || fields.some((p) => requiredFields.has(p.name));
-  const type = (schema: Schema) =>
-    typescriptType(schema, false, undefined, false, undefined, undefined, c.models);
+  const type = (schema: Schema, documentation = false) =>
+    typescriptType(schema, false, undefined, false, undefined, undefined, c.models, documentation);
   // A whole-union InputValue adds Model<Union> and wraps literal tags, preventing
   // callers from narrowing params on the discriminator. Keep union params explicit.
   const unionBody =
@@ -658,17 +695,18 @@ function compileRequestCall(op: Operation, c: Contract, optionsType: string) {
   // An omitted optional body may accompany query/header params. Exclude declared
   // body fields in that branch so a partially supplied body still needs its required fields.
   const bodyType = op.body
-    ? (unionBody ? type(op.body) : `InputValue<${type(op.body)}>`) +
+    ? (unionBody ? type(op.body, true) : `InputValue<${type(op.body, true)}>`) +
       (!op.bodyRequired && fields.length
         ? ` | { ${[...new Set(valueScopes(op.body, c.definitions).flatMap((s) => Object.keys(s.properties ?? {})))].map((name) => `${JSON.stringify(name)}?: never`).join('; ')} }`
         : '')
     : undefined;
+  const paramsName = pascal(op.resource) + pascal(op.method) + 'Params';
   const paramsType =
     [
       ...(bodyType ? [`(${bodyType})`] : []),
       ...(fields.length
         ? [
-            `{ ${fields.map((p) => `${JSON.stringify(p.name)}${requiredFields.has(p.name) ? '' : '?'}: ${requiredFields.has(p.name) ? `InputValue<${type(p.schema)}>` : optionalPropertyType(p.name, `InputValue<${type(p.schema)}>`)}`).join('; ')} }`,
+            `{ ${fields.map((p) => `${schemaComment(input.properties?.[p.name] ?? p.schema, c.definitions ?? c.models)}${JSON.stringify(p.name)}${requiredFields.has(p.name) ? '' : '?'}: ${requiredFields.has(p.name) ? `InputValue<${type(p.schema)}>` : optionalPropertyType(p.name, `InputValue<${type(p.schema)}>`)}`).join('; ')} }`,
           ]
         : []),
     ].join(' & ') || '{}';
@@ -704,12 +742,23 @@ function compileRequestCall(op: Operation, c: Contract, optionsType: string) {
     ...paths.map((p, i) => `${names[i]}: InputValue<${type(p.schema)}>`),
     ...(hasParams(op)
       ? [
-          `params${paramsRequired || keyRequired ? '' : '?'}: ${paramsType}${!paramsRequired && keyRequired ? ' | undefined' : ''}`,
+          `params${paramsRequired || keyRequired ? '' : '?'}: ${paramsName}${!paramsRequired && keyRequired ? ' | undefined' : ''}`,
         ]
       : []),
     `options${keyRequired ? '' : '?'}: ${optionsType}`,
   ].join(', ');
-  const nodeInput = `_sdkRequestInput(${js(paths.map((p) => p.name))}, [${names.join(', ')}], ${js(fields.map((p) => p.name))}, ${Boolean(op.body)}, ${op.bodyRequired}, ${hasParams(op) ? 'params' : 'undefined'})`;
+  const managed = op.parameters
+    .filter(
+      (p) =>
+        p.in === 'header' &&
+        parameterSource(op, p, {
+          ...(c.auth ? { auth: c.auth } : {}),
+          ...(c.authentication ? { authentication: c.authentication } : {}),
+          ...(c.config.apiVersion ? { apiVersion: c.config.apiVersion } : {}),
+        }) !== 'input',
+    )
+    .map((p) => p.name.toLowerCase());
+  const nodeInput = `_sdkRequestInput(${js(paths.map((p) => p.name))}, [${names.join(', ')}], ${js(fields.map((p) => p.name))}, ${Boolean(op.body)}, ${op.bodyRequired}, ${hasParams(op) ? 'params' : 'undefined'}, ${js(managed)})`;
   const phpSignature = [
     ...names.map(
       (name, i) =>
@@ -733,6 +782,8 @@ function compileRequestCall(op: Operation, c: Contract, optionsType: string) {
   if (hasParams(op)) {
     phpPrelude +=
       "$params = $params instanceof Model ? $params->toInputArray() : $params; $rest = $params ?? []; if ($rest && array_is_list($rest)) throw SdkError::create('validation', 'Expected associative params', 'not_sent'); ";
+    if (managed.length)
+      phpPrelude += `foreach (array_keys($rest) as $name) { if (in_array(strtolower((string)$name), ${'[' + managed.map(php).join(', ') + ']'}, true)) throw SdkError::create('validation', 'Supply SDK-managed headers through request options'); } `;
     for (const p of fields)
       phpPrelude += `if (array_key_exists(${php(p.name)}, $rest)) { $input[${php(p.name)}] = $rest[${php(p.name)}]; unset($rest[${php(p.name)}]); } `;
     if (op.body)
@@ -742,14 +793,32 @@ function compileRequestCall(op: Operation, c: Contract, optionsType: string) {
         "foreach ($rest as $name => $value) { if (array_key_exists($name, $input)) throw SdkError::create('validation', 'Path values belong in positional arguments', 'not_sent'); $input[$name] = $value; } ";
   }
   return {
+    paramsName,
+    paramsType,
+    nodePathDocs: paths.map((p, i) => ({
+      name: names[i] ?? p.name,
+      description: p.description ?? p.schema.description ?? '',
+    })),
     nodeArgs,
     nodeSignature,
     nodeInput,
     phpSignature,
     phpPrelude,
-    phpDoc: hasParams(op)
-      ? `@param array<array-key, mixed>|Model${paramsRequired ? '' : '|null'} $params Flat body fields and query/header parameters; path arguments follow URL order.`
-      : 'Path arguments follow URL order; request options come last.',
+    phpDoc:
+      paths
+        .map(
+          (p, i) =>
+            `@param ${phpType(p.schema)}|Model $${names[i]} ${String(
+              p.description ?? p.schema.description ?? '',
+            )
+              .replaceAll('*/', '* /')
+              .replace(/[\r\n]+/g, ' ')}`,
+        )
+        .join('\n     * ') +
+      (paths.length ? '\n     * ' : '') +
+      (hasParams(op)
+        ? `@param ${paramsName}|array<array-key, mixed>|Model${paramsRequired ? '' : '|null'} $params Flat body fields and query/header parameters; path arguments follow URL order.`
+        : 'Path arguments follow URL order; request options come last.'),
   };
 }
 
@@ -1216,6 +1285,18 @@ export function compileSdkContract(source: Contract): {
             sharedNames,
           ),
         ),
+        ...c.operations
+          .filter((op) => positional(op) && hasParams(op))
+          .map((op) =>
+            compilePhpModel(
+              pascal(op.resource) + pascal(op.method) + 'Params',
+              paramsSchema(op, c),
+              false,
+              sharedNames,
+              undefined,
+              c.definitions,
+            ),
+          ),
         ...responseModels,
       ],
       operations: Object.fromEntries(

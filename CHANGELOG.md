@@ -4,6 +4,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ## Unreleased (generator 0.1.0)
 
+- Positional calls use named `*Params` types/models with parameter descriptions and path `@param` documentation. Declared idempotency keys must use `options.idempotencyKey`; params and generic-header channels are rejected. PHP's caller-correlation option is now `clientRequestId`.
+
 - Union request bodies now support positional path IDs and flat union-typed params in Node and PHP. Per-operation object request overrides are rejected; remove them to use the positional default. The SDK-wide legacy style setting remains available. Reference headings use discriminator values, model names or titles instead of ordinal body variants.
 
 - Node and PHP now report retry-chain uncertainty consistently: in-progress answers and final uncertain write errors are `unknown`, while a replayed final answer settles earlier timeouts. Preserve fully read successes past deadlines and caller retry eligibility after automatic budgets expire. Add profile `errors.inProgressCodes` and `operations.<id>.defaults.{timeoutMs,deadlineMs}` with request > client > operation > global precedence; generated RUNTIME docs list operation defaults.

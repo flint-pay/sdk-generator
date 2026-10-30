@@ -646,14 +646,14 @@ for (const style of ['object', 'positional']) {
     const compilation = compileSdkContract(f.contract);
     const op = f.contract.operations[0];
     const input = inputSchema(op, f.contract.config.apiVersion, f.contract);
-    for (const name of ['x-session-id', 'X-Session-Secret', 'X-Api-Version'])
+    for (const name of ['x-session-id', 'X-Session-Secret', 'X-Api-Version', 'Idempotency-Key'])
       assert.equal(Object.hasOwn(input.properties, name), false, name);
     assert.deepEqual(input.required, ['id', 'X-Tenant']);
-    for (const name of ['Idempotency-Key', 'X-Request-Id', 'X-Tenant'])
+    for (const name of ['X-Request-Id', 'X-Tenant'])
       assert.ok(Object.hasOwn(input.properties, name), name);
     for (const target of ['node', 'php']) {
       const docs = readReference(f.output, target);
-      for (const name of ['x-session-id', 'X-Session-Secret', 'X-Api-Version'])
+      for (const name of ['x-session-id', 'X-Session-Secret', 'X-Api-Version', 'Idempotency-Key'])
         assert.ok(!docs.includes('`' + name + '`'), name);
       assert.match(docs, /`X-Request-Id`/);
       const example = readFileSync(
@@ -683,14 +683,11 @@ for (const style of ['object', 'positional']) {
               id: 'command',
               'X-Tenant': 'tenant',
               'X-Request-Id': 'caller-id',
-              'Idempotency-Key': 'saved-key',
             },
           ]
-        : [
-            'command',
-            { 'X-Tenant': 'tenant', 'X-Request-Id': 'caller-id', 'Idempotency-Key': 'saved-key' },
-          ];
+        : ['command', { 'X-Tenant': 'tenant', 'X-Request-Id': 'caller-id' }];
     const response = await c.api.sendWithResponse(...args, {
+      idempotencyKey: 'saved-key',
       headers: { 'X-API-VERSION': 'ignored' },
     });
     assert.equal(response.meta.requestId, 'req_007ARQX9HRSSV4DWBYC52DZKJ6');
@@ -710,7 +707,7 @@ for (const style of ['object', 'positional']) {
     await assert.rejects(c.api.send(...args, { headers: { 'X-Session-ID': 'ConflictError' } }), {
       name: 'ConfigurationError',
     });
-    await assert.rejects(c.api.send(...args, { idempotencyKey: 'ConflictError' }), {
+    await assert.rejects(c.api.send(...args, { idempotencyKey: '' }), {
       name: 'InvalidInputError',
     });
     assert.equal(seen.length, 1);
@@ -719,7 +716,7 @@ for (const style of ['object', 'positional']) {
       consumer,
       `import {Client, type ApiSendInput} from './index.js';
 const c=new Client({baseUrl:'https://example.invalid',authMode:'session',credentials:{session:{SessionID:'id',SessionSecret:'secret'}}});
-const input:ApiSendInput={id:'command','X-Tenant':'tenant','X-Request-Id':'caller','Idempotency-Key':'saved'};
+const input:ApiSendInput={id:'command','X-Tenant':'tenant','X-Request-Id':'caller'};
 c.api.send(${style === 'object' ? 'input' : "'command',{'X-Tenant':'tenant'}"});
 // @ts-expect-error credential header is supplied by authentication
 const duplicateAuth:ApiSendInput={id:'command','X-Tenant':'tenant','x-session-id':'id'};
@@ -732,24 +729,24 @@ c.api.send(${style === 'object' ? "{id:'command'}" : "'command',{}"});
     typecheck(consumer);
     const phpArgs =
       style === 'object'
-        ? "['id'=>'command','X-Tenant'=>'tenant','X-Request-Id'=>'caller-id','Idempotency-Key'=>'saved-key']"
-        : "'command',['X-Tenant'=>'tenant','X-Request-Id'=>'caller-id','Idempotency-Key'=>'saved-key']";
+        ? "['id'=>'command','X-Tenant'=>'tenant','X-Request-Id'=>'caller-id']"
+        : "'command',['X-Tenant'=>'tenant','X-Request-Id'=>'caller-id']";
     ok('php', [
       '-r',
       String.raw`
 require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
 $inputClass=new ReflectionClass(Example\Types\ApiSendInput::class);
-foreach(['getXSessionId','getXSessionSecret','getXApiVersion'] as $method)if($inputClass->hasMethod($method))throw new Exception('Duplicate header getter');
-foreach(['getIdempotencyKey','getXRequestId','getXTenant'] as $method)if(!$inputClass->hasMethod($method))throw new Exception('Ordinary header getter removed');
+foreach(['getXSessionId','getXSessionSecret','getXApiVersion','getIdempotencyKey'] as $method)if($inputClass->hasMethod($method))throw new Exception('Duplicate header getter');
+foreach(['getXRequestId','getXTenant'] as $method)if(!$inputClass->hasMethod($method))throw new Exception('Ordinary header getter removed');
 $seen=[];
 $c=new Example\Types\Client(new Example\Types\ClientOptions(baseUrl:'https://example.invalid',authMode:'session',credentials:['session'=>['SessionID'=>'session-id','SessionSecret'=>'session-secret']],transport:function($r)use(&$seen){$seen[]=$r['headers'];return ['status'=>204,'headers'=>['x-request-id'=>'req_007ARQX9HRSSV4DWBYC52DZKJ6'],'body'=>''];}));
 ` +
-        `$response=$c->api->sendWithResponse(${phpArgs},new Example\\Types\\RequestOptions(headers:['X-API-VERSION'=>'ignored']));\n` +
+        `$response=$c->api->sendWithResponse(${phpArgs},new Example\\Types\\RequestOptions(idempotencyKey:'saved-key',headers:['X-API-VERSION'=>'ignored']));\n` +
         String.raw`
 if($response->meta['requestId']!=='req_007ARQX9HRSSV4DWBYC52DZKJ6')throw new Exception('Request ID metadata');
 foreach(['x-session-id'=>'session-id','x-session-secret'=>'session-secret','x-api-version'=>'v1','idempotency-key'=>'saved-key','x-request-id'=>'caller-id','x-tenant'=>'tenant'] as $name=>$value)if($seen[0][$name]!==$value)throw new Exception('Header '.$name);
 ` +
-        `foreach([new Example\\Types\\RequestOptions(credentials:['SessionID'=>'x','SessionSecret'=>'session-secret']),new Example\\Types\\RequestOptions(headers:['X-Session-ID'=>'ConflictError']),new Example\\Types\\RequestOptions(idempotencyKey:'ConflictError')] as $options){try{$c->api->send(${phpArgs},$options);throw new Exception('Expected failure');}catch(Example\\Types\\SdkError $e){}}\n` +
+        `foreach([new Example\\Types\\RequestOptions(credentials:['SessionID'=>'x','SessionSecret'=>'session-secret']),new Example\\Types\\RequestOptions(headers:['X-Session-ID'=>'ConflictError']),new Example\\Types\\RequestOptions(idempotencyKey:'')] as $options){try{$c->api->send(${phpArgs},$options);throw new Exception('Expected failure');}catch(Example\\Types\\SdkError $e){}}\n` +
         String.raw`
 if(count($seen)!==1)throw new Exception('Invalid headers dispatched');
 `,
@@ -768,7 +765,11 @@ if(count($seen)!==1)throw new Exception('Invalid headers dispatched');
         ...input.properties,
         ...Object.fromEntries(
           op.parameters
-            .filter((p) => ['x-session-id', 'X-Session-Secret', 'X-Api-Version'].includes(p.name))
+            .filter((p) =>
+              ['x-session-id', 'X-Session-Secret', 'X-Api-Version', 'Idempotency-Key'].includes(
+                p.name,
+              ),
+            )
             .map((p) => [p.name, p.schema]),
         ),
       },
@@ -779,13 +780,15 @@ if(count($seen)!==1)throw new Exception('Invalid headers dispatched');
     record.compiled = storeCompiledSnapshot({ ...snapshot, plan: previous });
     writeFileSync(recordPath, JSON.stringify(record));
     const findings = preview(f.contract, f.output).compatibility;
-    for (const name of ['x-session-id', 'X-Session-Secret', 'X-Api-Version'])
+    for (const name of ['x-session-id', 'X-Session-Secret', 'X-Api-Version', 'Idempotency-Key'])
       assert.ok(
         findings.some((f) => f.severity === 'breaking' && f.subject.endsWith('.input.' + name)),
         JSON.stringify(findings),
       );
     for (const getter of oldModel.getters.filter((getter) =>
-      ['x-session-id', 'X-Session-Secret', 'X-Api-Version'].includes(getter.field),
+      ['x-session-id', 'X-Session-Secret', 'X-Api-Version', 'Idempotency-Key'].includes(
+        getter.field,
+      ),
     ))
       assert.ok(
         findings.some(

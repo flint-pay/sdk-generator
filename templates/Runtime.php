@@ -4727,14 +4727,7 @@ class Runtime
         $header = strtolower($op['idempotency']['header'] ?? '');
         $key = $header !== '' ? $options?->idempotencyKey : null;
         if ($header !== '' && $key === null) {
-            foreach ([$input, $options?->headers ?? []] as $values) {
-                foreach ($values as $name => $value) {
-                    if (strtolower((string) $name) === $header && $key === null) {
-                        $key = $value;
-                    }
-                }
-            }
-            if ($key === null && ($op['idempotency']['auto'] ?? false)) {
+            if ($op['idempotency']['auto'] ?? false) {
                 $bytes = random_bytes(16);
                 $bytes[6] = chr((ord($bytes[6]) & 0x0f) | 0x40);
                 $bytes[8] = chr((ord($bytes[8]) & 0x3f) | 0x80);
@@ -4839,7 +4832,7 @@ class Runtime
                 'application/json',
             'user-agent' => $this->contract['userAgent'] ?? 'PublicSDK (PHP)',
         ];
-        $set = function (mixed $name, mixed $value) use (&$headers, $op): void {
+        $set = function (mixed $name, mixed $value) use (&$headers): void {
             if (
                 !is_string($name) ||
                 !is_string($value) ||
@@ -4848,20 +4841,12 @@ class Runtime
             ) {
                 Codec::fail('headers', 'invalid HTTP header');
             }
-            $existing = $headers[strtolower($name)] ?? null;
-            if (
-                strtolower($op['idempotency']['header'] ?? '') === strtolower($name) &&
-                $existing !== null &&
-                $existing !== $value
-            ) {
-                Codec::fail(
-                    'idempotencyKey',
-                    'conflicting keys were supplied through input headers or request options',
-                );
-            }
             $headers[strtolower($name)] = $value;
         };
         foreach ($o->headers as $name => $value) {
+            if (strtolower($op['idempotency']['header'] ?? '') === strtolower((string) $name)) {
+                Codec::fail((string) $name, 'supply this header through options.idempotencyKey');
+            }
             $set($name, $value);
         }
         $basePath = rtrim(parse_url($this->baseUrl, PHP_URL_PATH) ?? '', '/');
@@ -4893,22 +4878,22 @@ class Runtime
             $present = array_key_exists($p['name'], $input);
             $value = $present ? $input[$p['name']] : null;
             if (
-                !$present &&
                 $p['in'] === 'header' &&
                 strtolower($op['idempotency']['header'] ?? '') === strtolower($p['name'])
             ) {
-                if (($options->idempotencyKey ?? null) !== null) {
-                    $value = $options->idempotencyKey;
-                    $present = true;
-                } else {
-                    foreach ($options->headers ?? [] as $name => $headerValue) {
-                        if (strtolower($name) === strtolower($p['name'])) {
-                            $value = $headerValue;
-                            $present = true;
-                            break;
-                        }
-                    }
+                if ($present) {
+                    Codec::fail($p['name'], 'supply this header through options.idempotencyKey');
                 }
+                $value = $o->idempotencyKey;
+                $present = $value !== null;
+            }
+            if (
+                $p['in'] === 'header' &&
+                strtolower($this->contract['apiVersion']['header'] ?? '') ===
+                    strtolower($p['name']) &&
+                $present
+            ) {
+                Codec::fail($p['name'], 'API version is managed by the SDK');
             }
             if (
                 $p['in'] === 'header' &&
@@ -5286,9 +5271,7 @@ class Runtime
             }
             $set($op['conditional']['header'], $o->ifMatch);
         }
-        $key =
-            $o->idempotencyKey ??
-            ($headers[strtolower($op['idempotency']['header'] ?? '')] ?? null);
+        $key = $o->idempotencyKey;
         if ($key !== null) {
             if (!isset($op['idempotency']) || $key === '') {
                 Codec::fail(

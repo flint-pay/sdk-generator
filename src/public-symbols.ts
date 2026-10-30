@@ -1,3 +1,4 @@
+import { positional, hasParams } from './request-style.js';
 import type { Contract } from './contract.js';
 import { Diagnostic } from './diagnostic.js';
 import { webhookEventTypeName } from './naming.js';
@@ -94,6 +95,8 @@ export function reservePublicSymbols(
   }
   for (const op of c.operations) {
     reserve(pascal(op.resource) + pascal(op.method) + 'Input', op.id + '.input');
+    if (positional(op) && hasParams(op))
+      reserve(pascal(op.resource) + pascal(op.method) + 'Params', op.id + '.params');
     reserve(pascal(op.resource) + pascal(op.method) + 'Response', op.id + '.response');
     if (knownOperations.has(op.id))
       reserve(pascal(op.resource) + pascal(op.method) + 'ResponseKnown');

@@ -204,7 +204,7 @@ $book = $client->books->retrieve(
 
 Headers supplied by an operation's permitted authentication modes and the configured API-version header are omitted from its inputs; pass credentials through [authentication](#authenticate) options. Anonymous operations and operations whose modes never supply a declared header retain that input field. Credential headers are validated by their wire representation before dispatch.
 
-Declared idempotency, conditional and request-ID headers retain input fields and their declared requiredness is enforced before dispatch. Idempotency and conditional inputs may be omitted when their effective values come from request options or automatic idempotency keys. A required request-ID header remains a required input.
+Declared idempotency headers are excluded from input and params types; use `idempotencyKey` in request options. Passing an idempotency key in params or generic request headers fails validation. Conditional headers retain their input fields and may instead come from request options. A request-ID header marked as an SDK request option uses `clientRequestId` in both targets; an ordinary required request-ID header remains an input.
 
 With `requests.style: "object"`, methods take one input object with path/query/header fields and a `body` field, then options. See [request arguments](configuration.md#request-arguments) for empty and optional bodies.
 
@@ -583,27 +583,27 @@ Unknown JavaScript client option keys raise a validation error. For example, rep
 
 Pass client defaults to `new Client({...})` in Node or `new Client(new ClientOptions(...))` in PHP. Pass request overrides as the last method argument. PHP request header names and values must be strings; invalid values raise `InvalidInputError` before dispatch.
 
-| Option                                  | Where             | Default and behavior                                                                                                                                                |
-| --------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `baseUrl`                               | Client            | First declared server, if present; otherwise required. Explicit values override the default. No credentials, query or fragment.                                     |
-| `token`                                 | Client            | Absent. See [authenticate](#authenticate) for when it is available.                                                                                                 |
-| `allowedOrigins`                        | Client            | Only the base URL origin. Applies to every destination, including pagination links.                                                                                 |
-| `allowInsecureHttp`                     | Client            | `false`; enable only for deliberate local HTTP tests.                                                                                                               |
-| `timeoutMs`                             | Client or request | `10000`; positive duration per attempt, including response body consumption.                                                                                        |
-| `deadlineMs`                            | Client or request | `30000`; positive overall duration, not an absolute timestamp. Includes retry waits. Iterator and polling scope: [pagination and polling](#pagination-and-polling). |
-| `maxAttempts`                           | Client or request | A positive safe integer budget capped at the operation limit. Defaults follow [retries](#errors-and-retries).                                                       |
-| `transport`                             | Client            | Fetch for buffered Node calls, native HTTP/HTTPS for Node SSE, reusable cURL in PHP. Injected transports are caller-owned.                                          |
-| `diagnostics`                           | Client            | Optional callback receiving operation, attempt, status, request ID, timing and error kind, without bodies or credentials.                                           |
-| `redactFields`                          | Client            | Additional field names to redact in model inspection, error messages and parsed error details. Does not change response data.                                       |
-| `headers`                               | Request           | Request-local header map; includes tenant context and optional User-Agent override. A configured API-version pin takes precedence.                                  |
-| `idempotencyKey`                        | Request           | Caller-owned stable key for a declared idempotent operation. Persist across retries and process restarts.                                                           |
-| `clientRequestId` / `client_request_id` | Request           | Node / PHP caller correlation value for a header marked `x-flint-request-option: client_request_id`. Omitted when unset.                                            |
-| `ifMatch`                               | Request           | Value for the declared conditional header, including when that header is `If-None-Match`.                                                                           |
-| `signal` / `cancellation`               | Request           | Node `AbortSignal` / PHP `Cancellation` token. Stops local work, not a remote mutation.                                                                             |
-| `maxPages`, `maxItems`                  | Request           | Positive iterator limits; maxPages defaults to 1000 and maxItems has no practical default cap.                                                                      |
+| Option                    | Where             | Default and behavior                                                                                                                                                |
+| ------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `baseUrl`                 | Client            | First declared server, if present; otherwise required. Explicit values override the default. No credentials, query or fragment.                                     |
+| `token`                   | Client            | Absent. See [authenticate](#authenticate) for when it is available.                                                                                                 |
+| `allowedOrigins`          | Client            | Only the base URL origin. Applies to every destination, including pagination links.                                                                                 |
+| `allowInsecureHttp`       | Client            | `false`; enable only for deliberate local HTTP tests.                                                                                                               |
+| `timeoutMs`               | Client or request | `10000`; positive duration per attempt, including response body consumption.                                                                                        |
+| `deadlineMs`              | Client or request | `30000`; positive overall duration, not an absolute timestamp. Includes retry waits. Iterator and polling scope: [pagination and polling](#pagination-and-polling). |
+| `maxAttempts`             | Client or request | A positive safe integer budget capped at the operation limit. Defaults follow [retries](#errors-and-retries).                                                       |
+| `transport`               | Client            | Fetch for buffered Node calls, native HTTP/HTTPS for Node SSE, reusable cURL in PHP. Injected transports are caller-owned.                                          |
+| `diagnostics`             | Client            | Optional callback receiving operation, attempt, status, request ID, timing and error kind, without bodies or credentials.                                           |
+| `redactFields`            | Client            | Additional field names to redact in model inspection, error messages and parsed error details. Does not change response data.                                       |
+| `headers`                 | Request           | Request-local header map; includes tenant context and optional User-Agent override. A configured API-version pin takes precedence.                                  |
+| `idempotencyKey`          | Request           | Caller-owned stable key for a declared idempotent operation. Persist across retries and process restarts.                                                           |
+| `clientRequestId`         | Request           | Node / PHP caller correlation value for a header marked `x-flint-request-option: client_request_id`. Omitted when unset.                                            |
+| `ifMatch`                 | Request           | Value for the declared conditional header, including when that header is `If-None-Match`.                                                                           |
+| `signal` / `cancellation` | Request           | Node `AbortSignal` / PHP `Cancellation` token. Stops local work, not a remote mutation.                                                                             |
+| `maxPages`, `maxItems`    | Request           | Positive iterator limits; maxPages defaults to 1000 and maxItems has no practical default cap.                                                                      |
 
 For operations declaring the client request ID option, pass `{ clientRequestId: 'order-123' }`
-in Node or `new RequestOptions(client_request_id: 'order-123')` in PHP. Values must
+in Node or `new RequestOptions(clientRequestId: 'order-123')` in PHP. Values must
 contain 1 to 128 visible ASCII characters without spaces. Invalid values raise a
 `validation` error with `outcome: "not_sent"` before transport, including when schema
 validation is disabled. Conflicting option and header values also fail before transport.

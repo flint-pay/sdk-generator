@@ -114,7 +114,7 @@ for (const style of ['object', 'positional'])
       assert.doesNotMatch(declarations, /X-Request-Id|X-Correlation-Id/);
       assert.match(
         readFileSync(join(output, 'php/src/classes/RequestOptions.php'), 'utf8'),
-        /\$client_request_id/,
+        /\$clientRequestId/,
       );
       const sdk = await import(pathToFileURL(join(output, 'node/index.js')));
       const sent = [];
@@ -256,21 +256,21 @@ $cases=json_decode($argv[2],true,512,JSON_THROW_ON_ERROR); $sent=[]; $status=200
 $c=new \RequestOptionTest\Client(new \RequestOptionTest\ClientOptions(baseUrl:'https://example.invalid',transport:function($r)use(&$sent,&$status,$cases){$sent[]=$r['headers'];return ['status'=>$status,'headers'=>['content-type'=>'application/json','x-request-id'=>$status===200?$cases['responseId']:$cases['errorId']],'body'=>'{}'];}));
 $call=fn($o,$method='send')=>$cases['style']==='object'?$c->api->$method([],$o):$c->api->$method($o);
 if($call(new \RequestOptionTest\RequestOptions())->meta['requestId']!==$cases['responseId'])throw new \Exception('response ID');
-foreach($cases['good'] as $v)$call(new \RequestOptionTest\RequestOptions(client_request_id:$v));
+foreach($cases['good'] as $v)$call(new \RequestOptionTest\RequestOptions(clientRequestId:$v));
 $call(new \RequestOptionTest\RequestOptions(headers:['X-REQUEST-ID'=>'header-only']));
-$call(new \RequestOptionTest\RequestOptions(headers:['X-Request-Id'=>'same'],client_request_id:'same'));
+$call(new \RequestOptionTest\RequestOptions(headers:['X-Request-Id'=>'same'],clientRequestId:'same'));
 if(isset($sent[0]['x-request-id'])||array_column(array_slice($sent,1),'x-request-id')!==[...$cases['good'],'header-only','same'])throw new \Exception('wire headers');
 $before=count($sent);
-foreach($cases['bad'] as $v){try{$call(new \RequestOptionTest\RequestOptions(client_request_id:$v));throw new \Exception('expected validation');}catch(\RequestOptionTest\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='InvalidInputError'||$e->outcome!=='not_sent')throw $e;}}
-foreach([new \RequestOptionTest\RequestOptions(headers:['x-request-id'=>'a b']),new \RequestOptionTest\RequestOptions(headers:['x-request-id'=>'two'],client_request_id:'one')] as $o){try{$call($o);throw new \Exception('expected validation');}catch(\RequestOptionTest\SdkError $e){}}
+foreach($cases['bad'] as $v){try{$call(new \RequestOptionTest\RequestOptions(clientRequestId:$v));throw new \Exception('expected validation');}catch(\RequestOptionTest\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='InvalidInputError'||$e->outcome!=='not_sent')throw $e;}}
+foreach([new \RequestOptionTest\RequestOptions(headers:['x-request-id'=>'a b']),new \RequestOptionTest\RequestOptions(headers:['x-request-id'=>'two'],clientRequestId:'one')] as $o){try{$call($o);throw new \Exception('expected validation');}catch(\RequestOptionTest\SdkError $e){}}
 if($cases['style']==='object'){try{$c->api->send(['X-Request-Id'=>'input']);throw new \Exception('expected input rejection');}catch(\RequestOptionTest\SdkError $e){}}
 if(count($sent)!==$before)throw new \Exception('invalid values dispatched');
-$call(new \RequestOptionTest\RequestOptions(client_request_id:'alternate-name'),'alternate');
+$call(new \RequestOptionTest\RequestOptions(clientRequestId:'alternate-name'),'alternate');
 if(end($sent)['x-correlation-id']!=='alternate-name'||isset(end($sent)['x-request-id']))throw new \Exception('extension routing');
-$o=(new \RequestOptionTest\RequestOptions(client_request_id:'preserved'))->withDeadline(1000);
-if($o->client_request_id!=='preserved')throw new \Exception('option forwarding');
+$o=(new \RequestOptionTest\RequestOptions(clientRequestId:'preserved'))->withDeadline(1000);
+if($o->clientRequestId!=='preserved')throw new \Exception('option forwarding');
 $status=400;
-try{$call(new \RequestOptionTest\RequestOptions(client_request_id:'caller-value'));throw new \Exception('expected error');}catch(\RequestOptionTest\SdkError $e){if($e->requestId!==$cases['errorId'])throw $e;}
+try{$call(new \RequestOptionTest\RequestOptions(clientRequestId:'caller-value'));throw new \Exception('expected error');}catch(\RequestOptionTest\SdkError $e){if($e->requestId!==$cases['errorId'])throw $e;}
 `,
           join(output, 'php'),
           JSON.stringify(cases),

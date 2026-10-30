@@ -147,11 +147,12 @@ export function parameterSource(
   op: Operation,
   parameter: Pick<Parameter, 'in' | 'name' | 'x-flint-request-option'>,
   settings: Pick<RuntimeContract, 'auth' | 'authentication' | 'apiVersion'>,
-): 'input' | 'authentication' | 'api-version' | 'request-option' {
+): 'input' | 'authentication' | 'api-version' | 'request-option' | 'idempotency' {
   if (parameter['x-flint-request-option'] !== undefined) return 'request-option';
   if (parameter.in !== 'header') return 'input';
   const name = parameter.name.toLowerCase();
   if (settings.apiVersion?.header.toLowerCase() === name) return 'api-version';
+  if (op.idempotency?.header.toLowerCase() === name) return 'idempotency';
   if (
     op.authModes?.some((mode) =>
       settings.authentication?.[mode]?.schemes.some(
