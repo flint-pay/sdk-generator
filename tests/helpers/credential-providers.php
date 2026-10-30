@@ -151,7 +151,7 @@ foreach (['provider', 'closureString', 'closureCredential'] as $form) {
         );
         if (isset($c['bodyFailures']) && $error !== null) {
             same($error->status, 401, $c['name']);
-            same($error->outcome, 'response', $c['name']);
+            same($error->outcome, 'unknown', $c['name']);
         }
         if (isset($c['message'])) {
             same($error->getMessage(), $c['message'], $c['name']);

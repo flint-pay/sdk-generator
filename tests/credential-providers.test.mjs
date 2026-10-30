@@ -167,7 +167,7 @@ for (const surface of surfaces)
       assert.equal(error?.name, surface === 'token' ? (c.legacyError ?? c.error) : c.error, c.name);
       if (c.bodyFailures && error) {
         assert.equal(error.status, 401, c.name);
-        assert.equal(error.outcome, 'response', c.name);
+        assert.equal(error.outcome, 'unknown', c.name);
       }
       if (c.message) assert.equal(error.message, c.message, c.name);
       if (c.error) assert.equal(error.retryAllowed, false, c.name);
@@ -262,6 +262,7 @@ test('default transports preserve the 401 refresh policy after truncated bodies'
       if (error) {
         assert.equal(error.retryAllowed, false, c.name);
         assert.equal(error.status, 401, c.name);
+        assert.equal(error.outcome, 'unknown', c.name);
       }
       assert.deepEqual(seen, c.headers, c.name);
       assert.equal(calls, c.calls, c.name);

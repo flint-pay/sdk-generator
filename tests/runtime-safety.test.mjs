@@ -280,7 +280,7 @@ test('default transports distinguish per-attempt timeouts, overall deadlines, re
     });
     await assert.rejects(client.payments.retrieve({ id: 'p-synthetic' }), (e) => {
       assert.ok(e instanceof (deadline ? errors.TimeoutError : errors.TimeoutError));
-      assert.equal(e.retryAllowed, false === deadline);
+      assert.equal(e.retryAllowed, true);
       assert.match(e.message, deadline ? /deadline/ : /timed out/);
       return true;
     });
@@ -302,7 +302,7 @@ echo json_encode($rows);
   const result = await promisify(execFile)('php', [script, join(output, 'php'), baseUrl]);
   assert.deepEqual(JSON.parse(result.stdout), [
     ['TimeoutError', true, null, 28],
-    ['TimeoutError', false, null, 28],
+    ['TimeoutError', true, null, 28],
   ]);
   const refusal = createServer();
   await new Promise((r) => refusal.listen(0, '127.0.0.1', r));

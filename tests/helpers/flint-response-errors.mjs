@@ -148,7 +148,7 @@ async function nodeErrors(base, audit, entry = 'index.js') {
           );
           assert.equal(error.name, kind, example.location + ': kind');
           assert.equal(error.status, Number(example.status), example.location + ': status');
-          assert.equal(error.outcome, 'response', example.location + ': outcome');
+          assert.equal(error.outcome, example.expectedOutcome, example.location + ': outcome');
           assert.equal(error.code, body.error.code, example.location + ': code');
           // No nonconforming-details exclusions: every published error object
           // must survive the public SdkError.details certification boundary.
@@ -182,11 +182,22 @@ export async function checkErrorResponseExamples(output, examples, routes, cases
     groups,
     examples: examples.map((example) => {
       const operation = routes.get(example.operation).operation;
+      const error = JSON.parse(example.json).error;
+      const inProgressCodes = routes.get(example.operation).plan.errors?.inProgressCodes ?? [];
+      const uncertainWrite =
+        !['GET', 'HEAD'].includes(operation.verb) &&
+        (Number(example.status) >= 500 ||
+          error.code === 'IDEMPOTENCY_RECOVERY_REQUIRED' ||
+          error.reason === 'outcome_unknown' ||
+          (Array.isArray(error.details) &&
+            error.details.some((detail) => detail.reason === 'outcome_unknown')));
       const schema =
         source.paths[operation.path][operation.verb.toLowerCase()].responses[example.status]
           .content[example.media].schema;
       return {
         ...example,
+        expectedOutcome:
+          inProgressCodes.includes(error.code) || uncertainWrite ? 'unknown' : 'response',
         // PHP's public details are mixed raw JSON: safe integers stay numeric;
         // fractional/unsafe tokens remain exact strings, independently of schema.
         expectedPhpDetailsJson: JSON.stringify(

@@ -184,9 +184,9 @@ test('PHP compiled execution is isolated from schema lowering and dispatches eve
   const result = spawnSync(
     'php',
     ['-r', program, new URL('../templates/Runtime.php', import.meta.url).pathname],
-    { encoding: 'utf8' },
+    { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 },
   );
-  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.status, 0, result.error?.message ?? result.stderr);
   const methods = JSON.parse(result.stdout);
   for (const name of [
     'execute',

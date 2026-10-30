@@ -108,7 +108,12 @@ export interface Retry {
   baseDelayMs: number;
   maxDelayMs?: number;
 }
+export interface OperationDefaults {
+  timeoutMs?: number;
+  deadlineMs?: number;
+}
 export interface Capability {
+  defaults?: OperationDefaults;
   request?: RequestStyle;
   response?: ResponseReturn;
   stream?: { events?: Record<string, string>; idleTimeoutMs?: number; maxEventBytes?: number };
@@ -259,6 +264,7 @@ export interface Config {
   license?: string;
   errors?: {
     codePath?: string;
+    inProgressCodes?: string[];
     retry?: { path: string; retryValues: string[] };
     messagePath?: string;
     detailsPath?: string;
@@ -1975,7 +1981,7 @@ function loadContractInput(
       diagnostics.check(() =>
         keys(
           config.errors!,
-          ['codePath', 'messagePath', 'detailsPath', 'requestIdHeader', 'retry'],
+          ['codePath', 'messagePath', 'detailsPath', 'requestIdHeader', 'retry', 'inProgressCodes'],
           'config/errors',
         ),
       );
@@ -1991,6 +1997,12 @@ function loadContractInput(
           });
       });
       diagnostics.check(() => {
+        const codes = config.errors!.inProgressCodes;
+        if (
+          codes !== undefined &&
+          (!Array.isArray(codes) || codes.some((code) => typeof code !== 'string' || !code.trim()))
+        )
+          fail('config/errors/inProgressCodes', 'expected nonempty string codes');
         const retry = config.errors!.retry;
         if (retry !== undefined) {
           keys(retry, ['path', 'retryValues'], 'config/errors/retry');
@@ -2994,6 +3006,7 @@ function loadContractInput(
         keys(
           c,
           [
+            'defaults',
             'request',
             'response',
             'resource',
@@ -3014,6 +3027,14 @@ function loadContractInput(
           ],
           `config/operations/${pointerSegment(id)}`,
         );
+        if (c.defaults !== undefined) {
+          keys(c.defaults, ['timeoutMs', 'deadlineMs'], cp + '/defaults');
+          if (!Object.keys(c.defaults).length)
+            fail(cp + '/defaults', 'requires timeoutMs or deadlineMs');
+          for (const [name, value] of Object.entries(c.defaults))
+            if (!Number.isSafeInteger(value) || value <= 0)
+              fail(cp + '/defaults/' + name, 'expected a positive safe integer');
+        }
         if (c.request !== undefined)
           validateRequestStyle(c.request, `config/operations/${pointerSegment(id)}/request`);
         const requestStyle =

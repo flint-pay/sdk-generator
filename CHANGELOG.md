@@ -4,6 +4,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ## Unreleased (generator 0.1.0)
 
+- Node and PHP now report retry-chain uncertainty consistently: in-progress answers and final uncertain write errors are `unknown`, while a replayed final answer settles earlier timeouts. Preserve fully read successes past deadlines and caller retry eligibility after automatic budgets expire. Add profile `errors.inProgressCodes` and `operations.<id>.defaults.{timeoutMs,deadlineMs}` with request > client > operation > global precedence; generated RUNTIME docs list operation defaults.
+
 - Breaking: Node and PHP reject explicitly passed undefined/null/empty/blank credentials with `ConfigurationError` code `credential_missing` before sending. Default discovery runs only when no credential option is passed; request credentials replace client credentials. Omit credential options to use ambient discovery, and set `ambientCredentials: false` with explicit tenant credentials in multi-tenant applications. PHP credential defaults use an internal enum marker so omitted named arguments remain distinct from explicit null.
 
 - Breaking: Node and PHP errors use a status-based ApiError hierarchy, flattened call context and message-plus-init constructors. Removed kind, error meta and the old validation/protocol/deadline/destination classes. PHP code and getCode() now return the string error code; status carries the HTTP status. Compiled error surface version 2 reports this upgrade as breaking.

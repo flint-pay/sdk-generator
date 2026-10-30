@@ -15,17 +15,15 @@
     "request": { "deadlineMs": 100 }
   },
   {
-    "name": "slow page still exceeds default deadline",
+    "name": "completely read page survives default deadline",
     "pageMs": 30001,
     "consumerMs": 0,
-    "client": { "timeoutMs": 60000 },
-    "error": "TimeoutError"
+    "client": { "timeoutMs": 60000 }
   },
   {
-    "name": "slow page still exceeds request deadline",
+    "name": "completely read page survives request deadline",
     "pageMs": 101,
     "consumerMs": 0,
-    "request": { "deadlineMs": 100 },
-    "error": "TimeoutError"
+    "request": { "deadlineMs": 100 }
   }
 ]

@@ -79,7 +79,7 @@ try {
             $check($error instanceof $class, 'error class');
             $check(substr(strrchr(get_class($error), chr(92)), 1) === $kind, 'kind');
             $check($error->status === (int) $example['status'], 'status');
-            $check($error->outcome === 'response', 'outcome');
+            $check($error->outcome === $example['expectedOutcome'], 'outcome');
             $check($error->code === $body->error->code, 'code');
             // PHP exposes mixed error details with exact raw numeric tokens;
             // Node additionally certifies schema-directed typed details.
