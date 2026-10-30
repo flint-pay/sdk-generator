@@ -9,6 +9,7 @@ import { loadContract, generate, preview, validateFixtures } from '../dist/index
 import { compileSdkContract } from '../dist/target-plan.js';
 import { compareCompiledContracts } from '../dist/compiled-compatibility.js';
 import { assertRuntimePlan } from '../dist/runtime-plan.js';
+import { storeCompiledSnapshot, restoreCompiledSnapshot } from '../dist/compiled-record.js';
 
 const responseId = 'req_01KWM6WAHG3N9Q8T2V5XRZ7C4D';
 const errorId = 'req_01KWM6WAHG3N9Q8T2V5XRZ7C4E';
@@ -18,6 +19,66 @@ const parameter = (name = 'X-Request-Id', option = 'client_request_id') => ({
   required: false,
   schema: { type: 'string' },
   'x-flint-request-option': option,
+});
+
+test('historical records retain the shipped PHP option spelling without weakening executable plans', (t) => {
+  const { load } = setup(t, 'positional');
+  const current = compileSdkContract(load()).plan;
+  const historical = structuredClone(current);
+  historical.node.errorTypes = { code: 'string', details: 'unknown' };
+  delete historical.node.errorSurfaceVersion;
+  delete historical.php.errorSurfaceVersion;
+  for (const runtime of [historical.runtime, historical.php.runtime])
+    for (const operation of runtime.operations)
+      for (const field of operation.parameters)
+        if (field.source === 'request-option') field.requestOption.php = 'client_request_id';
+  const snapshot = {
+    plan: historical,
+    runtimeIdentity: { node: '0'.repeat(64), php: '1'.repeat(64) },
+  };
+  const restored = restoreCompiledSnapshot(storeCompiledSnapshot(snapshot));
+  assert.deepEqual(restored.plan, historical);
+  assert.throws(() => assertRuntimePlan(restored.plan.runtime), /Invalid compiled request option/);
+  assert.ok(
+    compareCompiledContracts(restored.plan, current).some(
+      (finding) =>
+        finding.severity === 'breaking' &&
+        finding.subject === 'send.requestOptions.client_request_id',
+    ),
+  );
+  for (const mutation of [
+    (field) => {
+      field.requestOption.php = 'unknown';
+    },
+    (field) => {
+      field.requestOption.node = 'unknown';
+    },
+    (field) => {
+      field.required = true;
+    },
+    (field) => {
+      field.codec.checks.minLength = 0;
+    },
+  ]) {
+    const malformed = structuredClone(historical.runtime);
+    const field = malformed.operations
+      .flatMap((op) => op.parameters)
+      .find((field) => field.source === 'request-option');
+    mutation(field);
+    assert.throws(() => assertRuntimePlan(malformed, true), /Invalid compiled request option/);
+  }
+  const missingCurrentFields = structuredClone(snapshot);
+  missingCurrentFields.plan.node.errorSurfaceVersion = current.node.errorSurfaceVersion;
+  assert.throws(
+    () => restoreCompiledSnapshot(storeCompiledSnapshot(missingCurrentFields)),
+    /node.errorTypes.type/,
+  );
+  const malformedLegacyFields = structuredClone(snapshot);
+  malformedLegacyFields.plan.node.errorTypes.type = 1;
+  assert.throws(
+    () => restoreCompiledSnapshot(storeCompiledSnapshot(malformedLegacyFields)),
+    /node.errorTypes.type/,
+  );
 });
 function setup(t, style, validation = 'schema') {
   const dir = mkdtempSync(join(tmpdir(), 'sdk-request-option-'));

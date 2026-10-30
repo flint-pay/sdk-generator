@@ -208,13 +208,13 @@ export function assertCompiledSnapshot(value: unknown): asserts value is Compile
       if (typeof name !== 'string') throw new Error('node.eventTypes: invalid event type name');
   if (node.responseReturnDeclarations !== undefined)
     fields(node, ['responseReturnDeclarations'], 'string', 'node');
-  if (node.errorTypes !== undefined)
-    fields(
-      object(node.errorTypes, 'node.errorTypes'),
-      ['code', 'details', 'type', 'errorSource', 'remediation'],
-      'string',
-      'node.errorTypes',
-    );
+  if (node.errorTypes !== undefined) {
+    const errors = object(node.errorTypes, 'node.errorTypes');
+    fields(errors, ['code', 'details'], 'string', 'node.errorTypes');
+    for (const key of ['type', 'errorSource', 'remediation'])
+      if (Number(node.errorSurfaceVersion ?? 1) >= 3 || errors[key] !== undefined)
+        fields(errors, [key], 'string', 'node.errorTypes');
+  }
   if (node.authentication !== undefined) {
     const authentication = object(node.authentication, 'node.authentication');
     fields(authentication, ['declarations'], 'string', 'node.authentication');
