@@ -650,10 +650,15 @@ function compileRequestCall(op: Operation, c: Contract, optionsType: string) {
   const paramsRequired = op.bodyRequired || fields.some((p) => requiredFields.has(p.name));
   const type = (schema: Schema) =>
     typescriptType(schema, false, undefined, false, undefined, undefined, c.models);
+  // A whole-union InputValue adds Model<Union> and wraps literal tags, preventing
+  // callers from narrowing params on the discriminator. Keep union params explicit.
+  const unionBody =
+    op.body &&
+    valueScopes(op.body, c.definitions).some((shape) => shape.oneOf?.length || shape.anyOf?.length);
   // An omitted optional body may accompany query/header params. Exclude declared
   // body fields in that branch so a partially supplied body still needs its required fields.
   const bodyType = op.body
-    ? `InputValue<${type(op.body)}>` +
+    ? (unionBody ? type(op.body) : `InputValue<${type(op.body)}>`) +
       (!op.bodyRequired && fields.length
         ? ` | { ${[...new Set(valueScopes(op.body, c.definitions).flatMap((s) => Object.keys(s.properties ?? {})))].map((name) => `${JSON.stringify(name)}?: never`).join('; ')} }`
         : '')

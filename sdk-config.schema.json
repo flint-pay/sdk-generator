@@ -587,7 +587,13 @@
           "additionalProperties": false
         },
         "request": {
-          "$ref": "#/$defs/request"
+          "type": "object",
+          "properties": {
+            "style": {
+              "enum": ["positional"]
+            }
+          },
+          "additionalProperties": false
         },
         "response": {
           "$ref": "#/$defs/response"

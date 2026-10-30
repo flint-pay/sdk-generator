@@ -84,6 +84,30 @@ export function objectConstraint(s: Schema): ObjectContext {
       ? 'nullableObject'
       : undefined;
 }
+
+/** Classify request bodies without widening the declaration renderer's object context. */
+export function objectBodyConstraint(
+  s: Schema,
+  definitions: Readonly<Record<string, Schema>>,
+  seen = new Set<string>(),
+): boolean {
+  const ref = s['x-sdk-ref'];
+  if (ref)
+    return (
+      !!definitions[ref] &&
+      !seen.has(ref) &&
+      objectBodyConstraint(definitions[ref], definitions, new Set([...seen, ref]))
+    );
+  if (objectConstraint(s) === 'object') return true;
+  return (
+    (s.allOf ?? []).some((branch) => objectBodyConstraint(branch, definitions, seen)) ||
+    [s.oneOf, s.anyOf].some(
+      (branches) =>
+        !!branches?.length &&
+        branches.every((branch) => objectBodyConstraint(branch, definitions, seen)),
+    )
+  );
+}
 function hasDateInput(schema: Schema, definitions: Readonly<Record<string, Schema>>): boolean {
   return valueScopes(schema, definitions).some((shape) =>
     (Array.isArray(shape.type) ? shape.type : [shape.type]).some(

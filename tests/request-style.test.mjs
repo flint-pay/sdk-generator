@@ -271,16 +271,19 @@ await c.api.updateOrder('id');`;
   for (const op of f.contract.operations)
     execFileSync('php', ['-l', join(f.output, 'php/examples/api-' + op.method + '.php')]);
 });
-test('explicit object style and operation overrides retain the old signature; migration is breaking', async () => {
+test('global legacy object style remains explicit; operation object overrides fail and migration is breaking', async () => {
   const old = fixture({ style: 'object' });
   const next = fixture();
   const { c } = await client(old);
   assert.equal((await c.api.getOrder({ order_id: 'id' })).data.id, 'ok');
   assert.equal(php(old, "echo $c->api->getOrder(['order_id'=>'id'])->data->id;"), 'ok');
-  const overridden = fixture({
-    config: { operations: { getOrder: { request: { style: 'object' } } } },
-  });
-  assert.equal((await (await client(overridden)).c.api.getOrder({ order_id: 'id' })).data.id, 'ok');
+  assert.throws(
+    () =>
+      fixture({
+        config: { operations: { getOrder: { request: { style: 'object' } } } },
+      }),
+    /per-operation object requests are no longer supported/,
+  );
   const changes = compareCompiledContracts(
     compileSdkContract(old.contract).plan,
     compileSdkContract(next.contract).plan,
@@ -504,4 +507,19 @@ test('path arguments cannot shadow generated request and response helpers', asyn
   assert.equal((await c.api.getOrderWithResponse('one', 'two', 'three')).body.id, 'ok');
   assert.equal(requests.at(-1).path, '/helpers/one/two/three');
   assert.equal(php(f, "echo $c->api->getOrder('one','two','three')->id;"), 'ok');
+});
+
+test('union bodies retain per-branch object, conflict and dictionary guards', () => {
+  for (const keyword of ['oneOf', 'anyOf']) {
+    for (const invalid of [
+      { type: 'string' },
+      { type: ['object', 'null'] },
+      { ...body, properties: { limit: string } },
+      { ...body, additionalProperties: string },
+    ])
+      assert.throws(
+        () => fixture({ bodySchema: { [keyword]: [body, invalid] } }),
+        /non-null object body|conflicts with parameter limit|typed dictionary body/,
+      );
+  }
 });

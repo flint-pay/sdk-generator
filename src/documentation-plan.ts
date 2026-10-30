@@ -9,6 +9,8 @@ export interface DocumentationFact {
   readonly value: ValueInstruction;
   readonly nullable: boolean;
   readonly model?: string;
+  readonly title?: string;
+  readonly discriminator?: { propertyName: string; mapping?: Readonly<Record<string, number>> };
   readonly reference?: string;
   readonly fields: Readonly<Record<string, DocumentationFact>>;
   readonly required: readonly string[];
@@ -135,6 +137,17 @@ export function compileDocumentation(
       value: p.value,
       nullable: p.nullable,
       ...(model ? { model } : {}),
+      ...(typeof s.title === 'string' ? { title: s.title } : {}),
+      ...(s.discriminator
+        ? {
+            discriminator: {
+              propertyName: s.discriminator.propertyName,
+              ...(s['x-sdk-discriminator-mapping']
+                ? { mapping: s['x-sdk-discriminator-mapping'] }
+                : {}),
+            },
+          }
+        : {}),
       ...(p.reference ? { reference: p.reference } : {}),
       fields: Object.fromEntries(
         Object.entries(p.fields ?? {})
@@ -311,6 +324,30 @@ export function factShape(
   cache.set(fact, shape);
   return shape;
 }
+/** Stable request-variant identities come from tags, then model/title annotations. */
+export function factVariantName(
+  parent: DocumentationFact,
+  branch: DocumentationFact,
+  index: number,
+  definitions: DocumentationContext['definitions'],
+): string {
+  const discriminator = parent.discriminator;
+  if (discriminator) {
+    const mapped = Object.entries(discriminator.mapping ?? {})
+      .filter(([, target]) => target === index)
+      .map(([tag]) => JSON.stringify(tag));
+    const field = factShape(branch, definitions).fields[discriminator.propertyName];
+    const declared = field
+      ? factEnums(field, definitions).find((entry) => !entry.path && entry.values.length === 1)
+          ?.values
+      : undefined;
+    const values = mapped.length ? mapped : declared;
+    if (values?.length) return `with ${discriminator.propertyName}: ${values.join(' | ')}`;
+  }
+  const name = branch.model ?? branch.reference ?? branch.title;
+  return name ?? `variant ${index + 1}`;
+}
+
 export function factVariants(
   fact: DocumentationFact,
   definitions: DocumentationContext['definitions'],
@@ -320,7 +357,10 @@ export function factVariants(
   const saved = cache?.get(fact);
   if (saved) return saved;
   const common: DocumentationFact[] = [];
-  const groups = new Map<string, { keyword: string; branches: readonly DocumentationFact[] }>();
+  const groups = new Map<
+    string,
+    { keyword: string; branches: readonly DocumentationFact[]; parent: DocumentationFact }
+  >();
   const references = new Set(seen);
   const collect = (part: DocumentationFact) => {
     const { reference, model, ...own } = part;
@@ -335,7 +375,11 @@ export function factVariants(
       ['anyOf', part.any],
     ] as const)
       if (branches.length)
-        groups.set(keyword + ':' + branches.map(factIdentity).join(','), { keyword, branches });
+        groups.set(keyword + ':' + branches.map(factIdentity).join(','), {
+          keyword,
+          branches,
+          parent: part,
+        });
   };
   collect(fact);
   if (!groups.size) {
@@ -343,7 +387,7 @@ export function factVariants(
     cache?.set(fact, variants);
     return variants;
   }
-  const variants = [...groups.values()].flatMap(({ keyword, branches }, group) =>
+  const variants = [...groups.values()].flatMap(({ keyword, branches, parent }, group) =>
     branches.flatMap((branch, index) =>
       factVariants(branch, definitions, references).flatMap((variant) => {
         const fact = factConjunction([...common, variant.fact]);
@@ -359,7 +403,7 @@ export function factVariants(
               {
                 fact,
                 conditions: [
-                  `${keyword}${groups.size > 1 ? ' group ' + (group + 1) : ''} variant ${index + 1}${branch.description ? ': ' + branch.description : ''}`,
+                  `${keyword}${groups.size > 1 ? ' group ' + (group + 1) : ''} ${factVariantName(parent, branch, index, definitions)}${branch.description ? ': ' + branch.description : ''}`,
                   ...variant.conditions,
                 ],
               },
