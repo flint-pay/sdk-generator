@@ -4,6 +4,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ## Unreleased
 
+- Restore published compatibility records with the former PHP `client_request_id` option spelling and pre-envelope error types. Saved identities remain unchanged for migration comparison; executable plans still require current names and validation.
+
 - Response component references reuse their declared types in both targets, including PHP model classes. Inline response names that collide with declared components receive deterministic `OperationResponse` suffixes, reported by `diagnose`, instead of failing generation.
 
 - Generated Node and PHP examples optionally read `FLINT_BASE_URL`, use real-format path placeholders and media request examples, reject empty PATCH examples, and support profile-configured derived idempotency keys. The runtime does not read `FLINT_BASE_URL`. (generator 0.1.0)

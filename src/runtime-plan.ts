@@ -708,9 +708,15 @@ export function assertRuntimePlan(
           String(op.id) + '.parameter.' + String(field.name),
         );
         const names = record(field.requestOption, 'requestOption');
+        // Saved 7.x plans retain the PHP spelling that shipped. Do not normalize
+        // it: compatibility comparison must still report the public rename.
+        const historicalPhpName =
+          historical &&
+          field['x-flint-request-option'] === 'client_request_id' &&
+          names.php === 'client_request_id';
         if (
           names.node !== option.node ||
-          names.php !== option.php ||
+          (names.php !== option.php && !historicalPhpName) ||
           field.required ||
           stable(field.codec) !== stable(option.codec)
         )
