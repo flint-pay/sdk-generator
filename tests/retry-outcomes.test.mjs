@@ -31,13 +31,15 @@ const definitions = Object.fromEntries([
   ...money.map((id) => [id, 'post']),
   ['write', 'patch'],
   ['authenticatedWrite', 'post'],
+  ['authenticatedHead', 'head'],
   ['plain', 'post'],
   ['read', 'get'],
   ['head', 'head'],
   ['binary', 'get'],
   ['events', 'get'],
 ]);
-const keyed = (id) => !['plain', 'read', 'head', 'binary', 'events'].includes(id);
+const keyed = (id) =>
+  !['plain', 'read', 'head', 'authenticatedHead', 'binary', 'events'].includes(id);
 const api = {
   openapi: '3.1.0',
   info: { title: 'Outcome fixture', version: '1' },
@@ -48,7 +50,7 @@ const api = {
       {
         [verb]: {
           operationId: id,
-          ...(id === 'authenticatedWrite' ? { security: [{ Bearer: [] }] } : {}),
+          ...(id.startsWith('authenticated') ? { security: [{ Bearer: [] }] } : {}),
           ...(id === 'routeClassPayment' ? { 'x-flint-route-class': 'payment' } : {}),
           ...(keyed(id)
             ? {
@@ -151,6 +153,39 @@ const answer = (status, code = 'TEMPORARY', retry = 'same_request', extra = {}) 
 const timeout = { failure: 'timeout' },
   refused = { failure: 'refused' };
 const rows = [
+  ...['invalidation', 'resolution', 'refused'].flatMap((failure) =>
+    ['buffered write', 'HEAD', 'unread stream', 'failed buffered write'].map((kind) => {
+      const complete = kind === 'buffered write' || kind === 'HEAD';
+      return {
+        name: '401 refresh ' + failure + ' after ' + kind,
+        op: kind === 'HEAD' ? 'authenticatedHead' : 'authenticatedWrite',
+        refresh: true,
+        invalidateFailure: failure === 'invalidation',
+        authFailAt: failure === 'resolution' ? 2 : undefined,
+        credentialCalls: failure === 'invalidation' ? 1 : 2,
+        invalidations: 1,
+        chain: [
+          answer(401, 'INVALID_CREDENTIAL', 'none', {
+            buffered: kind.includes('buffered'),
+            bodyless: kind === 'buffered write',
+            bodyFailure: !complete,
+          }),
+          ...(failure === 'refused' ? [refused] : []),
+        ],
+        options: { maxAttempts: 1 },
+        attempts: failure === 'invalidation' ? 1 : 2,
+        error:
+          failure === 'invalidation'
+            ? 'AuthenticationError'
+            : failure === 'resolution'
+              ? 'ConfigurationError'
+              : 'ConnectionError',
+        status: 401,
+        outcome: complete ? (failure === 'invalidation' ? 'response' : 'not_sent') : 'unknown',
+        retryAllowed: false,
+      };
+    }),
+  ),
   ...[null, timeout, answer(503), answer(429)].map((first) => ({
     name: 'credential failure after ' + (first?.failure ?? first?.status ?? 'no dispatch'),
     op: 'authenticatedWrite',
@@ -603,14 +638,21 @@ async function nodeCase(row, t) {
       throw Object.assign(new Error('Synthetic refusal'), { code: 'ECONNREFUSED' });
     if (step.failure === 'timeout') return new Promise(() => {});
     if (step.delayMs) await new Promise((resolve) => schedule(resolve, step.delayMs));
-    const response = new Response(row.op === 'binary' ? '%PDF-synthetic' : wire(step), {
-      status: step.status,
-      headers: {
-        'content-type': row.op === 'binary' ? 'application/pdf' : 'application/json',
-        'x-request-id': 'req_' + calls.length,
-        ...(step.retryAfter ? { 'retry-after': step.retryAfter } : {}),
+    const response = new Response(
+      step.bodyless || request.method === 'HEAD'
+        ? null
+        : row.op === 'binary'
+          ? '%PDF-synthetic'
+          : wire(step),
+      {
+        status: step.status,
+        headers: {
+          'content-type': row.op === 'binary' ? 'application/pdf' : 'application/json',
+          'x-request-id': 'req_' + calls.length,
+          ...(step.retryAfter ? { 'retry-after': step.retryAfter } : {}),
+        },
       },
-    });
+    );
     const read = response.arrayBuffer.bind(response);
     response.arrayBuffer = async () => {
       if (step.bodyFailure) throw new Error('Synthetic incomplete body');
@@ -625,12 +667,21 @@ async function nodeCase(row, t) {
     return response;
   };
   if (row.cancelBefore) controller.abort();
-  let credentialCalls = 0;
+  let credentialCalls = 0,
+    invalidations = 0;
   const token = {
     async getCredential() {
       if (++credentialCalls === row.authFailAt) throw new Error('Synthetic provider failure');
       return { value: 'synthetic-token' };
     },
+    ...(row.refresh
+      ? {
+          invalidate() {
+            invalidations++;
+            if (row.invalidateFailure) throw new Error('Synthetic invalidation failure');
+          },
+        }
+      : {}),
   };
   const client = new sdk.Client({
     baseUrl: 'https://example.invalid',
@@ -695,7 +746,7 @@ async function nodeCase(row, t) {
   }
   assert.ok(settled, row.name + ': bounded fake-clock execution');
   t.mock.restoreAll();
-  return { ...actual, calls, elapsed: now };
+  return { ...actual, calls, credentialCalls, invalidations, elapsed: now };
 }
 function verify(row, actual) {
   assert.equal(actual.calls.length, row.chain.length, row.name);
@@ -721,6 +772,10 @@ function verify(row, actual) {
     }
   }
   if (row.elapsed !== undefined) assert.equal(actual.elapsed, row.elapsed, row.name);
+  if (row.credentialCalls !== undefined)
+    assert.equal(actual.credentialCalls, row.credentialCalls, row.name);
+  if (row.invalidations !== undefined)
+    assert.equal(actual.invalidations, row.invalidations, row.name);
   assert.equal(actual.attempts, row.attempts ?? row.chain.length, row.name);
   const ids = row.chain.flatMap((step, index) => (step.status ? ['req_' + (index + 1)] : []));
   assert.deepEqual(actual.requestIds ?? [], ids, row.name);

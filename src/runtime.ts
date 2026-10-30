@@ -4274,12 +4274,21 @@ class CompiledRuntime {
         context.lastResponse = meta;
         delete context.retryAfterMs;
         if (retryAfter !== undefined) context.retryAfterMs = retryAfter;
+        // Bodyless responses are already complete even if credential refresh stops here.
+        if (op.verb === 'HEAD' || response.body === null)
+          context.observations[attempt - 1] = {
+            state: 'answered',
+            status: response.status,
+            inProgress: false,
+            uncertainWrite: false,
+            retryAllowed: false,
+          };
         if (response.status === 401 && safe && credentialRetries === 0 && providers.size > 0) {
           diagnosticError = 'authentication';
           try {
             await response.body?.cancel();
           } catch {
-            // Refresh can proceed, but a discarded body leaves this attempt unanswered.
+            // Cleanup does not establish completion of an unread body.
           }
           try {
             for (const invalidate of providers.values()) invalidate();

@@ -127,6 +127,14 @@ foreach ($rows as $row) {
         if (isset($step['retryAfter'])) {
             $headers['retry-after'] = $step['retryAfter'];
         }
+        if ($step['buffered'] ?? false) {
+            return [
+                'status' => $step['status'],
+                'headers' => $headers,
+                'body' => $raw,
+                'failureCode' => $step['bodyFailure'] ?? false ? CURLE_PARTIAL_FILE : null,
+            ];
+        }
         return [
             'status' => $step['status'],
             'headers' => $headers,
@@ -141,6 +149,23 @@ foreach ($rows as $row) {
         }
         return 'synthetic-token';
     };
+    if ($row['refresh'] ?? false) {
+        $credential = new class ($credential, $row) implements CredentialProvider {
+            public int $invalidations = 0;
+            public function __construct(private \Closure $resolve, private array $row) {}
+            public function getCredential(): Credential
+            {
+                return new Credential(($this->resolve)());
+            }
+            public function invalidate(?Credential $credential = null): void
+            {
+                $this->invalidations++;
+                if ($this->row['invalidateFailure'] ?? false) {
+                    throw new \RuntimeException('Synthetic invalidation failure');
+                }
+            }
+        };
+    }
     $clientOptions = new ClientOptions(
         ...array_merge(['baseUrl' => 'https://example.invalid'], $row['client'] ?? [], [
             'token' => $credential,
@@ -178,6 +203,12 @@ foreach ($rows as $row) {
             'message' => $error->getMessage(),
         ];
     }
-    $results[] = $actual + ['calls' => $calls, 'elapsed' => $GLOBALS['clock']];
+    $results[] = $actual + [
+        'calls' => $calls,
+        'credentialCalls' => $credentialCalls,
+        'invalidations' =>
+            $credential instanceof CredentialProvider ? $credential->invalidations : 0,
+        'elapsed' => $GLOBALS['clock'],
+    ];
 }
 echo json_encode($results, JSON_THROW_ON_ERROR);

@@ -5415,13 +5415,28 @@ class Runtime
                     $context['lastResponse'] = $meta;
                     $context['retryAfterMs'] = $retryAfter;
                 }
+                // Successful buffered transports and bodyless responses are already complete.
+                if (
+                    $status > 0 &&
+                    !isset($response['failureCode']) &&
+                    ($op['verb'] === 'HEAD' ||
+                        !(($response['stream'] ?? null) instanceof ByteStream))
+                ) {
+                    $context['observations'][$attempt - 1] = [
+                        'state' => 'answered',
+                        'status' => $status,
+                        'inProgress' => false,
+                        'uncertainWrite' => false,
+                        'retryAllowed' => false,
+                    ];
+                }
                 if ($status === 401 && $safe && $credentialRetries === 0 && $providers) {
                     $diagnosticError = 'authentication';
                     if (($response['stream'] ?? null) instanceof ByteStream) {
                         try {
                             $response['stream']->close();
                         } catch (\Throwable) {
-                            // Refresh can proceed, but a discarded body leaves this attempt unanswered.
+                            // Cleanup does not establish completion of an unread body.
                         }
                     }
                     try {
