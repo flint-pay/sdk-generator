@@ -106,6 +106,8 @@ export function numericEnumDeclaration(
     if (numeric && members.some((v) => typeof v === 'number')) {
       part.type = structuredClone(numeric.type!);
       if (numeric.format !== undefined) part.format = numeric.format;
+      if (numeric['x-sdk-integer-mode'] !== undefined)
+        part['x-sdk-integer-mode'] = numeric['x-sdk-integer-mode'];
       changed = true;
     }
   }

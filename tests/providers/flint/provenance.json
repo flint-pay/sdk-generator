@@ -238,8 +238,8 @@
       "examples": {
         "createDeliveryMethod": "The published request requires name, type and configuration; retain the synthetic Standard shipping example and the server-supported minimum option lifetime. No source constraint is removed.",
         "updateDeliveryMethod": "Retain the synthetic status-only update. It selects an update field without requiring configuration-version state.",
-        "updateInventoryCount": "The export native integers are converted to exact SDK strings for int64 inputs.",
-        "other": "Consolidated shared examples use synthetic typed IDs, positive USD amounts, six-digit verification codes and declared minimums/patterns. Exact int64 SDK inputs use strings; no schema constraints are removed. All runnable examples are validated after source example protection.",
+        "updateInventoryCount": "The profile selects native integer counters; expected_version, quantities and physical versions use numbers. Money component fields retain exact SDK strings.",
+        "other": "Consolidated shared examples use synthetic typed IDs, positive USD amounts, six-digit verification codes and declared minimums/patterns. Exact Money SDK inputs use strings and counters use native numbers; no schema constraints are removed. All runnable examples are validated after source example protection.",
         "createPaymentIntent": "The generic schema sample uses zero, but provider payment validation requires a positive amount (at least 50 minor units for USD). The profile uses a synthetic 5000 USD minor-unit example; it does not assert live payment eligibility.",
         "createReport": "Provider report validation requires interval_end_at to be after interval_start_at. The profile uses a one-day synthetic interval rather than equal generic timestamps."
       },

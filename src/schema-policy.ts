@@ -143,6 +143,7 @@ export function compileSchemaPolicy(
     'readOnly',
     'writeOnly',
     'x-sensitive',
+    'x-sdk-integer-mode',
     'x-sdk-ref',
     'x-sdk-type-name',
   ]);
@@ -150,7 +151,9 @@ export function compileSchemaPolicy(
     kinds: acceptedKinds(schema, direction),
     wire: {
       ...(schema.format !== undefined ? { format: schema.format } : {}),
-      exact: kinds.some((kind) => exactValue(valueInstruction(kind, schema.format))),
+      exact: kinds.some((kind) =>
+        exactValue(valueInstruction(kind, schema.format, schema['x-sdk-integer-mode'])),
+      ),
       label: String(schema.format ?? schema.type ?? 'unconstrained'),
       ...(schema['x-sdk-number-input'] === 'explicit' ? { numberInput: 'explicit' as const } : {}),
     },

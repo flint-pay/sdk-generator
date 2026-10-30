@@ -1,3 +1,4 @@
+import { integerMode, markIntegerMode, sameObjectShape } from './integer-policy.js';
 import { scalarQueryArray } from './query-arrays.js';
 import { isReservedTypeName } from './naming.js';
 import { locateDiagnostic } from './input-diagnostics.js';
@@ -48,6 +49,7 @@ import { createHash } from 'node:crypto';
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export type Schema = {
+  'x-sdk-integer-mode'?: 'number' | 'exact';
   'x-sdk-query-array-items'?: Schema;
   'x-sdk-ref'?: string;
   /** Source component name for Node declarations; codecs retain their shared reference. */
@@ -229,6 +231,7 @@ export type CapabilityOverride = Omit<Capability, DefaultCapability | 'request'>
     | false;
 };
 export interface Config {
+  integers?: 'exact' | 'number' | { mode: 'exact' | 'number'; exactComponents?: string[] };
   operationNames?: 'tags' | 'path';
   queryArrays?: 'scalar-or-array';
   $schema?: string;
@@ -642,7 +645,11 @@ function schema(s: Schema, p: string, legacy = false, explicitNumbers = false): 
     } else if (types.length !== 2 || !types.includes('null')) {
       delete s.type;
       const alternatives = {
-        anyOf: types.map((type) => ({ type, ...(s.format ? { format: s.format } : {}) })),
+        anyOf: types.map((type) => ({
+          type,
+          ...(s.format ? { format: s.format } : {}),
+          ...(s['x-sdk-integer-mode'] ? { 'x-sdk-integer-mode': s['x-sdk-integer-mode'] } : {}),
+        })),
       };
       delete s.format;
       if (s.anyOf) s.allOf = [...(s.allOf ?? []), alternatives];
@@ -988,9 +995,11 @@ function checkRepresentations(s: Schema, p: string, explicitNumbers = false): vo
     const type = Array.isArray(shape.type) ? shape.type.find((t) => t !== 'null') : shape.type;
     if (shape['x-sdk-number-input'] === 'explicit') return 'wrapped-number';
     if (type === 'number')
-      return exactValue(valueInstruction(type, shape.format)) ? 'exact-number' : 'native-number';
+      return exactValue(valueInstruction(type, shape.format, shape['x-sdk-integer-mode']))
+        ? 'exact-number'
+        : 'native-number';
     if (type === 'integer')
-      return exactValue(valueInstruction('integer', shape.format))
+      return exactValue(valueInstruction('integer', shape.format, shape['x-sdk-integer-mode']))
         ? 'exact-number'
         : 'native-number';
     return type === 'string' ? 'string' : undefined;
@@ -1016,6 +1025,8 @@ function checkRepresentations(s: Schema, p: string, explicitNumbers = false): vo
         shape.type = structuredClone(numeric.type!);
         if (numeric.format !== undefined && shape.format === undefined)
           shape.format = numeric.format;
+        if (numeric['x-sdk-integer-mode'] !== undefined)
+          shape['x-sdk-integer-mode'] = numeric['x-sdk-integer-mode'];
       }
       for (const branch of [
         ...(shape.allOf ?? []),
@@ -1044,7 +1055,7 @@ function checkRepresentations(s: Schema, p: string, explicitNumbers = false): vo
     if (relation === 'intersection')
       return types.includes('number') ? [...types, 'integer'] : types;
     return types.map((type) =>
-      exactValue(valueInstruction(type, shape.format))
+      exactValue(valueInstruction(type, shape.format, shape['x-sdk-integer-mode']))
         ? shape['x-sdk-number-input'] === 'explicit'
           ? 'wrapped-number'
           : 'string'
@@ -1496,6 +1507,26 @@ function loadContractInput(
     }
     return documents.get(file);
   }
+  const resolvedSchema = <T>(value: T, file: string, sourcePath: string, context: Context): T => {
+    if (context === 'schema' && value && typeof value === 'object') {
+      // Resolution owns this copy. Component boundaries cover refs, aliases and allOf.
+      const component = /^\/components\/schemas\/([^/]+)$/
+        .exec(sourcePath)?.[1]
+        ?.replace(/~1/g, '/')
+        .replace(/~0/g, '~');
+      const exact =
+        typeof config.integers === 'object' &&
+        config.integers.exactComponents?.some(
+          (name) => component === name || sameObjectShape(value, raw.components?.schemas?.[name]),
+        );
+      markIntegerMode(value, exact ? 'exact' : integerMode(config), Boolean(exact), (schema) => {
+        // A contextual exact subtree cannot alias its native counter component.
+        referenceNames.delete(schema);
+        typeNames.delete(schema);
+      });
+    }
+    return protectExamples(value, file, sourcePath, context);
+  };
   function deref(
     value: any,
     file: string,
@@ -1539,11 +1570,11 @@ function loadContractInput(
             publicModel(modelMatch[1]!.replace(/~1/g, '/').replace(/~0/g, '~')),
           );
         if (raw.openapi.startsWith('3.0.'))
-          return protectExamples(result, file, sourcePath, context);
+          return resolvedSchema(result, file, sourcePath, context);
         const { $ref, ...siblings } = value;
         if (context === 'schema') {
           if (!Object.keys(siblings).length)
-            return protectExamples(result, file, sourcePath, context);
+            return resolvedSchema(result, file, sourcePath, context);
           record(result, path);
           const local = deref(siblings, file, path, stack, context, sourcePath);
           if (local.allOf !== undefined && (!Array.isArray(local.allOf) || !local.allOf.length))
@@ -1564,7 +1595,7 @@ function loadContractInput(
               );
             const typeName = typeNames.get(result);
             if (typeName) typeNames.set(combined, typeName);
-            return protectExamples(combined, file, sourcePath, context);
+            return resolvedSchema(combined, file, sourcePath, context);
           }
           // Preserve keyword scope (especially additionalProperties and alternatives).
           // The referenced target remains a separate conjunct, even at recursive edges.
@@ -1587,7 +1618,7 @@ function loadContractInput(
           const combined = { ...metadata, ...local, allOf: [result, ...(local.allOf ?? [])] };
           for (const key of ['readOnly', 'writeOnly', 'x-sensitive'])
             if (result[key] === true || local[key] === true) combined[key] = true;
-          return protectExamples(combined, file, sourcePath, context);
+          return resolvedSchema(combined, file, sourcePath, context);
         }
         for (const key of ['summary', 'description']) {
           if (!Object.hasOwn(siblings, key)) continue;
@@ -1735,7 +1766,7 @@ function loadContractInput(
       }
       result['x-sdk-discriminator-mapping'] = bindings;
     }
-    return protectExamples(result, file, sourcePath, context);
+    return resolvedSchema(result, file, sourcePath, context);
   }
   const raw = load(resolve(definitionPath));
   openApiObject(raw);
@@ -1841,6 +1872,7 @@ function loadContractInput(
     keys(
       config,
       [
+        'integers',
         'queryArrays',
         'operationNames',
         'requests',
@@ -1913,6 +1945,19 @@ function loadContractInput(
   diagnostics.check(() => {
     if (config.operationNames !== undefined && !['tags', 'path'].includes(config.operationNames))
       fail('config/operationNames', 'expected tags or path');
+  });
+  checkConfig(['integers'], () => {
+    const policy = config.integers;
+    if (policy === undefined || policy === 'exact' || policy === 'number') return;
+    keys(policy, ['mode', 'exactComponents'], 'config/integers');
+    if (!['exact', 'number'].includes(policy.mode))
+      fail('config/integers/mode', 'expected exact or number');
+    if (policy.exactComponents !== undefined) {
+      strings(policy.exactComponents, 'config/integers/exactComponents');
+      for (const name of policy.exactComponents)
+        if (!Object.hasOwn(raw.components?.schemas ?? {}, name))
+          fail('config/integers/exactComponents', `unknown component ${name}`);
+    }
   });
   diagnostics.check(() => {
     if (config.queryArrays !== undefined && config.queryArrays !== 'scalar-or-array')
@@ -2553,6 +2598,7 @@ function loadContractInput(
         'config' + sourcePath,
         'x-sdk-* extensions are reserved for resolved generator metadata',
       );
+    if (context === 'schema') markIntegerMode(value, integerMode(config));
     if (context === 'schema' && exampleProtection?.protects('config', sourcePath))
       Reflect.set(value, EXAMPLE_PROTECTION_MARKER, true);
     for (const [key, child] of Object.entries(value))
@@ -3570,7 +3616,7 @@ function loadContractInput(
           // Follow same-instance conjuncts and alternatives, just as field/type
           // projection does; formats may be supplied by referenced siblings.
           const exactInteger = (shape: Schema): boolean =>
-            exactValue(valueInstruction('integer', shape.format)) ||
+            exactValue(valueInstruction('integer', shape.format, shape['x-sdk-integer-mode'])) ||
             [...(shape.allOf ?? []), ...(shape.oneOf ?? []), ...(shape.anyOf ?? [])].some(
               exactInteger,
             );

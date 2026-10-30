@@ -111,7 +111,8 @@ export function objectBodyConstraint(
 function hasDateInput(schema: Schema, definitions: Readonly<Record<string, Schema>>): boolean {
   return valueScopes(schema, definitions).some((shape) =>
     (Array.isArray(shape.type) ? shape.type : [shape.type]).some(
-      (type) => valueInstruction(type, shape.format).kind === 'date-time',
+      (type) =>
+        valueInstruction(type, shape.format, shape['x-sdk-integer-mode']).kind === 'date-time',
     ),
   );
 }
@@ -197,7 +198,7 @@ export function typescriptType(
         const representations = shapes.flatMap((shape) => {
           const types = Array.isArray(shape.type) ? shape.type : [shape.type];
           return types.flatMap((type) => {
-            const instruction = valueInstruction(type, shape.format);
+            const instruction = valueInstruction(type, shape.format, shape['x-sdk-integer-mode']);
             if (instruction.kind === 'exact-integer')
               return response
                 ? ['`${bigint}`']
@@ -390,13 +391,13 @@ export function typescriptType(
   if (
     !response &&
     s['x-sdk-number-input'] === 'explicit' &&
-    exactValue(valueInstruction(types[0], s.format))
+    exactValue(valueInstruction(types[0], s.format, s['x-sdk-integer-mode']))
   )
-    return valueInstruction(types[0], s.format).kind === 'exact-integer'
+    return valueInstruction(types[0], s.format, s['x-sdk-integer-mode']).kind === 'exact-integer'
       ? 'ExactNumber | bigint'
       : 'ExactNumber';
-  if (s.enum && exactValue(valueInstruction(types[0], s.format)))
-    return valueInstruction(types[0], s.format).kind === 'exact-integer'
+  if (s.enum && exactValue(valueInstruction(types[0], s.format, s['x-sdk-integer-mode'])))
+    return valueInstruction(types[0], s.format, s['x-sdk-integer-mode']).kind === 'exact-integer'
       ? response
         ? '`${bigint}`'
         : '`${bigint}` | bigint'
@@ -415,7 +416,9 @@ export function typescriptType(
         )
         .map((v) =>
           JSON.stringify(
-            v !== null && exactValue(valueInstruction(types[0], s.format)) ? String(v) : v,
+            v !== null && exactValue(valueInstruction(types[0], s.format, s['x-sdk-integer-mode']))
+              ? String(v)
+              : v,
           ),
         )
         .join(' | ') || 'never') +
@@ -432,9 +435,11 @@ export function typescriptType(
     case 'boolean':
       return 'boolean';
     case 'number':
-      return exactValue(valueInstruction('number', s.format)) ? 'string' : 'number';
+      return exactValue(valueInstruction('number', s.format, s['x-sdk-integer-mode']))
+        ? 'string'
+        : 'number';
     case 'integer':
-      return exactValue(valueInstruction('integer', s.format))
+      return exactValue(valueInstruction('integer', s.format, s['x-sdk-integer-mode']))
         ? response
           ? '`${bigint}`'
           : '`${bigint}` | bigint'

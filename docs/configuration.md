@@ -63,6 +63,7 @@ Unknown configuration keys fail with a source location. Capability declarations 
 | `license`              | Package license metadata; defaults to `Apache-2.0`. Bundled runtime license is retained.                                                                        |
 | `requests`             | Request argument style: `positional` (default) or `object`; see [request arguments](#request-arguments).                                                        |
 | `responses`            | Optional SDK-wide return mode (`payload` by default, or `result`) and payload path; see [payload returns](#payload-returns).                                    |
+| `integers`             | `"exact"` (default), `"number"`, or `{ "mode": "number", "exactComponents": ["Money"] }`; see [integer representations](#integer-representations).              |
 | `queryArrays`          | Optional `"scalar-or-array"`: exploded form query arrays accept scalars as one-element arrays.                                                                  |
 | `operationNames`       | `tags` (default) or `path`. Path names follow the first literal segment after `/v1` and the operation ID.                                                       |
 | `operations`           | Public naming, aliases, examples and declared operation capabilities. Matching resource tags and operation IDs supply names; otherwise `api` and `operationId`. |
@@ -932,3 +933,9 @@ Generated clients send a User-Agent with the configured package name, package ve
 ### Deprecated settings
 
 `numericUnions: "explicit"` and `schemaSharing: "named"` are deprecated aliases for automatic behavior; omit them. They are still accepted, invalid values fail diagnosis, and the CLI prints a deprecation warning on stderr. Library callers receive warnings through `loadContract(..., { onWarning })`.
+
+### Integer representations
+
+Set `"integers": { "mode": "number", "exactComponents": ["Money"] }` to represent int64/uint64 counters as Node `number` and PHP `int`. Both runtimes reject values outside ±(2^53 − 1), without rounding: requests raise `InvalidInputError` (`invalid_value`) before sending and responses raise `UnexpectedResponseError`. The shorthand `"integers": "number"` has no component exceptions.
+
+`exactComponents` names source schema components, before profile renaming. Every integer field inside these components, including through references and compositions, retains exact strings. Inline objects with the same field kinds also retain exact integers, including copies with narrowed bounds or enum values. For Flint, listing `Money` keeps `amount` and other money integers exact wherever that component is referenced, including `*_money` fields. Other shapes use the selected mode; list their component explicitly if they require exact values. The default `"exact"` preserves existing int64/uint64 string behavior and existing native int32 integers. Decimal representations are unchanged.

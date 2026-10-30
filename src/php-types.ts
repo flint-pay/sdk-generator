@@ -33,7 +33,7 @@ export function phpDeclaration(
   const format =
     typed.find((part) =>
       (Array.isArray(part.type) ? part.type : [part.type]).some((type) =>
-        exactValue(valueInstruction(type, part.format)),
+        exactValue(valueInstruction(type, part.format, part['x-sdk-integer-mode'])),
       ),
     )?.format ?? typed.find((part) => part.format)?.format;
   const properties: Record<string, Schema> = {};
@@ -63,6 +63,11 @@ export function phpDeclaration(
     ...base,
     ...(firstType !== undefined ? { type: allowed.length === 1 ? firstType : allowed } : {}),
     ...(format !== undefined ? { format } : {}),
+    ...(parts.some((part) => part['x-sdk-integer-mode'] === 'exact')
+      ? { 'x-sdk-integer-mode': 'exact' as const }
+      : parts.some((part) => part['x-sdk-integer-mode'] === 'number')
+        ? { 'x-sdk-integer-mode': 'number' as const }
+        : {}),
     ...(Object.keys(properties).length ? { properties } : {}),
     required: [...new Set(parts.flatMap((part) => part.required ?? []))],
     ...(items ? { items } : {}),
@@ -108,13 +113,13 @@ export function phpNative(
     (Array.isArray(s.type) ? s.type : [s.type]).map((type) => {
       switch (type) {
         case 'integer':
-          return exactValue(valueInstruction(type, s.format))
+          return exactValue(valueInstruction(type, s.format, s['x-sdk-integer-mode']))
             ? 'string'
             : floatIntersection
               ? 'float'
               : 'int';
         case 'number':
-          return exactValue(valueInstruction(type, s.format))
+          return exactValue(valueInstruction(type, s.format, s['x-sdk-integer-mode']))
             ? 'string'
             : response
               ? 'float'

@@ -1954,10 +1954,10 @@ final class Codec
         return self::$validationFailures[$error] ?? null;
     }
 
-    public static function fail(string $path, string $reason): never
+    public static function fail(string $path, string $reason, ?string $code = null): never
     {
         $message = "$path: $reason";
-        $error = SdkError::create('validation', $message);
+        $error = SdkError::create('validation', $message, errorCode: $code);
         self::$validationFailures ??= new \WeakMap();
         self::$validationFailures[$error] = $message;
         throw $error;
@@ -3637,7 +3637,7 @@ final class Codec
                 return $response ? (float) $value : $value;
             }
             if (!is_int($value) || abs($value) > 9007199254740991) {
-                self::fail($path, 'expected a safe integer; declare int64 for larger values');
+                self::fail($path, 'expected a safe integer in ±(2^53 − 1)', 'invalid_value');
             }
             if (!$response || $matching) {
                 self::numericConstraints(

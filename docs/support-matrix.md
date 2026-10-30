@@ -118,3 +118,5 @@ Positional requests support object-only `oneOf` and `anyOf` bodies in both targe
 Both targets name positional params and preserve path/query parameter descriptions. Declared idempotency headers are accepted only through `idempotencyKey` options, with the original wire schema enforced. PHP uses `clientRequestId` for caller correlation.
 
 Opt-in scalar query arrays are supported in Node and PHP for exploded form array parameters. Scalars normalize to singleton arrays before validation; other parameter encodings retain their original input shapes.
+
+Integer representation defaults to exact int64/uint64 strings. Opt-in `integers: "number"` uses safe native numbers in both targets; the object form accepts `exactComponents` for exact integer subtrees such as Money. Both targets reject unsafe values without rounding.

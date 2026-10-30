@@ -33,6 +33,7 @@ const semantic = new Set([
   'response-return',
   'request-style',
   'query-arrays',
+  'integer-policy',
   'request-options',
   'response-compatibility',
   'compiled-compatibility',

@@ -1992,7 +1992,7 @@ export function parameterExample(
     if (typeof value !== 'number') return false;
     return scopes.some((shape) =>
       (Array.isArray(shape.type) ? shape.type : [shape.type]).some((type) =>
-        exactValue(valueInstruction(type, shape.format)),
+        exactValue(valueInstruction(type, shape.format, shape['x-sdk-integer-mode'])),
       ),
     );
   };
@@ -2019,7 +2019,7 @@ function sampleMetadata(
     );
   const exact = scopes.find((shape) =>
     (Array.isArray(shape.type) ? shape.type : [shape.type]).some((type) =>
-      exactValue(valueInstruction(type, shape.format)),
+      exactValue(valueInstruction(type, shape.format, shape['x-sdk-integer-mode'])),
     ),
   );
   if (exact && typeof value === 'string')
@@ -2099,7 +2099,7 @@ export function sample(
       if (typeof value === 'number') {
         const numeric = shapes.find((shape) =>
           (Array.isArray(shape.type) ? shape.type : [shape.type]).some((type) =>
-            exactValue(valueInstruction(type, shape.format)),
+            exactValue(valueInstruction(type, shape.format, shape['x-sdk-integer-mode'])),
           ),
         );
         if (numeric)
@@ -2146,7 +2146,7 @@ export function sample(
   const t = Array.isArray(s.type) ? s.type.find((t) => t !== 'null') : s.type;
   if (s.enum?.length) {
     onMetadata?.();
-    return s.enum[0] !== null && exactValue(valueInstruction(t, s.format))
+    return s.enum[0] !== null && exactValue(valueInstruction(t, s.format, s['x-sdk-integer-mode']))
       ? s['x-sdk-number-input'] === 'explicit'
         ? new ExactNumberSample(String(s.enum[0]))
         : String(s.enum[0])
@@ -2196,7 +2196,12 @@ export function sample(
     );
   if (t === 'boolean') return true;
   if (t === 'integer' || t === 'number') {
-    const fallback = t === 'integer' ? (exactValue(valueInstruction(t, s.format)) ? 100 : 1) : 1;
+    const fallback =
+      t === 'integer'
+        ? exactValue(valueInstruction(t, s.format, s['x-sdk-integer-mode']))
+          ? 100
+          : 1
+        : 1;
     const step = s.multipleOf ?? (t === 'integer' ? 1 : 0.01);
     let value =
       s.minimum ?? (s.exclusiveMinimum !== undefined ? s.exclusiveMinimum + step : fallback);
@@ -2204,7 +2209,7 @@ export function sample(
     if (s.maximum !== undefined) value = Math.min(value, s.maximum);
     if (s.exclusiveMaximum !== undefined && value >= s.exclusiveMaximum)
       value = s.exclusiveMaximum - step;
-    if (!exactValue(valueInstruction(t, s.format))) return value;
+    if (!exactValue(valueInstruction(t, s.format, s['x-sdk-integer-mode']))) return value;
     const token =
       t === 'number' && value === 1 && s.multipleOf === undefined ? '1.00' : String(value);
     return s['x-sdk-number-input'] === 'explicit' ? new ExactNumberSample(token) : token;
