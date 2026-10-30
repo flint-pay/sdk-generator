@@ -40,8 +40,8 @@ const doc = {
             'application/json': {
               schema: {
                 oneOf: [
-                  { $ref: '#/components/schemas/Merchant' },
-                  { $ref: '#/components/schemas/Partner' },
+                  { $ref: '#/components/schemas/Merchant', title: 'merchant' },
+                  { $ref: '#/components/schemas/Partner', title: 'partner' },
                 ],
                 discriminator: { propertyName: 'audience' },
               },
@@ -63,6 +63,7 @@ for (const format of ['hex', 'timestamped-hex', 'standard-webhooks']) {
   test(`${format}: framework headers, input errors, signed bytes, and known envelopes agree across targets`, async () => {
     const config = {
       version: '1.0.0',
+      responses: { return: 'result' },
       npm: { name: '@example/webhooks' },
       composer: { name: 'example/webhooks', namespace: 'Example\\Webhooks' },
       webhook: {
@@ -475,6 +476,7 @@ test('webhook declaration aliases remain deterministic, validated and visible to
     profile,
     JSON.stringify({
       version: '1.0.0',
+      responses: { return: 'result' },
       npm: { name: '@example/webhook-declarations' },
       composer: { name: 'example/webhook-declarations', namespace: 'Example\\Webhooks' },
       webhook: {

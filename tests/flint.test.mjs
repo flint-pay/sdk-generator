@@ -92,10 +92,9 @@ test('Flint reference pins local source, all seven selected operations and recur
         s = statSync(file);
       return size + (s.isDirectory() ? bytes(file) : s.size);
     }, 0);
-  // Complete field/branch facts in source comments and Markdown total 4.51 MB.
-  // Keep bounded headroom while detecting accidental recursive expansion.
+  // Intended 8.0 runtime, descriptors and docs total 4,920,265 bytes; allow 10% headroom.
   assert.ok(
-    bytes(join(output, 'node')) + bytes(join(output, 'php')) < 4_800_000,
+    bytes(join(output, 'node')) + bytes(join(output, 'php')) < 5_420_000,
     'named shapes must be shared rather than repeatedly expanded',
   );
 });

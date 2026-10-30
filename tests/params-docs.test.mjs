@@ -114,7 +114,7 @@ test('named Params, Input property prose, path @param and reference rows retain 
   assert.match(f.declarations, /list\(params\?: RefundsListParams, options\?/);
   assert.match(f.declarations, /update\(customer_id:.*params: CustomersUpdateParams/);
   assert.match(f.declarations, /@param customer_id Flint customer ID\./);
-  for (const name of ['RefundsListInput', 'RefundsListParams']) {
+  for (const name of ['RefundsListParams']) {
     const declaration = f.declarations.split('export type ' + name + ' = ')[1]?.split('export ')[0];
     assert.ok(declaration, name);
     assert.match(
@@ -140,6 +140,10 @@ test('named Params, Input property prose, path @param and reference rows retain 
     readFileSync(join(f.output, 'php/src/classes/RefundsListParams.php'), 'utf8'),
     /Filter by the original Idempotency-Key/,
   );
+  assert.match(
+    readFileSync(join(f.output, 'php/src/classes/RefundsListInput.php'), 'utf8'),
+    /Filter by the original Idempotency-Key/,
+  );
   const op = f.contract.operations.find((op) => op.id === 'listRefunds');
   const schema = inputSchema(op, f.contract.config.apiVersion, f.contract).properties
     .idempotency_key;
@@ -155,9 +159,9 @@ test('managed headers are absent from Params types and their former input paths 
   const consumer = join(f.output, 'node/consumer.ts');
   writeFileSync(
     consumer,
-    `import {Client, type RefundsListInput, type RefundsListParams, type CustomersUpdateParams} from './index.js';
+    `import {Client, type RefundsListParams, type CustomersUpdateParams} from './index.js';
 const client = new Client({baseUrl:'https://example.invalid'});
-const filters: RefundsListInput = {idempotency_key:'recovery-key'};
+const filters: RefundsListParams = {idempotency_key:'recovery-key'};
 const params: RefundsListParams = filters;
 client.refunds.list(params);
 const update: CustomersUpdateParams = {name:'new'};

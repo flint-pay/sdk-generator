@@ -109,7 +109,7 @@ try{$c->catalog->retrieve('list');throw new Exception('required field accepted')
 echo 'ok';`),
     'ok',
   );
-  const source = readFileSync(join(output, 'php/src/classes/CatalogRetrieveResponse.php'), 'utf8');
+  const source = readFileSync(join(output, 'php/src/classes/Page.php'), 'utf8');
   assert.match(source, /@property-read \?string \$next/);
   assert.match(source, /function getNext\(\): \?string/);
   const { Client } = await import(pathToFileURL(join(output, 'node/index.js')).href);
@@ -236,7 +236,7 @@ test('HTTP errors carry useful context and constants without changing their kind
   const rows = JSON.parse(
     php(String.raw`
 use ModelDx\{Client,ClientOptions,SdkError};
-$c=new Client(new ClientOptions('https://example.invalid',maxAttempts:1,transport:fn($r)=>['status'=>422,'headers'=>['x-request-id'=>'req_test'],'body'=>'{"message":"Invalid item","code":"invalid_item"}']));
+$c=new Client(new ClientOptions('https://example.invalid',maxAttempts:1,transport:fn($r)=>['status'=>422,'headers'=>['x-request-id'=>'req_test'],'body'=>'{"error":{"message":"Invalid item","code":"invalid_item"}}']));
 try{$c->catalog->retrieve('list');}catch(SdkError $e){echo json_encode([$e instanceof ModelDx\Errors\InvalidRequestError,substr(strrchr(get_class($e), chr(92)), 1)==='InvalidRequestError',$e->outcome===SdkError::OUTCOME_RESPONSE,$e->getCode(),$e->code,$e->getMessage()]);}`),
   );
   assert.deepEqual(rows, [true, true, true, 'invalid_item', 'invalid_item', 'Invalid item']);

@@ -118,7 +118,7 @@ test('numeric field docs agree with generated declarations and factories in both
     const declarations = readFileSync(join(out, 'node/declarations/NumbersInput.d.ts'), 'utf8');
     for (const name of Object.keys(native)) {
       const comment = declarations.match(
-        new RegExp(`/\\*\\* Shape \\$ \\(Value\\): [^*]*${name} reading\\.(.*?)\\*/`),
+        new RegExp(`/\\*\\* [^*]*${name} reading\\.(.*?)\\*/`),
       )?.[0];
       assert.ok(comment, name);
       assert.doesNotMatch(comment, /exact numeric string|ExactNumber/);

@@ -131,9 +131,9 @@ test('native clients reject transport-normalized idempotency keys through every 
 $c=new Client(new ClientOptions(baseUrl:$argv[2],allowInsecureHttp:true));
 $cases=json_decode(file_get_contents($argv[3]),true);$errors=[];
 foreach($cases['keys'] as $key) foreach(['option','header','input'] as $source){
-  $input=new HardeningSdk\\ApiSaveValueInput($source==='input'?['Idempotency-Key'=>$key]:[]);
+  try { $input=new HardeningSdk\\ApiSaveValueInput($source==='input'?['Idempotency-Key'=>$key]:[]);
   $options=new RequestOptions(idempotencyKey:$source==='option'?$key:null,headers:$source==='header'?['iDeMpOtEnCy-KeY'=>$key]:[]);
-  try{$c->api->saveValue($input,$options);$errors[]='sent';}catch(SdkError $e){$errors[]=[substr(strrchr(get_class($e), chr(92)), 1),$e->outcome];}
+  $c->api->saveValue($input,$options);$errors[]='sent';}catch(SdkError $e){$errors[]=[substr(strrchr(get_class($e), chr(92)), 1),$e->outcome];}
 }
 foreach($cases['valid'] as $key)$c->api->saveValue(new HardeningSdk\\ApiSaveValueInput(),new RequestOptions(idempotencyKey:$key));
 $c->api->saveValue();echo json_encode($errors);

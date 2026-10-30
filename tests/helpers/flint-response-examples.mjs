@@ -123,7 +123,7 @@ export function responseExamples(source) {
   return { routes, schemas, omitted };
 }
 
-export async function checkResponseExamples(output, sourceFile, casesFile) {
+export async function checkResponseExamples(output, sourceFile, casesFile, profile = {}) {
   const source = JSON.parse(readFileSync(sourceFile, 'utf8'));
   const expectedFailures = JSON.parse(
     readFileSync(join(dirname(sourceFile), 'response-example-failures.json'), 'utf8'),
@@ -172,6 +172,7 @@ export async function checkResponseExamples(output, sourceFile, casesFile) {
     config,
     JSON.stringify({
       version: '1.0.0',
+      responses: { return: 'result' },
       auth: { scheme: 'BearerAuth' },
       include: audit.schemas.map((_, i) => 'responseExample' + i),
       npm: { name: '@example/response-audit' },
@@ -258,7 +259,7 @@ export async function checkResponseExamples(output, sourceFile, casesFile) {
         mode: 'response',
         definitions: route.plan.definitions,
       }),
-    /required field is missing/,
+    /data\.amount_money is required/,
   );
   const php = spawnSync(
     'php',
@@ -283,6 +284,7 @@ export async function checkResponseExamples(output, sourceFile, casesFile) {
     routes,
     join(dirname(casesFile), 'error-response-examples.json'),
     source,
+    profile,
   );
   return {
     inspected: audit.routes.length + schemas.length,

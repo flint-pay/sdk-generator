@@ -327,10 +327,19 @@ test('inline body variants retain their descriptions while sharing identical fie
       method: 'update',
       body: {
         type: 'object',
-        properties: { mode: { type: 'string', enum: ['fast', 'safe'] } },
+        properties: { type: { type: 'string' }, mode: { type: 'string', enum: ['fast', 'safe'] } },
+        discriminator: { propertyName: 'type' },
         anyOf: [
-          { required: ['mode'], description: 'First declared alternative.' },
-          { required: ['mode'], description: 'Second declared alternative.' },
+          {
+            properties: { type: { const: 'record' } },
+            required: ['type', 'mode'],
+            description: 'First declared alternative.',
+          },
+          {
+            properties: { type: { const: 'record' } },
+            required: ['type', 'mode'],
+            description: 'Second declared alternative.',
+          },
         ],
       },
     },
@@ -338,7 +347,10 @@ test('inline body variants retain their descriptions while sharing identical fie
   );
   assert.equal(document.split('| Field | Presence | Type | Description |').length - 1, 2);
   assert.match(document, /Second declared alternative\./);
-  assert.match(document, /Fields: \[records.update: variant 1\]\(#recordsupdate-variant-1\)/);
+  assert.match(
+    document,
+    /Fields: \[records.update with `type: "record"`\]\(#recordsupdate-with-type-record\)/,
+  );
   assert.match(document, /\| `mode` \| Required \| string \| Values: `"fast"`, `"safe"`/);
 });
 
@@ -350,22 +362,43 @@ test('shared variant tables link to the correct occurrence of a duplicate headin
       method: 'update',
       body: {
         type: 'object',
-        properties: { x: { type: 'string' }, y: { type: 'string' } },
+        properties: { type: { type: 'string' }, x: { type: 'string' }, y: { type: 'string' } },
         allOf: [
-          { anyOf: [{ required: ['x'] }, { required: ['y'] }] },
-          { anyOf: [{ required: ['y'] }, { required: ['x', 'y'] }] },
-          { anyOf: [{ required: ['y'] }, { required: ['x', 'y'] }] },
+          {
+            discriminator: { propertyName: 'type' },
+            anyOf: [
+              { properties: { type: { const: 'x' } }, required: ['x'] },
+              { properties: { type: { const: 'y' } }, required: ['y'] },
+            ],
+          },
+          {
+            discriminator: { propertyName: 'type' },
+            anyOf: [
+              { properties: { type: { const: 'x' } }, required: ['x'] },
+              { properties: { type: { const: 'y' } }, required: ['x', 'y'] },
+            ],
+          },
+          {
+            discriminator: { propertyName: 'type' },
+            anyOf: [
+              { properties: { type: { const: 'x' } }, required: ['x'] },
+              { properties: { type: { const: 'y' } }, required: ['x', 'y'] },
+            ],
+          },
         ],
       },
     },
     {},
   );
   assert.equal(document.split('| Field | Presence | Type | Description |').length - 1, 4);
-  const headings = document.split('#### records.update: variant 2');
+  const headings = document.split('#### records.update with `type: "y"`');
   assert.equal(headings.length, 4);
   assert.match(headings[1], /\| `x` \| Optional/);
   assert.match(headings[2], /\| `x` \| Required/);
   assert.match(headings[2], /\| `y` \| Required/);
   assert.doesNotMatch(headings[3], /\| Field \|/);
-  assert.match(headings[3], /Fields: \[records.update: variant 2\]\(#recordsupdate-variant-2-1\)/);
+  assert.match(
+    headings[3],
+    /Fields: \[records.update with `type: "y"`\]\(#recordsupdate-with-type-y-1\)/,
+  );
 });

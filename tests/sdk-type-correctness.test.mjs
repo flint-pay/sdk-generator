@@ -745,14 +745,15 @@ for (const style of ['object', 'positional']) {
     const consumer = join(f.output, 'node/consumer.ts');
     writeFileSync(
       consumer,
-      `import {Client, type ApiSendInput} from './index.js';
+      `import {Client} from './index.js';
+type ApiSendInput = NonNullable<Parameters<Client['api']['send']>[${style === 'object' ? 0 : 1}]>;
 const c=new Client({baseUrl:'https://example.invalid',authMode:'session',credentials:{session:{SessionID:'id',SessionSecret:'secret'}}});
-const input:ApiSendInput={id:'command','X-Tenant':'tenant','X-Request-Id':'caller'};
+const input:ApiSendInput={${style === 'object' ? "id:'command'," : ''}'X-Tenant':'tenant','X-Request-Id':'caller'};
 c.api.send(${style === 'object' ? 'input' : "'command',{'X-Tenant':'tenant'}"});
 // @ts-expect-error credential header is supplied by authentication
-const duplicateAuth:ApiSendInput={id:'command','X-Tenant':'tenant','x-session-id':'id'};
+const duplicateAuth:ApiSendInput={${style === 'object' ? "id:'command'," : ''}'X-Tenant':'tenant','x-session-id':'id'};
 // @ts-expect-error the configured pin supplies the version
-const duplicatePin:ApiSendInput={id:'command','X-Tenant':'tenant','X-Api-Version':'v1'};
+const duplicatePin:ApiSendInput={${style === 'object' ? "id:'command'," : ''}'X-Tenant':'tenant','X-Api-Version':'v1'};
 // @ts-expect-error an ordinary required header stays required
 c.api.send(${style === 'object' ? "{id:'command'}" : "'command',{}"});
 `,
@@ -1113,7 +1114,9 @@ test('named modes preserve header inputs outside the operation security requirem
   const consumer = join(f.output, 'node/retained.ts');
   writeFileSync(
     consumer,
-    `import {Client, type ApiAnonymousInput, type ApiBearerInput} from './index.js';
+    `import {Client} from './index.js';
+type ApiAnonymousInput = Parameters<Client['api']['anonymous']>[0];
+type ApiBearerInput = Parameters<Client['api']['bearer']>[0];
 const c=new Client({baseUrl:'https://example.invalid'});
 const anonymous:ApiAnonymousInput={'x-checkout-id':'id','X-Checkout-Secret':'secret'};
 const bearer:ApiBearerInput={'x-checkout-id':'id'};
@@ -1260,7 +1263,8 @@ test('declared request-ID requiredness is preserved alongside required managed h
   const consumer = join(f.output, 'node/required.ts');
   writeFileSync(
     consumer,
-    `import {Client, type ApiSendInput} from './index.js';
+    `import {Client} from './index.js';
+type ApiSendInput = Parameters<Client['api']['send']>[0];
 const c=new Client({baseUrl:'https://example.invalid'});
 const input:ApiSendInput={'X-Request-Id':'caller'};
 c.api.send(input,{idempotencyKey:'saved',ifMatch:'tag'});

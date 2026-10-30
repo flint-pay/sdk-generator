@@ -258,7 +258,7 @@ test('nullable wrappers preserve composition and annotation semantics', () => {
     amount: 10,
     currency: 'USD',
   });
-  assert.throws(() => serialize({ amount: '10' }, schema), /alternative/);
+  assert.throws(() => serialize({ amount: '10' }, schema), /matches none of its 2 shapes/);
   assert.equal(JSON.stringify(schema).includes('nullable'), false);
 });
 
@@ -355,7 +355,7 @@ test('invalid provider examples fail during generation with the customization pa
   writeFileSync(file, JSON.stringify(configured));
   assert.throws(
     () => generate(loadContract(definitionPath, file), join(root, 'bad-example-output')),
-    /config\/operations\/sendExclusive\/example.*exactly one/,
+    /config\/operations\/sendExclusive\/example.*matches none of its 2 shapes/,
   );
   configured.operations.sendExclusive.example.body = { value: 'example' };
   writeFileSync(file, JSON.stringify(configured));

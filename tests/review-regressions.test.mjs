@@ -64,7 +64,7 @@ test('aliased renames report removed public types and prevent incompatible patch
   const tsFile = join(i.dir, 'consumer.mts');
   writeFileSync(
     tsFile,
-    "import { Client, type BooksRetrieveInput } from './sdk/node/index.js';\nconst input: BooksRetrieveInput = {id:'123'};\nnew Client({baseUrl:'https://example.invalid'}).books.retrieve(input);\n",
+    "import { Client, type BooksRetrieveResponse } from './sdk/node/index.js';\nconst input = {id:'123'};\nconst response: BooksRetrieveResponse = {title:'Book'};\nnew Client({baseUrl:'https://example.invalid'}).books.retrieve(input);\n",
   );
   const phpFile = join(i.dir, 'consumer.php');
   writeFileSync(
@@ -84,7 +84,7 @@ echo $client->books->retrieve(new Example\\Library\\BooksRetrieveInput(['id'=>'1
   const ts = compile(tsFile),
     php = run('php', [phpFile, i.output]);
   assert.notEqual(ts.status, 0);
-  assert.match(ts.stdout, /BooksRetrieveInput/);
+  assert.match(ts.stdout, /BooksRetrieveResponse/);
   assert.notEqual(php.status, 0);
   assert.match(php.stderr, /BooksRetrieveInput.*not found/);
   const record = JSON.parse(readFileSync(join(i.output, '.sdk-generator.json')));

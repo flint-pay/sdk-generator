@@ -624,7 +624,9 @@ test('default streaming transports decode negotiated gzip events and JSON errors
   const server = createServer((req, res) => {
     const error = req.headers['x-test-case'] === 'error';
     const compressed = req.headers['accept-encoding'] === 'gzip';
-    const payload = error ? '{"code":"expected_error"}' : 'data: first\n\ndata: later\n\n';
+    const payload = error
+      ? '{"error":{"code":"expected_error"}}'
+      : 'data: first\n\ndata: later\n\n';
     res.writeHead(error ? 400 : 200, {
       'Content-Type': error ? 'application/json' : 'text/event-stream',
       ...(compressed ? { 'Content-Encoding': 'gzip' } : {}),

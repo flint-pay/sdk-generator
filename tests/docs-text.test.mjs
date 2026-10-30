@@ -89,7 +89,11 @@ const base = {
       retry: { maxAttempts: 4, statuses: [503], transport: true, baseDelayMs: 10 },
       idempotency: { ...idempotency, auto: true, autoKeyPrefix: 'fx_' },
     },
-    updateWidget: { resource: 'widgets', method: 'update' },
+    updateWidget: {
+      resource: 'widgets',
+      method: 'update',
+      example: { widget_id: 'widget_fixture', body: { name: 'Updated widget' } },
+    },
   },
 };
 const apiFile = join(root, 'api.json');

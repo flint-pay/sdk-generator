@@ -4,6 +4,7 @@ import { join, dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { runInNewContext } from 'node:vm';
 import { spawnSync } from 'node:child_process';
+import ts from 'typescript';
 
 // These expectations come from the documented HTTP status contract, independently
 // of the generated error factory. All other documented 4xx statuses use ApiError.
@@ -20,7 +21,11 @@ const kinds = {
 
 // Expected values come from source JSON, with only the documented exact numeric
 // representations applied. No generated codec or certificate sets expectations.
-function expectedJson(value, schemas, source, path) {
+function expectedJson(value, schemas, source, path, integers = 'exact', exact = false) {
+  const mode = integers?.mode ?? integers;
+  exact ||= schemas.some((schema) =>
+    integers?.exactComponents?.includes(schema?.$ref?.split('/').at(-1)),
+  );
   const expand = (schema, seen = new Set()) => {
     if (!schema || typeof schema !== 'object') return [];
     const children = ['allOf', 'anyOf', 'oneOf'].flatMap((key) => schema[key] ?? []);
@@ -40,7 +45,11 @@ function expectedJson(value, schemas, source, path) {
     const numeric = schemas.filter((schema) => ['integer', 'number'].includes(schema.type));
     const representations = new Set(
       numeric.map((schema) =>
-        ['int64', 'uint64', 'decimal'].includes(schema.format) ? 'string' : 'number',
+        schema.format === 'decimal' ||
+        (schema.type === 'integer' &&
+          (exact || (mode !== 'number' && ['int64', 'uint64'].includes(schema.format))))
+          ? 'string'
+          : 'number',
       ),
     );
     assert.equal(representations.size, 1, path + ': explicitly review numeric expectation');
@@ -57,6 +66,8 @@ function expectedJson(value, schemas, source, path) {
         schemas.map((schema) => schema.items),
         source,
         `${path}[${index}]`,
+        integers,
+        exact,
       ),
     );
   if (value && typeof value === 'object')
@@ -68,6 +79,8 @@ function expectedJson(value, schemas, source, path) {
           schemas.map((schema) => schema.properties?.[key] ?? schema.additionalProperties),
           source,
           `${path}.${key}`,
+          integers,
+          exact,
         ),
       ]),
     );
@@ -81,24 +94,58 @@ function requestGroup(base, operation, plan) {
     join(base, 'examples', `${operation.resource}-${operation.method}.mjs`),
     'utf8',
   );
-  const call = example.match(/const result = await client\.(\w+)\.(\w+)\(([\s\S]*?)\n\)/);
+  const syntax = ts.createSourceFile(
+    'example.mjs',
+    example,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.JS,
+  );
+  let call;
+  const visit = (node) => {
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.getText(syntax) === `client.${operation.resource}.${operation.method}`
+    )
+      call = node;
+    ts.forEachChild(node, visit);
+  };
+  visit(syntax);
   assert.ok(call, operation.id + ': missing runnable request example');
-  assert.equal(call[1], operation.resource);
-  assert.equal(call[2], operation.method);
   const parsed = JSON.parse(
-    runInNewContext(`JSON.stringify([${call[3]}])`, {
-      idempotencyKey: 'response-example-audit',
-    }),
+    runInNewContext(
+      `JSON.stringify([${call.arguments.map((argument) => argument.getText(syntax)).join(',')}])`,
+      {
+        idempotencyKey: 'response-example-audit',
+      },
+    ),
   );
   const paths = [...operation.path.matchAll(/\{([^}]+)\}/g)].map((match) => match[1]);
   const positional = operation.request?.style === 'positional';
-  const hasParams = Boolean(
-    operation.body ||
-      operation.parameters.some(
-        (parameter) => parameter.in !== 'path' && parameter.source !== 'request-option',
-      ),
+  // Argument positions come from the public signature: managed headers no
+  // longer create params slots, and optional params may be omitted explicitly.
+  const declaration = ts.createSourceFile(
+    'resource.d.ts',
+    readFileSync(join(base, 'resources', operation.resource + '.d.ts'), 'utf8'),
+    ts.ScriptTarget.Latest,
+    true,
   );
-  const count = positional ? paths.length + Number(hasParams) : 1;
+  let count;
+  const signature = (node) => {
+    if (
+      (ts.isMethodDeclaration(node) || ts.isMethodSignature(node)) &&
+      node.name.getText(declaration) === operation.method
+    )
+      count = node.parameters.findIndex(
+        (parameter) => parameter.name.getText(declaration) === 'options',
+      );
+    ts.forEachChild(node, signature);
+  };
+  signature(declaration);
+  assert.ok(count >= 0, operation.id + ': missing options signature');
+  for (const [index, argument] of call.arguments.entries())
+    if (argument.kind === ts.SyntaxKind.Identifier && argument.getText(syntax) === 'undefined')
+      parsed[index] = undefined;
   const args = Array.from({ length: count }, (_, index) => parsed[index]);
   const options = parsed[count] ?? {};
   const pathValues = positional
@@ -184,7 +231,14 @@ async function nodeErrors(base, audit, entry = 'index.js') {
   }
 }
 
-export async function checkErrorResponseExamples(output, examples, routes, casesFile, source) {
+export async function checkErrorResponseExamples(
+  output,
+  examples,
+  routes,
+  casesFile,
+  source,
+  profile = {},
+) {
   const base = join(output, 'node');
   const groups = {};
   for (const example of examples) {
@@ -223,8 +277,13 @@ export async function checkErrorResponseExamples(output, examples, routes, cases
           ).error.details ?? [],
         ),
         expectedDetailsJson: JSON.stringify(
-          expectedJson(JSON.parse(example.json), [schema], source, example.location).error
-            .details ?? [],
+          expectedJson(
+            JSON.parse(example.json),
+            [schema],
+            source,
+            example.location,
+            profile.integers,
+          ).error.details ?? [],
         ),
         expectedError:
           kinds[example.status] ??

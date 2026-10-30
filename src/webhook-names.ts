@@ -61,7 +61,7 @@ export function webhookNames(
   const occupied = new Set(
     Object.keys(schemas)
       .filter((name) => !componentNames.has(name))
-      .map((name) => (overrides[name] ?? name).toLowerCase())
+      .map((name) => (Object.hasOwn(overrides, name) ? overrides[name]! : name).toLowerCase())
       .concat(Object.values(overrides).map((name) => name.toLowerCase())),
   );
   const choose = (event: string): string => {

@@ -141,15 +141,10 @@ test('numeric hover and model reference guidance follow the declared value repre
     /\n\s*\*(?!\/) ?/g,
     ' ',
   );
+  assert.doesNotMatch(input, /Shape \$/);
   assert.match(input, /"latitude"\?: number;/);
-  assert.match(
-    input,
-    /\/\*\* Shape \$ \(Value\): number\. Format: float\.[^*]*\*\/\s*"float_number"\?: number;/,
-  );
-  assert.match(
-    input,
-    /\/\*\* Shape \$ \(Value\): number\. Format: double\.[^*]*\*\/\s*"change_percent"\?: number;/,
-  );
+  assert.match(input, /\/\*\* Format: float\.[^*]*\*\/\s*"float_number"\?: number;/);
+  assert.match(input, /\/\*\* Format: double\.[^*]*\*\/\s*"change_percent"\?: number;/);
   assert.match(input, /"nullable_number"\?: number \| null;/);
   assert.doesNotMatch(
     input,
@@ -159,7 +154,7 @@ test('numeric hover and model reference guidance follow the declared value repre
     assert.match(
       input,
       new RegExp(
-        '/\\*\\* Shape \\$ \\(Value\\): [^*]*?' +
+        '/\\*\\* [^*]*?' +
           (['large', 'unsigned'].includes(field)
             ? 'Use an integer string \\(decimal digits\\), not a floating-point number'
             : 'Use an exact numeric string, not a floating-point number') +
@@ -343,7 +338,10 @@ test('native-number codecs enforce finite values and exact validation before pro
   assert.equal(serialize(0.25, { type: 'number', enum: [0.25] }), '0.25');
   assert.equal(serialize(0.25, { type: 'number', const: 0.25 }), '0.25');
   assert.equal(serialize(0.25, { type: 'number', multipleOf: 0.25 }), '0.25');
-  assert.throws(() => serialize(0.3, { type: 'number', multipleOf: 0.25 }), /multipleOf/);
+  assert.throws(
+    () => serialize(0.3, { type: 'number', multipleOf: 0.25 }),
+    /must be a multiple of 0.25/,
+  );
   const bounded = compileCodec({ type: 'number', maximum: 0.1 });
   assert.throws(
     () =>
@@ -351,7 +349,7 @@ test('native-number codecs enforce finite values and exact validation before pro
         mode: 'match',
         direction: 'response',
       }),
-    /maximum/,
+    /must be at most 0.1/,
   );
   assert.equal(
     executeCodec(new ExactNumber('0.10000000000000001'), bounded, { mode: 'response' }),

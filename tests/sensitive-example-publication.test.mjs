@@ -640,9 +640,14 @@ for (const baseline of publicationBaseline.records) {
       f.contract.operations.map(({ id }) => id),
       ['sendA', 'sendB'],
     );
-    const expected = [
+    const sourceExpected = [
       ...(sensitive ? [{ severity: 'review', subject: 'published schema examples' }] : []),
       { severity: 'additive', subject: 'sendA' },
+    ];
+    const expected = [
+      ...sourceExpected,
+      // Historical records predate codec semantics 5's intentional 8.0 representation break.
+      { severity: 'breaking', subject: 'SDK value representations' },
     ];
     // Records predate later generator capabilities (runtime and target flags); keep
     // the comparison focused on operations and published examples, excluding retry migrations.
@@ -653,7 +658,7 @@ for (const baseline of publicationBaseline.records) {
             subject !== 'runtime' && !/^(node|php)\./.test(subject) && !subject.endsWith('.retry'),
         )
         .map(({ severity, subject }) => ({ severity, subject }));
-    assert.deepEqual(summarize(compare(savedRecord.interface, f.contract)), expected);
+    assert.deepEqual(summarize(compare(savedRecord.interface, f.contract)), sourceExpected);
     mkdirSync(f.output);
     writeFileSync(join(f.output, '.sdk-generator.json'), JSON.stringify(savedRecord));
     assert.deepEqual(summarize(preview(f.contract, f.output).compatibility), expected);
