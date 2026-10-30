@@ -9,6 +9,7 @@ import {
 } from './helpers/docs-exports.mjs';
 import { npmPackResult } from '../dist/distribution.js';
 import { measurePackageBudgets, assertPackageBudgets } from './helpers/package-budgets.mjs';
+import { assertRunnableExamples } from './helpers/runnable-examples.mjs';
 import { measureSdkWeight } from './helpers/sdk-weight.mjs';
 import { measureWebhookTypes } from './helpers/webhook-types.mjs';
 import test from 'node:test';
@@ -85,7 +86,7 @@ const loaded=performance.now();
 generate(c,${JSON.stringify(output)});
 const generated=performance.now();
 writeFileSync(${JSON.stringify(join(dir, 'webhook-names.json'))},JSON.stringify(Object.fromEntries(Object.keys(c.config.webhook.events).map(event=>[event,webhookEventTypeName(event)]))));
-writeFileSync(${JSON.stringify(join(dir, 'summary.json'))},JSON.stringify({operations:c.operations.map(o=>o.id),methods:c.operations.map(o=>({resource:o.resource,method:o.method,payload:o.response?.return==='payload',pagination:Boolean(o.pagination),polling:Boolean(o.polling)})),incoming:c.incoming.map(o=>({name:o.name,model:o.model})),events:Object.keys(c.config.webhook.events),modes:c.authentication,loadMs:loaded-started,generateMs:generated-loaded,elapsedMs:performance.now()-started,maxRSS:process.resourceUsage().maxRSS,definitions:Object.keys(c.definitions).length}));
+writeFileSync(${JSON.stringify(join(dir, 'summary.json'))},JSON.stringify({operations:c.operations.map(o=>o.id),methods:c.operations.map(o=>({resource:o.resource,method:o.method,verb:o.verb,path:o.path,payload:o.response?.return==='payload',pagination:Boolean(o.pagination),polling:Boolean(o.polling)})),incoming:c.incoming.map(o=>({name:o.name,model:o.model})),events:Object.keys(c.config.webhook.events),modes:c.authentication,loadMs:loaded-started,generateMs:generated-loaded,elapsedMs:performance.now()-started,maxRSS:process.resourceUsage().maxRSS,definitions:Object.keys(c.definitions).length}));
 const savedRecord=JSON.parse(readFileSync(${JSON.stringify(join(output, '.sdk-generator.json'))},'utf8'));
 const restored=JSON.parse(JSON.stringify(savedRecord.interface));
 assert.deepEqual(preview(restored,${JSON.stringify(output)}).changes,[],'full export saved interface must render every Node/PHP file identically');
@@ -136,6 +137,9 @@ assert.deepEqual(preview(restored,${JSON.stringify(output)}).changes,[],'full ex
         assert.ok(coverage.suppressed > 100, `${target}: full canonical operation coverage`);
       }
       const summary = JSON.parse(readFileSync(join(dir, 'summary.json')));
+      console.log(
+        'Runnable examples ' + JSON.stringify(assertRunnableExamples(output, summary.methods)),
+      );
       console.log(
         'Full generation ' +
           JSON.stringify({

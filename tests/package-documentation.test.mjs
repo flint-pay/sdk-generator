@@ -187,7 +187,7 @@ test('resource docs separate inputs from linked output fields, errors and shared
         join(root, `examples/records-create.${target === 'node' ? 'mjs' : 'php'}`),
         'utf8',
       );
-      assert.match(example, /Set API_BASE_URL to your sandbox or local mock URL/);
+      assert.match(example, /FLINT_BASE_URL/);
       assert.match(example, /allowInsecureHttp:/);
       assert.ok(readFileSync(join(root, 'llms.txt'), 'utf8').includes('REFERENCE.md'));
       if (target === 'php') {

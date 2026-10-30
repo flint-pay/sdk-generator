@@ -497,10 +497,10 @@ test('examples prefer permitted token shortcuts and never invent a sandbox URL',
     const example = readFileSync(join(output, target, `examples/api-merchant.${ext}`), 'utf8');
     assert.match(example, /API_TOKEN/);
     assert.doesNotMatch(example, /first\.example\.invalid\/v1/);
-    assert.match(example, /Set API_BASE_URL to your sandbox or local mock URL/);
+    assert.match(example, /FLINT_BASE_URL/);
     assert.doesNotMatch(example, /API_MERCHANT_|sandbox\.example\.invalid|authMode:/);
     const missing = readFileSync(join(noDefault, target, `examples/api-health.${ext}`), 'utf8');
-    assert.match(missing, /Set API_BASE_URL to your sandbox or local mock URL/);
+    assert.match(missing, /FLINT_BASE_URL/);
     assert.doesNotMatch(missing, /sandbox\.example\.invalid/);
   }
 });

@@ -126,7 +126,7 @@ test('Flint READMEs lead with SDK docs and include one quickstart and concise pa
       '[Flint Pay SDK documentation](https://developers.withflintpay.com/docs/guides/sdks)';
     assert.ok(readme.includes(docs));
     assert.ok(readme.includes('allowInsecureHttp'));
-    assert.match(readme, /Set API_BASE_URL to your sandbox or local mock URL/);
+    assert.match(readme, /FLINT_BASE_URL/);
     assert.ok(!readme.includes('...(process.env.API_TOKEN'));
     assert.doesNotMatch(readme, /process\.env\.API_TOKEN \?\?|getenv\('API_TOKEN'\) \?:/);
     assert.match(readme, /Set API_TOKEN: this call requires a credential/);
@@ -237,7 +237,7 @@ test('README snippets run in both targets with per-action keys and actionable er
   await new Promise((done) => server.listen(0, '127.0.0.1', done));
   const env = {
     ...process.env,
-    API_BASE_URL: `http://127.0.0.1:${server.address().port}`,
+    FLINT_BASE_URL: `http://127.0.0.1:${server.address().port}`,
     API_TOKEN: 'test-token',
   };
   try {

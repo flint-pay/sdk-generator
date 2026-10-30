@@ -674,7 +674,7 @@ function operationOptions(
 }
 
 function compileClientOptions(c: Contract): string {
-  const baseUrl = `baseUrl${c.defaultBaseUrl !== undefined ? '?' : ''}: string;`;
+  const baseUrl = `baseUrl${c.defaultBaseUrl !== undefined ? '?' : ''}: string | undefined;`;
   if (!c.authentication)
     return `/** Client configuration. See RUNTIME.md#clientoptions. */\nexport type ClientOptions = Omit<RuntimeClientOptions, 'baseUrl'> & { ${baseUrl} };\n`;
   const shortcuts = Object.keys(c.authShortcuts ?? {})
@@ -2098,12 +2098,30 @@ function sampleMetadata(
         definitions,
       ),
     );
+  if (value && typeof value === 'object' && !Array.isArray(value))
+    return Object.fromEntries(
+      Object.entries(value).map(([name, child]) => [
+        name,
+        sampleMetadata(
+          child,
+          {
+            allOf: scopes.flatMap((shape) =>
+              shape.properties?.[name] ? [shape.properties[name]!] : [],
+            ),
+          },
+          definitions,
+        ),
+      ]),
+    );
   const exact = scopes.find((shape) =>
     (Array.isArray(shape.type) ? shape.type : [shape.type]).some((type) =>
       exactValue(valueInstruction(type, shape.format, shape['x-sdk-integer-mode'])),
     ),
   );
-  if (exact && typeof value === 'string')
+  if (
+    exact &&
+    (typeof value === 'string' || (typeof value === 'number' && Number.isSafeInteger(value)))
+  )
     return exact['x-sdk-number-input'] === 'explicit'
       ? new ExactNumberSample(String(value))
       : String(value);
@@ -2136,7 +2154,7 @@ export function sample(
   // A use-site example takes precedence over the referenced model's sample.
   if (s.example !== undefined) {
     onMetadata?.();
-    return s.example;
+    return sampleMetadata(s.example, s, definitions);
   }
   if (s['x-sdk-ref']) {
     const name = s['x-sdk-ref'];

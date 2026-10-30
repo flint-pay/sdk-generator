@@ -6,7 +6,7 @@
       "api": "tests/fixtures/payment-api.json",
       "config": "tests/fixtures/payment-sdk.json",
       "nodeRuntimeSha256": "fdb538f92fc528aeaf3bdc66dd73972808c9b735b511adda39800076ae805c10",
-      "phpSha256": "3310f720b1956fbca75975ca69bf20bab6c0da8058147960de7336cba49d2e18",
+      "phpSha256": "fd61f92166bc205dfd231df1efbd54622221e6c9d0263a3c39a9c3cfc3957e05",
       "rootExports": [
         "SdkError",
         "Model",
@@ -43,16 +43,16 @@
       ],
       "singleTarget": {
         "node": "fdb538f92fc528aeaf3bdc66dd73972808c9b735b511adda39800076ae805c10",
-        "php": "3310f720b1956fbca75975ca69bf20bab6c0da8058147960de7336cba49d2e18"
+        "php": "fd61f92166bc205dfd231df1efbd54622221e6c9d0263a3c39a9c3cfc3957e05"
       },
-      "phpRuntimeSha256": "7cadb996186f952bd381512415417c141608bb40c89240d5fd977ddf748dac78"
+      "phpRuntimeSha256": "21629aab77345eedbff89c9c4beeae2f179475dc9bb7c3c676f4dba50122e433"
     },
     {
       "name": "flint",
       "api": "tests/providers/flint/openapi.json",
       "config": "tests/providers/flint/sdk.json",
-      "nodeRuntimeSha256": "ae884660007951721becf2123354f053ad515bd499cab641bbfdb2da3d34eb9e",
-      "phpSha256": "6dde829265bb097abdd583e6b670fe17d056b4accac713d33f22ca9eb82e31e0",
+      "nodeRuntimeSha256": "faed5c5036d4eba9b1465743e971cb4cec18e273f3885d8425c956433e069eec",
+      "phpSha256": "06c630b8d0569c3dd377847b4683f2219fb53f56dcbcf569a77e8ed3f23b8b9d",
       "rootExports": [
         "SdkError",
         "errors",
@@ -221,10 +221,10 @@
         "WebhookVerificationOptions"
       ],
       "singleTarget": {
-        "node": "1c1d31cffa2d0512314d07200db3c37d57dfd7f8b0bec42925718abafeaeb595",
-        "php": "6dde829265bb097abdd583e6b670fe17d056b4accac713d33f22ca9eb82e31e0"
+        "node": "ead243ed883c2995e1261cf0ead6ec8561124b5b0cb701a09879526151a63a0f",
+        "php": "06c630b8d0569c3dd377847b4683f2219fb53f56dcbcf569a77e8ed3f23b8b9d"
       },
-      "phpRuntimeSha256": "214116346eec1afac214522a1351b907170404eda01baaf3606c196cad9f1c6e"
+      "phpRuntimeSha256": "2a901ef4a44ff47c439e5e1afca06024b3aa69a49c778a489aea84f690188639"
     }
   ]
 }

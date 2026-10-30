@@ -800,7 +800,7 @@ test('payload-mode generated examples and README use the selected return shape',
     assert.match(
       execFileSync(process.execPath, [file], {
         encoding: 'utf8',
-        env: { ...process.env, API_BASE_URL: 'https://example.invalid' },
+        env: { ...process.env, FLINT_BASE_URL: 'https://example.invalid' },
       }),
       /p_1/,
     );

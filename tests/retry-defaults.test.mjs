@@ -687,7 +687,7 @@ test('generated examples retry transient failures without an explicit attempt ov
     const file = join(root, 'example-' + op + '.php');
     writeFileSync(file, php);
     execFileSync('php', [file, join(output, 'php')], {
-      env: { ...process.env, API_BASE_URL: 'https://example.invalid' },
+      env: { ...process.env, FLINT_BASE_URL: 'https://example.invalid' },
     });
   }
 });

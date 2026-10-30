@@ -243,7 +243,7 @@ test('download scripts, quickstarts and runtime recipes save exact bytes and ins
             name,
             source,
             {
-              API_BASE_URL: `http://127.0.0.1:${server.address().port}`,
+              FLINT_BASE_URL: `http://127.0.0.1:${server.address().port}`,
               API_TOKEN: 'synthetic-doc-token',
               API_DOWNLOAD_PATH: downloadPath,
             },

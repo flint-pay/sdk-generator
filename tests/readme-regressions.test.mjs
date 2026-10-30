@@ -130,7 +130,7 @@ test('README quickstarts and recipes preserve source-looking literals, including
   await withServer(async (baseUrl, requests) => {
     for (const target of ['node', 'php']) {
       const before = requests.length;
-      await runReadme(output, target, { API_BASE_URL: baseUrl });
+      await runReadme(output, target, { FLINT_BASE_URL: baseUrl });
       assert.deepEqual(
         requests.slice(before).map((r) => r.path),
         ['/start', '/next', '/last'],
@@ -173,7 +173,7 @@ test('README generated keys replace required and optional header samples without
   await withServer(async (baseUrl, requests) => {
     for (const target of ['node', 'php']) {
       const before = requests.length;
-      await runReadme(output, target, { API_BASE_URL: baseUrl });
+      await runReadme(output, target, { FLINT_BASE_URL: baseUrl });
       const calls = requests.slice(before);
       assert.deepEqual(
         calls.map((r) => r.path),
@@ -204,7 +204,7 @@ for (const target of ['node', 'php']) {
       { requests: { style: 'positional' } },
     );
     await withServer(async (baseUrl, requests) => {
-      await runReadme(output, target, { API_BASE_URL: baseUrl });
+      await runReadme(output, target, { FLINT_BASE_URL: baseUrl });
       assert.equal(requests.length, 1);
       assert.equal(requests[0].path, '/actions');
       assert.equal(requests[0].body, '');
@@ -258,7 +258,7 @@ test('later README recipes retain exact-number and streaming symbols across auth
       for (const target of ['node', 'php']) {
         const before = requests.length;
         const execution = await runReadme(output, target, {
-          API_BASE_URL: baseUrl,
+          FLINT_BASE_URL: baseUrl,
           API_TOKEN: 'recipe-token',
         });
         assert.match(execution.stdout, /message/);
@@ -332,7 +332,7 @@ test('README client reuse follows the selected shortcut rather than the first pe
     for (const target of ['node', 'php']) {
       const before = requests.length;
       await runReadme(output, target, {
-        API_BASE_URL: baseUrl,
+        FLINT_BASE_URL: baseUrl,
         API_TOKEN: 'merchant-value',
         CUSTOMER_TOKEN: 'customer-value',
       });
@@ -401,7 +401,7 @@ test('package READMEs lead with install and print capability notes only when dec
           : '`$client->verifyWebhook($rawBody, $headers, $secrets)`',
       ),
     );
-    assert.match(paymentReadme, /Set `API_BASE_URL` and `API_TOKEN`, then replace/);
+    assert.match(paymentReadme, /Set `API_TOKEN`, then replace/);
     assert.match(readme, /Without a declared retry policy, GET, HEAD and OPTIONS/);
     assert.match(paymentReadme, /Operations with a declared retry policy follow it.*otherwise GET/);
     assert.match(

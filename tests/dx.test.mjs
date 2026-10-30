@@ -191,7 +191,7 @@ test('pagination and polling recipes run in both generated SDKs', () => {
         execFileSync(process.execPath, [file], {
           env: {
             ...process.env,
-            API_BASE_URL: 'https://example.invalid',
+            FLINT_BASE_URL: 'https://example.invalid',
             API_MERCHANT_BEARERAUTH: 'token',
           },
         });
@@ -212,7 +212,7 @@ test('pagination and polling recipes run in both generated SDKs', () => {
         execFileSync('php', ['-r', source], {
           env: {
             ...process.env,
-            API_BASE_URL: 'https://example.invalid',
+            FLINT_BASE_URL: 'https://example.invalid',
             API_MERCHANT_BEARERAUTH: 'token',
           },
         });

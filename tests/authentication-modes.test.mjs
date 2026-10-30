@@ -586,7 +586,7 @@ test('documentation.authShortcut selects example credentials, which fail fast wh
     const quickstart = readFileSync(join(output, target, 'README.md'), 'utf8')
       .split('## Quickstart')[1]
       .split('[Run the standalone example]')[0];
-    assert.match(quickstart, /Set `API_BASE_URL`, `CUSTOMER_TOKEN`/);
+    assert.match(quickstart, /Set `CUSTOMER_TOKEN`/);
     const code = quickstart.split('```')[1];
     assert.match(
       code,
@@ -606,7 +606,7 @@ test('documentation.authShortcut selects example credentials, which fail fast wh
     assert.throws(
       () =>
         execFileSync(target === 'node' ? process.execPath : 'php', [both], {
-          env: { ...process.env, API_BASE_URL: 'https://example.invalid', CUSTOMER_TOKEN: '' },
+          env: { ...process.env, FLINT_BASE_URL: 'https://example.invalid', CUSTOMER_TOKEN: '' },
           stdio: 'pipe',
         }),
       (error) =>
@@ -678,7 +678,7 @@ test('example credential locals avoid keywords and globals the examples use', as
   try {
     const env = {
       ...process.env,
-      API_BASE_URL: `http://127.0.0.1:${server.address().port}`,
+      FLINT_BASE_URL: `http://127.0.0.1:${server.address().port}`,
       API_PAIR_DEFAULT: 'default-value',
       API_PAIR_THIS: 'this-value',
       CRYPTO: 'merchant-value',
@@ -793,7 +793,7 @@ test('examples send optional named-mode credentials only when set and skip unuse
   });
   await new Promise((done) => server.listen(0, '127.0.0.1', done));
   try {
-    const base = { ...process.env, API_BASE_URL: `http://127.0.0.1:${server.address().port}` };
+    const base = { ...process.env, FLINT_BASE_URL: `http://127.0.0.1:${server.address().port}` };
     for (const name of ['API_TOKEN', 'API_PAIR_ID', 'API_PAIR_SECRET']) delete base[name];
     for (const target of ['node', 'php']) {
       const ext = target === 'node' ? 'mjs' : 'php';

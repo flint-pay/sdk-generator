@@ -55,6 +55,12 @@
       "method": "update",
       "conditional": {
         "header": "If-Match"
+      },
+      "example": {
+        "id": "pay_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "body": {
+          "description": "Updated payment"
+        }
       }
     },
     "listPayments": {

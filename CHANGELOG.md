@@ -2,7 +2,9 @@
 
 Generator changes that affect generated SDKs. Generated SDK versions are independent; regenerated packages record their own findings in their release notes and migration guidance. See [releases](docs/releases.md) for version policy and [upgrade steps](docs/releases.md#upgrade-an-existing-sdk).
 
-## Unreleased (generator 0.1.0)
+## Unreleased
+
+- Generated Node and PHP examples optionally read `FLINT_BASE_URL`, use real-format path placeholders and media request examples, reject empty PATCH examples, and support profile-configured derived idempotency keys. The runtime does not read `FLINT_BASE_URL`. (generator 0.1.0)
 
 - Breaking: Node and PHP configuration failures use SDK-specific codes and messages naming options, without `param`; workload identity failures retain their reason separately. Implicit pagination truncation now raises `PaginationLimitError` (`pagination_limit_exceeded`) with `pages` and `nextPageToken` after 1,000 pages when a continuation remains. Explicit `maxPages` limits end quietly; a terminal 1,000th page succeeds. See [migration](docs/releases.md#configuration-errors-and-pagination-limits).
 

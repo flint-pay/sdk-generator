@@ -87,7 +87,7 @@ function fixture(name, { header, example, response, auth = false, components = {
   return { dir, output, contract, read: (name) => readFileSync(join(output, name), 'utf8') };
 }
 function runExample(f, target, source, key) {
-  const env = { ...process.env, API_BASE_URL: 'https://example.invalid' };
+  const env = { ...process.env, FLINT_BASE_URL: 'https://example.invalid' };
   delete env.API_IDEMPOTENCY_KEY;
   if (key !== undefined) env.API_IDEMPOTENCY_KEY = key;
   if (target === 'node') {

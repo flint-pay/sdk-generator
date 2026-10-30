@@ -189,7 +189,10 @@
   },
   "errors": {
     "objectPath": "error",
-    "fields": { "code": "code", "message": "message" },
+    "fields": {
+      "code": "code",
+      "message": "message"
+    },
     "requestIdHeader": "X-Request-Id"
   },
   "webhook": {
@@ -208,8 +211,33 @@
     "value": "2026-09-07"
   },
   "documentation": {
-    "overview": "Use the Flint Pay SDK to integrate with the Flint API from your server. See the [Flint Pay SDK documentation](https://developers.withflintpay.com/docs/guides/sdks) for setup and integration guides. The default base URL is production (`https://api.withflintpay.com`). For sandbox testing, pass `baseUrl` as `https://api.staging.withflintpay.com`, or set `API_BASE_URL` to that URL when running example scripts.",
-    "examples": ["createPaymentIntent", "getPaymentIntent", "createRefund"]
+    "overview": "Use the Flint Pay SDK to integrate with the Flint API from your server. The client sends requests to `https://api.withflintpay.com`, which serves sandbox and live mode: a `flint_test_` key runs in your sandbox, a `flint_live_` key in live mode. Optionally set `FLINT_BASE_URL` when running example scripts.",
+    "examples": ["createPaymentIntent", "getPaymentIntent", "createRefund"],
+    "exampleValues": {
+      "customer_address_id": "caddr_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "customer_session_id": "cses_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "customer_verification_id": "cver_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "email_change_request_id": "cecr_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "feedback_report_id": "fbr_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "gift_card_funding_disposition_id": "gfd_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "invoice_late_fee_id": "inlf_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "invoice_payment_term_id": "ipt_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "payment_method_domain_id": "pmdom_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "resource_id": "prod_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "return_inspection_line_item_id": "retinli_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "return_receipt_line_item_id": "retrcli_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "risk_list_id": "rl_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "risk_list_item_id": "rli_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "risk_rule_id": "rule_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "subscription_line_item_id": "sli_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "expected_delivery_selection_id": "dsel_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "from_delivery_method_id": "dmet_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "to_delivery_method_id": "dmet_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "receiving_location_id": "loc_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "inspection_location_id": "loc_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "client_id": "papp_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "external_reference_id": "warehouse-item-42"
+    }
   },
   "operations": {
     "authorizeCLIDevice": {
@@ -358,7 +386,13 @@
     "updateBundle": {
       "resource": "bundles",
       "method": "update",
-      "pagination": false
+      "pagination": false,
+      "example": {
+        "bundle_id": "bun_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "body": {
+          "name": "Weekend admission"
+        }
+      }
     },
     "listBundleComponents": {
       "resource": "bundles",
@@ -398,7 +432,13 @@
     "updateCategory": {
       "resource": "categories",
       "method": "update",
-      "pagination": false
+      "pagination": false,
+      "example": {
+        "category_id": "ctg_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "body": {
+          "name": "Admission"
+        }
+      }
     },
     "listCheckoutSessions": {
       "resource": "checkoutSessions",
@@ -440,8 +480,8 @@
       "resource": "checkoutSessions",
       "method": "confirmCustomerVerification",
       "example": {
-        "checkout_session_id": "cs_example",
-        "checkout_session_customer_verification_id": "cver_example",
+        "checkout_session_id": "cs_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "checkout_session_customer_verification_id": "cver_01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "body": {
           "code": "123456"
         }
@@ -508,7 +548,13 @@
     "updateCreditNote": {
       "resource": "creditNotes",
       "method": "update",
-      "pagination": false
+      "pagination": false,
+      "example": {
+        "credit_note_id": "cn_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "body": {
+          "memo": "Updated credit note"
+        }
+      }
     },
     "listCreditNoteAllocations": {
       "resource": "creditNotes",
@@ -524,7 +570,7 @@
       "method": "createAllocation",
       "pagination": false,
       "example": {
-        "credit_note_id": "example",
+        "credit_note_id": "cn_01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "body": {
           "amount_money": {
             "amount": "100",
@@ -644,7 +690,12 @@
     "refreshCustomerSession": {
       "resource": "customerSessions",
       "method": "refresh",
-      "pagination": false
+      "pagination": false,
+      "exampleIdempotencyKey": {
+        "prefix": "refresh-",
+        "variable": "customerSessionId",
+        "example": "cses_01ARZ3NDEKTSV4RRFFQ69G5FAV"
+      }
     },
     "revokeCustomerSession": {
       "resource": "customerSessions",
@@ -661,7 +712,7 @@
       "method": "confirm",
       "pagination": false,
       "example": {
-        "customer_verification_id": "example",
+        "customer_verification_id": "cver_01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "body": {
           "code": "123456"
         }
@@ -773,7 +824,13 @@
     "updateDeliveryLocationSet": {
       "resource": "deliveryLocationSets",
       "method": "update",
-      "pagination": false
+      "pagination": false,
+      "example": {
+        "delivery_location_set_id": "dls_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "body": {
+          "name": "Standard delivery"
+        }
+      }
     },
     "listDeliveryMethods": {
       "resource": "deliveryMethods",
@@ -823,7 +880,7 @@
       "method": "update",
       "pagination": false,
       "example": {
-        "delivery_method_id": "example",
+        "delivery_method_id": "dmet_01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "body": {
           "status": "active"
         }
@@ -985,7 +1042,13 @@
     "updateDeliveryZone": {
       "resource": "deliveryZones",
       "method": "update",
-      "pagination": false
+      "pagination": false,
+      "example": {
+        "delivery_zone_id": "dzone_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "body": {
+          "name": "Local delivery"
+        }
+      }
     },
     "createDemoSession": {
       "resource": "demoSessions",
@@ -1416,7 +1479,7 @@
             "currency": "USD"
           },
           "capture_mode": "automatic",
-          "gift_card_id": "example",
+          "gift_card_id": "gc_01ARZ3NDEKTSV4RRFFQ69G5FAV",
           "sale_reference": "example"
         }
       }
@@ -1478,14 +1541,20 @@
     "updateGiftCard": {
       "resource": "giftCards",
       "method": "update",
-      "pagination": false
+      "pagination": false,
+      "example": {
+        "gift_card_id": "gc_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "body": {
+          "external_reference_id": "gift-card-42"
+        }
+      }
     },
     "adjustGiftCardBalance": {
       "resource": "giftCards",
       "method": "adjustBalance",
       "pagination": false,
       "example": {
-        "gift_card_id": "example",
+        "gift_card_id": "gc_01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "body": {
           "amount_money": {
             "amount": "100",
@@ -1500,7 +1569,7 @@
       "method": "cashOut",
       "pagination": false,
       "example": {
-        "gift_card_id": "example",
+        "gift_card_id": "gc_01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "body": {
           "amount_money": {
             "amount": "100",
@@ -1515,12 +1584,12 @@
       "method": "createLoad",
       "pagination": false,
       "example": {
-        "gift_card_id": "example",
+        "gift_card_id": "gc_01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "body": {
           "source": {
-            "external_reference_id": "example",
+            "external_reference_id": "warehouse-item-42",
             "funding_source_type": "external_payment",
-            "customer_id": "example"
+            "customer_id": "cus_01ARZ3NDEKTSV4RRFFQ69G5FAV"
           },
           "value_money": {
             "amount": "100",
@@ -1653,7 +1722,7 @@
             "type": "manual"
           }
         },
-        "inventory_count_id": "example"
+        "inventory_count_id": "invc_01ARZ3NDEKTSV4RRFFQ69G5FAV"
       }
     },
     "transitionInventoryCount": {
@@ -1805,7 +1874,13 @@
     "updateInventoryTransfer": {
       "resource": "inventoryTransfers",
       "method": "update",
-      "pagination": false
+      "pagination": false,
+      "example": {
+        "inventory_transfer_id": "invtr_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "body": {
+          "note": "Updated transfer"
+        }
+      }
     },
     "transitionInventoryTransfer": {
       "resource": "inventoryTransfers",
@@ -1867,7 +1942,13 @@
     "updateInvoice": {
       "resource": "invoices",
       "method": "update",
-      "pagination": false
+      "pagination": false,
+      "example": {
+        "invoice_id": "inv_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "body": {
+          "memo": "Updated delivery instructions"
+        }
+      }
     },
     "listInvoiceActivities": {
       "resource": "invoices",
@@ -1926,7 +2007,7 @@
       "method": "recordManualPayment",
       "pagination": false,
       "example": {
-        "invoice_id": "example",
+        "invoice_id": "inv_01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "body": {
           "amount_money": {
             "amount": "100",
@@ -2108,7 +2189,7 @@
       "method": "confirmEmailChangeRequest",
       "pagination": false,
       "example": {
-        "email_change_request_id": "example",
+        "email_change_request_id": "cecr_01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "body": {
           "new_email_code": "123456"
         }
@@ -2477,7 +2558,7 @@
       "method": "changeSubscriptionDelivery",
       "pagination": false,
       "example": {
-        "subscription_id": "example",
+        "subscription_id": "sub_01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "body": {
           "delivery": {
             "delivery_method_id": "dmet_00000000000000000000000000",
@@ -2495,8 +2576,8 @@
       "method": "updateSubscriptionLineItem",
       "pagination": false,
       "example": {
-        "subscription_id": "example",
-        "subscription_line_item_id": "example",
+        "subscription_id": "sub_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "subscription_line_item_id": "sli_01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "body": {
           "variant_id": "var_00000000000000000000000000"
         }
@@ -2648,7 +2729,13 @@
     "updateModifierGroup": {
       "resource": "modifierGroups",
       "method": "update",
-      "pagination": false
+      "pagination": false,
+      "example": {
+        "modifier_group_id": "mg_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "body": {
+          "name": "Extras"
+        }
+      }
     },
     "listModifierSets": {
       "resource": "modifierSets",
@@ -2679,7 +2766,13 @@
     "updateModifierSet": {
       "resource": "modifierSets",
       "method": "update",
-      "pagination": false
+      "pagination": false,
+      "example": {
+        "modifier_set_id": "ms_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "body": {
+          "name": "Extras"
+        }
+      }
     },
     "authorizePartnerInstall": {
       "resource": "oauth",
@@ -2759,7 +2852,13 @@
     "updateOrder": {
       "resource": "orders",
       "method": "update",
-      "pagination": false
+      "pagination": false,
+      "example": {
+        "order_id": "ord_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "body": {
+          "internal_note": "VIP hold"
+        }
+      }
     },
     "createOrderAccessLink": {
       "resource": "orders",
@@ -2780,7 +2879,7 @@
       "method": "addCharge",
       "pagination": false,
       "example": {
-        "order_id": "example",
+        "order_id": "ord_01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "body": {
           "charge": {
             "name": "example",
@@ -2801,7 +2900,14 @@
     "updateOrderCharge": {
       "resource": "orders",
       "method": "updateCharge",
-      "pagination": false
+      "pagination": false,
+      "example": {
+        "order_id": "ord_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "order_charge_id": "och_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "body": {
+          "name": "Priority delivery"
+        }
+      }
     },
     "closeOrder": {
       "resource": "orders",
@@ -2863,12 +2969,36 @@
     "updateOrderLineItem": {
       "resource": "orders",
       "method": "updateLineItem",
-      "pagination": false
+      "pagination": false,
+      "example": {
+        "order_id": "ord_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "order_line_item_id": "li_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "body": {
+          "metadata": {
+            "source": "support"
+          }
+        }
+      }
     },
     "payOrder": {
       "resource": "orders",
       "method": "pay",
-      "pagination": false
+      "pagination": false,
+      "example": {
+        "order_id": "ord_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "body": {
+          "action": "pay",
+          "expected_outstanding_money": {
+            "amount": "2500",
+            "currency": "USD"
+          },
+          "payment_source": {
+            "stripe": {
+              "confirmation_token": "ctoken_synthetic"
+            }
+          }
+        }
+      }
     },
     "listOrderPaymentAttempts": {
       "resource": "orders",
@@ -3070,7 +3200,15 @@
     "updatePaymentIntent": {
       "resource": "paymentIntents",
       "method": "update",
-      "pagination": false
+      "pagination": false,
+      "example": {
+        "payment_intent_id": "pi_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "body": {
+          "metadata": {
+            "channel": "support"
+          }
+        }
+      }
     },
     "listPaymentIntentActivities": {
       "resource": "paymentIntents",
@@ -3125,7 +3263,13 @@
     "updatePaymentLink": {
       "resource": "paymentLinks",
       "method": "update",
-      "pagination": false
+      "pagination": false,
+      "example": {
+        "payment_link_id": "pl_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "body": {
+          "description": "Updated payment link"
+        }
+      }
     },
     "getPaymentLinkPublic": {
       "resource": "paymentLinks",
@@ -3232,7 +3376,12 @@
     "updatePayoutSettings": {
       "resource": "payoutSettings",
       "method": "update",
-      "pagination": false
+      "pagination": false,
+      "example": {
+        "body": {
+          "statement_descriptor": "FLINT STORE"
+        }
+      }
     },
     "listPayoutDestinations": {
       "resource": "payoutSettings",
@@ -3258,7 +3407,15 @@
     "updatePayoutDestination": {
       "resource": "payoutSettings",
       "method": "updatePayoutDestination",
-      "pagination": false
+      "pagination": false,
+      "example": {
+        "payout_destination_id": "pdest_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "body": {
+          "metadata": {
+            "label": "Main account"
+          }
+        }
+      }
     },
     "listPayouts": {
       "resource": "payouts",
@@ -3367,7 +3524,7 @@
       "method": "createVariant",
       "pagination": false,
       "example": {
-        "product_id": "example",
+        "product_id": "prod_01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "body": {
           "unit_price_money": {
             "amount": "100",
@@ -3391,7 +3548,14 @@
     "updateProductVariant": {
       "resource": "products",
       "method": "updateVariant",
-      "pagination": false
+      "pagination": false,
+      "example": {
+        "product_id": "prod_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "variant_id": "var_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "body": {
+          "name": "Large"
+        }
+      }
     },
     "listPromotionCodes": {
       "resource": "promotions",
@@ -3431,7 +3595,13 @@
     "updatePromotion": {
       "resource": "promotions",
       "method": "update",
-      "pagination": false
+      "pagination": false,
+      "example": {
+        "promotion_id": "promo_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "body": {
+          "name": "Weekend offer"
+        }
+      }
     },
     "createPromotionCode": {
       "resource": "promotions",
@@ -3602,7 +3772,13 @@
     "updateReturnPolicy": {
       "resource": "returnPolicies",
       "method": "update",
-      "pagination": false
+      "pagination": false,
+      "example": {
+        "return_policy_id": "rpol_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "body": {
+          "name": "Standard returns"
+        }
+      }
     },
     "listReturnPolicyRevisions": {
       "resource": "returnPolicies",
@@ -3661,7 +3837,13 @@
     "updateReturnReason": {
       "resource": "returnReasons",
       "method": "update",
-      "pagination": false
+      "pagination": false,
+      "example": {
+        "return_reason_id": "rrsn_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "body": {
+          "name": "Wrong size"
+        }
+      }
     },
     "listReturnReceipts": {
       "resource": "returnReceipts",
@@ -3703,7 +3885,15 @@
     "updateReturnResolution": {
       "resource": "returnResolutions",
       "method": "update",
-      "pagination": false
+      "pagination": false,
+      "example": {
+        "return_resolution_id": "retres_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "body": {
+          "metadata": {
+            "source": "support"
+          }
+        }
+      }
     },
     "cancelReturnResolution": {
       "resource": "returnResolutions",
@@ -3754,7 +3944,15 @@
     "updateReturn": {
       "resource": "returns",
       "method": "update",
-      "pagination": false
+      "pagination": false,
+      "example": {
+        "return_id": "ret_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "body": {
+          "metadata": {
+            "source": "support"
+          }
+        }
+      }
     },
     "createReturnAccessLink": {
       "resource": "returns",
@@ -3836,7 +4034,14 @@
     "updateReturnLineItem": {
       "resource": "returns",
       "method": "updateLineItem",
-      "pagination": false
+      "pagination": false,
+      "example": {
+        "return_id": "ret_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "return_line_item_id": "retli_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "body": {
+          "buyer_note": "Wrong size"
+        }
+      }
     },
     "cancelReturnLineItem": {
       "resource": "returns",
@@ -3868,12 +4073,12 @@
       "method": "createResolution",
       "pagination": false,
       "example": {
-        "return_id": "example",
+        "return_id": "ret_01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "body": {
           "resolution_type": "refund",
           "line_items": [
             {
-              "return_line_item_id": "rtli_example",
+              "return_line_item_id": "retli_01ARZ3NDEKTSV4RRFFQ69G5FAV",
               "quantity": 1
             }
           ]
@@ -3925,7 +4130,7 @@
       "method": "addItems",
       "pagination": false,
       "example": {
-        "risk_list_id": "example",
+        "risk_list_id": "rl_01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "body": {
           "values": ["sdk-example"]
         }
@@ -3951,7 +4156,7 @@
       "pagination": false,
       "example": {
         "body": {
-          "risk_rule_id": "rr_example"
+          "risk_rule_id": "rule_01ARZ3NDEKTSV4RRFFQ69G5FAV"
         }
       }
     },
@@ -4002,7 +4207,13 @@
     "updateRiskRule": {
       "resource": "riskRules",
       "method": "update",
-      "pagination": false
+      "pagination": false,
+      "example": {
+        "risk_rule_id": "rule_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "body": {
+          "description": "Updated review rule"
+        }
+      }
     },
     "getSettings": {
       "resource": "settings",
@@ -4014,7 +4225,14 @@
     "updateSettings": {
       "resource": "settings",
       "method": "update",
-      "pagination": false
+      "pagination": false,
+      "example": {
+        "body": {
+          "metadata": {
+            "source": "support"
+          }
+        }
+      }
     },
     "getEffectiveSettings": {
       "resource": "settings",
@@ -4144,7 +4362,13 @@
     "updateSubscriptionPlan": {
       "resource": "subscriptionPlans",
       "method": "update",
-      "pagination": false
+      "pagination": false,
+      "example": {
+        "subscription_plan_id": "plan_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "body": {
+          "name": "Monthly membership"
+        }
+      }
     },
     "createSubscriptionPreview": {
       "resource": "subscriptionPreviews",
@@ -4205,7 +4429,7 @@
       "method": "changePlan",
       "pagination": false,
       "example": {
-        "subscription_id": "example",
+        "subscription_id": "sub_01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "body": {
           "billing_starts": "now",
           "subscription_plan_id": "plan_00000000000000000000000000"
@@ -4217,7 +4441,7 @@
       "method": "createLineItem",
       "pagination": false,
       "example": {
-        "subscription_id": "example",
+        "subscription_id": "sub_01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "body": {
           "quantity": 1,
           "variant_id": "var_00000000000000000000000000"
@@ -4232,7 +4456,14 @@
     "updateSubscriptionLineItem": {
       "resource": "subscriptions",
       "method": "updateLineItem",
-      "pagination": false
+      "pagination": false,
+      "example": {
+        "subscription_id": "sub_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "subscription_line_item_id": "sli_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "body": {
+          "quantity": 2
+        }
+      }
     },
     "pauseSubscription": {
       "resource": "subscriptions",

@@ -752,3 +752,12 @@ catch (Example\\Discovery\\SdkError $e) { if (str_contains($e->getMessage(), 'sy
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test('default credential and README templates have no staging host', () => {
+  for (const path of [
+    'src/generate.ts',
+    'docs/configuration.md',
+    'tests/providers/flint/full-common-sdk.json',
+  ])
+    assert.doesNotMatch(readFileSync(path, 'utf8'), /api\.staging\.withflintpay\.com/);
+});

@@ -718,7 +718,7 @@ test('all generated JavaScript and PHP operation examples execute', async () => 
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const env = {
     ...process.env,
-    API_BASE_URL: `http://127.0.0.1:${server.address().port}`,
+    FLINT_BASE_URL: `http://127.0.0.1:${server.address().port}`,
     API_TOKEN: 'synthetic-test-token',
   };
   try {

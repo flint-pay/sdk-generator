@@ -147,6 +147,7 @@ export interface Capability {
   polling?: { state: string; success: string[]; failure: string[]; intervalMs: number };
   conditional?: { header: string };
   example?: Record<string, unknown>;
+  exampleIdempotencyKey?: { prefix: string; variable: string; example: string };
   deprecated?: string;
 }
 const capabilityFields = {
@@ -306,6 +307,7 @@ export interface Config {
     operationUrl?: string;
     /** OpenAPI tag to documentation slug. Required for `{tagSlug}`; every included tag must be mapped. */
     tagSlugs?: Record<string, string>;
+    exampleValues?: Record<string, string>;
   };
   release?: { baseUrl?: string; policy?: 'review' | 'semver' };
 }
@@ -1821,6 +1823,21 @@ function loadContractInput(
   }
   const raw = load(resolve(definitionPath));
   openApiObject(raw);
+  const examplePrefixes = new Map<string, Set<string>>();
+  const findExamplePrefixes = (value: unknown): void => {
+    if (!value || typeof value !== 'object') return;
+    for (const [name, child] of Object.entries(value)) {
+      if (typeof child === 'string') {
+        const prefix = /^([a-z][a-z0-9]*)_[0-7][0-9A-HJKMNP-TV-Z]{25}$/.exec(child)?.[1];
+        if (prefix) {
+          const prefixes = examplePrefixes.get(name) ?? new Set<string>();
+          prefixes.add(prefix);
+          examplePrefixes.set(name, prefixes);
+        }
+      } else findExamplePrefixes(child);
+    }
+  };
+  findExamplePrefixes(raw);
   const mergeProfiles = (left: unknown, right: unknown, path: string): unknown => {
     if (left === undefined) return structuredClone(right);
     if (stable(left) === stable(right)) return structuredClone(left);
@@ -2156,10 +2173,28 @@ function loadContractInput(
   });
   checkConfig(['documentation'], () => {
     if (config.documentation !== undefined) {
+      if (config.documentation.exampleValues !== undefined) {
+        record(config.documentation.exampleValues, 'config/documentation/exampleValues');
+        for (const [name, value] of Object.entries(config.documentation.exampleValues))
+          if (!name || typeof value !== 'string' || !value.trim())
+            fail(
+              'config/documentation/exampleValues/' + pointerSegment(name),
+              'expected a nonempty example value',
+            );
+      }
       diagnostics.check(() =>
         keys(
           config.documentation!,
-          ['overview', 'guides', 'examples', 'authShortcut', 'apiName', 'operationUrl', 'tagSlugs'],
+          [
+            'overview',
+            'guides',
+            'examples',
+            'authShortcut',
+            'apiName',
+            'operationUrl',
+            'tagSlugs',
+            'exampleValues',
+          ],
           'config/documentation',
         ),
       );
@@ -3032,6 +3067,35 @@ function loadContractInput(
     }
   }
   const resourceSpellings = new Map<string, string>();
+  const exampleValue = (name: string): string | undefined => {
+    const prefixes = examplePrefixes.get(name);
+    return (
+      config.documentation?.exampleValues?.[name] ??
+      (prefixes?.size === 1 ? [...prefixes][0] + '_01ARZ3NDEKTSV4RRFFQ69G5FAV' : undefined)
+    );
+  };
+  const seededExamples = new WeakSet<Schema>();
+  const seedBodyExamples = (shape: Schema): void => {
+    if (seededExamples.has(shape)) return;
+    seededExamples.add(shape);
+    for (const [name, child] of Object.entries(shape.properties ?? {})) {
+      const value = exampleValue(name);
+      if (
+        value !== undefined &&
+        child.example === undefined &&
+        child.const === undefined &&
+        !child.enum?.length &&
+        child.default === undefined &&
+        parameterExampleEligible({ in: 'path', name: 'identifier', schema: child }, definitions)
+      )
+        child.example = value;
+      seedBodyExamples(child);
+    }
+    if (shape['x-sdk-ref'] && definitions[shape['x-sdk-ref']])
+      seedBodyExamples(definitions[shape['x-sdk-ref']]!);
+    if (shape.items) seedBodyExamples(shape.items);
+    for (const key of ['allOf', 'anyOf', 'oneOf'] as const) shape[key]?.forEach(seedBodyExamples);
+  };
   const operations: Operation[] = [];
   const referenceUrls: Record<string, string> = {};
   const ids = new Set<string>();
@@ -3156,12 +3220,31 @@ function loadContractInput(
             'polling',
             'conditional',
             'example',
+            'exampleIdempotencyKey',
             'deprecated',
             'requestMediaType',
             'stream',
           ],
           `config/operations/${pointerSegment(id)}`,
         );
+        if (c.exampleIdempotencyKey !== undefined) {
+          const key = c.exampleIdempotencyKey;
+          keys(key, ['prefix', 'variable', 'example'], cp + '/exampleIdempotencyKey');
+          if (
+            !c.idempotency ||
+            typeof key.prefix !== 'string' ||
+            !key.prefix ||
+            typeof key.example !== 'string' ||
+            !key.example ||
+            typeof key.variable !== 'string' ||
+            !isPublicName(key.variable) ||
+            ['client', 'baseUrl', 'idempotencyKey', 'result', 'crypto'].includes(key.variable)
+          )
+            fail(
+              cp + '/exampleIdempotencyKey',
+              'requires idempotency, a prefix, an example and a distinct variable name',
+            );
+        }
         if (c.defaults !== undefined) {
           keys(c.defaults, ['timeoutMs', 'deadlineMs'], cp + '/defaults');
           if (!Object.keys(c.defaults).length)
@@ -3358,6 +3441,22 @@ function loadContractInput(
             Reflect.deleteProperty(param, 'example');
             Reflect.deleteProperty(param, 'examples');
           }
+          if (
+            (param.in === 'path' || param.in === 'query') &&
+            parameterExampleEligible({ ...param, name: 'identifier' }, definitions, apiKeyNames)
+          ) {
+            const value = exampleValue(param.name);
+            if (
+              value !== undefined &&
+              param.schema.example === undefined &&
+              param.schema.const === undefined &&
+              !param.schema.enum?.length &&
+              param.schema.default === undefined &&
+              !Object.hasOwn(param, 'example') &&
+              !Object.hasOwn(param, 'examples')
+            )
+              param.schema.example = value;
+          }
           const style = param.style ?? (param.in === 'query' ? 'form' : 'simple');
           if (style !== (param.in === 'query' ? 'form' : 'simple'))
             fail(p, `unsupported parameter style ${style}`);
@@ -3485,6 +3584,19 @@ function loadContractInput(
             raw.openapi.startsWith('3.0.'),
             config.numericUnions === 'explicit',
           );
+          const mediaExample = Object.hasOwn(content, 'example')
+            ? content.example
+            : Object.values(content.examples ?? {}).map((entry) =>
+                entry && typeof entry === 'object' ? Reflect.get(entry, 'value') : undefined,
+              )[0];
+          if (mediaExample !== undefined && content.schema.example === undefined) {
+            sourceJson.assertExact(
+              mediaExample,
+              p + '/requestBody/content/' + pointerSegment(media) + '/example',
+            );
+            content.schema.example = mediaExample;
+          }
+          seedBodyExamples(content.schema);
           body = content.schema;
           mediaType = media;
         }
