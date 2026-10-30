@@ -268,3 +268,14 @@ test('combined Node response aliases also report a component-name fallback', (t)
     'WidgetsGetOperationResponse',
   );
 });
+
+test('a recursive response component has one owner when hydrated directly and through a field', async (t) => {
+  const f = fixture(t, {
+    schema: ref('Widget'),
+    components: {
+      Widget: { ...object, properties: { ...object.properties, parent: ref('Widget') } },
+    },
+  });
+  await exercise(f, 'Widget', 'widgets', 'get', { id: 'widget', parent: { id: 'parent' } });
+  assert.equal(existsSync(join(f.output, 'php/src/classes/WidgetsGetResponse.php')), false);
+});

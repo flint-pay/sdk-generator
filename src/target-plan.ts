@@ -1779,10 +1779,16 @@ export function compileSdkContract(source: Contract): {
     }
     for (const [event, name] of Object.entries(eventModels)) {
       const schema = semantic.config.webhook?.events[event];
-      if (schema) representations.model(name, schema);
+      if (schema)
+        representations.model(
+          name,
+          schema,
+          Object.hasOwn(semantic.models, name) ? 'models.' + name : undefined,
+        );
     }
     for (const name of c.webhookAudienceModels ?? [])
-      if (semantic.models[name]) representations.model(name, semantic.models[name]);
+      if (semantic.models[name])
+        representations.model(name, semantic.models[name], 'models.' + name);
     representations.checkFieldClasses();
     for (const entity of representations.entities.values()) {
       const model = compilePhpModel(

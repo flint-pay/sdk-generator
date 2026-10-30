@@ -49,6 +49,7 @@ const config = {
   npm: { name: '@example/setup' },
   composer: { name: 'example/setup', namespace: 'Example\\Setup' },
   requests: { style: 'object' },
+  responses: { return: 'result' },
   operations: Object.fromEntries(
     Object.keys(api.paths).map((path) => [
       path.slice(1),
@@ -197,7 +198,8 @@ const cases = [
     name: 'invalid base URL',
     options: { baseUrl },
     operation: 'health',
-    error: 'InvalidInputError',
+    error: 'ConfigurationError',
+    code: 'invalid_destination',
     message: 'baseUrl',
   })),
   {
@@ -205,6 +207,7 @@ const cases = [
     options: { baseUrl: 'http://localhost' },
     operation: 'health',
     error: 'ConfigurationError',
+    code: 'invalid_destination',
     message: 'allowInsecureHttp: true',
   },
   {
@@ -212,6 +215,7 @@ const cases = [
     options: { baseUrl: 'ftp://example.invalid' },
     operation: 'health',
     error: 'ConfigurationError',
+    code: 'invalid_destination',
     message: 'Unsupported destination protocol',
   },
   {
@@ -219,6 +223,7 @@ const cases = [
     options: { allowedOrigins: ['https://other.example.invalid'] },
     operation: 'health',
     error: 'ConfigurationError',
+    code: 'invalid_destination',
     message: 'allowedOrigins',
   },
 ];
@@ -254,7 +259,7 @@ foreach(json_decode(file_get_contents($argv[2]),true) as $case) {
     if($sent!==1)throw new Exception('missing dispatch');
     $client->close();
   } catch(SdkError $e) {
-    if(($case['error']??null)!==substr(strrchr(get_class($e), chr(92)), 1) || !str_contains($e->getMessage(),$case['message']) || $sent!==0 || $e->outcome!=='not_sent')throw $e;
+    if(($case['error']??null)!==substr(strrchr(get_class($e), chr(92)), 1) || !str_contains($e->getMessage(),$case['message']) || (isset($case['code']) && $e->code!==$case['code']) || $sent!==0 || $e->outcome!=='not_sent')throw $e;
     if(str_contains($e->getMessage(),'password'))throw new Exception('leaked URL');
   }
 }
@@ -285,6 +290,7 @@ test('generated Node and PHP setup has independent destination and credential ex
         run,
         (error) =>
           error.name === row.error &&
+          (!row.code || error.code === row.code) &&
           error.message.includes(row.message) &&
           error.outcome === 'not_sent' &&
           !error.message.includes('password'),
@@ -300,23 +306,31 @@ test('omitted defaults and unmapped tokens fail clearly in both targets', async 
   const NoDefault = (await import(pathToFileURL(join(noDefault, 'node/index.js')).href)).Client;
   assert.throws(
     () => new NoDefault(),
-    (e) => e.name === 'InvalidInputError' && /baseUrl.*no default/.test(e.message),
+    (e) =>
+      e.name === 'ConfigurationError' &&
+      e.code === 'invalid_destination' &&
+      /baseUrl.*no default/.test(e.message),
   );
   for (const value of [null, [], 'options'])
     assert.throws(
       () => new Client(value),
-      (e) => e.name === 'InvalidInputError' && /options/.test(e.message),
+      (e) =>
+        e.name === 'ConfigurationError' && e.code === 'invalid_option' && /options/.test(e.message),
     );
   for (const value of [null, 123, {}])
     assert.throws(
       () => new Client({ baseUrl: value }),
-      (e) => e.name === 'InvalidInputError' && /baseUrl/.test(e.message),
+      (e) =>
+        e.name === 'ConfigurationError' &&
+        e.code === 'invalid_destination' &&
+        /baseUrl/.test(e.message),
     );
   const Unmapped = (await import(pathToFileURL(join(unmapped, 'node/index.js')).href)).Client;
   assert.throws(
     () => new Unmapped({ token: 'hidden-token' }),
     (e) =>
       e.name === 'ConfigurationError' &&
+      e.code === 'auth_mode_not_permitted' &&
       /token.*apiKey/.test(e.message) &&
       !e.message.includes('hidden-token'),
   );
@@ -324,8 +338,9 @@ test('omitted defaults and unmapped tokens fail clearly in both targets', async 
     {
       name: 'no default',
       operation: 'health',
-      error: 'InvalidInputError',
-      message: 'baseUrl: required',
+      error: 'ConfigurationError',
+      code: 'invalid_destination',
+      message: 'required: pass baseUrl',
     },
   ]);
   phpCases(unmapped, [
@@ -334,6 +349,7 @@ test('omitted defaults and unmapped tokens fail clearly in both targets', async 
       options: { token: 'hidden-token' },
       operation: 'health',
       error: 'ConfigurationError',
+      code: 'auth_mode_not_permitted',
       message: 'token is not configured',
     },
   ]);

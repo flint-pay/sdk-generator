@@ -425,7 +425,7 @@
           "refund_ids": [],
           "return_credit_settlements": [],
           "tips": [],
-          "version": "1"
+          "version": 1
         }
       }
     }
@@ -673,7 +673,7 @@
           "refund_ids": [],
           "return_credit_settlements": [],
           "tips": [],
-          "version": "1"
+          "version": 1
         }
       }
     }

@@ -3,7 +3,7 @@
     "name": "ReturnLineDecision minimal current decision",
     "model": "ReturnLineDecision",
     "value": {
-      "approved_quantity": "1",
+      "approved_quantity": 1,
       "return_line_item_id": "retli_test"
     },
     "valid": true
@@ -12,7 +12,7 @@
     "name": "ReturnLineDecision manual null automatic resolution",
     "model": "ReturnLineDecision",
     "value": {
-      "approved_quantity": "1",
+      "approved_quantity": 1,
       "return_line_item_id": "retli_test",
       "automatic_resolution_type": null
     },
@@ -22,7 +22,7 @@
     "name": "ReturnLineDecision automatic refund",
     "model": "ReturnLineDecision",
     "value": {
-      "approved_quantity": "1",
+      "approved_quantity": 1,
       "return_line_item_id": "retli_test",
       "allowed_resolution_types": ["refund"],
       "automatic_resolution_type": "refund"
@@ -33,7 +33,7 @@
     "name": "ReturnLineDecision store credit",
     "model": "ReturnLineDecision",
     "value": {
-      "approved_quantity": "1",
+      "approved_quantity": 1,
       "return_line_item_id": "retli_test",
       "allowed_resolution_types": ["store_credit"],
       "automatic_resolution_type": "store_credit"
@@ -44,7 +44,7 @@
     "name": "ReturnLineDecision exchange cannot be automatic",
     "model": "ReturnLineDecision",
     "value": {
-      "approved_quantity": "1",
+      "approved_quantity": 1,
       "return_line_item_id": "retli_test",
       "automatic_resolution_type": "exchange"
     },
@@ -54,7 +54,7 @@
     "name": "ReturnLineDecision negative quantity",
     "model": "ReturnLineDecision",
     "value": {
-      "approved_quantity": "-1",
+      "approved_quantity": -1,
       "return_line_item_id": "retli_test"
     },
     "valid": false
@@ -63,7 +63,7 @@
     "name": "ReturnLineDecision obsolete decision basis",
     "model": "ReturnLineDecision",
     "value": {
-      "approved_quantity": "1",
+      "approved_quantity": 1,
       "return_line_item_id": "retli_test",
       "decision_basis": "explicit"
     },
@@ -73,7 +73,7 @@
     "name": "ReturnLineDecision decline message requires reason",
     "model": "ReturnLineDecision",
     "value": {
-      "approved_quantity": "1",
+      "approved_quantity": 1,
       "return_line_item_id": "retli_test",
       "decline_reason_message": "Synthetic explanation"
     },
@@ -83,7 +83,7 @@
     "name": "ReturnLineDecision decline reason supplied",
     "model": "ReturnLineDecision",
     "value": {
-      "approved_quantity": "1",
+      "approved_quantity": 1,
       "return_line_item_id": "retli_test",
       "decline_reason": "other",
       "decline_reason_message": "Synthetic explanation"
@@ -94,7 +94,7 @@
     "name": "ReturnLineDecision override message requires reason",
     "model": "ReturnLineDecision",
     "value": {
-      "approved_quantity": "1",
+      "approved_quantity": 1,
       "return_line_item_id": "retli_test",
       "override_reason_message": "Synthetic explanation"
     },
@@ -104,7 +104,7 @@
     "name": "ReturnLineDecision override reason supplied",
     "model": "ReturnLineDecision",
     "value": {
-      "approved_quantity": "1",
+      "approved_quantity": 1,
       "return_line_item_id": "retli_test",
       "override_reason": "other",
       "override_reason_message": "Synthetic explanation"
@@ -115,7 +115,7 @@
     "name": "ReturnProcessDecision minimal current decision",
     "model": "ReturnProcessDecision",
     "value": {
-      "approved_quantity": "1"
+      "approved_quantity": 1
     },
     "valid": true
   },
@@ -123,7 +123,7 @@
     "name": "ReturnProcessDecision manual null automatic resolution",
     "model": "ReturnProcessDecision",
     "value": {
-      "approved_quantity": "1",
+      "approved_quantity": 1,
       "automatic_resolution_type": null
     },
     "valid": true
@@ -132,7 +132,7 @@
     "name": "ReturnProcessDecision automatic refund",
     "model": "ReturnProcessDecision",
     "value": {
-      "approved_quantity": "1",
+      "approved_quantity": 1,
       "allowed_resolution_types": ["refund"],
       "automatic_resolution_type": "refund"
     },
@@ -142,7 +142,7 @@
     "name": "ReturnProcessDecision store credit",
     "model": "ReturnProcessDecision",
     "value": {
-      "approved_quantity": "1",
+      "approved_quantity": 1,
       "allowed_resolution_types": ["store_credit"],
       "automatic_resolution_type": "store_credit"
     },
@@ -152,7 +152,7 @@
     "name": "ReturnProcessDecision exchange cannot be automatic",
     "model": "ReturnProcessDecision",
     "value": {
-      "approved_quantity": "1",
+      "approved_quantity": 1,
       "automatic_resolution_type": "exchange"
     },
     "valid": false
@@ -161,7 +161,7 @@
     "name": "ReturnProcessDecision negative quantity",
     "model": "ReturnProcessDecision",
     "value": {
-      "approved_quantity": "-1"
+      "approved_quantity": -1
     },
     "valid": false
   },
@@ -169,7 +169,7 @@
     "name": "ReturnProcessDecision obsolete decision basis",
     "model": "ReturnProcessDecision",
     "value": {
-      "approved_quantity": "1",
+      "approved_quantity": 1,
       "decision_basis": "explicit"
     },
     "valid": false
@@ -178,7 +178,7 @@
     "name": "ReturnProcessDecision decline message requires reason",
     "model": "ReturnProcessDecision",
     "value": {
-      "approved_quantity": "1",
+      "approved_quantity": 1,
       "decline_reason_message": "Synthetic explanation"
     },
     "valid": false
@@ -187,7 +187,7 @@
     "name": "ReturnProcessDecision decline reason supplied",
     "model": "ReturnProcessDecision",
     "value": {
-      "approved_quantity": "1",
+      "approved_quantity": 1,
       "decline_reason": "other",
       "decline_reason_message": "Synthetic explanation"
     },
@@ -197,7 +197,7 @@
     "name": "ReturnProcessDecision override message requires reason",
     "model": "ReturnProcessDecision",
     "value": {
-      "approved_quantity": "1",
+      "approved_quantity": 1,
       "override_reason_message": "Synthetic explanation"
     },
     "valid": false
@@ -206,7 +206,7 @@
     "name": "ReturnProcessDecision override reason supplied",
     "model": "ReturnProcessDecision",
     "value": {
-      "approved_quantity": "1",
+      "approved_quantity": 1,
       "override_reason": "other",
       "override_reason_message": "Synthetic explanation"
     },

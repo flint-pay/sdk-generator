@@ -173,7 +173,7 @@ test('selective Node imports call the same API and bundle no unrelated descripto
   const file = join(output, 'node', 'selective.ts');
   writeFileSync(
     file,
-    `import {Client, SdkError, Model, serialize, parseExact, redact, type Result, type ResponseInfo, type RequestOptions, type BooksRetrieveInput} from './resources/books.js'; const c=new Client({baseUrl:'https://example.invalid'}); c.books.retrieve('a');
+    `import {Client, SdkError, Model, serialize, parseExact, redact, type Result, type ResponseInfo, type RequestOptions} from './resources/books.js'; const c=new Client({baseUrl:'https://example.invalid'}); c.books.retrieve('a');
 void [SdkError, Model, serialize, parseExact, redact];
 const result: Result<string> | undefined = undefined;
 const metadata: ResponseInfo | undefined = undefined;

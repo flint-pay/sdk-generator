@@ -2835,6 +2835,19 @@ final class Codec
         array $definitions = [],
         int $depth = 0,
     ): array {
+        // Retain failed matches for diagnostics instead of traversing invalid
+        // recursive values again at every enclosing union.
+        $failures = [];
+        $match = function (array $branch, bool $allowUnknownFields, int $index) use (
+            $matches,
+            &$failures,
+        ): bool {
+            $result = $matches($branch, $allowUnknownFields, $index);
+            if ($result instanceof SdkError) {
+                $failures[$index] = $result;
+            }
+            return $result === true;
+        };
         $tolerateUnknownFields = $allowUnknownResponseFields;
         if (isset($s['nullableAlternative']) && $response && !$matching) {
             $index = $value === null ? 1 - $s['nullableAlternative'] : $s['nullableAlternative'];
@@ -2887,7 +2900,7 @@ final class Codec
                     ? []
                     : array_filter(
                         $s[$keyword],
-                        fn($branch, $index) => $matches($branch, false, $index),
+                        fn($branch, $index) => $match($branch, false, $index),
                         ARRAY_FILTER_USE_BOTH,
                     );
             // Prefer exact closed exactlyOne alternatives, then a unique
@@ -2899,7 +2912,7 @@ final class Codec
             ) {
                 $compatible = array_filter(
                     $s[$keyword],
-                    fn($branch, $index) => $matches($branch, true, $index),
+                    fn($branch, $index) => $match($branch, true, $index),
                     ARRAY_FILTER_USE_BOTH,
                 );
                 if ($keyword === 'some' || count($compatible) === 1) {
@@ -2924,30 +2937,13 @@ final class Codec
             if (!$selected && !isset($s['tag'])) {
                 $closest = null;
                 $shape = '';
-                foreach ($s[$keyword] as $index => $branch) {
-                    try {
-                        self::executeNode(
-                            $value,
-                            $branch,
-                            $path,
-                            $response,
-                            true,
-                            $definitions,
-                            $depth + 1,
-                            true,
-                            $allowUnknownResponseFields,
-                        );
-                    } catch (SdkError $error) {
-                        if (self::validationFailureMessage($error) === null) {
-                            throw $error;
-                        }
-                        $level = preg_match_all('/[.\[]/', $error->param ?? '');
-                        if ($closest === null || $level > $closest[0]) {
-                            $closest = [$level, $error];
-                            $shape =
-                                $branch['label'] ??
-                                ($branch['reference'] ?? 'shape ' . ($index + 1));
-                        }
+                foreach ($failures as $index => $error) {
+                    $level = preg_match_all('/[.\[]/', $error->param ?? '');
+                    if ($closest === null || $level > $closest[0]) {
+                        $closest = [$level, $error];
+                        $branch = $s[$keyword][$index];
+                        $shape =
+                            $branch['label'] ?? ($branch['reference'] ?? 'shape ' . ($index + 1));
                     }
                 }
                 if ($closest !== null) {
@@ -3127,7 +3123,7 @@ final class Codec
                         $response,
                         $definitions,
                         $depth,
-                    ): bool {
+                    ): bool|SdkError {
                         try {
                             self::executeNode(
                                 $candidate,
@@ -3143,7 +3139,7 @@ final class Codec
                             return true;
                         } catch (SdkError $e) {
                             if (self::validationFailureMessage($e) !== null) {
-                                return false;
+                                return $e;
                             }
                             throw $e;
                         }
@@ -3571,7 +3567,7 @@ final class Codec
                         $response,
                         $depth,
                         $budget,
-                    ): bool {
+                    ): bool|SdkError {
                         try {
                             $candidate = self::numericView(
                                 $value,
@@ -3598,7 +3594,7 @@ final class Codec
                             return true;
                         } catch (SdkError $e) {
                             if (self::validationFailureMessage($e) !== null) {
-                                return false;
+                                return $e;
                             }
                             throw $e;
                         }
@@ -3914,12 +3910,12 @@ final class Codec
                     return true;
                 } catch (SdkError $e) {
                     if (self::validationFailureMessage($e) !== null) {
-                        return false;
+                        return $e;
                     }
                     throw $e;
                 }
             };
-            if (isset($s['exclude']) && $matches($s['exclude'], false)) {
+            if (isset($s['exclude']) && $matches($s['exclude'], false) === true) {
                 self::fail($path, 'value matches a forbidden combination');
             }
             $conditional = self::conditionalBranch(

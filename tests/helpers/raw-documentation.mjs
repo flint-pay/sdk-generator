@@ -136,9 +136,29 @@ export function rawDocumentationInput(api, profile) {
           'Event';
     }
   }
-  const normalize = (s) => {
+  const numberIntegers = (config.integers?.mode ?? config.integers) === 'number';
+  const exactNames = config.integers?.exactComponents ?? [];
+  // Compare only value shapes, independently of production integer annotations.
+  const valueShape = (s) =>
+    JSON.stringify([
+      (Array.isArray(s.type) ? s.type : [s.type]).filter((t) => t !== 'null').sort(),
+      s.format,
+      s.properties &&
+        Object.keys(s.properties)
+          .sort()
+          .map((key) => [key, valueShape(s.properties[key])]),
+      s.items && valueShape(s.items),
+    ]);
+  const exactShapes = exactNames
+    .filter((name) => schemas[name]?.properties)
+    .map((name) => valueShape(schemas[name]));
+  const normalize = (s, exact = false) => {
     if (!s || typeof s !== 'object') return s;
+    exact ||= !!s.properties && exactShapes.includes(valueShape(s));
     const out = { ...s };
+    if (numberIntegers && (s.type === 'integer' || s.type?.includes?.('integer'))) {
+      out['x-oracle-integers'] = exact ? 'exact' : 'number';
+    }
     if (protectedNodes.has(s))
       for (const key of ['example', 'examples', 'default']) delete out[key];
     if (s.$ref) {
@@ -158,7 +178,9 @@ export function rawDocumentationInput(api, profile) {
     }
     for (const key of ['properties'])
       if (s[key])
-        out[key] = Object.fromEntries(Object.entries(s[key]).map(([k, v]) => [k, normalize(v)]));
+        out[key] = Object.fromEntries(
+          Object.entries(s[key]).map(([k, v]) => [k, normalize(v, exact)]),
+        );
     for (const key of [
       'items',
       'additionalProperties',
@@ -169,8 +191,9 @@ export function rawDocumentationInput(api, profile) {
       'then',
       'else',
     ])
-      if (s[key] && typeof s[key] === 'object') out[key] = normalize(s[key]);
-    for (const key of ['allOf', 'oneOf', 'anyOf']) if (s[key]) out[key] = s[key].map(normalize);
+      if (s[key] && typeof s[key] === 'object') out[key] = normalize(s[key], exact);
+    for (const key of ['allOf', 'oneOf', 'anyOf'])
+      if (s[key]) out[key] = s[key].map((part) => normalize(part, exact));
     if (Array.isArray(out.type) && out.type.filter((t) => t !== 'null').length > 1) {
       const { type, ...siblings } = out;
       return { ...siblings, anyOf: type.map((type) => ({ type })) };
@@ -178,7 +201,7 @@ export function rawDocumentationInput(api, profile) {
     return out;
   };
   const models = Object.fromEntries(
-    Object.entries(schemas).map(([n, s]) => [rename[n], normalize(s)]),
+    Object.entries(schemas).map(([n, s]) => [rename[n], normalize(s, exactNames.includes(n))]),
   );
   for (const [event, item] of Object.entries(document.webhooks ?? {}))
     for (const method of ['post', 'put', 'get', 'patch', 'delete', 'head', 'options']) {
@@ -228,7 +251,8 @@ export function schemaInstruction(s) {
     type = types.find((t) => t !== 'null') ?? (s.type === undefined ? undefined : 'null');
   const kind =
     type === 'integer'
-      ? /^(?:u?int64)$/.test(s.format)
+      ? s['x-oracle-integers'] === 'exact' ||
+        (s['x-oracle-integers'] !== 'number' && /^(?:u?int64)$/.test(s.format))
         ? 'exact-integer'
         : 'safe-integer'
       : type === 'number'
@@ -562,9 +586,11 @@ export function documentedModels(directory, input) {
       if (documentRoots.has(name) && !models.some((m) => m.name === name && m.response))
         add(name, schema, true);
   // Public operation response class names, including envelope/nested classes.
+  // PHP success wrappers no longer have status suffixes. Error envelopes retain
+  // their declared component classes instead of joining that wrapper.
   for (const op of input.operations)
     for (const [status, r] of Object.entries(op.responses))
-      if (r.schema)
+      if (r.schema && (!php || /^2\d\d$/.test(status)))
         add(
           op.resource[0].toUpperCase() +
             op.resource.slice(1) +
@@ -727,6 +753,16 @@ export function documentedModels(directory, input) {
       }
       return s;
     };
+    // A declared tagged response now owns its variant classes instead of an
+    // operation wrapper. Read their spellings from declarations, while branch
+    // tags and constraints still come only from the raw component.
+    for (const [name, schema] of Object.entries(input.models)) {
+      if (!commonScopes(schema, defs).some((part) => part.discriminator)) continue;
+      const variants = [...labels].filter(
+        (label) => label.startsWith(name) && label !== name && !label.endsWith('Input'),
+      );
+      if (variants.length) bind(schema, variants.join('|') + '|\\stdClass');
+    }
     // Each class is paired with its original schema before following its getter
     // identities. Bound annotations never replace a containing union/null node.
     for (let pass = 0; pass < 2; pass++)

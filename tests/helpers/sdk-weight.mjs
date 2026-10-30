@@ -61,7 +61,7 @@ export function measureSdkWeight(output) {
     const client=new Client(options),first=performance.now();
     for(let i=0;i<25;i++)new Client(options);
     const repeatedClientMs=(performance.now()-first)/25;
-    const requestStart=performance.now(); await client.invoices.getPDF({invoice_id:'inv_test'});
+    const requestStart=performance.now(); await client.invoices.getPDF('inv_test');
     console.log(JSON.stringify({version:process.version,importMs:imported-start,importRss:importRss-rss,firstClientMs:first-imported,repeatedClientMs,firstRequestMs:performance.now()-requestStart,rss:process.memoryUsage().rss-rss}));
   `,
   ]);
@@ -141,7 +141,7 @@ export function measureSdkWeight(output) {
     $options=new \\${namespace}\\ClientOptions(baseUrl:'https://example.invalid',token:'synthetic',transport:fn($r)=>['status'=>200,'headers'=>['content-type'=>'application/pdf'],'body'=>'%PDF synthetic']);
     $client=new \\${namespace}\\Client($options);$first=hrtime(true);
     for($i=0;$i<25;$i++){ $c=new \\${namespace}\\Client($options);$c->close(); }
-    $repeated=(hrtime(true)-$first)/25e6;$requestStart=hrtime(true);$client->invoices->getPDF(['invoice_id'=>'inv_test']);$firstRequest=(hrtime(true)-$requestStart)/1e6;
+    $repeated=(hrtime(true)-$first)/25e6;$requestStart=hrtime(true);$client->invoices->getPDF('inv_test');$firstRequest=(hrtime(true)-$requestStart)/1e6;
     echo json_encode(['firstRequestMs'=>$firstRequest,'version'=>PHP_VERSION,'opcache'=>${opcache},'autoloadMs'=>($loaded-$start)/1e6,'autoloadMemory'=>$importMemory,'firstClientMs'=>($first-$loaded)/1e6,'repeatedClientMs'=>$repeated,'peakMemory'=>memory_get_peak_usage(true)]);
   `,
       join(output, 'php'),
@@ -156,7 +156,7 @@ export function measureSdkWeight(output) {
           contents:
             entry === 'webhooks'
               ? `export {verifyWebhook} from './webhooks.js';`
-              : `import {Client} from './${entry}.js'; export const call=()=>new Client({baseUrl:'https://example.invalid',token:'synthetic'}).invoices.getPDF({invoice_id:'inv_test'});`,
+              : `import {Client} from './${entry}.js'; export const call=()=>new Client({baseUrl:'https://example.invalid',token:'synthetic'}).invoices.getPDF('inv_test');`,
           resolveDir: join(output, 'node'),
         },
         bundle: true,

@@ -128,9 +128,9 @@ test('3.1 sibling constraints intersect, retain local metadata, and never contam
   assert.deepEqual(c.models.Text, base);
   assert.deepEqual(c.definitions[body.properties.plain['x-sdk-ref']], base);
   assert.equal(serialize({ short: 'abc', long: 'abcde' }, body), '{"short":"abc","long":"abcde"}');
-  assert.throws(() => serialize({ short: 'a' }, body), /minLength/);
-  assert.throws(() => serialize({ short: 'abcd' }, body), /maxLength/);
-  assert.throws(() => serialize({ long: 'abcd' }, body), /minLength/);
+  assert.throws(() => serialize({ short: 'a' }, body), /must be a string with at least/);
+  assert.throws(() => serialize({ short: 'abcd' }, body), /must be a string with at most/);
+  assert.throws(() => serialize({ long: 'abcd' }, body), /must be a string with at least/);
 });
 
 test('description siblings retain named identity despite structurally identical PHP models', async () => {
@@ -167,11 +167,8 @@ test('description siblings retain named identity despite structurally identical 
       /\| `other` \| Required \| \[FirstRecord\]\(MODELS.md#firstrecord\)/,
     );
   }
-  assert.match(
-    files.get('php/src/classes/ApiSendValueResponse.php'),
-    /getAnnotated\(\): SecondRecord/,
-  );
-  assert.match(files.get('php/src/classes/ApiSendValueResponse.php'), /getOther\(\): FirstRecord/);
+  assert.match(files.get('php/src/classes/Envelope.php'), /getAnnotated\(\): SecondRecord/);
+  assert.match(files.get('php/src/classes/Envelope.php'), /getOther\(\): FirstRecord/);
   assert.match(renderedDeclarations(files), /"annotated": FirstRecord;/);
   assert.match(renderedDeclarations(files), /"annotated": SecondRecordInput;/);
   const value = { plain: { id: 'plain' }, annotated: { id: 'field' }, other: { id: 'other' } };
@@ -187,7 +184,7 @@ test('description siblings retain named identity despite structurally identical 
       declare(strict_types=1);
       require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
       function recordId(SiblingsSdk\SecondRecord $record): string { return $record->getId(); }
-      $model=new SiblingsSdk\ApiSendValueResponse(json_decode($argv[2],false));
+      $model=new SiblingsSdk\Envelope(json_decode($argv[2],false));
       if(recordId($model->getPlain())!=='plain'||recordId($model->getAnnotated())!=='field')exit(2);
       if(get_class($model->getOther())!==SiblingsSdk\FirstRecord::class)exit(3);
       if(get_class($model->getAnnotated())!==SiblingsSdk\SecondRecord::class)exit(4);
@@ -272,7 +269,7 @@ test('annotation overrides stay at their ref use sites through cached outer refe
         { annotated: 'a' },
         { ...c.operations[0].body, 'x-sdk-definitions': c.definitions },
       ),
-    /minLength/,
+    /must be a string with at least/,
   );
 });
 
@@ -2326,7 +2323,7 @@ test('mutually dependent numeric unions share declarations before validating the
           const exclusive = {
             allOf: [referenced, { oneOf: [...sibling.oneOf, sibling.oneOf[0]] }],
           };
-          assert.throws(() => serialize(exact, exclusive), /exactly one alternative/);
+          assert.throws(() => serialize(exact, exclusive), /matches none of its 2 shapes/);
         }
       }
     }

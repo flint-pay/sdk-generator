@@ -124,16 +124,16 @@ echo json_encode($sent);
   ]);
 });
 
-test('named input and params types accept scalars and readonly arrays with per-item enum types', (t) => {
+test('named params and method inputs accept scalars and readonly arrays with per-item enum types', (t) => {
   const f = fixture(t);
   const consumer = join(f.output, 'node/consumer.ts');
   writeFileSync(
     consumer,
-    `import {Client,type RefundsListParams,type RefundsListInput} from './index.js';
+    `import {Client,type RefundsListParams} from './index.js';
 const client=new Client({baseUrl:'https://example.invalid'});
 const singleton=['duplicate'] as const;
 const params:RefundsListParams={reason:singleton};
-const input:RefundsListInput={reason:'fraud'};
+const input:NonNullable<Parameters<Client['refunds']['list']>[0]>={reason:'fraud'};
 client.refunds.list(params);client.refunds.list(input);client.refunds.list({reason:'duplicate'});
 // @ts-expect-error Scalar enum values are checked.
 client.refunds.list({reason:'invalid'});

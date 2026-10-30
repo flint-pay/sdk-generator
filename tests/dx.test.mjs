@@ -137,7 +137,7 @@ test('reference explains response envelopes, numeric units, models and every con
     const ref = readReference(output, target);
     for (const method of ['listAllItems', 'listAllPages', 'retrieveWait'])
       assert.ok(ref.includes(method));
-    assert.match(read(`${target}/RUNTIME.md`), /data \(the complete body\)/);
+    assert.match(read(`${target}/RUNTIME.md`), /lastResponse carrying status, headers, requestId/);
     assert.match(read(`${target}/RUNTIME.md`), /API_IDEMPOTENCY_KEY/);
     assert.match(read(`${target}/RUNTIME.md`), /BearerAuth/);
   }
@@ -154,7 +154,7 @@ foreach([$input,new PaymentsCreateInput($input)] as $value){
  if($data->getDescription()!==null || $data->description!==null)throw new Exception('optional read');
  try{$data->descripton;throw new Exception('did not throw');}catch(SdkError $e){if(!str_contains($e->getMessage(),'Unknown model property descripton'))throw $e;}
 }
-$model=new Example\\Payments\\PaymentsCreateResponse(['id'=>'p_1','amount'=>'100','status'=>'pending','description'=>null]);
+$model=new Example\\Payments\\Payment(['id'=>'p_1','amount'=>'100','status'=>'pending','description'=>null]);
 if(!$model->hasDescription() || $model->valueOrDefault('description','fallback')!==null)throw new Exception('null');
 $fallback=(object)['nested'=>(object)['value'=>1]];$copy=$model->valueOrDefault('absent',$fallback);$copy->nested->value=2;if($fallback->nested->value!==1)throw new Exception('copy');
 $c->close();echo 'ok';`;

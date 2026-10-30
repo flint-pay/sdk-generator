@@ -79,7 +79,7 @@ try {
     ]);
     throw new RuntimeException('Strict decoder accepted missing required fields');
 } catch (Example\FlintFull\SdkError $error) {
-    if (!str_contains($error->getMessage(), 'required field is missing')) {
+    if (!str_contains($error->getMessage(), 'data.amount_money is required')) {
         throw $error;
     }
 }

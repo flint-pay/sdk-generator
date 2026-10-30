@@ -5,8 +5,8 @@
       "name": "payment",
       "api": "tests/fixtures/payment-api.json",
       "config": "tests/fixtures/payment-sdk.json",
-      "nodeRuntimeSha256": "74f365dd6e26fb7d5997f6d1facb310c8a913e8a6df1735a5c1133bb0438278b",
-      "phpSha256": "993384440698c2e9670fcbdd89039e3612734845fa7419e0a9478d227f7b9dc5",
+      "nodeRuntimeSha256": "3a4ba1f673a370b7923c6cc7cb822c473c75c20ec49cfafb3db4f7405c7f9f11",
+      "phpSha256": "7734035bbff662ab09c998070d8886ed732e8e43fcbf5a3e407a7a752a4912a3",
       "rootExports": [
         "Client",
         "ClientOptions",
@@ -17,16 +17,9 @@
         "InputValue",
         "Model",
         "Payment",
-        "PaymentsCaptureInput",
-        "PaymentsCreateInput",
-        "PaymentsLinksInput",
         "PaymentsLinksResponse",
-        "PaymentsListAllInput",
         "PaymentsListAllResponse",
-        "PaymentsRefundInput",
-        "PaymentsRetrieveInput",
         "PaymentsRetrieveResponse",
-        "PaymentsUpdateInput",
         "PaymentsUpdateResponse",
         "RequestOptions",
         "ResponseInfo",
@@ -43,17 +36,17 @@
         "verifyWebhookAsync"
       ],
       "singleTarget": {
-        "node": "74f365dd6e26fb7d5997f6d1facb310c8a913e8a6df1735a5c1133bb0438278b",
-        "php": "993384440698c2e9670fcbdd89039e3612734845fa7419e0a9478d227f7b9dc5"
+        "node": "3a4ba1f673a370b7923c6cc7cb822c473c75c20ec49cfafb3db4f7405c7f9f11",
+        "php": "7734035bbff662ab09c998070d8886ed732e8e43fcbf5a3e407a7a752a4912a3"
       },
-      "phpRuntimeSha256": "590286f5c67d9f98a83fd2b7abfbf1d0e7c63d38ef7a48904634569a6d998d47"
+      "phpRuntimeSha256": "3ec992ab5eadd2686aee21b2e46246653b46179eaba0a5c64c3a9cd0df217487"
     },
     {
       "name": "flint",
       "api": "tests/providers/flint/openapi.json",
       "config": "tests/providers/flint/sdk.json",
-      "nodeRuntimeSha256": "5492dac44753f482958d6c913cb936213d8650a5de59aa1c929e91e562d2ce6c",
-      "phpSha256": "c3737796fe0861de8135a32b9dec9afa64b2598d023632ce0a77df061dc01982",
+      "nodeRuntimeSha256": "1399930bbdc8ccf4bcf0d1614fe6213b4011a6f3295a1eb28f7bd8f50b4d18b9",
+      "phpSha256": "b20008959de29d6cefa00a7d036a3f80c5e62606c0048acd5f1bdccb87e21547",
       "rootExports": [
         "Address",
         "CapturePaymentIntentRequest",
@@ -123,11 +116,7 @@
         "PaymentIntentSucceededMerchantEvent",
         "PaymentIntentWithCollection",
         "PaymentIntentWithCollectionResponse",
-        "PaymentIntentsCaptureInput",
-        "PaymentIntentsCreateInput",
         "PaymentIntentsCreateResponse",
-        "PaymentIntentsGetInput",
-        "PaymentIntentsListInput",
         "PaymentRefund",
         "PaymentRisk",
         "PaymentSourceAchDebitSummary",
@@ -171,9 +160,6 @@
         "RefundTenderAllocationRequest",
         "RefundTenderAllocationRequestInput",
         "RefundUnissuedGiftCardRecovery",
-        "RefundsCreateInput",
-        "RefundsGetInput",
-        "RefundsListInput",
         "RequestOptions",
         "ResourceType",
         "ResponseInfo",
@@ -223,10 +209,10 @@
         "verifyWebhookAsync"
       ],
       "singleTarget": {
-        "node": "aacb4de0864fe1f9d00144f221517b19039a592db88ca3873ee964b5a77fd771",
-        "php": "c3737796fe0861de8135a32b9dec9afa64b2598d023632ce0a77df061dc01982"
+        "node": "42850097d69fbc8ef016440d6b2aea0ec9574330fbd72eda77df8226043893e0",
+        "php": "b20008959de29d6cefa00a7d036a3f80c5e62606c0048acd5f1bdccb87e21547"
       },
-      "phpRuntimeSha256": "5f7bb46c86fe071011ca1366906513b24524434060f07d4f404b35ab7ab19b71"
+      "phpRuntimeSha256": "fd3d923e1caa39db0ae3b222e73ac9652988f353d96d7e94290e28f0dbffa06a"
     }
   ]
 }

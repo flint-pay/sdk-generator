@@ -230,10 +230,7 @@ test('annotated refs retain both-target input requiredness and output omission w
     files.get('node/declarations/Envelope.d.ts'),
     /"credential"|"inheritedWrite"/,
   );
-  assert.doesNotMatch(
-    files.get('php/src/classes/ApiSendRecordResponse.php'),
-    /getCredential|getInheritedWrite/,
-  );
+  assert.doesNotMatch(files.get('php/src/classes/Envelope.php'), /getCredential|getInheritedWrite/);
 });
 
 test('valid local and inherited examples survive annotation refs, including nested fields, items and maps', async () => {
@@ -330,7 +327,7 @@ test('invalid local examples remain rejected against referenced pattern constrai
     );
     assert.throws(
       () => render(i.load()),
-      /config\/operations\/sendRecord\/example:.*input\.body\.value: string violates pattern/,
+      /config\/operations\/sendRecord\/example:.*body\.value must be a string matching the required pattern; received a string/,
     );
   }
 });
@@ -350,7 +347,10 @@ test('local and inherited defaults remain metadata and never supply missing cons
   const c = i.load();
   assert.equal(c.operations[0].body.properties.value.default, 'SPECIAL');
   assert.equal(c.operations[0].body.properties.inherited.default, 'SPECIAL');
-  assert.throws(() => render(c), /input\.body\.value: string violates pattern/);
+  assert.throws(
+    () => render(c),
+    /body\.value must be a string matching the required pattern; received a string/,
+  );
   const configured = fixture(
     {
       type: 'object',

@@ -1,6 +1,10 @@
 import { spawnSync } from 'node:child_process';
 import { assertIndependentOracleGraph } from './helpers/oracle-import-graph.mjs';
-import { rawDocumentationInput, payloadSchemas } from './helpers/raw-documentation.mjs';
+import {
+  rawDocumentationInput,
+  payloadSchemas,
+  schemaInstruction,
+} from './helpers/raw-documentation.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -231,7 +235,15 @@ test('independent certifier covers value branches, nested collections and declar
       assert.match(docs, /minItems: `3`/);
       assert.match(docs, /uniqueItems: `true`/);
       assert.match(docs, /"blue"/);
-      assert.doesNotMatch(docs, /Array of any|list(?:&lt;|<)mixed/);
+      // Field tables retain element types; low-level Result.data summaries may be generic.
+      assert.deepEqual(
+        docs
+          .split('\n')
+          .filter(
+            (line) => line.startsWith('| `') && /Array of any|list(?:&lt;|<)mixed/.test(line),
+          ),
+        [],
+      );
       const sourceDir = join(root, target === 'node' ? 'declarations' : 'src/classes');
       const source = readdirSync(sourceDir)
         .filter((name) => /\.(?:d\.ts|php)$/.test(name))
@@ -508,5 +520,38 @@ test('raw payload projection intersects reference siblings before deriving requi
       (f) => f.field === 'payment_collection',
     ).presence,
     'Required',
+  );
+});
+
+test('raw documentation expectations honor native counters and exact component shapes', () => {
+  const money = {
+    type: 'object',
+    properties: { amount: { type: 'integer', format: 'int64' }, currency: { type: 'string' } },
+  };
+  const api = {
+    components: {
+      schemas: {
+        Money: money,
+        Version: { type: 'integer', format: 'int64' },
+        Inline: { type: 'object', properties: { amount_money: money } },
+      },
+    },
+  };
+  const native = rawDocumentationInput(api, {
+    integers: { mode: 'number', exactComponents: ['Money'] },
+  });
+  assert.equal(schemaInstruction(native.models.Version).value.kind, 'safe-integer');
+  assert.equal(native.models.Version.format, 'int64', 'wire format documentation stays intact');
+  assert.equal(
+    schemaInstruction(native.models.Money.properties.amount).value.kind,
+    'exact-integer',
+  );
+  assert.equal(
+    schemaInstruction(native.models.Inline.properties.amount_money.properties.amount).value.kind,
+    'exact-integer',
+  );
+  assert.equal(
+    schemaInstruction(rawDocumentationInput(api, {}).models.Version).value.kind,
+    'exact-integer',
   );
 });

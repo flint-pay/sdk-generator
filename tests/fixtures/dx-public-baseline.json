@@ -6,29 +6,29 @@
       "name": "library",
       "api": "examples/library.openapi.json",
       "config": "examples/library.sdk.json",
-      "nodeDeclarationsSha256": "4c17f2543412bb332da9a28d197741e7a2131075e2e7f26050ffe4a5bc2d2de7",
+      "nodeDeclarationsSha256": "e5821c5c8c10d108aa08c974bec11b54ffc15e70abe8d61995d87af85212255a",
       "phpDeclarationsSha256": "8d06f3a3624500937cd37700df7953f88ff3d3940e3be3cb2bfefac47d945560"
     },
     {
       "name": "payment",
       "api": "tests/fixtures/payment-api.json",
       "config": "tests/fixtures/payment-sdk.json",
-      "nodeDeclarationsSha256": "44caf29df0496bf9087b3e4af32397fd6cf85be20dffe116add86538e74940d6",
-      "phpDeclarationsSha256": "77ff8ec4821900798a1d3356b3266801db8acc54c29bf636eda535bddf1e3cf7"
+      "nodeDeclarationsSha256": "9dde79f04f301d4fa20ef3439cfde9c891839e5f84acae3412836623046d7bf5",
+      "phpDeclarationsSha256": "24bc2b53826ffa924a39625c505a90d2ad58253b85a66decee30f7be3ea30d81"
     },
     {
       "name": "flint",
       "api": "tests/providers/flint/openapi.json",
       "config": "tests/providers/flint/sdk.json",
-      "nodeDeclarationsSha256": "42ba4ee5b555862990f94e3ad2a42a009d036955d44dc6e6b877756bdb8ae2b7",
-      "phpDeclarationsSha256": "ad7b890de67b86fc843663e54c49c26acef88fd19f265fe3ccc15d2658ad050b"
+      "nodeDeclarationsSha256": "04f9f1ab56a4930a60b65c5e350050cdd11878ae4b296b50b40707e3ec50d8ff",
+      "phpDeclarationsSha256": "d205f2318a9858d93c895de85b6df0614f78d8227721e0223619904eff906227"
     },
     {
       "name": "risk",
       "api": "tests/providers/flint/risk-openapi.json",
       "config": "tests/providers/flint/risk-sdk.json",
-      "nodeDeclarationsSha256": "d756c9f66d7958211faea1cf3bc832747c9c7ff954ccd7d17780067f62edb532",
-      "phpDeclarationsSha256": "4cc80a7218b717d2c3ac62417c060b77308b1347934ec0d6b0ff6929b164d138"
+      "nodeDeclarationsSha256": "a34a95b5d34008daa85a7fd8b5fe8f1d151ece36fe1ecbdaaa9458d9177b73a2",
+      "phpDeclarationsSha256": "70fa3d190e03b9f9c484f1227fd7cd1d86ad8a1a331063da41b751dd07e9e069"
     }
   ]
 }

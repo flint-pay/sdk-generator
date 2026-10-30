@@ -116,7 +116,7 @@ test('optional response model fields permit a stable minor release in both targe
     'php',
     [
       '-r',
-      String.raw`require $argv[1].'/src/Runtime.php'; $old = new CompatibilityExample\ApiOneResponse(['id'=>'v']); $new = new CompatibilityExample\ApiOneResponse(['id'=>'v','label'=>'new']); echo json_encode([$old->getId(),$old->hasLabel(),$new->getLabel()]);`,
+      String.raw`require $argv[1].'/src/Runtime.php'; $old = new CompatibilityExample\Value(['id'=>'v']); $new = new CompatibilityExample\Value(['id'=>'v','label'=>'new']); echo json_encode([$old->getId(),$old->hasLabel(),$new->getLabel()]);`,
       join(f.output, 'php'),
     ],
     { encoding: 'utf8' },

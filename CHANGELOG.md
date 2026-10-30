@@ -17,6 +17,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 - Response component references reuse their declared types in both targets, including PHP model classes. Inline response names that collide with declared components receive deterministic `OperationResponse` suffixes, reported by `diagnose`, instead of failing generation.
 
+- Preserve prototype-named model lookup during webhook naming and ownership of reused response component classes, and reuse PHP union failures when formatting validation errors to keep recursive invalid inputs bounded.
+
 - Generated Node and PHP examples optionally read `FLINT_BASE_URL`, use real-format path placeholders and media request examples, reject empty PATCH examples, and support profile-configured derived idempotency keys. The runtime does not read `FLINT_BASE_URL`. (generator 0.1.0)
 
 - Breaking: payload results, pages and final polls carry `lastResponse` (PHP `lastResponse()`), with typed `ResponseInfo.body`; result-mode `meta` moves there too. Remove `*WithResponse` companions, `SdkResponse` and Node `Metadata`. Payloads must be objects; items carry no response information. Diagnostics expose `errorName`/`errorCode`. User-Agent includes runtime/OS details and optional client `appInfo`. See [migration](docs/releases.md#response-information-and-application-identity).

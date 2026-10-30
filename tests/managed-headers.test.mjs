@@ -226,7 +226,8 @@ for (const style of ['object', 'positional']) {
     // Required managed headers must not force duplicate arguments in generated types.
     writeFileSync(
       join(out, 'node/check.ts'),
-      `import {Client, type ApiSendValueInput} from './index.js';
+      `import {Client} from './index.js';
+type ApiSendValueInput = NonNullable<Parameters<Client['api']['sendValue']>[0]>;
 const c = new Client({baseUrl:'https://example.invalid'});
 const input: ApiSendValueInput = {};
 c.api.sendValue({}, {ifMatch:'tag_new'});
