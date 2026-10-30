@@ -90,7 +90,9 @@ async function runNode(f, source, statuses) {
   try {
     await execute(
       ExampleClient,
-      { env: { API_BASE_URL: 'https://example.invalid', API_IDEMPOTENCY_KEY: 'saved-action-key' } },
+      {
+        env: { FLINT_BASE_URL: 'https://example.invalid', API_IDEMPOTENCY_KEY: 'saved-action-key' },
+      },
       { log() {} },
     );
   } catch (error) {
@@ -132,7 +134,7 @@ function runPhp(f, source, statuses) {
         encoding: 'utf8',
         env: {
           ...process.env,
-          API_BASE_URL: 'https://example.invalid',
+          FLINT_BASE_URL: 'https://example.invalid',
           API_IDEMPOTENCY_KEY: 'saved-action-key',
         },
       },

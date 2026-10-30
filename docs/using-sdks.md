@@ -875,7 +875,7 @@ Keep handwritten domain helpers in the generated package's `custom/` directory; 
 
 Each package's `examples/` directory has a runnable script for every operation, linked from the API reference. Node emits one `.mjs` file per operation and validates it with TypeScript's `checkJs`. PHP examples find Composer's autoloader from the application directory or their installed location under `vendor/`; copied examples work inside the application too.
 
-- Scripts read `API_BASE_URL`, `API_TOKEN`, `API_KEY` or the configured shortcut's uppercase snake-case variable explicitly. A script without a compiled default server requires `API_BASE_URL`, and a script for an authenticated operation requires its credential variable; each explains how to set it.
+- Scripts read `FLINT_BASE_URL`, `API_TOKEN`, `API_KEY` or the configured shortcut's uppercase snake-case variable explicitly. Unset `FLINT_BASE_URL` uses the spec default server. A script for an authenticated operation requires its credential variable; each explains how to set it.
 - Replace sample IDs with values from your account before running.
 - Scripts generate random idempotency keys only when the declared header schema permits that format and length. Otherwise set `API_IDEMPOTENCY_KEY` to a schema-compatible key. Use a new key for each new business action, and reuse a saved key only for the same action.
 - See [running operation examples](configuration.md#running-operation-examples) for commands.

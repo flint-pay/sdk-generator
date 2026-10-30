@@ -455,6 +455,13 @@
           "additionalProperties": {
             "type": "string"
           }
+        },
+        "exampleValues": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       },
       "additionalProperties": false
@@ -967,6 +974,25 @@
         "namingReason": {
           "type": "string",
           "minLength": 1
+        },
+        "exampleIdempotencyKey": {
+          "type": "object",
+          "required": ["prefix", "variable", "example"],
+          "properties": {
+            "prefix": {
+              "type": "string",
+              "minLength": 1
+            },
+            "variable": {
+              "type": "string",
+              "minLength": 1
+            },
+            "example": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

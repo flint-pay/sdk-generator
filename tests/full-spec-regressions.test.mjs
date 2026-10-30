@@ -858,7 +858,7 @@ test('exact fractional union samples produce executable and typechecked examples
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const env = {
     ...process.env,
-    API_BASE_URL: `http://127.0.0.1:${server.address().port}`,
+    FLINT_BASE_URL: `http://127.0.0.1:${server.address().port}`,
   };
   try {
     for (const [schema, sharing, wire] of [

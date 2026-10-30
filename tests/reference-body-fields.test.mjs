@@ -1083,7 +1083,7 @@ test('generated PHP examples preserve schema examples alongside new parameter va
   writeFileSync(file, source);
   const run = execFileSync('php', [file], {
     encoding: 'utf8',
-    env: { ...process.env, API_BASE_URL: 'https://example.invalid' },
+    env: { ...process.env, FLINT_BASE_URL: 'https://example.invalid' },
   });
   assert.match(run, /synthetic wire assertions passed/);
 });

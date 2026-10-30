@@ -332,7 +332,7 @@ test('mixed JSON, empty and SSE examples validate and run every result path in N
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const env = {
     ...process.env,
-    API_BASE_URL: `http://127.0.0.1:${server.address().port}`,
+    FLINT_BASE_URL: `http://127.0.0.1:${server.address().port}`,
   };
   try {
     for (const mixed of [false, true]) {

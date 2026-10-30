@@ -679,23 +679,35 @@ function exampleKey(
   const parameters = op.parameters.filter(
     (p) => p.in === 'header' && p.name.toLowerCase() === headerName.toLowerCase(),
   );
-  const requiresSuppliedKey = parameters.some(
-    (p) => !acceptsGeneratedKey(p.schema, target === 'node' ? 36 : 32, definitions),
-  );
+  const requiresSuppliedKey =
+    !op.exampleIdempotencyKey &&
+    parameters.some(
+      (p) => !acceptsGeneratedKey(p.schema, target === 'node' ? 36 : 32, definitions),
+    );
   if (op.idempotency || parameters.length) {
-    const create = requiresSuppliedKey
+    const derived = op.exampleIdempotencyKey;
+    const create = derived
       ? target === 'node'
-        ? '(process.env.API_IDEMPOTENCY_KEY ?? "")'
-        : "(getenv('API_IDEMPOTENCY_KEY') === false ? '' : getenv('API_IDEMPOTENCY_KEY'))"
-      : target === 'node'
-        ? 'crypto.randomUUID()'
-        : 'bin2hex(random_bytes(16))';
+        ? `\`${js(derived.prefix).slice(1, -1).replaceAll('`', '\\`').replaceAll('${', '\\${')}\${${derived.variable}}\``
+        : php(derived.prefix) + ' . $' + derived.variable
+      : requiresSuppliedKey
+        ? target === 'node'
+          ? '(process.env.API_IDEMPOTENCY_KEY ?? "")'
+          : "(getenv('API_IDEMPOTENCY_KEY') === false ? '' : getenv('API_IDEMPOTENCY_KEY'))"
+        : target === 'node'
+          ? 'crypto.randomUUID()'
+          : 'bin2hex(random_bytes(16))';
     const expression = inline ? create : target === 'node' ? key : '$' + key;
     if (!inline) {
       keySetup =
         '// Persist this key with the action before sending; reuse it for every resubmission.\n' +
         (target === 'node' ? `const ${key} = ${create};\n` : `$${key} = ${create};\n`);
-      if (requiresSuppliedKey)
+      if (derived)
+        keySetup =
+          (target === 'node'
+            ? `const ${derived.variable} = ${js(derived.example)};\n`
+            : `$${derived.variable} = ${php(derived.example)};\n`) + keySetup;
+      if (requiresSuppliedKey && !derived)
         keySetup +=
           target === 'node'
             ? `if (!${key}) throw new Error("Set API_IDEMPOTENCY_KEY to a new key matching the header schema, or reuse the key saved with this action");\n`
@@ -932,7 +944,7 @@ function exampleParts(
   if (target === 'node') {
     return {
       symbols,
-      setup: `const ${baseUrl} = process.env.API_BASE_URL;\nif (!${baseUrl}) throw new Error("Set API_BASE_URL to your sandbox or local mock URL");\n${credentialSetup}const ${client} = new Client({\n  ${option('baseUrl', baseUrl)},\n  allowInsecureHttp: ["localhost", "127.0.0.1"].includes(new URL(${baseUrl}).hostname) && new URL(${baseUrl}).protocol === "http:",\n${authOptions ? '  ' + authOptions + ',\n' : ''}});\n`,
+      setup: `const ${baseUrl} = process.env.FLINT_BASE_URL || undefined;\n${credentialSetup}const ${client} = new Client({\n  ${option('baseUrl', baseUrl)},\n  allowInsecureHttp: !!${baseUrl} && ["localhost", "127.0.0.1"].includes(new URL(${baseUrl}).hostname) && new URL(${baseUrl}).protocol === "http:",\n${authOptions ? '  ' + authOptions + ',\n' : ''}});\n`,
       call:
         key.keySetup +
         `${assign}await ${client}.${op.resource}.${method}(${nodeArguments});\n${output}` +
@@ -944,7 +956,7 @@ function exampleParts(
   }
   return {
     symbols,
-    setup: `$baseUrl = getenv('API_BASE_URL');\nif ($baseUrl === false || $baseUrl === '') throw new \\RuntimeException('Set API_BASE_URL to your sandbox or local mock URL');\n${credentialSetup}$${client} = new Client(new ClientOptions(\n${authOptions ? '  ' + authOptions + ',\n' : ''}  baseUrl: $baseUrl,\n  allowInsecureHttp: in_array(parse_url($baseUrl, PHP_URL_HOST), ['localhost', '127.0.0.1'], true) && parse_url($baseUrl, PHP_URL_SCHEME) === 'http',\n));\n`,
+    setup: `$baseUrl = getenv('FLINT_BASE_URL') ?: null;\n${credentialSetup}$${client} = new Client(new ClientOptions(\n${authOptions ? '  ' + authOptions + ',\n' : ''}  baseUrl: $baseUrl,\n  allowInsecureHttp: $baseUrl !== null && in_array(parse_url($baseUrl, PHP_URL_HOST), ['localhost', '127.0.0.1'], true) && parse_url($baseUrl, PHP_URL_SCHEME) === 'http',\n));\n`,
     call:
       key.keySetup +
       `${positional(op) ? '' : `$input = ${phpExampleSource(input, 0, true, syntax)};\n`}${assign}$${client}->${op.resource}->${method}(${positional(op) ? publicArguments(op, input, 'php', syntax, false, Boolean(requestOptions)) : '$input'}${requestOptions ? `${requestArguments(op, input).length ? ', ' : ''}new RequestOptions(${requestOptions})` : ''});\n${output}` +
@@ -1128,7 +1140,7 @@ function packageReadme(
   const authLink = c.authentication ? ' ([authentication](RUNTIME.md#authentication))' : '';
   const ambient =
     c.config.auth && 'defaultCredentials' in c.config.auth && c.config.auth.defaultCredentials;
-  const setup = `Set ${markdownList(['`API_BASE_URL`', ...environment])}${authLink}${ambient ? ' and configure default credentials as described in the authentication guide' : ''}, then replace the sample values with your own. Choose your sandbox or local mock URL explicitly${c.defaultBaseUrl !== undefined ? `; the API declares ${c.defaultBaseUrl} as its default server` : ''}.`;
+  const setup = `${environment.length ? `Set ${markdownList(environment)}${authLink}` : 'Configure the client'}${ambient ? ' and configure default credentials as described in the authentication guide' : ''}, then replace the sample values with your own. Optionally set FLINT_BASE_URL to override the API default server${c.defaultBaseUrl !== undefined ? ` (${c.defaultBaseUrl})` : ''}.`;
   const resultData = node ? 'result.data' : '$result->data';
   const resultMeta = node ? 'result.meta' : '$result->meta';
   const returnMode =
@@ -1172,7 +1184,7 @@ function packageReadme(
     `## Errors and retries\n\nFailed calls throw \`SdkError\` with \`${node ? 'message' : 'getMessage()'}\`, \`status\`, \`code\` and \`requestId\`. An \`outcome\` of \`unknown\` means the request may have succeeded, so check the current state before resubmitting. ${retries} See [errors](RUNTIME.md#responses-and-errors) and [retries](RUNTIME.md#retries-and-idempotency).\n\nCheck an error's class to handle a specific failure; every class extends \`SdkError\`:\n\n\`\`\`${node ? 'js' : 'php'}\n${errorSnippet}\n\`\`\`\n\n` +
     pagination +
     webhooks +
-    `## Documentation\n\nSet API_BASE_URL to your sandbox or local mock URL and supply the credential environment variables shown in the quickstart. Example IDs are placeholders: replace them with IDs from that environment.\n\n${c.operations.some(positional) ? 'Selected methods use positional path arguments; check their signatures.' : 'Methods accept one object with path/query/header fields and a body member for JSON requests.'} Request options are the last argument.\n\n- [API reference](REFERENCE.md): resource index linking to operation files under reference/\n- [Models](MODELS.md): model index, fields and descriptions\n- [Runtime guide](RUNTIME.md): request options, errors, retries${c.config.webhook ? ', pagination and webhooks' : ' and pagination'}\n${guides.join('')}- [Agent index](llms.txt): a small documentation entry point\n- \`examples/\`: a runnable script per operation. ${node ? 'Run `node examples/RESOURCE-METHOD.mjs`; examples are checked with TypeScript checkJs.' : 'Run `composer install`, then `php examples/RESOURCE-METHOD.php`.'}\n\nPackage ${c.config.version}, generated for API ${c.apiVersion}.\n`
+    `## Documentation\n\nOptionally set FLINT_BASE_URL to override the API default server. Supply the credential environment variables shown in the quickstart. Example IDs are placeholders: replace them with IDs from that environment.\n\n${c.operations.some(positional) ? 'Selected methods use positional path arguments; check their signatures.' : 'Methods accept one object with path/query/header fields and a body member for JSON requests.'} Request options are the last argument.\n\n- [API reference](REFERENCE.md): resource index linking to operation files under reference/\n- [Models](MODELS.md): model index, fields and descriptions\n- [Runtime guide](RUNTIME.md): request options, errors, retries${c.config.webhook ? ', pagination and webhooks' : ' and pagination'}\n${guides.join('')}- [Agent index](llms.txt): a small documentation entry point\n- \`examples/\`: a runnable script per operation. ${node ? 'Run `node examples/RESOURCE-METHOD.mjs`; examples are checked with TypeScript checkJs.' : 'Run `composer install`, then `php examples/RESOURCE-METHOD.php`.'}\n\nPackage ${c.config.version}, generated for API ${c.apiVersion}.\n`
   );
 }
 
@@ -1222,6 +1234,16 @@ function checkCompilation(compilation: ReturnType<typeof compileSdkContract>): v
     );
     if (!model) throw new Error('Missing input codec for ' + op.id);
     try {
+      if (op.exampleIdempotencyKey) {
+        const key = op.exampleIdempotencyKey;
+        for (const parameter of op.parameters.filter(
+          (p) => p.in === 'header' && p.name.toLowerCase() === op.idempotency?.header.toLowerCase(),
+        ))
+          executeCodec(key.prefix + key.example, compileSample(parameter.schema), {
+            mode: 'request',
+            validateConstraints: true,
+          });
+      }
       const schema = exampleSchema(op, c.config.apiVersion, c);
       const configured = configuredExample(op, schema, c.definitions ?? {}, compileSample);
       const omitted = new Set(
@@ -1240,6 +1262,11 @@ function checkCompilation(compilation: ReturnType<typeof compileSdkContract>): v
         mode: 'request',
         definitions: targetPlan.runtime.definitions ?? {},
       });
+      if (op.verb === 'PATCH' && op.body && input && typeof input === 'object') {
+        const body = Reflect.get(input, 'body');
+        if (!body || (typeof body === 'object' && !Object.keys(body).length))
+          throw new Error('PATCH examples must include at least one update field');
+      }
       checkedExamples.set(op, input);
     } catch (error) {
       throw new Diagnostic(
@@ -3746,7 +3773,7 @@ function runtimeGuide(
     ' never trigger this refresh retry. Credential provider exceptions become authentication errors without retaining potentially sensitive causes.\n\n' +
     (c.config.auth && 'defaultCredentials' in c.config.auth && c.config.auth.defaultCredentials
       ? 'Default credential discovery is lazy and runs only when no credential option is passed on either the client or the request, and ambientCredentials is not false. It tries configured API key/access token environment variables (both set is ambiguous_credentials), then configured workload identity. Set ambientCredentials: false to disable it. defaultCredentials() and workloadIdentityCredentials(options) return credential providers supporting token, token_file and github_actions sources and cached refresh.\n\n'
-      : 'This SDK does not discover credentials from environment variables. The example scripts explicitly read API_BASE_URL and their named credential variables.\n\n') +
+      : 'This SDK does not discover credentials from environment variables. The example scripts explicitly read FLINT_BASE_URL and their named credential variables.\n\n') +
     (c.authShortcuts?.apiKey
       ? 'For a multi-tenant application, pass the tenant credential explicitly and disable ambient discovery:\n\n' +
         snippet(
