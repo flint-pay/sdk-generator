@@ -243,7 +243,7 @@ References identify variants by their discriminator values, such as `with creden
 
 The legacy SDK-wide `requests.style: "object"` setting remains available for generators with nonobject bodies. It takes `(input, options)`, with path/query/header fields on `input` and the body under `input.body`. Flint's full fixture uses positional calls throughout.
 
-Configuration `example` values, HTTP fixtures and exported operation `Input` shapes always use the canonical `{ pathField, queryField, body }` structure; generated runnable examples translate them to the selected call style. Changing styles or positional path order is a breaking change in compatibility checks. Profiles merge request styles under the usual conflict rules.
+Configuration `example` values, HTTP fixtures and internal operation `Input` shapes always use the canonical `{ pathField, queryField, body }` structure; generated runnable examples translate them to the selected call style. Node does not export operation wire `*Input` aliases from the root or resource entry points. PHP retains these classes with `@internal` docblocks. Use the public `*Params` types for positional calls; component input types remain public. Changing styles or positional path order is a breaking change in compatibility checks. Profiles merge request styles under the usual conflict rules.
 
 ## Payload returns
 
