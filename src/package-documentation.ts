@@ -142,7 +142,7 @@ export function modelDocuments(
     for (let start = 0; start < sections.length; start += 100) {
       const chunk = sections.slice(start, start + 100);
       const path = `models/index-${start / 100 + 1}.md`;
-      const label = `${chunk[0]![1]} – ${chunk.at(-1)![1]}`;
+      const label = `${chunk[0]![1]} to ${chunk.at(-1)![1]}`;
       toc += `- [${label}](${path})\n`;
       files.set(path, `[Model index](../MODELS.md)\n\n# ${label}\n\n${list(chunk)}`);
     }
@@ -343,8 +343,8 @@ const errorRows = [
   ['404', 'not_found', 'NotFoundError', 'Check the identifier and environment.'],
   ['409, 412', 'conflict', 'ConflictError', 'Read current state and reconcile; 412 never retries.'],
   ['429', 'rate_limit', 'RateLimitError', 'Honor retryAfterMs within the retry budget.'],
-  ['500–599', 'server', 'ServerError', 'Retry only when replay-safe; reconcile unknown mutations.'],
-  ['Other HTTP errors', 'api', 'ApiError', 'Inspect the provider code and correct the request.'],
+  ['500-599', 'server', 'ServerError', 'Retry only when replay-safe; reconcile unknown mutations.'],
+  ['Other HTTP errors', 'api', 'ApiError', 'Inspect the error code and correct the request.'],
   [
     'No HTTP response',
     'transport',
@@ -386,8 +386,8 @@ export function operationErrors(op: Operation): string {
     });
   return `#### Errors\n\n${rows.length ? '| Status | Error class | Kind |\n| --- | --- | --- |\n' + rows.join('\n') + '\n\n' : 'No explicit HTTP error responses declared.\n\n'}Other failures: [runtime error reference](RUNTIME.md#error-reference).\n\n`;
 }
-export function errorReference(target: 'node' | 'php'): string {
-  return `## Error reference\n\nEvery class below extends \`SdkError\`. ${target === 'node' ? 'Import subclasses through `errors`.' : 'Subclasses live in the `Errors` namespace.'}\n\n| Status or trigger | Kind | Class | Action |\n| --- | --- | --- | --- |\n${errorRows.map((r) => '| ' + r.join(' | ') + ' |').join('\n')}\n\n| Field | Meaning |\n| --- | --- |\n| ${target === 'node' ? 'code' : 'errorCode'} | Provider or stable local reason; distinct from HTTP status. |\n| details | Structured provider/runtime details when available. |\n| ${target === 'node' ? 'meta.requestId' : "meta['requestId']"} | Server request ID for support and correlation; may be absent. |\n| idempotencyKey | Resolved key; persist it with the action. |\n| retryAfterMs | Valid server Retry-After, in milliseconds. |\n| outcome | not_sent: no dispatch; response: an HTTP response; unknown: remote completion uncertain. |\n| status | HTTP status, or ${target === 'node' ? 'undefined' : 'null'} without a response. |\n| retryAllowed | Whether the failure permits another replay-safe attempt. |\n| raw | Original buffered body for explicit recovery; may contain sensitive data. |\n\nAn unknown outcome requires reconciliation using the original action and saved key before resubmission. An automatic key protects one SDK call only; persist an application key for recovery across calls.\n\n`;
+export function errorReference(target: 'node' | 'php', apiNameText = 'the API'): string {
+  return `## Error reference\n\nEvery class below extends \`SdkError\`. ${target === 'node' ? 'Import subclasses through `errors`.' : 'Subclasses live in the `Errors` namespace.'}\n\n| Status or trigger | Kind | Class | Action |\n| --- | --- | --- | --- |\n${errorRows.map((r) => '| ' + r.join(' | ') + ' |').join('\n')}\n\n| Field | Meaning |\n| --- | --- |\n| ${target === 'node' ? 'code' : 'errorCode'} | Error code from ${apiNameText}, or a stable local reason; distinct from HTTP status. |\n| details | Structured details from ${apiNameText} or the runtime, when available. |\n| ${target === 'node' ? 'meta.requestId' : "meta['requestId']"} | Server request ID for support and correlation; may be absent. |\n| idempotencyKey | Resolved key; persist it with the action. |\n| retryAfterMs | Valid server Retry-After, in milliseconds. |\n| outcome | not_sent: no dispatch; response: an HTTP response; unknown: remote completion uncertain. |\n| status | HTTP status, or ${target === 'node' ? 'undefined' : 'null'} without a response. |\n| retryAllowed | Whether the failure permits another replay-safe attempt. |\n| raw | Original buffered body for explicit recovery; may contain sensitive data. |\n\nAn unknown outcome requires reconciliation using the original action and saved key before resubmission. An automatic key protects one SDK call only; persist an application key for recovery across calls.\n\n`;
 }
 
 type Option = readonly [string, string, string, string];
@@ -517,7 +517,7 @@ export function optionsReference(c: Contract, target: 'node' | 'php'): string {
       node ? 'clientRequestId' : 'client_request_id',
       'string',
       'none',
-      'Caller correlation: 1–128 visible ASCII characters, no spaces. Forwarded only when the operation declares its request-ID header.',
+      'Caller correlation: 1-128 visible ASCII characters, no spaces. Forwarded only when the operation declares its request-ID header.',
     ],
   ];
   for (const name of Object.keys(c.authShortcuts ?? {})) {

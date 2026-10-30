@@ -551,7 +551,7 @@ test('operation references explain automatic keys and code-specific retries', ()
     assert.match(reference, /Code-specific retries: HTTP 409 \(`in_progress`\)/);
     assert.match(
       readFileSync(join(output, target, 'RUNTIME.md'), 'utf8'),
-      /Mutations with optional idempotency keys send once when no key is supplied/,
+      /1 write operation creates `Idempotency-Key` automatically when you supply none and allows up to 3 total attempts for transport failures and HTTP 503\. 5 write operations accept `idempotencyKey` and send once until you supply a key; with a key, they allow up to 3 total attempts for transport failures and HTTP 503; 3 of them declare other limits.*1 write operation declares no idempotency key and always sends once\./,
     );
     assert.doesNotMatch(reference, /[\t ]+\r?$/m);
   }

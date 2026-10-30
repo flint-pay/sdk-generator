@@ -125,11 +125,11 @@ test('collection enums survive references, nested arrays and maps in both packag
       const first = reference.split('### records.first')[1].split('### records.')[0];
       assert.doesNotMatch(
         first,
-        /\| `payment_options`|\| `event_sources`|24 synthetic hours|Methods accept/,
+        /\| `payment_options`|\| `event_sources`|\| 24 synthetic hours \||Methods accept/,
       );
       assert.match(first, /Returned payload: \[[^\]]+\]/);
       assert.match(first, /Idempotent: key automatic/);
-      assert.equal(runtime.split('24 synthetic hours').length - 1, 1);
+      assert.equal(runtime.split('| 24 synthetic hours |').length - 1, 1);
       assert.equal(
         docs.reduce(
           (count, [, text]) => count + (text.match(/^- `"synthetic_error_0"`$/gm)?.length ?? 0),
@@ -137,7 +137,7 @@ test('collection enums survive references, nested arrays and maps in both packag
         ),
         1,
       );
-      assert.match(models, /\[30 declared values\]\(ERRORS.md#provider-error-codes\)/);
+      assert.match(models, /\[30 declared values\]\(ERRORS.md#api-error-codes\)/);
       if (target === 'node') {
         assertDocumentedModelExports(root);
         const declarations = readdirSync(join(root, 'declarations'))
