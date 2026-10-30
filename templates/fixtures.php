@@ -85,7 +85,7 @@ foreach ($cases as $index => $case) {
             ucfirst($operation['method']) .
             'Input';
         $payload = ($operation['response']['return'] ?? 'result') === 'payload';
-        $method = $operation['method'] . ($payload ? 'WithResponse' : '');
+        $method = $operation['method'];
         $arguments = [new $inputClass($input)];
         if (($operation['request']['style'] ?? 'object') === 'positional') {
             preg_match_all('/\{([^}]+)\}/', $operation['path'], $matches);
@@ -135,32 +135,27 @@ foreach ($cases as $index => $case) {
             ],
         );
         $result = $client->{$operation['resource']}->{$method}(...$arguments);
-        if ($payload) {
-            $result = (object) [
-                'data' => $result->body,
-                'meta' => $result->meta,
-                'raw' => $result->raw,
-            ];
-        }
+        $info = $result->lastResponse();
+        $data = $payload ? $info->body : $result->data;
         check(!isset($case['error']), $case['name'] . ': expected error');
         if (array_key_exists('data', $case)) {
             check(
-                json_decode(json_encode($result->data), true) === $case['data'],
+                json_decode(json_encode($data), true) === $case['data'],
                 $case['name'] . ': data',
             );
         }
         if ($case['empty'] ?? false) {
-            check($result->data === null, $case['name'] . ': empty');
+            check($data === null, $case['name'] . ': empty');
         }
         if (isset($case['dataBase64'])) {
             check(
-                is_string($result->data) && base64_encode($result->data) === $case['dataBase64'],
+                is_string($data) && base64_encode($data) === $case['dataBase64'],
                 $case['name'] . ': binary data',
             );
-            check($result->raw === $result->data, $case['name'] . ': raw bytes');
+            check($result->raw === $data, $case['name'] . ': raw bytes');
         }
         if (isset($case['status'])) {
-            check($result->meta['status'] === $case['status'], $case['name'] . ': status');
+            check($info->status === $case['status'], $case['name'] . ': status');
         }
         $report[] = ['name' => $case['name'], 'ok' => true];
     } catch (\Throwable $e) {

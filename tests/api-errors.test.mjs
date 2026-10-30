@@ -84,7 +84,10 @@ function fixture(t, errors, operations) {
       npm: { name: '@example/api-errors' },
       composer: { name: 'example/api-errors', namespace: 'Example\\Errors' },
       errors: errors ?? { objectPath: '' },
-      ...(operations ? { operations } : {}),
+      operations: {
+        ...operations,
+        readValue: { ...operations?.readValue, response: { return: 'result' } },
+      },
     }),
   );
   return { source, config, output: join(dir, 'sdk') };
@@ -232,19 +235,9 @@ for (const nested of [false, true]) {
         return true;
       });
       assert.equal(events.length, [408, 429, 500, 502, 503, 504].includes(c.status) ? 3 : 1);
-      assert.equal(
-        events[0].errorKind,
-        {
-          400: 'validation',
-          422: 'validation',
-          401: 'authentication',
-          403: 'authentication',
-          404: 'not_found',
-          409: 'conflict',
-          412: 'conflict',
-          429: 'rate_limit',
-        }[c.status] ?? (c.status >= 500 ? 'server' : 'api'),
-      );
+      assert.equal(events[0].errorName, c.kind);
+      assert.equal(events[0].errorCode, c.payload?.code ?? 'http_error');
+      assert.equal(Object.hasOwn(events[0], 'errorKind'), false);
       assert.equal(events[0].status, c.status);
       assert.equal(events[0].message, undefined);
     }

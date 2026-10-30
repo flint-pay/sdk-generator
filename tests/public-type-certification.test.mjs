@@ -224,6 +224,7 @@ for (const provider of ['library', 'flint']) {
     if (provider === 'library') {
       const api = JSON.parse(readFileSync('examples/library.openapi.json', 'utf8'));
       const profile = JSON.parse(readFileSync('examples/library.sdk.json', 'utf8'));
+      profile.responses = { return: 'result' };
       const object = (properties) => ({
         type: 'object',
         properties,

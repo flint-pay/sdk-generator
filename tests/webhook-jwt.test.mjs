@@ -35,6 +35,7 @@ const hmac = {
 };
 const config = {
   version: '1.0.0',
+  responses: { return: 'result' },
   npm: { name: '@example/jwt' },
   composer: { name: 'example/jwt', namespace: 'Example\\Jwt' },
   webhook: {

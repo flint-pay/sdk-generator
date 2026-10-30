@@ -111,6 +111,7 @@ test('resource docs separate inputs from linked output fields, errors and shared
         version: '1.0.0',
         requests: { style: 'object' },
         responses: { return: 'payload' },
+        operations: { redirectRecord: { response: { return: 'result' } } },
         npm: { name: '@example/records' },
         composer: { name: 'example/records', namespace: 'Example\\Records' },
       }),
@@ -337,10 +338,7 @@ test('inline body variants retain their descriptions while sharing identical fie
   );
   assert.equal(document.split('| Field | Presence | Type | Description |').length - 1, 2);
   assert.match(document, /Second declared alternative\./);
-  assert.match(
-    document,
-    /Fields: \[records.update body anyOf variant 1 fields\]\(#recordsupdate-body-anyof-variant-1-fields\)/,
-  );
+  assert.match(document, /Fields: \[records.update: variant 1\]\(#recordsupdate-variant-1\)/);
   assert.match(document, /\| `mode` \| Required \| string \| Values: `"fast"`, `"safe"`/);
 });
 
@@ -363,12 +361,11 @@ test('shared variant tables link to the correct occurrence of a duplicate headin
     {},
   );
   assert.equal(document.split('| Field | Presence | Type | Description |').length - 1, 4);
-  const headings = document.split('#### records.update body anyOf variant 2 fields');
-  assert.equal(headings.length, 3);
+  const headings = document.split('#### records.update: variant 2');
+  assert.equal(headings.length, 4);
+  assert.match(headings[1], /\| `x` \| Optional/);
   assert.match(headings[2], /\| `x` \| Required/);
   assert.match(headings[2], /\| `y` \| Required/);
-  assert.match(
-    document,
-    /Fields: \[records.update body anyOf variant 2 fields\]\(#recordsupdate-body-anyof-variant-2-fields-1\)/,
-  );
+  assert.doesNotMatch(headings[3], /\| Field \|/);
+  assert.match(headings[3], /Fields: \[records.update: variant 2\]\(#recordsupdate-variant-2-1\)/);
 });

@@ -980,7 +980,7 @@ export function operationGuidance(c: Contract, op: Operation): string {
       ? `Code-specific retries: ${retry.errors.map((rule) => `HTTP ${rule.status} (${rule.codes.map((code) => literal(code)).join(', ')})`).join('; ')}.\n\n`
       : '') +
     (op.response?.return === 'payload'
-      ? `Complete body and metadata: ${literal(op.method + 'WithResponse')}. See [response modes](RUNTIME.md#responses-and-errors).\n\n`
+      ? `Complete body and metadata: lastResponse. See [response modes](RUNTIME.md#responses-and-errors).\n\n`
       : '') +
     (op.idempotency
       ? `Idempotent: key ${requiresIdempotencyKey(op) ? 'required' : op.idempotency.auto ? 'automatic' : 'optional'}, [${cell(idempotencyPolicyName(c, op.idempotency))}](RUNTIME.md#idempotency).\n\n`
@@ -992,10 +992,10 @@ export function operationGuidance(c: Contract, op: Operation): string {
       ? `Conditional header: ${literal(op.conditional.header)}, supplied through ifMatch.\n\n`
       : '') +
     (op.pagination
-      ? `Pagination: ${literal(op.method + 'Items')}, ${literal(op.method + 'Pages')}${op.response?.return === 'payload' ? ', ' + literal(op.method + 'PagesWithResponse') : ''}. [Canonical pagination example](RUNTIME.md#pagination-and-polling).\n\n`
+      ? `Pagination: ${literal(op.method + 'Items')}, ${literal(op.method + 'Pages')}. [Canonical pagination example](RUNTIME.md#pagination-and-polling).\n\n`
       : '') +
     (op.polling
-      ? `Polling: ${literal(op.method + 'Wait')}${op.response?.return === 'payload' ? ', ' + literal(op.method + 'WaitWithResponse') : ''}; state ${literal(op.polling.state)}; success ${op.polling.success.map((v) => literal(v)).join(', ')}; failure ${op.polling.failure.map((v) => literal(v)).join(', ')}. [Polling deadlines](RUNTIME.md#pagination-and-polling).\n\n`
+      ? `Polling: ${literal(op.method + 'Wait')}; state ${literal(op.polling.state)}; success ${op.polling.success.map((v) => literal(v)).join(', ')}; failure ${op.polling.failure.map((v) => literal(v)).join(', ')}. [Polling deadlines](RUNTIME.md#pagination-and-polling).\n\n`
       : '')
   );
 }

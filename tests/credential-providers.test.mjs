@@ -158,7 +158,7 @@ for (const surface of surfaces)
             {},
             { ...options, ...(op === 'keyed' ? { idempotencyKey: 'synthetic-key' } : {}) },
           );
-          assert.equal(result.meta.attempts, c.requests ? 1 : seen.length, c.name);
+          assert.equal(result.lastResponse.attempts, c.requests ? 1 : seen.length, c.name);
         } catch (e) {
           error = e;
           break;
@@ -255,7 +255,7 @@ test('default transports preserve the 401 refresh policy after truncated bodies'
             ...(c.maxAttempts ? { maxAttempts: c.maxAttempts } : {}),
           },
         );
-        assert.equal(result.meta.attempts, c.headers.length, c.name);
+        assert.equal(result.lastResponse.attempts, c.headers.length, c.name);
       } catch (e) {
         error = e;
       }

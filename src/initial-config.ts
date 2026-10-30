@@ -1,6 +1,8 @@
 import { resolve, relative } from 'node:path';
 import { locateDiagnostic } from './input-diagnostics.js';
-import type { Config } from './contract.js';
+import type { Config, Schema } from './contract.js';
+import { objectBodyConstraint } from './target-types.js';
+import { successStatus } from './runtime-plan.js';
 import { Diagnostic } from './diagnostic.js';
 import { kebabWords, pascalWords } from './naming.js';
 import { openApiObject, assertOpenApiVersion, readInput } from './openapi-input.js';
@@ -11,6 +13,7 @@ type InitialConfig = Pick<Config, 'version'> & {
   npm?: Config['npm'];
   composer?: Config['composer'];
   auth?: Config['auth'];
+  responses?: Config['responses'];
 };
 
 /** Build editable package metadata without writing files or validating API capabilities. */
@@ -39,6 +42,45 @@ export function initialConfig(
       ]);
     throw error;
   }
+  const record = (item: unknown): item is Record<string, unknown> =>
+    item !== null && typeof item === 'object' && !Array.isArray(item);
+  // Adapt raw OpenAPI references and nullability for the owning object constraint.
+  const responseShape = (item: unknown): Schema => {
+    if (!record(item)) return {};
+    const shape: Schema = {};
+    if (typeof item.type === 'string') shape.type = item.nullable ? [item.type, 'null'] : item.type;
+    else if (Array.isArray(item.type) && item.type.every((type) => typeof type === 'string'))
+      shape.type = item.nullable ? [...new Set([...item.type, 'null'])] : item.type;
+    if (typeof item.$ref === 'string' && item.$ref.startsWith('#/components/schemas/'))
+      shape['x-sdk-ref'] = item.$ref.slice(21).replaceAll('~1', '/').replaceAll('~0', '~');
+    for (const key of ['allOf', 'oneOf', 'anyOf'] as const)
+      if (Array.isArray(item[key])) shape[key] = item[key].map(responseShape);
+    return item.nullable && item.type === undefined ? { anyOf: [shape, { type: 'null' }] } : shape;
+  };
+  const rawSchemas =
+    record(value.components) && record(value.components.schemas) ? value.components.schemas : {};
+  const definitions = Object.fromEntries(
+    Object.entries(rawSchemas).map(([name, schema]) => [name, responseShape(schema)]),
+  );
+  let requiresResult = false;
+  if (record(value.paths))
+    for (const item of Object.values(value.paths)) {
+      if (!record(item)) continue;
+      if (typeof item.$ref === 'string') requiresResult = true;
+      for (const method of ['get', 'post', 'put', 'patch', 'delete', 'head', 'options']) {
+        const operation = item[method];
+        if (!record(operation) || !record(operation.responses)) continue;
+        for (const [status, response] of Object.entries(operation.responses)) {
+          if (!successStatus(status) && status !== 'default') continue;
+          const content = record(response) && record(response.content) ? response.content : {};
+          const media = Object.entries(content).find(([name]) =>
+            /(?:^|\/)json$|\+json$/.test(name),
+          )?.[1];
+          if (!record(media) || !objectBodyConstraint(responseShape(media.schema), definitions))
+            requiresResult = true;
+        }
+      }
+    }
   const info = value.info;
   const title =
     info && typeof info === 'object' && 'title' in info && typeof info.title === 'string'
@@ -93,6 +135,7 @@ export function initialConfig(
   return {
     ...(auth ? { auth } : {}),
     version: '0.1.0',
+    ...(requiresResult ? { responses: { return: 'result' as const } } : {}),
     targets: [...targets],
     ...(targets.includes('node') ? { npm: { name: '@example/' + slug } } : {}),
     ...(targets.includes('php') ? { composer: { name: 'example/' + slug, namespace } } : {}),

@@ -41,6 +41,7 @@ writeFileSync(
 );
 const config = {
   version: '1.0.0',
+  responses: { return: 'result' },
   requests: { style: 'object' },
   npm: { name: '@example/values' },
   composer: { name: 'example/values', namespace: 'Example\\Values' },

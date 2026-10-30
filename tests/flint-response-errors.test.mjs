@@ -103,6 +103,7 @@ for (const [style, verb] of ['object', 'positional'].flatMap((style) =>
         config,
         JSON.stringify({
           version: '1.0.0',
+          responses: { return: 'result' },
           requests: { style },
           npm: { name: '@example/error-audit-control' },
           composer: { name: 'example/error-audit-control', namespace: 'Example\\FlintFull' },

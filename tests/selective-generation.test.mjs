@@ -28,6 +28,7 @@ const create = {
 };
 const settings = {
   version: '1.0.0',
+  responses: { return: 'result' },
   npm: { name: '@example/todos' },
   composer: { name: 'example/todos', namespace: 'Example\\Todos' },
 };
@@ -129,7 +130,7 @@ test('overrides replace existing values and explain why adding an operation ID f
 
 for (const target of ['node', 'php']) {
   test(`${target}-only output omits unselected metadata while preserving saved-record compatibility`, (t) => {
-    const config = { version: '1.0.0', targets: [target] };
+    const config = { version: '1.0.0', targets: [target], responses: { return: 'result' } };
     const selected = target === 'node' ? 'npm' : 'composer';
     const absent = target === 'node' ? 'composer' : 'npm';
     config[selected] = settings[selected];

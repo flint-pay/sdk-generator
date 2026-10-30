@@ -17,6 +17,7 @@ foreach (
             [
                 'SdkError',
                 'Result',
+                'ResponseInfo',
                 'Cancellation',
                 'RequestOptions',
                 'ClientOptions',
@@ -30,7 +31,6 @@ foreach (
                 'ExactNumber',
                 'Codec',
                 'Runtime',
-                'SdkResponse',
             ],
             true,
         )

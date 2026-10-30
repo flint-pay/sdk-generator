@@ -453,6 +453,14 @@ export function optionsReference(c: Contract, target: 'node' | 'php'): string {
       'Allowlisted canonical destination origins.',
     ],
     ['allowInsecureHttp', 'boolean', 'false', 'Permit HTTP for deliberate local tests.'],
+    [
+      'appInfo',
+      node
+        ? '{ name: string; version?: string; url?: string }'
+        : 'array{name: string, version?: string, url?: string}',
+      'none',
+      'Append application name/version and optional HTTPS URL to User-Agent, after SDK/runtime/OS details.',
+    ],
     ...common,
     [
       'transport',
@@ -464,7 +472,7 @@ export function optionsReference(c: Contract, target: 'node' | 'php'): string {
       'diagnostics',
       node ? '(event: DiagnosticEvent) => void' : 'Closure',
       'none',
-      'Per-attempt metadata callback. Exceptions are ignored; no bodies or credentials.',
+      'Per-attempt callback with errorName and errorCode. Exceptions are ignored; no bodies or credentials.',
     ],
     [
       'redactFields',

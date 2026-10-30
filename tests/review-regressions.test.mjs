@@ -107,10 +107,10 @@ echo $client->books->retrieve(new Example\\Library\\BooksRetrieveInput(['id'=>'1
 test('diagnosis rejects SDK export collisions and accepts configured model names', () => {
   const doc = structuredClone(api);
   const response = doc.paths['/books/{id}'].get.responses['200'].content['application/json'];
-  doc.components = { schemas: { Metadata: response.schema } };
-  response.schema = { $ref: '#/components/schemas/Metadata' };
+  doc.components = { schemas: { ResponseInfo: response.schema } };
+  response.schema = { $ref: '#/components/schemas/ResponseInfo' };
   const i = inputs('metadata', doc, config);
-  for (const name of ['Metadata', 'DiagnosticEvent', 'serialize', 'parseExact', 'redact']) {
+  for (const name of ['ResponseInfo', 'DiagnosticEvent', 'serialize', 'parseExact', 'redact']) {
     doc.components.schemas = {
       [name]: doc.components.schemas[Object.keys(doc.components.schemas)[0]],
     };
@@ -120,10 +120,10 @@ test('diagnosis rejects SDK export collisions and accepts configured model names
     assert.notEqual(diagnosis.status, 0);
     assert.match(diagnosis.stderr, /generated type collision/);
   }
-  doc.components.schemas = { Metadata: doc.components.schemas.redact };
-  response.schema = { $ref: '#/components/schemas/Metadata' };
+  doc.components.schemas = { ResponseInfo: doc.components.schemas.redact };
+  response.schema = { $ref: '#/components/schemas/ResponseInfo' };
   writeFileSync(i.definition, JSON.stringify(doc));
-  const profile = { ...config, models: { Metadata: 'BookMetadata' } };
+  const profile = { ...config, models: { ResponseInfo: 'BookResponseInfo' } };
   writeFileSync(i.configuration, JSON.stringify(profile));
   generate(i);
   ok(invoke('validate', i.output));

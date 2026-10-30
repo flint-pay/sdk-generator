@@ -56,6 +56,7 @@ function synthetic(root, incoming) {
     config,
     JSON.stringify({
       version: '1.0.0',
+      responses: { return: 'result' },
       targets: ['node', 'php'],
       npm: { name: '@example/event-order' },
       composer: { name: 'example/event-order', namespace: 'Example\\EventOrder' },

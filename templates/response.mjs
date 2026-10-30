@@ -1,16 +1,4 @@
-import { inspect } from 'node:util';
 import { createSdkError } from './runtime.js';
-
-export function sdkResponse(result) {
-  const response = { body: result.data, meta: result.meta, raw: result.raw };
-  Object.defineProperty(response, inspect.custom, {
-    value: () => {
-      const safe = result[inspect.custom]();
-      return { body: safe.data, meta: safe.meta };
-    },
-  });
-  return response;
-}
 
 export function responsePayload(result, path, decode) {
   let value = result.data;
@@ -21,7 +9,7 @@ export function responsePayload(result, path, decode) {
         'Missing configured response payload: ' + path.join('.'),
         'response',
         false,
-        result.meta,
+        result.lastResponse,
         undefined,
         undefined,
         undefined,
@@ -30,13 +18,16 @@ export function responsePayload(result, path, decode) {
     }
     value = value[key];
   }
-  return decode ? decode(result, path) : value;
+  const payload = decode ? decode(result, path) : value;
+  Object.defineProperty(payload, 'lastResponse', {
+    value: result.lastResponse,
+    enumerable: false,
+    writable: false,
+    configurable: false,
+  });
+  return payload;
 }
 
 export async function* payloadPages(pages, path, decode) {
   for await (const result of pages) yield responsePayload(result, path, decode);
-}
-
-export async function* sdkResponsePages(pages) {
-  for await (const result of pages) yield sdkResponse(result);
 }

@@ -12,11 +12,11 @@ export function reservePublicSymbols(
 ): (name: string, owner?: string) => void {
   const targets = c.config.targets ?? ['node', 'php'];
   const groups = [...new Set(c.operations.map((op) => op.resource))].sort();
-  const hasPayloadReturns = c.operations.some((op) => op.response?.return === 'payload');
   const symbols = new Set(
     [
       'Client',
-      ...(hasPayloadReturns ? ['SdkResponse'] : []),
+      'ResponseInfo',
+      'WithResponseInfo',
       'Runtime',
       ...(targets.includes('php') ? ['Omitted'] : []),
       'Model',
@@ -48,7 +48,6 @@ export function reservePublicSymbols(
       'RequestOptions',
       'InputValue',
       ...(c.authentication ? ['Credentials', 'AuthMode', 'RuntimeRequestOptions'] : []),
-      'Metadata',
       'DiagnosticEvent',
       'serialize',
       'parseExact',

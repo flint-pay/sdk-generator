@@ -463,7 +463,7 @@ $source=new class implements Example\Payments\ByteStream {
   public function read(): ?string { if($this->done)return null;$this->done=true;return "id: event-1\ndata: {}\n\nid: event-2\ndata: bad-json\n\n"; }
   public function close():void {}
 };
-$s=new Example\Payments\EventStream($source,['status'=>200],['idleTimeoutMs'=>100,'maxEventBytes'=>1000],fn($event,$raw)=>json_decode($raw,flags:JSON_THROW_ON_ERROR),fn()=>null);
+$s=new Example\Payments\EventStream($source,['status'=>200,'headers'=>[],'attempts'=>1,'durationMs'=>0],['idleTimeoutMs'=>100,'maxEventBytes'=>1000],fn($event,$raw)=>json_decode($raw,flags:JSON_THROW_ON_ERROR),fn()=>null);
 $count=0;
 try { foreach($s as $event)$count++; } catch(Example\Payments\SdkError $e) { echo json_encode([$count,$e->code,$e->event]); }
 `,

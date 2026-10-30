@@ -225,6 +225,7 @@ test('generated Node and PHP local validation matches server stage 1 without sen
     join(dir, 'sdk.json'),
     JSON.stringify({
       version: '1.0.0',
+      responses: { return: 'result' },
       npm: { name: '@example/local-validation' },
       composer: { name: 'example/local-validation', namespace: 'LocalValidation' },
       requests: { style: 'object' },

@@ -88,6 +88,7 @@ const config = {
   composer: { name: 'example/retry-budgets', namespace: 'RetryBudgets' },
   requests: { style: 'object' },
   responses: { return: 'result' },
+  errors: { objectPath: '' },
   operations: Object.fromEntries(
     Object.entries(definitions).map(([id, [, policy]]) => [id, policy]),
   ),
@@ -240,13 +241,13 @@ const cases = [
     key: 'saved-key',
   },
   {
-    name: 'stable header key',
+    name: 'idempotency header channel is rejected',
     op: 'keyed',
     input: body,
     options: { headers: { 'IDEMPOTENCY-KEY': 'header-key' } },
-    failures: 1,
-    attempts: 2,
-    key: 'header-key',
+    attempts: 0,
+    error: 'InvalidInputError',
+    eligible: false,
   },
   { name: 'stable auto key', op: 'auto', input: body, failures: 2, attempts: 3, auto: true },
   {
@@ -276,12 +277,12 @@ const cases = [
     key: 'saved-key',
   },
   {
-    name: 'required key input',
+    name: 'input cannot satisfy the required idempotency option',
     op: 'required',
     input: { 'Idempotency-Key': 'input-key' },
-    failures: 1,
-    attempts: 2,
-    key: 'input-key',
+    attempts: 0,
+    error: 'InvalidInputError',
+    eligible: false,
   },
   {
     name: 'unsupported key',
@@ -313,7 +314,7 @@ const cases = [
       op: 'read',
       [location]: { maxAttempts },
       attempts: 0,
-      error: 'InvalidInputError',
+      error: 'ConfigurationError',
       eligible: false,
     })),
   ),
@@ -407,7 +408,7 @@ async function nodeCase(row, dynamic = false) {
           row.options,
         )
       : await new sdk.Client(options).api[row.op](row.input ?? {}, row.options);
-    return { calls, events, error: null, eligible: null, attempts: result.meta.attempts };
+    return { calls, events, error: null, eligible: null, attempts: result.lastResponse.attempts };
   } catch (error) {
     return { calls, events, error: error.name, eligible: error.retryAllowed };
   }
@@ -434,7 +435,7 @@ foreach($rows as $row){
   try {
     $c=new \RetryBudgets\Client($options);
     $result=$c->api->{$row['op']}($row['input']??[],new \RetryBudgets\RequestOptions(...($row['options']??[])));
-    $results[]=['calls'=>$calls,'events'=>$events,'error'=>null,'eligible'=>null,'attempts'=>$result->meta['attempts']];
+    $results[]=['calls'=>$calls,'events'=>$events,'error'=>null,'eligible'=>null,'attempts'=>$result->lastResponse()->attempts];
   }catch(\RetryBudgets\SdkError $e){$results[]=['calls'=>$calls,'events'=>$events,'error'=>substr(strrchr(get_class($e), chr(92)), 1),'eligible'=>$e->retryAllowed];}
 }
 echo json_encode($results,JSON_THROW_ON_ERROR);
@@ -455,7 +456,7 @@ test('nonfinite and unsafe request budgets fail before dispatch in both runtimes
         op: 'read',
         [location]: { maxAttempts },
         attempts: 0,
-        error: 'InvalidInputError',
+        error: 'ConfigurationError',
         eligible: false,
       };
       verify(row, await nodeCase(row));
@@ -469,9 +470,9 @@ foreach([3,3.0,9007199254740991]as $budget){
 $c=new \RetryBudgets\Client(new \RetryBudgets\ClientOptions(baseUrl:'https://example.invalid',maxAttempts:$budget,transport:fn()=>['status'=>204,'headers'=>[],'body'=>'']));$c->api->read();
 }
 foreach([NAN,INF,-INF,9007199254740992] as $budget)foreach([false,true] as $client){
-  $c=new \RetryBudgets\Client(new \RetryBudgets\ClientOptions(baseUrl:'https://example.invalid',maxAttempts:$client?$budget:null,transport:fn()=>throw new \Exception('Unexpected dispatch')));
-  try{$c->api->read([],new \RetryBudgets\RequestOptions(maxAttempts:$client?null:$budget));throw new \Exception('Accepted invalid budget');}
-  catch(\RetryBudgets\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='InvalidInputError')throw $e;}
+  try{$c=new \RetryBudgets\Client(new \RetryBudgets\ClientOptions(baseUrl:'https://example.invalid',maxAttempts:$client?$budget:null,transport:fn()=>throw new \Exception('Unexpected dispatch')));
+  $c->api->read([],new \RetryBudgets\RequestOptions(maxAttempts:$client?null:$budget));throw new \Exception('Accepted invalid budget');}
+  catch(\RetryBudgets\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='ConfigurationError')throw $e;}
 }`,
     join(output, 'php'),
   ]);
@@ -492,7 +493,7 @@ test('compilation is deterministic and dynamic contract adapters preserve retry 
       String.raw`
 require $argv[1].'/src/Runtime.php';$count=0;
 $r=new \RetryBudgets\Runtime(json_decode(file_get_contents($argv[2]),true),new \RetryBudgets\ClientOptions(baseUrl:'https://example.invalid',transport:function()use(&$count){$count++;return ['status'=>$count===1?503:204,'headers'=>[],'body'=>''];}));
-echo $r->request('read')->meta['attempts'];`,
+echo $r->request('read')->lastResponse()->attempts;`,
       join(output, 'php'),
       join(root, 'raw.json'),
     ],
@@ -602,7 +603,7 @@ test('generated option types enforce idempotency across method forms without wea
       checkout: { schemes: ['checkout'], operations: ['getPayment'] },
     },
   };
-  paymentConfig.responses = { return: 'payload' };
+  paymentConfig.responses = { return: 'result' };
   paymentConfig.operations.getPayment.aliases = ['fetch'];
   for (const style of ['object', 'positional']) {
     paymentConfig.requests = { style };
@@ -616,7 +617,7 @@ test('generated option types enforce idempotency across method forms without wea
     const source = `import {Client,type RequestOptions} from './index.js';
 const c=new Client({baseUrl:'https://example.invalid',authMode:'merchant',credentials:{merchant:{bearer:'synthetic'}}});
 c.payments.create(${input},{idempotencyKey:'saved-key'});
-c.payments.createWithResponse(${input},{idempotencyKey:'saved-key'});
+const info=c.payments.create(${input},{idempotencyKey:'saved-key'});
 c.payments.retrieve(${id},{authMode:'checkout',credentials:{checkout:'synthetic'}});
 const shared:RequestOptions={idempotencyKey:'saved-key'};
 // @ts-expect-error Broad forwarded options may contain an unsupported key
@@ -625,7 +626,7 @@ c.payments.retrieve(${id},shared);
 c.payments.retrieve(${id},{authMode:'checkout',credentials:{bearer:'synthetic'}});
 // @ts-expect-error Unsupported authentication mode on mutation
 c.payments.create(${input},{authMode:'checkout',credentials:{checkout:'synthetic'},idempotencyKey:'saved-key'});
-${['retrieve', 'fetch', 'retrieveWithResponse', 'fetchWithResponse', 'retrieveWait'].map((method) => `// @ts-expect-error Unsupported idempotency key\nc.payments.${method}(${id},{idempotencyKey:'unsupported'});`).join('\n')}
+${['retrieve', 'fetch', 'retrieveWait'].map((method) => `// @ts-expect-error Unsupported idempotency key\nc.payments.${method}(${id},{idempotencyKey:'unsupported'});`).join('\n')}
 ${['listAll', 'listAllPages', 'listAllItems'].map((method) => `// @ts-expect-error Unsupported iterator key\nc.payments.${method}({}, {idempotencyKey:'unsupported'});`).join('\n')}
 `;
     const file = join(dir, 'node/check.ts');
@@ -668,7 +669,7 @@ test('generated examples retry transient failures without an explicit attempt ov
     const call = source.slice(start).split('console.log')[0];
     const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
     const result = await new AsyncFunction('client', call + '\nreturn result;')(client);
-    assert.equal(result.meta.attempts, 2);
+    assert.equal(result.lastResponse.attempts, 2);
     if (op === 'keyed')
       assert.equal(calls[0].headers['idempotency-key'], calls[1].headers['idempotency-key']);
     let php = readFileSync(join(output, `php/examples/api-${op}.php`), 'utf8');

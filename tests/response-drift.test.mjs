@@ -189,7 +189,7 @@ const cases = [
     payload: true,
   },
   {
-    op: 'payloadWithResponse',
+    op: 'payload',
     raw: '{"payment":{"id":"pay_payload"}}',
     data: { payment: { id: 'pay_payload' } },
     withResponse: true,
@@ -248,19 +248,23 @@ test('generated Node and PHP preserve typed successes and actionable recovery on
         const result = await client.api[c.op]();
         assert.deepEqual(
           JSON.parse(
-            JSON.stringify(c.payload ? result : c.withResponse ? result.body : result.data),
+            JSON.stringify(
+              c.payload ? result : c.withResponse ? result.lastResponse.body : result.data,
+            ),
           ),
           c.data,
           c.op,
         );
         if (!c.payload) {
-          assert.equal(result.meta.status, 200);
-          assert.equal(result.raw, c.raw);
+          assert.equal(result.lastResponse.status, 200);
+          if (!c.withResponse) assert.equal(result.raw, c.raw);
         }
       }
       assert.equal(calls, 1, c.op);
       assert.equal(diagnostics.length, 1);
-      assert.equal(diagnostics[0].errorKind, c.message ? 'protocol' : undefined);
+      assert.equal(diagnostics[0].errorName, c.message ? 'UnexpectedResponseError' : undefined);
+      assert.equal(diagnostics[0].errorCode, c.message ? '' : undefined);
+      assert.equal(Object.hasOwn(diagnostics[0], 'errorKind'), false);
       assert.ok(!JSON.stringify(diagnostics).includes('synthetic-private-value'));
     } finally {
       client.close();
@@ -283,10 +287,10 @@ foreach(json_decode(file_get_contents($argv[2]),true) as $case){
             'status'=>$case['status']??200,'headers'=>['content-type'=>'application/json','x-request-id'=>'req_00HAPCA3GDPS4T064K3TRG20D0'], 'body'=>$case['raw']];}));
     try{
         $result=$client->api->{$case['op']}();
-        $data=($case['payload']??false)?$result:(($case['withResponse']??false)?$result->body:$result->data);
+        $data=($case['payload']??false)?$result:(($case['withResponse']??false)?$result->lastResponse()->body:$result->data);
         $row=['data'=>$data];
         if(!($case['payload']??false)){
-            $row+=['status'=>$result->meta['status'],'raw'=>$result->raw,'model'=>(new ReflectionClass($data))->getShortName()];
+            $row+=['status'=>$result->lastResponse()->status,'raw'=>($case['withResponse']??false)?null:$result->raw,'model'=>(new ReflectionClass($data))->getShortName()];
         }
     }catch(SdkError $error){
         ob_start();var_dump($error);$debug=ob_get_clean();
@@ -310,7 +314,9 @@ echo json_encode($results,JSON_THROW_ON_ERROR);
     const c = cases[i];
     assert.equal(row.calls, 1, c.op);
     assert.equal(row.events.length, 1);
-    assert.equal(row.events[0].errorKind, c.message ? 'protocol' : undefined);
+    assert.equal(row.events[0].errorName, c.message ? 'UnexpectedResponseError' : undefined);
+    assert.equal(row.events[0].errorCode, c.message ? '' : undefined);
+    assert.equal(Object.hasOwn(row.events[0], 'errorKind'), false);
     assert.ok(!JSON.stringify(row.events).includes('synthetic-private-value'));
     if (c.message) {
       assert.deepEqual(
@@ -334,7 +340,7 @@ echo json_encode($results,JSON_THROW_ON_ERROR);
       assert.deepEqual(row.data, c.data, c.op);
       if (!c.payload) {
         assert.equal(row.status, 200);
-        assert.equal(row.raw, c.raw);
+        if (!c.withResponse) assert.equal(row.raw, c.raw);
         assert.equal(row.model, c.model);
       }
     }
@@ -347,7 +353,7 @@ test('payload extraction retains raw response in both adapters', async (t) => {
   const raw = '{"id":"pay_recover"}';
   const meta = { status: 200, headers: {}, attempts: 1, durationMs: 0 };
   assert.throws(
-    () => responsePayload({ data: { id: 'pay_recover' }, meta, raw }, ['payment']),
+    () => responsePayload({ data: { id: 'pay_recover' }, lastResponse: meta, raw }, ['payment']),
     (e) =>
       e.raw === raw &&
       e.status === meta.status &&
@@ -361,9 +367,9 @@ test('payload extraction retains raw response in both adapters', async (t) => {
     [
       '-r',
       String.raw`
-require $argv[1].'/php/src/Runtime.php';require $argv[1].'/php/src/SdkResponse.php';
-use Example\Drift\{SdkResponse,Result,SdkError};
-try{SdkResponse::payload(new Result((object)['id'=>'pay_recover'],['status'=>200],$argv[2]),['payment']);}
+require $argv[1].'/php/src/Runtime.php';
+use Example\Drift\{Runtime,Result,SdkError};
+try{Runtime::responsePayload(new Result((object)['id'=>'pay_recover'],['status'=>200,'headers'=>[],'requestIds'=>[],'attempts'=>1,'durationMs'=>0],$argv[2]),['payment']);}
 catch(SdkError $e){echo json_encode([$e->raw,$e->status,substr(strrchr(get_class($e), chr(92)), 1),$e->outcome,$e->retryAllowed]);}
 `,
       f.out,
@@ -446,7 +452,7 @@ try{$runtime->request('create');}
 catch(SdkError $e){
     ob_start();var_dump($e);$debug=ob_get_clean();
     echo json_encode([$e->getMessage(),substr(strrchr(get_class($e), chr(92)), 1),$e->outcome,$e->retryAllowed,$e->status,$e->raw,
-        $e->getPrevious()->getMessage(),$calls,$events[0]['errorKind'],str_contains($debug,'synthetic-private-constructor-message')]);
+        $e->getPrevious()->getMessage(),$calls,$events[0]['errorName'],$events[0]['errorCode'],str_contains($debug,'synthetic-private-constructor-message')]);
 }finally{$runtime->close();}
 `,
       f.out,
@@ -462,7 +468,8 @@ catch(SdkError $e){
     '{"id":"pay_recover"}',
     'synthetic-private-constructor-message',
     1,
-    'protocol',
+    'UnexpectedResponseError',
+    '',
     false,
   ]);
 });

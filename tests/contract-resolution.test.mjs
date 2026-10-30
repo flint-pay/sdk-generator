@@ -8,6 +8,7 @@ import { loadContract, generate, validateFixtures } from '../dist/index.js';
 
 const settings = {
   version: '1.0.0',
+  responses: { return: 'result' },
   requests: { style: 'object' },
   npm: { name: '@example/resolution' },
   composer: { name: 'example/resolution', namespace: 'Example\\Resolution' },

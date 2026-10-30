@@ -21,6 +21,19 @@ import {
 import { compareCompiledContracts } from '../dist/compiled-compatibility.js';
 
 function fixture(t, api, config = {}) {
+  // Empty success responses use Result so response context remains accessible.
+  config = { ...config, operations: { ...config.operations } };
+  for (const path of Object.values(api.paths ?? {}))
+    for (const operation of Object.values(path))
+      if (
+        operation?.operationId &&
+        operation.responses?.['204'] &&
+        !operation.responses['204'].content
+      )
+        config.operations[operation.operationId] = {
+          ...config.operations[operation.operationId],
+          response: { return: 'result' },
+        };
   mkdirSync('.generated', { recursive: true });
   const dir = mkdtempSync(resolve('.generated/sdk-types-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -143,7 +156,7 @@ const tag: string = value.tag;
   typecheck(consumer);
 });
 
-test('identical response shapes share a canonical name while PHP identities remain stable', async (t) => {
+test('identical response components keep declared response-info names while codecs share shapes', async (t) => {
   const result = { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] };
   const response = (name) => ({
     type: 'object',
@@ -165,6 +178,9 @@ test('identical response shapes share a canonical name while PHP identities rema
         '/alpha': {
           post: { operationId: 'createAlpha', responses: jsonResponse(ref('AlphaResponse')) },
         },
+        '/alpha-again': {
+          post: { operationId: 'createAlphaAgain', responses: jsonResponse(ref('AlphaResponse')) },
+        },
         '/beta': {
           post: { operationId: 'createBeta', responses: jsonResponse(ref('BetaResponse')) },
         },
@@ -177,6 +193,7 @@ test('identical response shapes share a canonical name while PHP identities rema
       responses: { payloadPath: 'data' },
       operations: {
         createAlpha: { resource: 'alpha', method: 'create' },
+        createAlphaAgain: { resource: 'alpha', method: 'createAgain' },
         createBeta: { resource: 'beta', method: 'create' },
         getAlpha: { resource: 'alpha', method: 'get', response: { payloadPath: null } },
       },
@@ -189,6 +206,14 @@ test('identical response shapes share a canonical name while PHP identities rema
   assert.equal(a.plan.node.operations.createAlpha.output, 'BetaResponse');
   assert.equal(a.plan.node.operations.createBeta.output, 'BetaResponse');
   assert.equal(a.plan.node.operations.getAlpha.output, 'BetaResult');
+  assert.equal(a.plan.node.operations.createAlpha.responseType, 'AlphaResponse');
+  assert.equal(a.plan.node.operations.createBeta.responseType, 'BetaResponse');
+  assert.equal(a.plan.node.operations.getAlpha.responseType, 'AlphaResult');
+  const clientDeclaration = ['alpha', 'beta']
+    .map((resource) => readFileSync(join(f.output, 'node/resources/' + resource + '.d.ts'), 'utf8'))
+    .join('\n');
+  assert.match(clientDeclaration, /WithResponseInfo<BetaResult, AlphaResponse>/);
+  assert.match(clientDeclaration, /WithResponseInfo<BetaResult, BetaResponse>/);
   // Codec identity remains shared, independently of the public Node name.
   assert.equal(
     a.plan.runtime.operations[0].responses['200'].codec.fields.data.reference,
@@ -227,7 +252,7 @@ const beta = c.beta.create();
 const direct = c.alpha.get();
 const existingAlpha: Promise<BetaResult> = alpha;
 const existingBeta: Promise<BetaResult> = beta;
-const response: Promise<BetaResponse> = c.alpha.createWithResponse().then(r => r.body);
+const response: Promise<BetaResponse> = c.alpha.create().then(r => r.lastResponse.body);
 import {Client as ScopedClient, type BetaResult as ScopedResult, type BetaResult as PreviousScopedResult} from './resources/alpha.js';
 const scoped: Promise<ScopedResult> = new ScopedClient({baseUrl:'https://example.invalid'}).alpha.create();
 const previousScoped: Promise<PreviousScopedResult> = scoped;
@@ -256,10 +281,16 @@ const constrainedNull: Constrained = null;
     ts.forEachChild(node, visit);
   }
   visit(program.getSourceFile(consumer));
-  assert.equal(names.get('alpha'), 'BetaResult');
-  assert.equal(names.get('beta'), 'BetaResult');
-  assert.equal(names.get('direct'), 'BetaResult');
-  assert.equal(names.get('scoped'), 'BetaResult');
+  assert.match(
+    names.get('alpha'),
+    /^WithResponseInfo<BetaResult, (?:AlphaResponse|BetaResponse)>$/,
+  );
+  assert.equal(names.get('beta'), 'WithResponseInfo<BetaResult, BetaResponse>');
+  assert.match(names.get('direct'), /^WithResponseInfo<BetaResult, (?:AlphaResult|BetaResult)>$/);
+  assert.match(
+    names.get('scoped'),
+    /^WithResponseInfo<BetaResult, (?:AlphaResponse|BetaResponse)>$/,
+  );
   const sdk = await import(pathToFileURL(join(f.output, 'node/index.js')));
   const c = new sdk.Client({
     baseUrl: 'https://example.invalid',
@@ -686,11 +717,11 @@ for (const style of ['object', 'positional']) {
             },
           ]
         : ['command', { 'X-Tenant': 'tenant', 'X-Request-Id': 'caller-id' }];
-    const response = await c.api.sendWithResponse(...args, {
+    const response = await c.api.send(...args, {
       idempotencyKey: 'saved-key',
       headers: { 'X-API-VERSION': 'ignored' },
     });
-    assert.equal(response.meta.requestId, 'req_007ARQX9HRSSV4DWBYC52DZKJ6');
+    assert.equal(response.lastResponse.requestId, 'req_007ARQX9HRSSV4DWBYC52DZKJ6');
     for (const [name, value] of Object.entries({
       'x-session-id': 'session-id',
       'x-session-secret': 'session-secret',
@@ -741,9 +772,9 @@ foreach(['getXRequestId','getXTenant'] as $method)if(!$inputClass->hasMethod($me
 $seen=[];
 $c=new Example\Types\Client(new Example\Types\ClientOptions(baseUrl:'https://example.invalid',authMode:'session',credentials:['session'=>['SessionID'=>'session-id','SessionSecret'=>'session-secret']],transport:function($r)use(&$seen){$seen[]=$r['headers'];return ['status'=>204,'headers'=>['x-request-id'=>'req_007ARQX9HRSSV4DWBYC52DZKJ6'],'body'=>''];}));
 ` +
-        `$response=$c->api->sendWithResponse(${phpArgs},new Example\\Types\\RequestOptions(idempotencyKey:'saved-key',headers:['X-API-VERSION'=>'ignored']));\n` +
+        `$response=$c->api->send(${phpArgs},new Example\\Types\\RequestOptions(idempotencyKey:'saved-key',headers:['X-API-VERSION'=>'ignored']));\n` +
         String.raw`
-if($response->meta['requestId']!=='req_007ARQX9HRSSV4DWBYC52DZKJ6')throw new Exception('Request ID metadata');
+if($response->lastResponse()->requestId!=='req_007ARQX9HRSSV4DWBYC52DZKJ6')throw new Exception('Request ID metadata');
 foreach(['x-session-id'=>'session-id','x-session-secret'=>'session-secret','x-api-version'=>'v1','idempotency-key'=>'saved-key','x-request-id'=>'caller-id','x-tenant'=>'tenant'] as $name=>$value)if($seen[0][$name]!==$value)throw new Exception('Header '.$name);
 ` +
         `foreach([new Example\\Types\\RequestOptions(credentials:['SessionID'=>'x','SessionSecret'=>'session-secret']),new Example\\Types\\RequestOptions(headers:['X-Session-ID'=>'ConflictError']),new Example\\Types\\RequestOptions(idempotencyKey:'')] as $options){try{$c->api->send(${phpArgs},$options);throw new Exception('Expected failure');}catch(Example\\Types\\SdkError $e){}}\n` +
@@ -1588,10 +1619,10 @@ const omitted: InputValue<undefined> = undefined;
       error.status === 200 &&
       error.raw.includes('future'),
   );
-  assert.deepEqual(
-    { ...(await client.things.chooseWithResponse()).body },
-    { data: { future: true } },
-  );
+  await assert.rejects(client.things.choose(), (error) => {
+    assert.deepEqual(JSON.parse(error.raw), { data: { future: true } });
+    return error.name === 'UnexpectedResponseError';
+  });
   unknownPayload = false;
   failed = true;
   await assert.rejects(
@@ -1651,23 +1682,44 @@ for (const nesting of ['direct', 'object', 'array', 'nullable']) {
     });
     const wrapSchema = (schema) =>
       nesting === 'array'
-        ? { type: 'array', items: schema }
+        ? object({ items: { type: 'array', items: schema } })
         : nesting === 'object'
           ? object({ content: schema })
           : nesting === 'nullable'
-            ? { oneOf: [schema, { type: 'null' }] }
+            ? object({ value: { oneOf: [schema, { type: 'null' }] } })
             : schema;
     const wrap = (value) =>
-      nesting === 'array' ? [value] : nesting === 'object' ? { content: value } : value;
+      nesting === 'array'
+        ? { items: [value] }
+        : nesting === 'object'
+          ? { content: value }
+          : nesting === 'nullable'
+            ? { value }
+            : value;
     const unwrap = (value) =>
-      nesting === 'array' ? value[0] : nesting === 'object' ? value.content : value;
-    const access = nesting === 'array' ? '[0]' : nesting === 'object' ? '.content' : '';
+      nesting === 'array'
+        ? value.items[0]
+        : nesting === 'object'
+          ? value.content
+          : nesting === 'nullable'
+            ? value.value
+            : value;
+    const access =
+      nesting === 'array'
+        ? '.items[0]'
+        : nesting === 'object'
+          ? '.content'
+          : nesting === 'nullable'
+            ? '.value'
+            : '';
     const errorAccess =
       nesting === 'array'
-        ? 'error.details[0]?.[0]'
+        ? 'error.details[0]?.items[0]'
         : nesting === 'object'
           ? "error.details[0] && 'content' in error.details[0] && error.details[0].content"
-          : 'error.details[0]';
+          : nesting === 'nullable'
+            ? 'error.details[0]?.value'
+            : 'error.details[0]';
     const alternatives = (key) => ({
       oneOf: ['FirstDetail', 'SecondDetail'].map((name) =>
         object({
@@ -1722,6 +1774,7 @@ export function inspectError(error: errors.ApiError) {
 export function inspectPayload(value: Awaited<ReturnType<Client['choices']['get']>>) {
   if (!value) return;
   const data = value${access};
+  if (!data) return;
   if ('foo' in data) return data.foo.toUpperCase();
   return data.bar.toFixed(1);
 }
@@ -1779,10 +1832,10 @@ export function inspectPayload(value: Awaited<ReturnType<Client['choices']['get'
     }
     if (nesting === 'nullable') {
       // Null fits both envelope branches, so the oneOf envelope is ambiguous.
-      value = null;
+      value = { value: null };
       await assert.rejects(client.choices.get(), (error) => {
         assert.deepEqual(error.details, []);
-        assert.deepEqual(JSON.parse(error.raw).error.details, [null]);
+        assert.deepEqual(JSON.parse(error.raw).error.details, [value]);
         assert.equal(consumer.inspectError(error), undefined);
         return true;
       });
@@ -1869,7 +1922,7 @@ export function payload(v:Awaited<ReturnType<Client['api']['read']>>) {
  }
 }
 export async function full(c:Client) {
- const v=(await c.api.readWithResponse()).body;
+ const v=(await c.api.read()).lastResponse.body;
  if('data' in v && v.data && typeof v.data==='object' && 'content' in v.data && v.data.content && typeof v.data.content==='object' && 'foo' in v.data.content) {
   // @ts-expect-error full response alternatives also keep foo unknown
   v.data.content.foo.toUpperCase();
@@ -1940,6 +1993,7 @@ test('error certification includes other statuses and operations without local r
     },
     {
       errors: { objectPath: 'error' },
+      responses: { return: 'result' },
       operations: {
         first: { resource: 'api', method: 'first' },
         second: { resource: 'api', method: 'second' },
@@ -2038,7 +2092,7 @@ test('the public type certifier also protects pagination, known predicates and k
       },
     },
     {
-      responses: { return: 'payload', payloadPath: 'data' },
+      responses: { return: 'payload' },
       operations: {
         read: {
           resource: 'api',
@@ -2063,7 +2117,7 @@ test('the public type certifier also protects pagination, known predicates and k
     `import {isApiReadResponseKnown,type Client,type VerifiedWebhook} from './index.js';
 type Item=ReturnType<Client['api']['readItems']> extends AsyncGenerator<infer I>?I:never;
 export function item(v:Item){if('foo' in v)return v.foo.toUpperCase();return v.bar.toFixed();}
-export function known(v:Awaited<ReturnType<Client['api']['readWithResponse']>>){if(isApiReadResponseKnown(v.body))for(const i of v.body.data)item(i);}
+export function known(v:Awaited<ReturnType<Client['api']['read']>>){if(isApiReadResponseKnown(v.lastResponse.body))for(const i of v.lastResponse.body.data)item(i);}
 export function webhook(v:VerifiedWebhook){if(v.known){if('foo' in v.event.data)return v.event.data.foo.toUpperCase();return v.event.data.bar.toFixed();}}
 `,
   );
@@ -2089,9 +2143,9 @@ export function webhook(v:VerifiedWebhook){if(v.known){if('foo' in v.event.data)
   ]) {
     value = body;
     const valid = body.foo === 'safe' && !Object.hasOwn(body, 'bar');
-    const full = await client.api.readWithResponse();
-    assert.equal(sdk.isApiReadResponseKnown(full.body), valid);
-    assert.equal(scoped.isApiReadResponseKnown(full.body), valid);
+    const full = await client.api.read();
+    assert.equal(sdk.isApiReadResponseKnown(full.lastResponse.body), valid);
+    assert.equal(scoped.isApiReadResponseKnown(full.lastResponse.body), valid);
     assert.doesNotThrow(() => consumer.known(full));
     if (valid)
       assert.deepEqual(await Array.fromAsync(client.api.readItems(), consumer.item), ['SAFE']);

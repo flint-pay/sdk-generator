@@ -9,6 +9,7 @@ import { loadContract, generate, Diagnostic } from '../dist/index.js';
 const root = mkdtempSync(join(tmpdir(), 'sdk-audit-fixes-'));
 after(() => rmSync(root, { recursive: true, force: true }));
 const profile = {
+  responses: { return: 'result' },
   version: '1.0.0',
   npm: { name: 'audit-sdk' },
   composer: { name: 'audit/sdk', namespace: 'AuditSdk' },
@@ -77,11 +78,11 @@ test('positional model arguments preserve exact JSON kinds across methods and ta
       },
     };
     const model = sdk.makePayload(raw);
-    for (const method of ['save', 'persist', 'saveWithResponse'])
+    for (const method of ['save', 'persist'])
       for (const value of [raw, model])
         await c.api[method](style === 'object' ? { body: value } : value);
     const expected = '{"amount":1.2500,"nested":{"values":["1.2500",9007199254740993,1e-20]}}';
-    assert.deepEqual(wire, Array(6).fill(expected));
+    assert.deepEqual(wire, Array(4).fill(expected));
     const { modelInputValue } = await import(join(i.out, 'node/runtime.js'));
     const extracted = modelInputValue(model);
     extracted.nested.values.push('edited');
@@ -288,7 +289,7 @@ foreach([false,true] as $preserve)if(Codec::plainNumbers(Codec::parse($wire,$pre
 foreach(['[01]','[1e]','[1.]','[1,]','{"n":-}','NaN'] as $invalid){try{Codec::parse($invalid);throw new Exception('accepted malformed JSON');}catch(JsonException $e){}}
 $wire='['.implode(',',array_fill(0,320000,'123456789')).']';
 $c=new Client(new ClientOptions(baseUrl:'https://example.invalid',transport:fn($r)=>['status'=>200,'headers'=>[],'body'=>$wire]));
-$values=$c->api->numbers(new RequestOptions(deadlineMs:10000));
+$values=$c->api->numbers(new RequestOptions(deadlineMs:10000))->data;
 if(count($values)!==320000||$values[0]!==123456789||$values[319999]!==123456789)throw new Exception('changed response');
 echo 'ok';
 `,

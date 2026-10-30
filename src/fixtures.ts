@@ -157,11 +157,12 @@ export async function validateFixturesWithProgress(
             );
           else {
             const payload = operation.response?.return === 'payload';
-            const response = await client[operation.resource][
-              operation.method + (payload ? 'WithResponse' : '')
-            ](...requestArguments(operation, scenario.input), scenario.options);
+            const response = await client[operation.resource][operation.method](
+              ...requestArguments(operation, scenario.input),
+              scenario.options,
+            );
             const result = payload
-              ? { data: response.body, meta: response.meta, raw: response.raw }
+              ? { data: response.lastResponse.body, lastResponse: response.lastResponse }
               : response;
             if (scenario.data !== undefined)
               assert.deepEqual(JSON.parse(JSON.stringify(result.data)), scenario.data);
@@ -170,7 +171,8 @@ export async function validateFixturesWithProgress(
               assert.equal(Buffer.from(result.data).toString('base64'), scenario.dataBase64);
               assert.equal(result.raw, result.data);
             }
-            if (scenario.status !== undefined) assert.equal(result.meta.status, scenario.status);
+            if (scenario.status !== undefined)
+              assert.equal(result.lastResponse.status, scenario.status);
             if (scenario.empty) assert.equal(result.data, undefined);
           }
           assert.equal(attempts, scenario.attempts ?? 1);

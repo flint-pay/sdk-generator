@@ -3368,11 +3368,8 @@ function loadContractInput(
         const allNames = [
           method,
           ...(c.aliases ?? []),
-          ...(payloadReturn ? [method, ...(c.aliases ?? [])].map((n) => n + 'WithResponse') : []),
           ...(c.pagination ? [method + 'Pages', method + 'Items'] : []),
           ...(c.polling ? [method + 'Wait'] : []),
-          ...(payloadReturn && c.pagination ? [method + 'PagesWithResponse'] : []),
-          ...(payloadReturn && c.polling ? [method + 'WaitWithResponse'] : []),
         ];
         for (const n of allNames) {
           name(n, cp + (n === method ? '/method' : '/aliases'), true);
@@ -3903,7 +3900,7 @@ function loadContractInput(
               : {}),
         };
         if (!payloadReturn) delete operation.response;
-        if (payloadReturn && responseReturn.payloadPath) payloadSchemas(operation);
+        if (payloadReturn) payloadSchemas(operation, definitions);
         if (requestStyle !== 'positional') delete operation.request;
         validatePositional(operation, definitions);
         const urlTemplate = config.documentation?.operationUrl;

@@ -85,6 +85,7 @@ function fixture(t, targets = ['php'], { generated = true } = {}) {
     output = join(dir, 'output');
   const config = {
     version: '1.0.0',
+    responses: { return: 'result' },
     targets,
     requests: { style: 'object' },
     npm: { name: '@synthetic/todos' },
@@ -129,6 +130,7 @@ test('init writes only the expected minimal config and reports diagnosis and nex
   assert.match(result.stderr, /inferred api.listTodos/);
   const config = {
     version: '0.1.0',
+    responses: { return: 'result' },
     targets: ['node', 'php'],
     npm: { name: '@example/synthetic-todos' },
     composer: { name: 'example/synthetic-todos', namespace: 'Example\\SyntheticTodos' },
@@ -166,6 +168,7 @@ test('initialConfig reuses ASCII naming words and fallbacks without writing file
     const config = initialConfig(f.api, { targets: ['node', 'php'] });
     assert.deepEqual(config, {
       version: '0.1.0',
+      responses: { return: 'result' },
       targets: ['node', 'php'],
       npm: { name: '@example/' + slug },
       composer: { name: 'example/' + slug, namespace: 'Example\\' + pascal },
@@ -176,6 +179,26 @@ test('initialConfig reuses ASCII naming words and fallbacks without writing file
     rmSync(f.sdk);
     assert.deepEqual(readdirSync(f.dir), ['api.json']);
   }
+});
+
+test('initialConfig keeps object payloads and selects result mode for nullable component responses', (t) => {
+  const f = fixture(t, ['node'], { generated: false });
+  const document = JSON.parse(readFileSync(f.api, 'utf8'));
+  document.components = {
+    schemas: {
+      TodoPage: {
+        type: 'object',
+        properties: { data: { type: 'array', items: { type: 'string' } } },
+      },
+    },
+  };
+  const schema = document.paths['/todos'].get.responses['200'].content['application/json'];
+  schema.schema = { $ref: '#/components/schemas/TodoPage' };
+  writeFileSync(f.api, JSON.stringify(document));
+  assert.equal(initialConfig(f.api).responses, undefined);
+  schema.schema.nullable = true;
+  writeFileSync(f.api, JSON.stringify(document));
+  assert.deepEqual(initialConfig(f.api).responses, { return: 'result' });
 });
 
 test('init writes valid digit-leading names for every target selection', (t) => {
@@ -267,6 +290,7 @@ test('init target selection omits unselected metadata and preserves diagnose JSO
     assert.equal(diagnosis.status, 0, diagnosis.stderr);
     const config = {
       version: '0.1.0',
+      responses: { return: 'result' },
       targets,
       ...(targets.includes('node') ? { npm: { name: '@example/synthetic-todos' } } : {}),
       ...(targets.includes('php')
@@ -916,7 +940,7 @@ test('--json preserves every command failure object and serialization', (t) => {
 test('human preview and generation summarize first generation and unchanged files', (t) => {
   const f = fixture(t, ['node', 'php']);
   const fresh = join(f.dir, 'new output');
-  const expected = `Files: 109 created (node 48, php 61); no previous generation\nCompatibility: not compared; no previous generation\n`;
+  const expected = `Files: 108 created (node 47, php 61); no previous generation\nCompatibility: not compared; no previous generation\n`;
   for (const flags of [[], ['--diff']]) {
     const result = run(['preview', f.api, f.sdk, fresh, ...flags]);
     assert.equal(result.status, 0, result.stderr);
@@ -934,7 +958,7 @@ test('human preview and generation summarize first generation and unchanged file
     assert.equal(result.status, 0, result.stderr);
     assert.equal(
       result.stdout,
-      `${command === 'preview' ? `Preview of ${fresh} (no files written)` : `Generated ${fresh}`}\nFiles: no changes (109 unchanged)\nCompatibility: no findings\n`,
+      `${command === 'preview' ? `Preview of ${fresh} (no files written)` : `Generated ${fresh}`}\nFiles: no changes (108 unchanged)\nCompatibility: no findings\n`,
     );
     assert.ok(Buffer.byteLength(result.stdout) < 1024);
   }
@@ -962,10 +986,10 @@ test('human regeneration lists sorted paths and every finding; --diff prints onl
   const plan = preview(contract, f.output);
   const plain = run(['preview', f.api, f.sdk, f.output]);
   assert.equal(plain.status, 0, plain.stderr);
-  assert.match(plain.stdout, /Files: 3 created, 14 modified, 64 removed, 31 unchanged\n/);
+  assert.match(plain.stdout, /Files: 3 created, 14 modified, 64 removed, 30 unchanged\n/);
   assert.match(plain.stdout, /Modified \(14\):\n  node\/README.md\n/);
   assert.match(plain.stdout, /\n  php\/README.md\n/);
-  assert.match(plain.stdout, /Compatibility: 6 breaking, 2 review, 0 additive\n/);
+  assert.match(plain.stdout, /Compatibility: 5 breaking, 2 review, 0 additive\n/);
   assert.match(
     plain.stdout,
     /  breaking  listTodos: Public method renamed without a compatible alias\n/,
@@ -1017,7 +1041,7 @@ test('human regeneration lists sorted paths and every finding; --diff prints onl
   const again = run(['preview', f.api, f.sdk, f.output]);
   assert.equal(again.status, 0, again.stderr);
   assert.match(again.stdout, /\nFiles: no changes \(\d+ unchanged\)\n/);
-  assert.match(again.stdout, /\nCompatibility: 6 breaking, 2 review, 0 additive\n/);
+  assert.match(again.stdout, /\nCompatibility: 5 breaking, 2 review, 0 additive\n/);
   assert.doesNotMatch(again.stdout, /no findings|Use --diff/);
 });
 
@@ -1035,7 +1059,7 @@ test('human validation prints one line per finished check group and fixtures, hi
         '  passed  node  npm package contents',
         '  passed  node  module and descriptor loading',
         '  passed  node  Type-checked JavaScript examples (1 file)',
-        '  passed  php   PHP syntax (46 files)',
+        '  passed  php   PHP syntax (45 files)',
         '  passed  php   Composer metadata',
         '  passed  php   descriptor validation',
         '  passed  node  HTTP fixtures (1 scenario)',

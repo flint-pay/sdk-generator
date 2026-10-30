@@ -127,6 +127,7 @@ writeFileSync(
   JSON.stringify({
     responses: { return: 'result' },
     version: '1.0.0',
+    errors: { objectPath: '' },
     requests: { style: 'object' },
     npm: { name: '@example/streams' },
     composer: { name: 'example/streams', namespace: 'Example\\Streams' },
@@ -158,7 +159,7 @@ foreach ([$wire, str_split($wire)] as $chunks) {
   public function read(): ?string { return array_shift($this->chunks); }
   public function close(): void { $this->closed=true; }
  };
- $stream=new EventStream($source, [], ['idleTimeoutMs'=>1000,'maxEventBytes'=>1000], fn($event,$raw)=>$raw, fn()=>null);
+ $stream=new EventStream($source, ['status'=>200,'headers'=>[],'attempts'=>1,'durationMs'=>0], ['idleTimeoutMs'=>1000,'maxEventBytes'=>1000], fn($event,$raw)=>$raw, fn()=>null);
  $frames=iterator_to_array($stream);
  if (!$source->closed) throw new Exception('connection leak');
  echo json_encode($frames, JSON_THROW_ON_ERROR)."\\n";
@@ -202,7 +203,7 @@ test(
         assert.equal(frame.data.sequence, '9007199254740993');
         break;
       }
-      assert.equal(result.meta.requestId, 'req_00V8185E0Q3QQVSA6GHPBQP2VS');
+      assert.equal(result.lastResponse.requestId, 'req_00V8185E0Q3QQVSA6GHPBQP2VS');
       await client.close();
       writeFileSync(
         join(dir, 'transport.php'),
@@ -213,7 +214,7 @@ use Example\\Streams\\{Client,ClientOptions,RequestOptions};
 $client=new Client(new ClientOptions(baseUrl: $argv[1], allowInsecureHttp: true));
 $result=$client->events->watch(options: new RequestOptions(timeoutMs: 10000));
 foreach ($result->data as $frame) { if ($frame->data->sequence !== '9007199254740993') throw new Exception('precision'); break; }
-if ($result->meta['requestId'] !== 'req_00V8185E0Q3QQVSA6GHPBQP2VS') throw new Exception('metadata');
+if ($result->lastResponse()->requestId !== 'req_00V8185E0Q3QQVSA6GHPBQP2VS') throw new Exception('metadata');
 $client->close();
 echo 'ok';
 `,
@@ -266,7 +267,7 @@ test('injected streams retain unknown events, reject malformed known payloads an
   assert.deepEqual(await Array.fromAsync(closeable.data), []);
   assert.equal(released, 2);
   await assert.rejects(client.events.watch({}, { streamIdleTimeoutMs: 0 }), {
-    name: 'InvalidInputError',
+    name: 'ConfigurationError',
   });
   assert.equal(calls, 2);
 

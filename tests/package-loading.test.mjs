@@ -23,7 +23,7 @@ api.paths['/unused-marker'] = {
 const config = JSON.parse(readFileSync('examples/library.sdk.json'));
 config.operations = {
   findBook: { resource: 'books', method: 'retrieve' },
-  unused: { resource: 'unrelated', method: 'read' },
+  unused: { resource: 'unrelated', method: 'read', response: { return: 'result' } },
 };
 writeFileSync(join(root, 'api.json'), JSON.stringify(api));
 writeFileSync(join(root, 'sdk.json'), JSON.stringify(config));
@@ -173,10 +173,10 @@ test('selective Node imports call the same API and bundle no unrelated descripto
   const file = join(output, 'node', 'selective.ts');
   writeFileSync(
     file,
-    `import {Client, SdkError, Model, serialize, parseExact, redact, type Result, type Metadata, type RequestOptions, type BooksRetrieveInput} from './resources/books.js'; const c=new Client({baseUrl:'https://example.invalid'}); c.books.retrieve('a');
+    `import {Client, SdkError, Model, serialize, parseExact, redact, type Result, type ResponseInfo, type RequestOptions, type BooksRetrieveInput} from './resources/books.js'; const c=new Client({baseUrl:'https://example.invalid'}); c.books.retrieve('a');
 void [SdkError, Model, serialize, parseExact, redact];
 const result: Result<string> | undefined = undefined;
-const metadata: Metadata | undefined = undefined;
+const metadata: ResponseInfo | undefined = undefined;
 const options: RequestOptions = {};
 // @ts-expect-error unrelated resource is absent
 c.unrelated.read();`,

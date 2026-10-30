@@ -135,7 +135,7 @@ for (const style of ['object', 'positional'])
       const call = (options, method = 'send') =>
         style === 'object' ? client.api[method]({}, options) : client.api[method](options);
       const unset = await call({});
-      assert.equal(unset.meta.requestId, responseId);
+      assert.equal(unset.lastResponse.requestId, responseId);
       const good = [
         '!',
         '~',
@@ -255,7 +255,7 @@ require $argv[1].'/src/Runtime.php'; require $argv[1].'/src/Client.php';
 $cases=json_decode($argv[2],true,512,JSON_THROW_ON_ERROR); $sent=[]; $status=200;
 $c=new \RequestOptionTest\Client(new \RequestOptionTest\ClientOptions(baseUrl:'https://example.invalid',transport:function($r)use(&$sent,&$status,$cases){$sent[]=$r['headers'];return ['status'=>$status,'headers'=>['content-type'=>'application/json','x-request-id'=>$status===200?$cases['responseId']:$cases['errorId']],'body'=>'{}'];}));
 $call=fn($o,$method='send')=>$cases['style']==='object'?$c->api->$method([],$o):$c->api->$method($o);
-if($call(new \RequestOptionTest\RequestOptions())->meta['requestId']!==$cases['responseId'])throw new \Exception('response ID');
+if($call(new \RequestOptionTest\RequestOptions())->lastResponse()->requestId!==$cases['responseId'])throw new \Exception('response ID');
 foreach($cases['good'] as $v)$call(new \RequestOptionTest\RequestOptions(clientRequestId:$v));
 $call(new \RequestOptionTest\RequestOptions(headers:['X-REQUEST-ID'=>'header-only']));
 $call(new \RequestOptionTest\RequestOptions(headers:['X-Request-Id'=>'same'],clientRequestId:'same'));

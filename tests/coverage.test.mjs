@@ -260,9 +260,13 @@ test('configured error metadata and diagnostics include failed attempts without 
     return true;
   });
   assert.deepEqual(
-    events.map((e) => e.errorKind),
-    ['transport', 'validation'],
+    events.map((e) => [e.errorName, e.errorCode]),
+    [
+      ['ConnectionError', 'transport_failure'],
+      ['InvalidRequestError', 'bad_input'],
+    ],
   );
+  assert.ok(events.every((event) => !Object.hasOwn(event, 'errorKind')));
   assert.equal(JSON.stringify(events).includes('secret'), false);
   assert.equal(JSON.stringify(events).includes('required'), false);
 });
@@ -443,12 +447,19 @@ test('both native clients identify their package and permit User-Agent overrides
     let stderr = '';
     child.stderr.on('data', (b) => (stderr += b));
     assert.equal(await new Promise((resolve) => child.on('close', resolve)), 0, stderr);
-    assert.deepEqual(received, [
-      `${contract.config.npm.name.replace(/^@/, '').replaceAll('/', '-')}/${contract.config.version} (Node.js)`,
-      'Consumer/1.0',
-      `${contract.config.composer.name.replaceAll('/', '-')}/${contract.config.version} (PHP)`,
-      'Consumer/1.0',
-    ]);
+    const nodeBase = `${contract.config.npm.name.replace(/^@/, '').replaceAll('/', '-')}/${contract.config.version}`;
+    const phpBase = `${contract.config.composer.name.replaceAll('/', '-')}/${contract.config.version}`;
+    assert.equal(
+      received[0],
+      `${nodeBase} (Node.js ${process.versions.node}; ${process.platform} ${process.arch})`,
+    );
+    const phpRuntime = spawnSync('php', ['-r', 'echo PHP_VERSION."; ".PHP_OS_FAMILY;'], {
+      encoding: 'utf8',
+    });
+    assert.equal(phpRuntime.status, 0, phpRuntime.stderr);
+    assert.equal(received[2], `${phpBase} (PHP ${phpRuntime.stdout})`);
+    assert.equal(received[1], 'Consumer/1.0');
+    assert.equal(received[3], 'Consumer/1.0');
   } finally {
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));

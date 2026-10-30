@@ -1,7 +1,7 @@
 import type { Operation, Schema } from './contract.js';
 import { Diagnostic, pointerSegment } from './diagnostic.js';
 import { successStatus } from './runtime-plan.js';
-import { objectConstraint } from './target-types.js';
+import { objectConstraint, objectBodyConstraint } from './target-types.js';
 
 export interface ResponseReturn {
   return?: 'result' | 'payload';
@@ -35,7 +35,6 @@ export function validateResponseReturn(
 /** Require a declared, present path in every alternative. Never infer envelopes by name. */
 export function payloadSchemas(op: Operation, definitions: Record<string, Schema> = {}): Schema[] {
   const path = op.response?.payloadPath;
-  if (!path) return [];
   const location = 'config/operations/' + pointerSegment(op.id) + '/response/payloadPath';
   const fail = (): never => {
     throw new Diagnostic(
@@ -82,7 +81,7 @@ export function payloadSchemas(op: Operation, definitions: Record<string, Schema
       return fail();
     return project(children.length === 1 ? children[0]! : { allOf: children }, parts.slice(1));
   };
-  return Object.entries(op.responses)
+  const projected = Object.entries(op.responses)
     .filter(([status]) => successStatus(status) || status === 'default')
     .flatMap(([, r]) => {
       if (
@@ -92,8 +91,30 @@ export function payloadSchemas(op: Operation, definitions: Record<string, Schema
         r.classification === 'redirect'
       )
         return fail();
-      return project(r.schema, path.split('.'));
+      return project(r.schema, path?.split('.') ?? []);
     });
+  const checkedProperties = new Set<Schema>();
+  const checkProperty = (schema: Schema): void => {
+    if (checkedProperties.has(schema)) return;
+    checkedProperties.add(schema);
+    const s = expand(schema);
+    if (Object.hasOwn(s.properties ?? {}, 'lastResponse'))
+      throw new Diagnostic(
+        location,
+        'payload property lastResponse is reserved for response information; use return: result',
+      );
+    for (const branch of [...(s.allOf ?? []), ...(s.oneOf ?? []), ...(s.anyOf ?? [])])
+      checkProperty(branch);
+  };
+  for (const schema of projected) {
+    checkProperty(schema);
+    if (!objectBodyConstraint(schema, definitions))
+      throw new Diagnostic(
+        location,
+        'payload must always be an object; use return: result for scalar, array, nullable or empty responses',
+      );
+  }
+  return projected;
 }
 
 /** Future alternatives may expose values outside the known payload schemas. */

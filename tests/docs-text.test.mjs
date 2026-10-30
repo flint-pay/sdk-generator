@@ -78,6 +78,7 @@ const api = {
 };
 const base = {
   version: '1.0.0',
+  responses: { return: 'result' },
   npm: { name: '@example/widgets' },
   composer: { name: 'example/widgets', namespace: 'Example\\Widgets' },
   operations: {
@@ -181,8 +182,11 @@ test('generated package docs name the API, name retention classes and avoid dash
     assert.ok(documents.length >= 8);
     for (const path of documents) {
       const text = readFileSync(path, 'utf8');
-      // Credential providers keep their name; nothing else calls the API a provider.
-      const prose = text.replace(/credential ?providers?/gi, '');
+      // Credential providers and the public SDK code keep their names.
+      // Other prose must name the API instead of calling it a provider.
+      const prose = text
+        .replace(/credential ?providers?/gi, '')
+        .replace(/\bcredential_provider_failed\b/g, '');
       assert.doesNotMatch(prose, /provider/i, path);
       assert.doesNotMatch(text, /policy [0-9]/i, path);
       assert.doesNotMatch(text, dash, path);
@@ -241,11 +245,12 @@ test('method docs put the route in the summary and link an absolute documentatio
     docFor('update'),
     /@see https:\/\/docs\.example\.test\/api\/widget-objects#updateWidget\n/,
   );
-  // Helper docs link the same page.
+  // Base method docs retain the link after response companions are removed.
   assert.match(
-    declarations,
-    /Complete decoded body[\s\S]*?@see https:\/\/docs\.example\.test\/api\/widget-objects#createWidget/,
+    docFor('create'),
+    /@see https:\/\/docs\.example\.test\/api\/widget-objects#createWidget\n/,
   );
+  assert.doesNotMatch(declarations, /\b(?:create|list|update)WithResponse\(/);
 });
 
 test('without a URL template, @see keeps the package reference', () => {

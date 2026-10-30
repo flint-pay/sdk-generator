@@ -83,6 +83,7 @@ import {
   compileSdkContract,
   RETRY_DEFAULTS,
   VALIDATION_MESSAGES,
+  RESPONSE_OBJECT_CODEC,
   ERROR_FIELDS,
   AUTH_SHORTCUT_RESERVED,
   type SampleValidator,
@@ -156,7 +157,7 @@ function runtimeIdentity(
               ? /^node\/(runtime|type-certificate|codec-plan|runtime-plan|request-options|descriptor-source|package-plan|response|request)\.js$/.test(
                   name,
                 )
-              : /^php\/src\/(SchemaAdapter|classes\/(?:Runtime|Codec|Model|SdkError|Result|RequestOptions|ClientOptions|Omitted|AmbientCredentialProvider|Credential|CredentialProvider|EventStream|ServerSentEvent|Cancellation|ByteStream|CurlByteStream|RawNumber|ParsedNumber|ExactNumber|SdkResponse|Errors\/\w+|Internal\/DescriptorSource))\.php$/.test(
+              : /^php\/src\/(SchemaAdapter|classes\/(?:Runtime|Codec|Model|SdkError|Result|RequestOptions|ClientOptions|Omitted|AmbientCredentialProvider|Credential|CredentialProvider|EventStream|ServerSentEvent|Cancellation|ByteStream|CurlByteStream|RawNumber|ParsedNumber|ExactNumber|ResponseInfo|Errors\/\w+|Internal\/DescriptorSource))\.php$/.test(
                   name,
                 ),
           ),
@@ -340,8 +341,8 @@ function downloadExampleResult(op: Operation, target: 'node' | 'php', result: st
       : `// Choose a destination path; PHP strings preserve every PDF byte.\n$${result}Path = getenv('API_DOWNLOAD_PATH') ?: 'download.pdf';\nif (file_put_contents($${result}Path, ${data}) === false) throw new \\RuntimeException('Could not save PDF');\necho 'Saved ' . strlen(${data}) . ' bytes to ' . $${result}Path . PHP_EOL;\n`;
   if (kind === 'redirect')
     return target === 'node'
-      ? `// Location may be relative or use another origin. The SDK does not follow it.\n// Validate the destination before a separate download; do not forward API credentials.\nconsole.log(${result}.meta.status, ${data}.location ?? "No Location header");\n`
-      : `// Location may be relative or use another origin. The SDK does not follow it.\n// Validate the destination before a separate download; do not forward API credentials.\necho $${result}->meta['status'] . ' ' . (${data}->location ?? 'No Location header') . PHP_EOL;\n`;
+      ? `// Location may be relative or use another origin. The SDK does not follow it.\n// Validate the destination before a separate download; do not forward API credentials.\nconsole.log(${result}.lastResponse.status, ${data}.location ?? "No Location header");\n`
+      : `// Location may be relative or use another origin. The SDK does not follow it.\n// Validate the destination before a separate download; do not forward API credentials.\necho $${result}->lastResponse()->status . ' ' . (${data}->location ?? 'No Location header') . PHP_EOL;\n`;
   return '';
 }
 
@@ -843,8 +844,7 @@ function exampleParts(
   const input = exampleInput(op, c.definitions ?? {});
   const credentials = exampleCredentials(c, op);
   const hasStream = Object.values(op.responses).some((response) => response.bodyKind === 'sse');
-  const withResponse = op.response?.return === 'payload' && downloadExampleKind(op) === 'redirect';
-  const method = op.method + (withResponse ? 'WithResponse' : '');
+  const method = op.method;
   const qualify = (symbol: string) =>
     options.qualifiedPhp ? `\\${c.config.composer.namespace}\\${symbol}` : symbol;
   const key = options.fields
@@ -916,11 +916,11 @@ function exampleParts(
   const printed =
     (downloadExampleResult(op, target, result) ||
       exampleResult(op, c.definitions ?? {}, target, result)) +
-    (op.response?.return === 'payload' && !withResponse
+    (op.response?.return === 'payload'
       ? ''
       : target === 'node'
-        ? `console.log(${result}.meta.requestId);\n`
-        : `echo ($${result}->meta['requestId'] ?? '') . PHP_EOL;\n`);
+        ? `console.log(${result}.lastResponse.requestId);\n`
+        : `echo ($${result}->lastResponse()->requestId ?? '') . PHP_EOL;\n`);
   // Print a payload with no recognizable ID fields; skip the variable for empty responses.
   const unused = !printed && !hasStream;
   const output =
@@ -1142,7 +1142,7 @@ function packageReadme(
     c.config.auth && 'defaultCredentials' in c.config.auth && c.config.auth.defaultCredentials;
   const setup = `${environment.length ? `Set ${markdownList(environment)}${authLink}` : 'Configure the client'}${ambient ? ' and configure default credentials as described in the authentication guide' : ''}, then replace the sample values with your own. Optionally set FLINT_BASE_URL to override the API default server${c.defaultBaseUrl !== undefined ? ` (${c.defaultBaseUrl})` : ''}.`;
   const resultData = node ? 'result.data' : '$result->data';
-  const resultMeta = node ? 'result.meta' : '$result->meta';
+  const resultMeta = node ? 'result.lastResponse' : '$result->lastResponse()';
   const returnMode =
     returns.payload === returns.total
       ? ''
@@ -1456,7 +1456,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     const descriptorOutput = nodeDescriptors(
       {
         ...compiledRuntime,
-        userAgent: `${c.config.npm.name.replace(/^@/, '').replaceAll('/', '-')}/${c.config.version} (Node.js)`,
+        userAgent: `${c.config.npm.name.replace(/^@/, '').replaceAll('/', '-')}/${c.config.version}`,
       },
       put,
     );
@@ -1471,7 +1471,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       put('request.js', readFileSync(join(here, '../templates/request.mjs'), 'utf8'));
       code = "import { requestInput as _sdkRequestInput } from './request.js';\n" + code;
     }
-    let declarations = `import type { ${c.authentication ? 'ClientOptions as RuntimeClientOptions, RequestOptions as RuntimeRequestOptions' : 'ClientOptions as RuntimeClientOptions, RequestOptions'}, Result, InputValue, CredentialProvider${defaultCredentials ? ', WorkloadIdentityOptions' : ''}${c.config.webhook ? ', WebhookHeaders as _SdkWebhookHeaders, WebhookVerificationOptions as _SdkWebhookVerificationOptions' : ''} } from './runtime.js';\nimport { Model${extraValues} } from './runtime.js';\nexport { SdkError, errors, Model${extraValues}, serialize, parseExact, redact } from './runtime.js';\nexport type { ${c.authentication ? '' : 'RequestOptions, '}Result, Metadata, DiagnosticEvent, InputValue, CredentialProvider${streamTypes ? ', ServerSentEvent' : ''} } from './runtime.js';\n`;
+    let declarations = `import type { ${c.authentication ? 'ClientOptions as RuntimeClientOptions, RequestOptions as RuntimeRequestOptions' : 'ClientOptions as RuntimeClientOptions, RequestOptions'}, Result, WithResponseInfo, InputValue, CredentialProvider${defaultCredentials ? ', WorkloadIdentityOptions' : ''}${c.config.webhook ? ', WebhookHeaders as _SdkWebhookHeaders, WebhookVerificationOptions as _SdkWebhookVerificationOptions' : ''} } from './runtime.js';\nimport { Model${extraValues} } from './runtime.js';\nexport { SdkError, errors, Model${extraValues}, serialize, parseExact, redact } from './runtime.js';\nexport type { ${c.authentication ? '' : 'RequestOptions, '}Result, ResponseInfo, WithResponseInfo, DiagnosticEvent, InputValue, CredentialProvider${streamTypes ? ', ServerSentEvent' : ''} } from './runtime.js';\n`;
     if (targetPlan.node.errorTypes)
       declarations += "export type { SdkErrorCode, SdkErrorDetails } from './runtime.js';\n";
     if (defaultCredentials)
@@ -1488,7 +1488,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     if (hasPayloadReturns) {
       put('response.js', readFileSync(join(here, '../templates/response.mjs'), 'utf8'));
       code =
-        "import { responsePayload as _sdkPayload, sdkResponse as _sdkResponse, payloadPages as _sdkPayloadPages, sdkResponsePages as _sdkResponsePages } from './response.js';\n" +
+        "import { responsePayload as _sdkPayload, payloadPages as _sdkPayloadPages } from './response.js';\n" +
         code;
       declarations += targetPlan.node.responseReturnDeclarations!;
     }
@@ -1511,14 +1511,20 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     }
     const responseType = (op: Operation): string =>
       targetPlan.node.operations[op.id]!.responseType!;
+    const responseAliases = new Set<string>();
     for (const op of c.operations) {
       declarations += `export type ${pascal(op.resource)}${pascal(op.method)}Input = ${targetPlan.node.operations[op.id]!.documentedInput ?? targetPlan.node.operations[op.id]!.input};\n`;
       if (positional(op) && hasParams(op)) {
         const call = targetPlan.requestCalls![op.id]!;
         declarations += `export type ${call.paramsName} = ${call.paramsType};\n`;
       }
-      if (responseType(op) !== targetPlan.node.operations[op.id]!.output)
+      if (
+        responseType(op) !== targetPlan.node.operations[op.id]!.output &&
+        !responseAliases.has(responseType(op))
+      ) {
+        responseAliases.add(responseType(op));
         declarations += `export type ${responseType(op)} = ${targetPlan.node.operations[op.id]!.output};\n`;
+      }
     }
     declarations += `/** API client; see README.md and RUNTIME.md#clientoptions. */\nexport declare class Client {\n  constructor(options${targetPlan.node.clientOptions?.optional ? '?' : ''}: ClientOptions);\n`;
     for (const group of groups) {
@@ -1537,37 +1543,27 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         for (const method of [op.method, ...(op.aliases ?? [])]) {
           const request = `this.#runtime.request(${js(op.id)}, ${call.nodeInput}, options)`;
           code += `      ${method}: ${positional(op) ? 'async ' : ''}(${call.nodeArgs}) => ${request}${payload ? `.then(result => _sdkPayload(result, ${js(payload.path)}${decodePayload}))` : ''},\n`;
-          declarations += `    ${methodDoc(c, op, method, definitions, call.nodePathDocs)}    ${method}(${call.nodeSignature}): Promise<${payload ? payload.node : `Result<${responseType(op)}>`}>;\n`;
-          if (payload) {
-            code += `      ${method}WithResponse: ${positional(op) ? 'async ' : ''}(${call.nodeArgs}) => ${request}.then(_sdkResponse),\n`;
-            declarations += `    /** Complete decoded body and HTTP metadata, without payload unwrapping.\n     * @see ${seeTarget(c, op)}\n     */\n    ${method}WithResponse(${call.nodeSignature}): Promise<SdkResponse<${responseType(op)}>>;\n`;
-          }
+          declarations += `    ${methodDoc(c, op, method, definitions, call.nodePathDocs)}    ${method}(${call.nodeSignature}): Promise<${payload ? `WithResponseInfo<${payload.node}, ${responseType(op)}>` : `Result<${responseType(op)}>`}>;\n`;
         }
         if (op.pagination)
           for (const [suffix, runtime, returnType] of [
             [
               'Pages',
               'pages',
-              payload?.helperReturn === 'payload' ? payload.node : `Result<${responseType(op)}>`,
+              payload?.helperReturn === 'payload'
+                ? `WithResponseInfo<${payload.node}, ${responseType(op)}>`
+                : `Result<${responseType(op)}>`,
             ],
             ['Items', 'items', targetPlan.node.operations[op.id]!.items],
           ]) {
             const request = `this.#runtime.${runtime}(${js(op.id)}, ${call.nodeInput}, options)`;
             code += `      ${op.method}${suffix}: (${call.nodeArgs}) => ${suffix === 'Pages' && payload?.helperReturn === 'payload' ? `_sdkPayloadPages(${request}, ${js(payload.path)}${decodePayload})` : request},\n`;
             declarations += `    /** Iterate ${suffix === 'Pages' ? 'pages' : 'items'} lazily.\n     * @see ${seeTarget(c, op)}\n     */\n    ${op.method}${suffix}(${call.nodeSignature}): AsyncGenerator<${returnType}>;\n`;
-            if (suffix === 'Pages' && payload?.helperReturn === 'payload') {
-              code += `      ${op.method}PagesWithResponse: (${call.nodeArgs}) => _sdkResponsePages(${request}),\n`;
-              declarations += `    /** Iterate complete page bodies with HTTP metadata.\n     * @see ${seeTarget(c, op)}\n     */\n    ${op.method}PagesWithResponse(${call.nodeSignature}): AsyncGenerator<SdkResponse<${responseType(op)}>>;\n`;
-            }
           }
         if (op.polling) {
           const request = `this.#runtime.wait(${js(op.id)}, ${call.nodeInput}, options)`;
           code += `      ${op.method}Wait: (${call.nodeArgs}) => ${request}${payload?.helperReturn === 'payload' ? `.then(result => _sdkPayload(result, ${js(payload.path)}${decodePayload}))` : ''},\n`;
-          declarations += `    /** Poll until a declared terminal state or deadline.\n     * @see ${seeTarget(c, op)}\n     */\n    ${op.method}Wait(${payload?.helperReturn === 'payload' || positional(op) ? call.nodeSignature : `input: ${prefix}Input, options?: ${requestOptionsType}`}): Promise<${payload?.helperReturn === 'payload' ? payload.node : `Result<${responseType(op)}>`}>;\n`;
-          if (payload?.helperReturn === 'payload') {
-            code += `      ${op.method}WaitWithResponse: (${call.nodeArgs}) => ${request}.then(_sdkResponse),\n`;
-            declarations += `    /** Poll for completion and return the full body with HTTP metadata.\n     * @see ${seeTarget(c, op)}\n     */\n    ${op.method}WaitWithResponse(${call.nodeSignature}): Promise<SdkResponse<${responseType(op)}>>;\n`;
-          }
+          declarations += `    /** Poll until a declared terminal state or deadline.\n     * @see ${seeTarget(c, op)}\n     */\n    ${op.method}Wait(${payload?.helperReturn === 'payload' || positional(op) ? call.nodeSignature : `input: ${prefix}Input, options?: ${requestOptionsType}`}): Promise<${payload?.helperReturn === 'payload' ? `WithResponseInfo<${payload.node}, ${responseType(op)}>` : `Result<${responseType(op)}>`}>;\n`;
         }
       }
       code += '    });\n';
@@ -1739,7 +1735,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     const ns = c.config.composer.namespace;
     const phpContract = {
       ...targetPlan.php.runtime,
-      userAgent: `${c.config.composer.name.replaceAll('/', '-')}/${c.config.version} (PHP)`,
+      userAgent: `${c.config.composer.name.replaceAll('/', '-')}/${c.config.version}`,
     };
     const eventModels = targetPlan.php.eventModels;
     const webhookDoc = (secretType: string) =>
@@ -1813,6 +1809,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         readFileSync(join(here, '../templates/Runtime.php'), 'utf8').replaceAll('SdkNamespace', ns),
         'src/Runtime.php',
         [
+          ["/* RESPONSE_OBJECT_CODEC */ '{}'", php(JSON.stringify(RESPONSE_OBJECT_CODEC))],
           ["/* VALIDATION_MESSAGES */ '{}'", php(JSON.stringify(VALIDATION_MESSAGES))],
           ["/* ERROR_FIELDS */ '{}'", php(JSON.stringify(ERROR_FIELDS))],
           [
@@ -1873,18 +1870,10 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         ],
       ),
     );
-    if (hasPayloadReturns)
-      put(
-        'src/SdkResponse.php',
-        readFileSync(join(here, '../templates/SdkResponse.php'), 'utf8').replace(
-          'namespace SdkNamespace;',
-          `namespace ${ns};`,
-        ),
-      );
     const resourceProperties = groups
       .map((group) => ` * @property-read ${pascal(group)}Resource $${group}`)
       .join('\n');
-    let code = `<?php\ndeclare(strict_types=1);\nnamespace ${ns};\n${hasPayloadReturns ? "require_once __DIR__ . '/SdkResponse.php';\n" : ''}\n/**\n${resourceProperties}\n */\nfinal class Client {\n    private Runtime $runtime;\n    private array $resourceCache = [];\n`;
+    let code = `<?php\ndeclare(strict_types=1);\nnamespace ${ns};\n\n/**\n${resourceProperties}\n */\nfinal class Client {\n    private Runtime $runtime;\n    private array $resourceCache = [];\n`;
     code += `    public function __construct(ClientOptions $options${c.defaultBaseUrl !== undefined ? ' = new ClientOptions()' : ''}) {\n        $this->runtime = new Runtime(SchemaRegistry::source(), $options, true);\n    }\n`;
     code += '    public function __get(string $name): mixed {\n        return match ($name) {\n';
     for (const group of groups)
@@ -1919,9 +1908,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         const call = callPlan(op, targetPlan, 'RequestOptions');
         for (const method of [op.method, ...(op.aliases ?? [])]) {
           const request = `$this->runtime->request(${php(op.id)}, ${normalizeInput}, $options)`;
-          code += `    /** ${comment(op.description)}\n${method !== op.method || op.deprecated ? `     * @deprecated ${comment(method !== op.method ? 'Use ' + op.method + '.' : op.deprecated!)}\n` : ''}     * ${positional(op) ? call.phpDoc : `@param ${inputName}|${targetPlan.documentation[op.id]!.phpInput} $input`}\n     * @return ${payload ? payload.php : `Result<${responseType}>`}\n     */\n    public function ${method}(${call.phpSignature}): ${payload ? payload.phpNative : 'Result'} { ${call.phpPrelude}return ${payload ? `SdkResponse::payload(${request}, [${payload.path.map(php).join(', ')}])` : request}; }\n`;
-          if (payload)
-            code += `    /** @return SdkResponse<${responseType}> */\n    public function ${method}WithResponse(${call.phpSignature}): SdkResponse { ${call.phpPrelude}$result = ${request}; return new SdkResponse($result->data, $result->meta, $result->raw); }\n`;
+          code += `    /** ${comment(op.description)}\n${method !== op.method || op.deprecated ? `     * @deprecated ${comment(method !== op.method ? 'Use ' + op.method + '.' : op.deprecated!)}\n` : ''}     * ${positional(op) ? call.phpDoc : `@param ${inputName}|${targetPlan.documentation[op.id]!.phpInput} $input`}\n     * @return ${payload ? payload.php : `Result<${responseType}>`}\n     */\n    public function ${method}(${call.phpSignature}): ${payload ? payload.phpNative : 'Result'} { ${call.phpPrelude}return ${payload ? `Runtime::responsePayload(${request}, [${payload.path.map(php).join(', ')}])` : request}; }\n`;
         }
         if (op.pagination)
           for (const [suffix, runtime] of [
@@ -1935,15 +1922,11 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
                   ? payload.php
                   : `Result<${responseType}>`
                 : targetPlan.php.operations[op.id]!.items
-            }> */\n    public function ${op.method}${suffix}(${call.phpSignature}): \\Generator { ${call.phpPrelude}return ${suffix === 'Pages' && payload?.helperReturn === 'payload' ? `SdkResponse::payloadPages(${request}, [${payload.path.map(php).join(', ')}])` : request}; }\n`;
-            if (suffix === 'Pages' && payload?.helperReturn === 'payload')
-              code += `    /** @return \\Generator<int, SdkResponse<${responseType}>> */\n    public function ${op.method}PagesWithResponse(${call.phpSignature}): \\Generator { ${call.phpPrelude}return SdkResponse::responsePages(${request}); }\n`;
+            }> */\n    public function ${op.method}${suffix}(${call.phpSignature}): \\Generator { ${call.phpPrelude}return ${suffix === 'Pages' && payload?.helperReturn === 'payload' ? `Runtime::responsePayloadPages(${request}, [${payload.path.map(php).join(', ')}])` : request}; }\n`;
           }
         if (op.polling) {
           const request = `$this->runtime->wait(${php(op.id)}, ${normalizeInput}, $options)`;
-          code += `    /** @return ${payload?.helperReturn === 'payload' ? payload.php : `Result<${responseType}>`} */\n    public function ${op.method}Wait(${call.phpSignature}): ${payload?.helperReturn === 'payload' ? payload.phpNative : 'Result'} { ${call.phpPrelude}return ${payload?.helperReturn === 'payload' ? `SdkResponse::payload(${request}, [${payload.path.map(php).join(', ')}])` : request}; }\n`;
-          if (payload?.helperReturn === 'payload')
-            code += `    /** @return SdkResponse<${responseType}> */\n    public function ${op.method}WaitWithResponse(${call.phpSignature}): SdkResponse { ${call.phpPrelude}$result = ${request}; return new SdkResponse($result->data, $result->meta, $result->raw); }\n`;
+          code += `    /** @return ${payload?.helperReturn === 'payload' ? payload.php : `Result<${responseType}>`} */\n    public function ${op.method}Wait(${call.phpSignature}): ${payload?.helperReturn === 'payload' ? payload.phpNative : 'Result'} { ${call.phpPrelude}return ${payload?.helperReturn === 'payload' ? `Runtime::responsePayload(${request}, [${payload.path.map(php).join(', ')}])` : request}; }\n`;
         }
       }
       code += '}\n';
@@ -2013,11 +1996,6 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       ...splitPhpClasses(code),
     ]);
     if (!phpContract.defaultCredentials) phpClasses.delete('AmbientCredentialProvider');
-    if (hasPayloadReturns) {
-      for (const [name, value] of splitPhpClasses(files.get('php/src/SdkResponse.php')!))
-        phpClasses.set(name, value);
-      files.delete('php/src/SdkResponse.php');
-    }
     const classmap: Record<string, string> = {};
     for (const [name, value] of phpClasses) {
       put(
@@ -2071,7 +2049,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         ']'
       };\nspl_autoload_register(static function (string $name) use ($classes): void { $path = $classes[strtolower($name)] ?? null; if ($path !== null) require_once __DIR__ . '/' . $path; });\n${phpContract.defaultCredentials ? "require_once __DIR__ . '/credentials.php';\n" : ''}`,
     );
-    for (const name of ['Runtime', 'Client', ...(hasPayloadReturns ? ['SdkResponse'] : [])])
+    for (const name of ['Runtime', 'Client'])
       put(
         `src/${name}.php`,
         `<?php\ndeclare(strict_types=1);\nnamespace ${ns};\nrequire_once __DIR__ . '/autoload.php';\n`,
@@ -3782,7 +3760,7 @@ function runtimeGuide(
             : '$client = new Client(new ClientOptions(apiKey: $tenant->flintKey, ambientCredentials: false));\n',
         )
       : '') +
-    `## Responses and errors\n\nPayload methods return the decoded body or configured payload path directly. WithResponse companions return SdkResponse with body, meta and raw without unwrapping. Each invocation makes its own request; choose one form per action. Result-mode methods return Result with data (the complete body), meta and raw. API envelopes remain inside that body. Pagination Pages and polling Wait follow the base return mode; their WithResponse companions expose the complete body and metadata. Items yields individual items.\n\n${node ? 'Metadata uses properties, and binary bodies are Uint8Array.' : 'Metadata uses array keys, and binary bodies are binary-safe strings.'} Raw JSON is buffered text and may contain sensitive data.\n\n### Errors\n\n` +
+    `## Responses and errors\n\nPayload methods return the decoded object or configured payload object directly, with lastResponse carrying status, headers, requestId, requestIds, idempotencyKey, attempts, durationMs and the complete decoded body. ${node ? 'The lastResponse property is non-enumerable and non-writable.' : 'Models expose lastResponse(), null on nested and user-built models.'} Pages carry response info and Wait carries the last poll; Items yields items without response info. Result-mode methods keep data and raw, with ${node ? 'lastResponse' : 'lastResponse()'}.\n\n${node ? 'ResponseInfo uses properties, and binary bodies are Uint8Array.' : 'ResponseInfo uses readonly properties, and binary bodies are binary-safe strings.'} Raw JSON is buffered text and may contain sensitive data.\n\n### Errors\n\n` +
     snippet(errorClassExample(c, target)) +
     errorReference(target, apiName(c)) +
     (providerCodes
