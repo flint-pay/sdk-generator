@@ -66,6 +66,10 @@ import {
   referenceType,
   authenticationGuide,
   operationGuidance,
+  apiName,
+  errorCodesLink,
+  errorCodesTitle,
+  retryPolicyParagraph,
 } from './sdk-documentation.js';
 import { schemaComment } from './schema-documentation.js';
 import {
@@ -441,7 +445,36 @@ function callPlan(op: Operation, plan: CompiledSdkContract, optionsType: string)
   return plan.requestCalls![op.id]!;
 }
 
+/** `@see` target: the configured absolute documentation URL, else the package's own reference. */
+function seeTarget(c: Contract, op: Operation): string {
+  return (
+    c.referenceUrls?.[op.id] ??
+    `reference/${op.resource}.md#${docAnchor(op.resource + '.' + op.method)}`
+  );
+}
+const routeReferences = new WeakMap<Contract, Map<string, string>>();
+/** Replace an exact `VERB /path` mention of an included operation with its SDK method. */
+function linkRoutes(c: Contract, text: string): string {
+  let routes = routeReferences.get(c);
+  if (!routes)
+    routeReferences.set(
+      c,
+      (routes = new Map(
+        c.operations.map((o) => [`${o.verb} ${o.path}`, `client.${o.resource}.${o.method}`]),
+      )),
+    );
+  return text.replace(
+    /(`?)\b(GET|POST|PUT|PATCH|DELETE) (\/[^\s`]*)(`?)/g,
+    (mention, open, verb, path, close) => {
+      const route = path.replace(/[.,;:)]+$/, '');
+      const reference = open === close ? routes!.get(`${verb} ${route}`) : undefined;
+      return reference ? `\`${reference}\`${path.slice(route.length)}` : mention;
+    },
+  );
+}
+
 function methodDoc(
+  c: Contract,
   op: Operation,
   method: string,
   definitions: Record<string, Schema> = {},
@@ -451,7 +484,20 @@ function methodDoc(
       ? `Use ${op.resource}.${op.method}; HTTP behavior is unchanged.`
       : op.deprecated;
   const key = exampleKey(op, 'node', 'idempotencyKey', false, definitions);
-  return `/**\n * ${comment(op.description || `${op.verb} ${op.path}`).replace(/[\r\n]+/g, ' ')}\n * @see reference/${op.resource}.md#${docAnchor(op.resource + '.' + op.method)}\n * ${op.verb} ${comment(op.path)}\n${deprecated ? ` * @deprecated ${comment(deprecated).replaceAll('\n', '\n * ')}\n` : ''}${key.requiresSuppliedKey ? ' * Set API_IDEMPOTENCY_KEY to a key matching the declared header schema before running this example.\n' : ''} * @example\n${
+  // The route belongs to the summary: after a tag it would become part of that tag's text.
+  const summary = [
+    ...(op.description
+      ? [comment(linkRoutes(c, op.description)).replace(/[\r\n]+/g, ' '), '']
+      : []),
+    `\`${op.verb} ${comment(op.path)}\``,
+    ...(key.requiresSuppliedKey
+      ? [
+          '',
+          'Set API_IDEMPOTENCY_KEY to a key matching the declared header schema before running this example.',
+        ]
+      : []),
+  ];
+  return `/**\n${summary.map((line) => (line ? ` * ${line}` : ' *')).join('\n')}\n * @see ${seeTarget(c, op)}\n * @throws {SdkError} When the request fails; inspect \`kind\`, \`code\` and \`outcome\`.\n${deprecated ? ` * @deprecated ${comment(deprecated).replaceAll('\n', '\n * ')}\n` : ''} * @example\n${
     key.keySetup
       ? comment(key.keySetup)
           .trimEnd()
@@ -1145,7 +1191,7 @@ function recoveryReference(c: Contract, target: 'node' | 'php'): string {
     target === 'node'
       ? `const idempotencyKey = process.env.API_IDEMPOTENCY_KEY;\nif (!idempotencyKey) throw new Error("Set API_IDEMPOTENCY_KEY to the key saved with this action");\n`
       : `$idempotencyKey = getenv('API_IDEMPOTENCY_KEY');\nif (!$idempotencyKey) throw new \\RuntimeException('Set API_IDEMPOTENCY_KEY to the key saved with this action');\n`;
-  return `\n## Resume an action with its saved key\n\nUse this only after reconciling the previous outcome and confirming the provider permits resubmission. Read the key and the original input from your saved action; keep both unchanged. The environment variable below stands in for your application's durable action record. Do not generate a new key when retrying that action. This example makes one request attempt.\n\n\`\`\`${target === 'node' ? 'typescript' : 'php'}\n${exampleImports(c, target, parts.symbols, false)}${parts.setup}${setup}${parts.call}${parts.close}\`\`\`\n`;
+  return `\n## Resume an action with its saved key\n\nUse this only after reconciling the previous outcome and confirming ${apiName(c)} permits resubmission. Read the key and the original input from your saved action; keep both unchanged. The environment variable below stands in for your application's durable action record. Do not generate a new key when retrying that action. This example makes one request attempt.\n\n\`\`\`${target === 'node' ? 'typescript' : 'php'}\n${exampleImports(c, target, parts.symbols, false)}${parts.setup}${setup}${parts.call}${parts.close}\`\`\`\n`;
 }
 
 export function render(c: Contract): Map<string, string> {
@@ -1458,10 +1504,10 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         for (const method of [op.method, ...(op.aliases ?? [])]) {
           const request = `this.#runtime.request(${js(op.id)}, ${call.nodeInput}, options)`;
           code += `      ${method}: ${positional(op) ? 'async ' : ''}(${call.nodeArgs}) => ${request}${payload ? `.then(result => _sdkPayload(result, ${js(payload.path)}${decodePayload}))` : ''},\n`;
-          declarations += `    ${methodDoc(op, method, definitions)}    ${method}(${call.nodeSignature}): Promise<${payload ? payload.node : `Result<${responseType(op)}>`}>;\n`;
+          declarations += `    ${methodDoc(c, op, method, definitions)}    ${method}(${call.nodeSignature}): Promise<${payload ? payload.node : `Result<${responseType(op)}>`}>;\n`;
           if (payload) {
             code += `      ${method}WithResponse: ${positional(op) ? 'async ' : ''}(${call.nodeArgs}) => ${request}.then(_sdkResponse),\n`;
-            declarations += `    /** Complete decoded body and HTTP metadata, without payload unwrapping.\n     * @see reference/${op.resource}.md#${docAnchor(op.resource + '.' + op.method)}\n     */\n    ${method}WithResponse(${call.nodeSignature}): Promise<SdkResponse<${responseType(op)}>>;\n`;
+            declarations += `    /** Complete decoded body and HTTP metadata, without payload unwrapping.\n     * @see ${seeTarget(c, op)}\n     */\n    ${method}WithResponse(${call.nodeSignature}): Promise<SdkResponse<${responseType(op)}>>;\n`;
           }
         }
         if (op.pagination)
@@ -1475,19 +1521,19 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
           ]) {
             const request = `this.#runtime.${runtime}(${js(op.id)}, ${call.nodeInput}, options)`;
             code += `      ${op.method}${suffix}: (${call.nodeArgs}) => ${suffix === 'Pages' && payload?.helperReturn === 'payload' ? `_sdkPayloadPages(${request}, ${js(payload.path)}${decodePayload})` : request},\n`;
-            declarations += `    /** Iterate ${suffix === 'Pages' ? 'pages' : 'items'} lazily.\n     * @see reference/${op.resource}.md#${docAnchor(op.resource + '.' + op.method)}\n     */\n    ${op.method}${suffix}(${call.nodeSignature}): AsyncGenerator<${returnType}>;\n`;
+            declarations += `    /** Iterate ${suffix === 'Pages' ? 'pages' : 'items'} lazily.\n     * @see ${seeTarget(c, op)}\n     */\n    ${op.method}${suffix}(${call.nodeSignature}): AsyncGenerator<${returnType}>;\n`;
             if (suffix === 'Pages' && payload?.helperReturn === 'payload') {
               code += `      ${op.method}PagesWithResponse: (${call.nodeArgs}) => _sdkResponsePages(${request}),\n`;
-              declarations += `    /** Iterate complete page bodies with HTTP metadata.\n     * @see reference/${op.resource}.md#${docAnchor(op.resource + '.' + op.method)}\n     */\n    ${op.method}PagesWithResponse(${call.nodeSignature}): AsyncGenerator<SdkResponse<${responseType(op)}>>;\n`;
+              declarations += `    /** Iterate complete page bodies with HTTP metadata.\n     * @see ${seeTarget(c, op)}\n     */\n    ${op.method}PagesWithResponse(${call.nodeSignature}): AsyncGenerator<SdkResponse<${responseType(op)}>>;\n`;
             }
           }
         if (op.polling) {
           const request = `this.#runtime.wait(${js(op.id)}, ${call.nodeInput}, options)`;
           code += `      ${op.method}Wait: (${call.nodeArgs}) => ${request}${payload?.helperReturn === 'payload' ? `.then(result => _sdkPayload(result, ${js(payload.path)}${decodePayload}))` : ''},\n`;
-          declarations += `    /** Poll until a declared terminal state or deadline.\n     * @see reference/${op.resource}.md#${docAnchor(op.resource + '.' + op.method)}\n     */\n    ${op.method}Wait(${payload?.helperReturn === 'payload' || positional(op) ? call.nodeSignature : `input: ${prefix}Input, options?: ${requestOptionsType}`}): Promise<${payload?.helperReturn === 'payload' ? payload.node : `Result<${responseType(op)}>`}>;\n`;
+          declarations += `    /** Poll until a declared terminal state or deadline.\n     * @see ${seeTarget(c, op)}\n     */\n    ${op.method}Wait(${payload?.helperReturn === 'payload' || positional(op) ? call.nodeSignature : `input: ${prefix}Input, options?: ${requestOptionsType}`}): Promise<${payload?.helperReturn === 'payload' ? payload.node : `Result<${responseType(op)}>`}>;\n`;
           if (payload?.helperReturn === 'payload') {
             code += `      ${op.method}WaitWithResponse: (${call.nodeArgs}) => ${request}.then(_sdkResponse),\n`;
-            declarations += `    /** Poll for completion and return the full body with HTTP metadata.\n     * @see reference/${op.resource}.md#${docAnchor(op.resource + '.' + op.method)}\n     */\n    ${op.method}WaitWithResponse(${call.nodeSignature}): Promise<SdkResponse<${responseType(op)}>>;\n`;
+            declarations += `    /** Poll for completion and return the full body with HTTP metadata.\n     * @see ${seeTarget(c, op)}\n     */\n    ${op.method}WaitWithResponse(${call.nodeSignature}): Promise<SdkResponse<${responseType(op)}>>;\n`;
           }
         }
       }
@@ -3490,26 +3536,30 @@ function webhookReference(target: 'node' | 'php', jwt: boolean): string {
   );
 }
 
+/** A receiving endpoint ID in the API's real format (prefix plus ULID), not a placeholder word. */
+const exampleEndpointId = 'whep_01J8Z3Y7Q5K2M9X4N6R8T0V2WB';
+
 function webhookJwtGuide(c: Contract, target: 'node' | 'php', standalone: boolean): string {
   const j = c.config.webhook?.jwt;
   if (!j) return '';
   const node = target === 'node';
+  const exampleBaseUrl = c.defaultBaseUrl ?? 'https://api.example.com';
   const example = node
     ? `import { verifyWebhookAsync } from '${c.config.npm.name}/webhooks';
 const verified = await verifyWebhookAsync(rawBody, headers, {
-  endpointIds: ['whep_example'],
-  baseUrl: 'https://api.example.com',
+  endpointIds: ['${exampleEndpointId}'],
+  baseUrl: '${exampleBaseUrl}',
 });
-// Or await client.verifyWebhookAsync(rawBody, headers, { endpointIds: ['whep_example'] });`
+// Or await client.verifyWebhookAsync(rawBody, headers, { endpointIds: ['${exampleEndpointId}'] });`
     : `// $cache is your application's PSR-16 cache.
-${standalone ? `use ${c.config.composer.namespace}\\Webhooks;\n$verified = Webhooks::verifyDelivery($rawBody, $headers, [\n    'endpoint_ids' => ['whep_example'],\n    'base_url' => 'https://api.example.com',\n    'cache' => $cache,\n]);` : "$verified = $client->verifyWebhookDelivery($rawBody, $headers, [\n    'endpoint_ids' => ['whep_example'],\n    'cache' => $cache,\n]);"}
+${standalone ? `use ${c.config.composer.namespace}\\Webhooks;\n$verified = Webhooks::verifyDelivery($rawBody, $headers, [\n    'endpoint_ids' => ['${exampleEndpointId}'],\n    'base_url' => '${exampleBaseUrl}',\n    'cache' => $cache,\n]);` : `$verified = $client->verifyWebhookDelivery($rawBody, $headers, [\n    'endpoint_ids' => ['${exampleEndpointId}'],\n    'cache' => $cache,\n]);`}
 // Persist the delivery and durable work before acknowledging it.`;
-  return `### JWT delivery verification\n\nUse ${node ? 'verifyWebhookAsync from the package root or webhooks subpath, or client.verifyWebhookAsync' : 'Webhooks::verifyDelivery or Client::verifyWebhookDelivery'} with the original raw body and your receiving endpoint IDs. ${!node && !standalone ? 'The Webhooks name belongs to a model; use the client method. ' : ''}The result adds ${node ? "signingMethod: 'jwt' | 'hmac'" : "signing_method: 'jwt' | 'hmac'"} to the existing verified result.\n\nThis package expects ${j.header}: ${j.scheme} with algorithm ES256, exact typ ${j.typ}, issuer ${j.issuer === 'baseUrl' ? 'from the configured API base URL origin without a trailing slash' : j.issuer}, and a matching endpoint audience. It checks iat/exp with a maximum ${Math.min(300, j.lifetimeSeconds)}-second lifetime and ${j.leewaySeconds}-second leeway, requires a jti that is not blank, and compares ${j.bodyHashClaim} to the SHA-256 of the exact body in constant time before JSON parsing. The protected header must contain only alg, kid and typ, so token-supplied keys and key URLs (jku, x5u, jwk, x5c) and crit headers are rejected. Duplicate JSON members, a sub claim, a non-string aud and non-integer iat or exp are rejected; other claims are ignored.\n\n\`\`\`${node ? 'js' : 'php'}\n${example}\n\`\`\`\n\n${node ? 'Options: endpointIds (string or string[]), secrets (string or string[]), jwks ({ keys: object[] }), baseUrl, fetch, nowSeconds. The client defaults baseUrl and fetch from its configured base URL and transport.' : 'Options: endpoint_ids (string or list), secrets (string or list), jwks (keys array), base_url, now_seconds, cache (optional PSR-16), http_client (optional PSR-18), request_factory (PSR-17, required with http_client). PHP requires ext-openssl; PSR packages are optional Composer suggestions, checked only when supplied. Without http_client, verification uses the SDK transport. The client defaults base_url.'} At least one of endpoint IDs or secrets is required. Standalone calls with issuer baseUrl require ${node ? 'baseUrl' : 'base_url'}. Time overrides use Unix seconds and are intended for tests.\n\nA bearer token plus endpoint IDs always selects JWT, with no HMAC fallback on failure. Otherwise, secrets and complete HMAC headers select HMAC. Missing signing headers produce webhook_missing_header. The synchronous ${node ? 'verifyWebhook' : 'Webhooks::verify'} remains HMAC-only.\n\nTrusted keys come from the issuer plus ${j.jwksPath}. Keys whose kid differs from the token's are ignored, whatever their type; the selected key must be an EC P-256 key with alg absent or ES256 and use absent or sig, else the token fails with webhook_invalid_token. A malformed fetched set or a repeated kid produces webhook_jwks_unavailable. Explicit jwks bypasses fetching entirely. The key cache shares in-flight requests per URL. Cache-Control max-age is clamped to 300..86400 seconds (900 when absent). Unknown kid refreshes are limited to once per minute per URL; failures can use the last successful set for up to 24 hours after fetching, retrying at most once a minute. Fetches have a 5-second timeout and a 256 KiB response cap. ${node ? '' : 'The key cache uses the cache option, else APCu when enabled, else a per-process static cache. Under PHP-FPM, pass cache or enable APCu so workers share keys, refresh limits and stale-key reuse. The cache is a trust store: anyone who can write to it can inject keys. APCu is shared by every pool under one PHP-FPM master, so hosts running mutually untrusted applications should pass their own cache. Single-flight is per process. PSR-18 has no portable timeout or redirect controls: configure injected clients for at most five seconds and no redirects. Fiber schedulers must resume waiting callers, which yield a monotonic deadline in milliseconds. Apache needs CGIPassAuth On, or an equivalent rewrite, to pass the Authorization header to PHP. '}Respond with 5xx for webhook_jwks_unavailable so the provider retries.\n\n`;
+  return `### JWT delivery verification\n\nUse ${node ? 'verifyWebhookAsync from the package root or webhooks subpath, or client.verifyWebhookAsync' : 'Webhooks::verifyDelivery or Client::verifyWebhookDelivery'} with the original raw body and your receiving endpoint IDs. ${!node && !standalone ? 'The Webhooks name belongs to a model; use the client method. ' : ''}The result adds ${node ? "signingMethod: 'jwt' | 'hmac'" : "signing_method: 'jwt' | 'hmac'"} to the existing verified result.\n\nThis package expects ${j.header}: ${j.scheme} with algorithm ES256, exact typ ${j.typ}, issuer ${j.issuer === 'baseUrl' ? 'from the configured API base URL origin without a trailing slash' : j.issuer}, and a matching endpoint audience. It checks iat/exp with a maximum ${Math.min(300, j.lifetimeSeconds)}-second lifetime and ${j.leewaySeconds}-second leeway, requires a jti that is not blank, and compares ${j.bodyHashClaim} to the SHA-256 of the exact body in constant time before JSON parsing. The protected header must contain only alg, kid and typ, so token-supplied keys and key URLs (jku, x5u, jwk, x5c) and crit headers are rejected. Duplicate JSON members, a sub claim, a non-string aud and non-integer iat or exp are rejected; other claims are ignored.\n\n\`\`\`${node ? 'js' : 'php'}\n${example}\n\`\`\`\n\n${node ? 'Options: endpointIds (string or string[]), secrets (string or string[]), jwks ({ keys: object[] }), baseUrl, fetch, nowSeconds. The client defaults baseUrl and fetch from its configured base URL and transport.' : 'Options: endpoint_ids (string or list), secrets (string or list), jwks (keys array), base_url, now_seconds, cache (optional PSR-16), http_client (optional PSR-18), request_factory (PSR-17, required with http_client). PHP requires ext-openssl; PSR packages are optional Composer suggestions, checked only when supplied. Without http_client, verification uses the SDK transport. The client defaults base_url.'} At least one of endpoint IDs or secrets is required. Standalone calls with issuer baseUrl require ${node ? 'baseUrl' : 'base_url'}. Time overrides use Unix seconds and are intended for tests.\n\nA bearer token plus endpoint IDs always selects JWT, with no HMAC fallback on failure. Otherwise, secrets and complete HMAC headers select HMAC. Missing signing headers produce webhook_missing_header. The synchronous ${node ? 'verifyWebhook' : 'Webhooks::verify'} remains HMAC-only.\n\nTrusted keys come from the issuer plus ${j.jwksPath}. Keys whose kid differs from the token's are ignored, whatever their type; the selected key must be an EC P-256 key with alg absent or ES256 and use absent or sig, else the token fails with webhook_invalid_token. A malformed fetched set or a repeated kid produces webhook_jwks_unavailable. Explicit jwks bypasses fetching entirely. The key cache shares in-flight requests per URL. Cache-Control max-age is clamped to 300..86400 seconds (900 when absent). Unknown kid refreshes are limited to once per minute per URL; failures can use the last successful set for up to 24 hours after fetching, retrying at most once a minute. Fetches have a 5-second timeout and a 256 KiB response cap. ${node ? '' : 'The key cache uses the cache option, else APCu when enabled, else a per-process static cache. Under PHP-FPM, pass cache or enable APCu so workers share keys, refresh limits and stale-key reuse. The cache is a trust store: anyone who can write to it can inject keys. APCu is shared by every pool under one PHP-FPM master, so hosts running mutually untrusted applications should pass their own cache. Single-flight is per process. PSR-18 has no portable timeout or redirect controls: configure injected clients for at most five seconds and no redirects. Fiber schedulers must resume waiting callers, which yield a monotonic deadline in milliseconds. Apache needs CGIPassAuth On, or an equivalent rewrite, to pass the Authorization header to PHP. '}Respond with 5xx for webhook_jwks_unavailable so ${apiName(c)} retries.\n\n`;
 }
 
 function webhookGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: boolean): string {
   const w = c.config.webhook;
-  if (!w) return 'This provider has not declared webhook verification.';
+  if (!w) return 'This SDK does not declare webhook verification.';
   const headers = [w.header, w.timestampHeader, w.idHeader]
     .filter(Boolean)
     .map((name) => '`' + name + '`')
@@ -3520,18 +3570,18 @@ function webhookGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: bo
       : standaloneWebhook
         ? `Use ${c.config.composer.namespace}\\Webhooks::verify($rawBody, $headers, $secrets, $nowSeconds = null) to verify without client options, a base URL or API credentials. Client::verifyWebhook delegates to the same verifier. The static method keeps mixed arguments so invalid inputs produce SDK error subclasses. `
         : 'The Webhooks name belongs to an API model; use Client::verifyWebhook for verification. Its mixed arguments keep invalid inputs within the SDK error guards. ';
-  const requirements = `${verifier}Call ${target === 'node' ? 'verifyWebhook(rawBody, headers, secrets, nowSeconds?)' : 'verifyWebhook($rawBody, $headers, $secrets, $nowSeconds = null)'} with original request bytes and ${headers}. This package uses ${w.format ?? 'hex'} HMAC-SHA256 signing and a ${w.toleranceSeconds}-second timestamp tolerance. ${w.format === 'standard-webhooks' ? 'Secrets must use the whsec_ prefix and canonical base64 encoding of exactly 32 key bytes.' : 'Use the signing secret supplied by the provider.'} Pass one secret string or an array of active secrets during rotation. nowSeconds is an optional Unix time override in seconds for deterministic tests; normally omit it. Millisecond-scale values raise an input error explaining the conversion. ${target === 'node' ? 'Node accepts original Buffer, Uint8Array or ArrayBuffer bytes. ' : 'PHP emits event classes for supported single object envelopes. Multi-variant or ambiguous event schemas verify and validate normally but return stdClass values (with arrays for JSON lists), even when known is true. Check the event name and payload fields before using these values; known does not guarantee a generated PHP class. '}\n\n`;
-  const examples =
-    target === 'node'
-      ? `### Fetch\n\nThe request body must not have been consumed. Pass the SDK client and your configured signing secret to this helper:\n\n\`\`\`js
-export async function verifyWebhookRequest(client, request, secrets) {
+  const requirements = `${verifier}Call ${target === 'node' ? 'verifyWebhook(rawBody, headers, secrets, nowSeconds?)' : 'verifyWebhook($rawBody, $headers, $secrets, $nowSeconds = null)'} with original request bytes and ${headers}. This package uses ${w.format ?? 'hex'} HMAC-SHA256 signing and a ${w.toleranceSeconds}-second timestamp tolerance. ${w.format === 'standard-webhooks' ? 'Secrets must use the whsec_ prefix and canonical base64 encoding of exactly 32 key bytes.' : `Use the signing secret supplied by ${apiName(c)}.`} Pass one secret string or an array of active secrets during rotation. nowSeconds is an optional Unix time override in seconds for deterministic tests; normally omit it. Millisecond-scale values raise an input error explaining the conversion. ${target === 'node' ? 'Node accepts original Buffer, Uint8Array or ArrayBuffer bytes. ' : 'PHP emits event classes for supported single object envelopes. Multi-variant or ambiguous event schemas verify and validate normally but return stdClass values (with arrays for JSON lists), even when known is true. Check the event name and payload fields before using these values; known does not guarantee a generated PHP class. '}\n\n`;
+  // With a JWT configured, snippets use the async verifier, which accepts JWT and HMAC deliveries.
+  const jwt = Boolean(w.jwt);
+  const nodeFramework = `### Fetch\n\nThe request body must not have been consumed. Pass the SDK client and ${jwt ? 'the IDs of your receiving webhook endpoints' : 'your configured signing secret'} to this helper:\n\n\`\`\`js
+export async function verifyWebhookRequest(client, request, ${jwt ? 'endpointIds' : 'secrets'}) {
   const rawBody = new Uint8Array(await request.arrayBuffer());
-  return client.verifyWebhook(rawBody, request.headers, secrets);
+  return ${jwt ? 'client.verifyWebhookAsync(rawBody, request.headers, { endpointIds })' : 'client.verifyWebhook(rawBody, request.headers, secrets)'};
 }
-\`\`\`\n\n### Express\n\nRegister this route before app.use(express.json()). req.headers is accepted directly. Supply client and webhookSecret from your application configuration:\n\n\`\`\`js
-app.post("/webhooks", express.raw({ type: "application/json" }), (req, res, next) => {
+\`\`\`\n\n### Express\n\nRegister this route before app.use(express.json()). req.headers is accepted directly. Supply client and ${jwt ? 'endpointIds' : 'webhookSecret'} from your application configuration:\n\n\`\`\`js
+app.post("/webhooks", express.raw({ type: "application/json" }), ${jwt ? 'async ' : ''}(req, res, next) => {
   try {
-    const verified = client.verifyWebhook(req.body, req.headers, webhookSecret);
+    const verified = ${jwt ? 'await client.verifyWebhookAsync(req.body, req.headers, { endpointIds })' : 'client.verifyWebhook(req.body, req.headers, webhookSecret)'};
     // Persist verified.event and verified.known in your durable inbox before acknowledging.
     // Leave unknown events pending for review.
     receiveVerified(verified, req, res, next);
@@ -3540,32 +3590,32 @@ app.post("/webhooks", express.raw({ type: "application/json" }), (req, res, next
   }
 });
 app.use(express.json());
-\`\`\`\n\n### Rotation and narrowing\n\n\`\`\`ts
+\`\`\`\n\n`;
+  const nodeNarrowing = `\`\`\`ts
 import type { VerifiedWebhook, KnownWebhookEvent } from '${c.config.npm.name}';
 
 function handleKnown(event: KnownWebhookEvent): void {
   // Switch on the configured event-type field to handle each declared event.
 }
 
-const verified: VerifiedWebhook = client.verifyWebhook(rawBody, headers, [currentSecret, previousSecret]);
+const verified: VerifiedWebhook = ${jwt ? 'await client.verifyWebhookAsync(rawBody, headers, { endpointIds, secrets: [currentSecret, previousSecret] })' : 'client.verifyWebhook(rawBody, headers, [currentSecret, previousSecret])'};
 if (verified.known) {
   const event = verified.event; // KnownWebhookEvent
   handleKnown(event);
 } else {
   const event = verified.event; // unknown: validate before accessing fields.
 }
-\`\`\`\n\nThe package root and webhooks subpath export these types, together with one WebhookEvent<EventName> type per declared event. Event names use PascalCase in the WebhookEvent<EventName> type. For an envelope with a data field, use that event type's ['data'] indexed access for its payload. A top-level typeField supports exhaustive switch narrowing with a never default. Dotted typeField paths require the named type or Extract<KnownWebhookEvent, { meta: { name: 'entity.updated' } }> (adapt that path and literal to your configuration). When no events are declared, KnownWebhookEvent is never.\n\n`
-      : `### PSR-7\n\nLoad Composer's vendor/autoload.php in your application. Pass an unmodified request body and getHeaders() arrays directly:\n\n\`\`\`php
+\`\`\`\n\nThe package root and webhooks subpath export these types, together with one WebhookEvent<EventName> type per declared event. Event names use PascalCase in the WebhookEvent<EventName> type. For an envelope with a data field, use that event type's ['data'] indexed access for its payload. A top-level typeField supports exhaustive switch narrowing with a never default. Dotted typeField paths require the named type or Extract<KnownWebhookEvent, { meta: { name: 'entity.updated' } }> (adapt that path and literal to your configuration). When no events are declared, KnownWebhookEvent is never.\n\n`;
+  const phpFramework = `### PSR-7\n\nLoad Composer's vendor/autoload.php in your application. Pass an unmodified request body and getHeaders() arrays directly:\n\n\`\`\`php
 use ${c.config.composer.namespace}\\Client;
 
-function verifyWebhookRequest(Client $client, object $request, string|array $secrets): array
+function verifyWebhookRequest(Client $client, object $request, ${jwt ? 'array $endpointIds' : 'string|array $secrets'}): array
 {
-    return $client->verifyWebhook((string) $request->getBody(), $request->getHeaders(), $secrets);
+    return ${jwt ? "$client->verifyWebhookDelivery((string) $request->getBody(), $request->getHeaders(), ['endpoint_ids' => $endpointIds])" : '$client->verifyWebhook((string) $request->getBody(), $request->getHeaders(), $secrets)'};
 }
 \`\`\`\n\nFor a native PHP handler, read php://input before parsing JSON:\n\n\`\`\`php
 $rawBody = file_get_contents('php://input');
-$verified = $client->verifyWebhook($rawBody, getallheaders(), $webhookSecret);
-// For rotation, pass [$currentSecret, $previousSecret] instead.
+${jwt ? `$verified = $client->verifyWebhookDelivery($rawBody, getallheaders(), ['endpoint_ids' => ['${exampleEndpointId}']]);\n// For HMAC deliveries, also pass 'secrets' => [$currentSecret, $previousSecret] during rotation.` : '$verified = $client->verifyWebhook($rawBody, getallheaders(), $webhookSecret);\n// For rotation, pass [$currentSecret, $previousSecret] instead.'}
 if ($verified['known']) {
     $event = $verified['event'];
     // Persist and process the matched event idempotently.
@@ -3573,11 +3623,23 @@ if ($verified['known']) {
     // Persist for review; do not assume a declared model or payload shape.
 }
 \`\`\`\n\n`;
+  const framework = target === 'node' ? nodeFramework : phpFramework;
+  // Without a JWT, the HMAC requirements lead; with one, HMAC is a subsection after the async examples.
+  const examples = jwt
+    ? framework +
+      (w.algorithm
+        ? `### HMAC verification and secret rotation\n\nEndpoints whose \`signing_methods\` include \`hmac\` also send ${headers}. Pass \`secrets\` to verify those deliveries by shared secret. ` +
+          requirements
+        : '### Narrowing verified events\n\n') +
+      (target === 'node' ? nodeNarrowing : '')
+    : (w.algorithm ? requirements : '') +
+      framework +
+      (target === 'node' ? '### Rotation and narrowing\n\n' + nodeNarrowing : '');
   const errors =
     target === 'node'
       ? `\`\`\`js
 try {
-  const verified = client.verifyWebhook(rawBody, headers, webhookSecret);
+  const verified = ${jwt ? 'await client.verifyWebhookAsync(rawBody, headers, { endpointIds })' : 'client.verifyWebhook(rawBody, headers, webhookSecret)'};
 } catch (error) {
   if (!(error instanceof SdkError)) throw error;
   // Record only error.kind and error.code; avoid logging request bodies or secrets.
@@ -3588,7 +3650,7 @@ try {
 \`\`\``
       : `\`\`\`php
 try {
-    $verified = $client->verifyWebhook($rawBody, $headers, $webhookSecret);
+    $verified = ${jwt ? "$client->verifyWebhookDelivery($rawBody, $headers, ['endpoint_ids' => $endpointIds])" : '$client->verifyWebhook($rawBody, $headers, $webhookSecret)'};
 } catch (\\${c.config.composer.namespace}\\SdkError $error) {
     // Record only $error->kind and $error->errorCode; omit bodies and secrets.
     // webhook_timestamp_out_of_tolerance: check the clock and delivery age.
@@ -3598,9 +3660,9 @@ try {
 \`\`\``;
   return (
     webhookJwtGuide(c, target, standaloneWebhook) +
-    (w.algorithm ? requirements + examples : '') +
-    `### Failures and recovery\n\n${target === 'node' ? 'Import SdkError from this package. ' : ''}SdkError uses ${target === 'node' ? 'code' : 'errorCode'} for these stable reasons:\n\n| Kind | Code | Action |\n| --- | --- | --- |\n| validation | webhook_invalid_input | Supply original bytes and supported header/time values. |\n| validation | webhook_invalid_secret | Supply at least one correctly formatted nonempty secret. |\n| authentication | webhook_missing_header | Forward all configured signing headers. |\n| authentication | webhook_invalid_timestamp | Supply one integer timestamp in seconds. |\n| authentication | webhook_timestamp_out_of_tolerance | Check the clock and delivery age. |\n| authentication | webhook_invalid_signature | Check the secret and original bytes. |\n| authentication | webhook_invalid_token | Reject malformed JWTs, wrong algorithm/type/issuer, signatures, or a kid naming an unusable key. |\n| authentication | webhook_invalid_audience | Check receiving endpoint IDs. |\n| authentication | webhook_token_expired | Check token timestamps, lifetime, leeway and the server clock. |\n| authentication | webhook_body_mismatch | Preserve the exact original bytes. |\n| authentication | webhook_unknown_key | The trusted set has no matching key. |\n| transport | webhook_jwks_unavailable | Keys could not be fetched, or the fetched set is malformed or repeats the token's kid. Answer 5xx so the provider retries. |\n| protocol | webhook_invalid_json | The authenticated body is not valid UTF-8 JSON. |\n\n` +
-    (w.algorithm ? errors : '') +
+    (w.algorithm || jwt ? examples : '') +
+    `### Failures and recovery\n\n${target === 'node' ? 'Import SdkError from this package. ' : ''}SdkError uses ${target === 'node' ? 'code' : 'errorCode'} for these stable reasons:\n\n| Kind | Code | Action |\n| --- | --- | --- |\n| validation | webhook_invalid_input | Supply original bytes and supported header/time values. |\n| validation | webhook_invalid_secret | Supply at least one correctly formatted nonempty secret. |\n| authentication | webhook_missing_header | Forward all configured signing headers. |\n| authentication | webhook_invalid_timestamp | Supply one integer timestamp in seconds. |\n| authentication | webhook_timestamp_out_of_tolerance | Check the clock and delivery age. |\n| authentication | webhook_invalid_signature | Check the secret and original bytes. |\n| authentication | webhook_invalid_token | Reject malformed JWTs, wrong algorithm/type/issuer, signatures, or a kid naming an unusable key. |\n| authentication | webhook_invalid_audience | Check receiving endpoint IDs. |\n| authentication | webhook_token_expired | Check token timestamps, lifetime, leeway and the server clock. |\n| authentication | webhook_body_mismatch | Preserve the exact original bytes. |\n| authentication | webhook_unknown_key | The trusted set has no matching key. |\n| transport | webhook_jwks_unavailable | Keys could not be fetched, or the fetched set is malformed or repeats the token's kid. Answer 5xx so ${apiName(c)} retries. |\n| protocol | webhook_invalid_json | The authenticated body is not valid UTF-8 JSON. |\n\n` +
+    (w.algorithm || jwt ? errors : '') +
     `\n\nNever verify ${target === 'node' ? 'JSON.stringify(parsedBody)' : 'json_encode($parsedBody)'}: verification authenticates the original bytes, including whitespace and numeric spelling. Preserve raw request bytes before parsing. For HMAC, repeated signature values are supported; timestamp and ID headers must each contain a single value.\n\nknown is true only for a registered event name whose payload matches a declared envelope. Authenticated unknown names return known: false with reason: unknown_event; declared names with unmatched envelopes use reason: unmatched_envelope. Known deliveries have no reason; nested response types retain their documented uncertainty. Malformed declared payloads produce a protocol error.\n\nVerification does not deduplicate deliveries. The optional examples/webhook-inbox files demonstrate durable inbox/outbox processing: commit the event ID and work record before acknowledging, reconcile out-of-order deliveries, and apply side effects idempotently. Unknown names and unmatched envelopes remain pending for review.`
   );
 }
@@ -3654,26 +3716,26 @@ function runtimeGuide(
     (node
       ? 'Credentials accept strings or CredentialProvider objects. getCredential() returns a Promise of { value: string, expiresAt?: Date }; optional invalidate() clears application caches.\n\n'
       : 'Credentials accept strings, CredentialProvider objects with getCredential(): Credential, or closures returning a string or Credential. A Credential holds a value and optional DateTimeInterface expiry.\n\n') +
-    'Providers resolve on every request attempt; the application owns caching and expiry. A replay-safe HTTP 401 invalidates providers implementing invalidate() and retries once, adding at most one attempt beyond the ordinary budget, even with maxAttempts: 1. The idempotency key is preserved. String credentials' +
+    'Credential providers resolve on every request attempt; the application owns caching and expiry. A replay-safe HTTP 401 invalidates credential providers implementing invalidate() and retries once, adding at most one attempt beyond the ordinary budget, even with maxAttempts: 1. The idempotency key is preserved. String credentials' +
     (node ? '' : ' and closures') +
-    ' never trigger this refresh retry. Provider exceptions become authentication errors without retaining potentially sensitive causes.\n\n' +
+    ' never trigger this refresh retry. Credential provider exceptions become authentication errors without retaining potentially sensitive causes.\n\n' +
     (c.config.auth && 'defaultCredentials' in c.config.auth && c.config.auth.defaultCredentials
-      ? 'Default credential discovery is lazy: explicit credentials, then configured API key/access token environment variables (both set is ambiguous_credentials), then configured workload identity. Set ambientCredentials: false to disable it. defaultCredentials() and workloadIdentityCredentials(options) return providers supporting token, token_file and github_actions sources and cached refresh.\n\n'
+      ? 'Default credential discovery is lazy: explicit credentials, then configured API key/access token environment variables (both set is ambiguous_credentials), then configured workload identity. Set ambientCredentials: false to disable it. defaultCredentials() and workloadIdentityCredentials(options) return credential providers supporting token, token_file and github_actions sources and cached refresh.\n\n'
       : 'This SDK does not discover credentials from environment variables. The example scripts explicitly read API_BASE_URL and their named credential variables.\n\n') +
     `## Responses and errors\n\nPayload methods return the decoded body or configured payload path directly. WithResponse companions return SdkResponse with body, meta and raw without unwrapping. Each invocation makes its own request; choose one form per action. Result-mode methods return Result with data (the complete body), meta and raw. API envelopes remain inside that body. Pagination Pages and polling Wait follow the base return mode; their WithResponse companions expose the complete body and metadata. Items yields individual items.\n\n${node ? 'Metadata uses properties, and binary bodies are Uint8Array.' : 'Metadata uses array keys, and binary bodies are binary-safe strings.'} Raw JSON is buffered text and may contain sensitive data.\n\n### Errors\n\n` +
     snippet(errorClassExample(c, target)) +
-    errorReference(target) +
+    errorReference(target, apiName(c)) +
     (providerCodes
-      ? '### Provider error codes\n\nSee the [declared provider error-code values](ERRORS.md#provider-error-codes).\n\n'
+      ? `### ${errorCodesTitle(c)}\n\nSee the [declared error-code values](${errorCodesLink(c)}).\n\n`
       : '') +
-    `### Undeclared and invalid responses\n\n${responseRecoveryGuide(target)}\n\n` +
-    `## Retries and idempotency\n\nWithout a declared policy, GET/HEAD/OPTIONS allow three total attempts for transport failures and HTTP 408, 429, 500, 502, 503 and 504. Other methods send once. Explicit operation policies replace those defaults; maxAttempts caps total attempts including the first. Mutations with optional idempotency keys send once when no key is supplied. HTTP 412 never retries.\n\nBackoff waits uniformly between half and all of baseDelayMs * 2^(attempt - 1), capped by maxDelayMs when declared. Retry-After is a minimum wait. Nonnegative decimal seconds or canonical GMT HTTP dates are accepted; malformed values are ignored. If the next wait exceeds the deadline, the last error is returned unchanged.\n\n` +
+    `### Undeclared and invalid responses\n\n${responseRecoveryGuide(c, target)}\n\n` +
+    `## Retries and idempotency\n\n${retryPolicyParagraph(c)}\n\nBackoff waits uniformly between half and all of baseDelayMs * 2^(attempt - 1), capped by maxDelayMs when declared. Retry-After is a minimum wait. Nonnegative decimal seconds or canonical GMT HTTP dates are accepted; malformed values are ignored. If the next wait exceeds the deadline, the last error is returned unchanged.\n\n` +
     (c.config.errors?.retry
       ? `The response field \`${c.config.errors.retry.path}\` controls body-driven retries for declared retry values: ${c.config.errors.retry.retryValues.map((v) => js(v)).join(', ')}. A string signal overrides status and code rules; otherwise statuses apply.\n\n`
       : '') +
     '### Idempotency\n\n' +
     idempotencyReference(c) +
-    'Only operations declaring idempotency accept idempotencyKey. Persist a key with the original input before the first attempt and reuse it for the same action. When automatic keys are enabled, the SDK creates one per call and reuses it across attempts; automatic keys do not span separate calls. Resolved keys are exposed on errors and response metadata, including not_sent failures after key resolution.\n\nAn outcome of unknown means remote completion is uncertain. Reconcile the action with the provider using the saved key before resubmitting. Cancellation and timeouts cannot undo remote work.\n\n' +
+    `Only operations declaring idempotency accept idempotencyKey. Persist a key with the original input before the first attempt and reuse it for the same action. When automatic keys are enabled, the SDK creates one per call and reuses it across attempts; automatic keys do not span separate calls. Resolved keys are exposed on errors and response metadata, including not_sent failures after key resolution.\n\nAn outcome of unknown means remote completion is uncertain. Reconcile the action with ${apiName(c)} using the saved key before resubmitting. Cancellation and timeouts cannot undo remote work.\n\n` +
     recoveryReference(c, target) +
     `\n## Pagination and polling\n\n${pagination}Pagination is lazy and defaults to at most 1000 pages. maxPages and maxItems cap work. Repeated continuations (including cursor cycles) and two consecutive empty pages still advertising a continuation raise protocol errors. An isolated or terminal empty page is valid. Iteration does not guarantee a stable snapshot or durable continuation. Each page gets a fresh deadline; processing yielded values does not consume it. Polling shares an overall deadline. Per-operation references list helper names and terminal states.\n\n` +
     `## Timeouts, streaming and cancellation\n\nTimeout is per attempt, including buffered body consumption. Deadline covers attempts and retry waits for one call. Overall deadlines use DeadlineError with retryAllowed false. For SSE these limits bound setup; streamIdleTimeoutMs controls idle reads and streamLifetimeMs optionally caps lifetime. Malformed known events raise ProtocolError with code sse_invalid_event and details containing eventId and one-based position. Close streams or the client to release resources; breaking iteration also closes a stream. Resume cursors and reconnection belong to the application.\n\n` +
@@ -3704,12 +3766,12 @@ function runtimeGuide(
   );
 }
 
-function responseRecoveryGuide(target: 'node' | 'php'): string {
+function responseRecoveryGuide(c: Contract, target: 'node' | 'php'): string {
   const explanation =
     "Exact HTTP status declarations take precedence, followed by a declared `default`. If neither exists for an actual 2xx response, the SDK reuses the sole declared JSON 2xx response, including its response decoder. Metadata retains the actual status. Multiple JSON success declarations remain ambiguous, even when their schemas match; binary, streaming, empty and redirect responses are never inferred.\n\nRequired fields and value types remain enforced. Schema failures are non-retryable `protocol` errors with `outcome: response`; the top-level message includes codec diagnostics such as `response.entity.id: required field is missing`, and the original cause remains available. The server may already have completed the action. Buffered JSON response failures and payload-extraction errors retain `raw` for explicit recovery; raw bodies are omitted from ordinary error inspection and diagnostics.\n\nInside a catch block, a synthetic create response with a top-level string `id` can be recovered as below. Use the actual endpoint's ID path and reconcile its state before continuing. This parses an unvalidated body only to recover the ID; it does not restore the SDK's typed guarantees or justify resubmitting the mutation.";
   const example =
     target === 'node'
-      ? 'if (error instanceof SdkError && error.kind === "protocol" &&\n    error.status >= 200 && error.status < 300 && error.raw) {\n  let body;\n  try { body = JSON.parse(error.raw); } catch { throw error; }\n  const entityId = typeof body?.id === "string" ? body.id : undefined;\n  if (!entityId) throw error;\n  // Reconcile this entity ID with the provider; do not submit another create.\n} else {\n  throw error;\n}'
-      : "if ($error instanceof SdkError && $error->kind === 'protocol' &&\n    $error->status >= 200 && $error->status < 300 && $error->raw !== null) {\n    try {\n        $body = json_decode($error->raw, true, 512, JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING);\n    } catch (\\JsonException) {\n        throw $error;\n    }\n    $entityId = is_array($body) && is_string($body['id'] ?? null) ? $body['id'] : null;\n    if ($entityId === null) throw $error;\n    // Reconcile this entity ID with the provider; do not submit another create.\n} else {\n    throw $error;\n}";
+      ? `if (error instanceof SdkError && error.kind === "protocol" &&\n    error.status >= 200 && error.status < 300 && error.raw) {\n  let body;\n  try { body = JSON.parse(error.raw); } catch { throw error; }\n  const entityId = typeof body?.id === "string" ? body.id : undefined;\n  if (!entityId) throw error;\n  // Reconcile this entity ID with ${apiName(c)}; do not submit another create.\n} else {\n  throw error;\n}`
+      : `if ($error instanceof SdkError && $error->kind === 'protocol' &&\n    $error->status >= 200 && $error->status < 300 && $error->raw !== null) {\n    try {\n        $body = json_decode($error->raw, true, 512, JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING);\n    } catch (\\JsonException) {\n        throw $error;\n    }\n    $entityId = is_array($body) && is_string($body['id'] ?? null) ? $body['id'] : null;\n    if ($entityId === null) throw $error;\n    // Reconcile this entity ID with ${apiName(c)}; do not submit another create.\n} else {\n    throw $error;\n}`;
   return explanation + '\n\n```' + (target === 'node' ? 'js' : 'php') + '\n' + example + '\n```';
 }

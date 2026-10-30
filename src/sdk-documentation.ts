@@ -969,7 +969,7 @@ export function operationGuidance(c: Contract, op: Operation): string {
       ? `Complete body and metadata: ${literal(op.method + 'WithResponse')}. See [response modes](RUNTIME.md#responses-and-errors).\n\n`
       : '') +
     (op.idempotency
-      ? `Idempotent: key ${requiresIdempotencyKey(op) ? 'required' : op.idempotency.auto ? 'automatic' : 'optional'} — [policy ${idempotencyPolicies(c).findIndex((policy) => policy.header === op.idempotency!.header && policy.retention === op.idempotency!.retention && policy.scope === op.idempotency!.scope) + 1}](RUNTIME.md#idempotency).\n\n`
+      ? `Idempotent: key ${requiresIdempotencyKey(op) ? 'required' : op.idempotency.auto ? 'automatic' : 'optional'}, [${cell(idempotencyPolicyName(c, op.idempotency))}](RUNTIME.md#idempotency).\n\n`
       : '') +
     (c.authentication
       ? `Authentication modes: ${op.authModes?.map((mode) => literal(mode)).join(', ') || 'none (anonymous)'}. [Credential setup](RUNTIME.md#authentication).\n\n`
@@ -1048,21 +1048,126 @@ export function idempotencyPolicies(c: Contract) {
     ).values(),
   ];
 }
+type IdempotencyPolicy = ReturnType<typeof idempotencyPolicies>[number];
+/** Retention classes are named by retention, adding scope and then header only to tell them apart. */
+function idempotencyPolicyNames(policies: IdempotencyPolicy[]): string[] {
+  const plain = (text: string) => text.replace(/[.\s]+$/, '');
+  const forms = [
+    (p: IdempotencyPolicy) => `${plain(p.retention)} retention`,
+    (p: IdempotencyPolicy) => `${plain(p.retention)} retention, ${plain(p.scope)} scope`,
+    (p: IdempotencyPolicy) =>
+      `${plain(p.retention)} retention, ${plain(p.scope)} scope, ${p.header}`,
+  ];
+  const form =
+    forms.find((f) => new Set(policies.map(f)).size === policies.length) ?? forms.at(-1)!;
+  return policies.map(form);
+}
+export function idempotencyPolicyName(c: Contract, used: NonNullable<Operation['idempotency']>) {
+  const policies = idempotencyPolicies(c);
+  const names = idempotencyPolicyNames(policies);
+  return names[
+    policies.findIndex(
+      (policy) =>
+        policy.header === used.header &&
+        policy.retention === used.retention &&
+        policy.scope === used.scope,
+    )
+  ]!;
+}
 export function idempotencyReference(c: Contract): string {
   const policies = idempotencyPolicies(c);
+  const names = idempotencyPolicyNames(policies);
   return policies.length
-    ? '| Policy | Header | Retention | Scope |\n| --- | --- | --- | --- |\n' +
+    ? '| Retention class | Header | Retention | Scope |\n| --- | --- | --- | --- |\n' +
         policies
           .map(
             (policy, index) =>
-              `| ${index + 1} | ${literalCell(policy.header)} | ${cell(policy.retention)} | ${cell(policy.scope)} |`,
+              `| ${cell(names[index]!)} | ${literalCell(policy.header)} | ${cell(policy.retention)} | ${cell(policy.scope)} |`,
           )
           .join('\n') +
         '\n\n'
     : '';
 }
 
-/** Provider error-code values are shared across model and operation field docs. */
+/** Name of the described API in generated prose: `documentation.apiName`, else "the API". */
+export const apiName = (c: Contract): string => c.config.documentation?.apiName ?? 'the API';
+/** Heading for the API's declared error-code values, with the ERRORS.md anchor that follows from it. */
+export const errorCodesTitle = (c: Contract): string =>
+  `${apiName(c).replace(/^the /i, '')} error codes`;
+export const errorCodesLink = (c: Contract): string =>
+  'ERRORS.md#' +
+  errorCodesTitle(c)
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}_\s-]/gu, '')
+    .replace(/\s/g, '-');
+
+type RetryClass = { retry: ReturnType<typeof compileRetry>['retry']; count: number };
+function retryClasses(ops: Operation[]): RetryClass[] {
+  const classes = new Map<string, RetryClass>();
+  for (const op of ops) {
+    const { retry } = compileRetry(op);
+    const key = stable([retry.maxAttempts, retry.statuses, retry.transport, retry.errors ?? null]);
+    const known = classes.get(key);
+    if (known) known.count++;
+    else classes.set(key, { retry, count: 1 });
+  }
+  return [...classes.values()].sort((a, b) => b.count - a.count);
+}
+const list = (items: readonly (string | number)[]) =>
+  items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`;
+function attempts(retry: RetryClass['retry']): string {
+  if (retry.maxAttempts <= 1) return 'one attempt';
+  const signals = [
+    retry.transport ? 'transport failures' : '',
+    retry.statuses.length ? `HTTP ${list(retry.statuses)}` : '',
+    retry.errors?.length ? 'declared error codes' : '',
+  ].filter(Boolean);
+  return `up to ${retry.maxAttempts} total attempts for ${signals.join(' and ') || 'declared retry signals'}`;
+}
+/** What a group of operations allows, plus how many of them declare other limits. */
+function allowance(ops: Operation[], plural = ops.length !== 1): string {
+  const [main, ...others] = retryClasses(ops);
+  const rest = others.reduce((sum, other) => sum + other.count, 0);
+  return (
+    `${plural ? 'allow' : 'allows'} ${attempts(main!.retry)}` +
+    (rest
+      ? `; ${rest} of them declare other limits, listed in each operation's request behavior`
+      : '')
+  );
+}
+/** Retry and automatic-key behavior as compiled for each operation, not as a fixed default. */
+export function retryPolicyParagraph(c: Contract): string {
+  const reads = c.operations.filter((op) => compileRetry(op).replay === 'safe');
+  const writes = c.operations.filter((op) => compileRetry(op).replay !== 'safe');
+  const keyed = writes.filter((op) => op.idempotency);
+  const automatic = keyed.filter((op) => op.idempotency!.auto);
+  const manual = keyed.filter((op) => !op.idempotency!.auto);
+  const writing = (ops: Operation[], one: string, many: string) =>
+    `${ops.length} write operation${ops.length === 1 ? ' ' + one : 's ' + many}`;
+  const sentences: string[] = [];
+  if (reads.length) sentences.push(`Reads (GET, HEAD and OPTIONS) ${allowance(reads, true)}.`);
+  if (automatic.length) {
+    const headers = [...new Set(automatic.map((op) => '`' + op.idempotency!.header + '`'))];
+    const prefixes = [...new Set(automatic.map((op) => op.idempotency!.autoKeyPrefix))];
+    sentences.push(
+      `${writing(automatic, 'creates', 'create')} ${list(headers)} automatically when you supply none` +
+        (prefixes.length === 1 && prefixes[0] ? `, beginning with ${literal(prefixes[0])}` : '') +
+        ` and ${allowance(automatic)}.`,
+    );
+  }
+  if (manual.length)
+    sentences.push(
+      `${writing(manual, 'accepts', 'accept')} \`idempotencyKey\` and ${manual.length === 1 ? 'sends' : 'send'} once until you supply a key; with a key, ${manual.length === 1 ? 'it' : 'they'} ${allowance(manual)}.`,
+    );
+  const unkeyed = writes.filter((op) => !op.idempotency);
+  if (unkeyed.length)
+    sentences.push(
+      `${writing(unkeyed, 'declares', 'declare')} no idempotency key and always ${unkeyed.length === 1 ? 'sends' : 'send'} once.`,
+    );
+  return `${sentences.join(' ')} maxAttempts caps total attempts including the first. HTTP 412 never retries.`;
+}
+
+/** Error-code values are shared across model and operation field docs. */
 export function errorCodeDocumentation(c: Contract): {
   links: Map<string, string>;
   reference: string;
@@ -1084,14 +1189,14 @@ export function errorCodeDocumentation(c: Contract): {
         for (const shape of shapes)
           for (const entry of schemaEnumValues(shape, c.definitions ?? c.models)) {
             if (entry.path) continue;
-            links.set(enumIdentity(entry.values), 'ERRORS.md#provider-error-codes');
+            links.set(enumIdentity(entry.values), errorCodesLink(c));
             for (const value of entry.values) values.add(value);
           }
       }
   return {
     links,
     reference: values.size
-      ? '# Provider error codes\n\n[Runtime error reference](RUNTIME.md#error-reference)\n\nInspect the provider code together with status and kind; retry only when the operation permits it. Declared values:\n\n' +
+      ? `# ${errorCodesTitle(c)}\n\n[Runtime error reference](RUNTIME.md#error-reference)\n\nInspect the error code together with status and kind; retry only when the operation permits it. Declared values:\n\n` +
         [...values]
           .sort()
           .map((value) => '- ' + literal(value))

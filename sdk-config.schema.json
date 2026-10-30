@@ -402,6 +402,22 @@
         },
         "authShortcut": {
           "type": "string"
+        },
+        "apiName": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Noun phrase naming the described API in generated prose. Defaults to \"the API\"."
+        },
+        "operationUrl": {
+          "type": "string",
+          "description": "Absolute HTTPS URL template for each operation's @see link. Placeholders: {operationId}, {tag} and {tagSlug}."
+        },
+        "tagSlugs": {
+          "type": "object",
+          "description": "OpenAPI tag to documentation slug. Required for {tagSlug}; every included tag must be mapped.",
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       },
       "additionalProperties": false

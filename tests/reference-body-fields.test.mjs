@@ -910,10 +910,11 @@ test('idempotency scope punctuation is joined once', () => {
   for (const target of ['node', 'php']) {
     const source = readReference(files, target);
     assert.match(source, /Idempotent: key automatic/);
-    assert.doesNotMatch(source, /24 hours|request parameters/);
+    assert.doesNotMatch(source, /request parameters|24 hours\./);
+    assert.match(source, /\[24 hours retention\]\(/);
     assert.match(
       files.get(`${target}/RUNTIME.md`),
-      /\| 1 \| `Idempotency-Key` \| 24 hours\. \| request parameters\. \|/,
+      /\| 24 hours retention \| `Idempotency-Key` \| 24 hours\. \| request parameters\. \|/,
     );
     assert.doesNotMatch(source, /request parameters\.\./);
   }

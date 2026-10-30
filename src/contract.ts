@@ -270,6 +270,15 @@ export interface Config {
     examples?: string[];
     /** Auth shortcut shown in README and operation examples where the operation permits it. */
     authShortcut?: string;
+    /** Noun phrase naming the described API in generated prose. Defaults to "the API". */
+    apiName?: string;
+    /**
+     * Absolute HTTPS URL template for each operation's `@see` link. Placeholders: `{operationId}`,
+     * `{tag}` (the operation's first OpenAPI tag) and `{tagSlug}` (that tag looked up in `tagSlugs`).
+     */
+    operationUrl?: string;
+    /** OpenAPI tag to documentation slug. Required for `{tagSlug}`; every included tag must be mapped. */
+    tagSlugs?: Record<string, string>;
   };
   release?: { baseUrl?: string; policy?: 'review' | 'semver' };
 }
@@ -279,6 +288,8 @@ export interface Contract {
   /** Private publication provenance; excluded from compiled compatibility facts and effective output. */
   exampleProtection?: { locations: string[]; schemas: string[] };
   defaultBaseUrl?: string;
+  /** Absolute documentation URL per operation ID, from `documentation.operationUrl`. */
+  referenceUrls?: Record<string, string>;
   title: string;
   apiVersion: string;
   operations: Operation[];
@@ -355,6 +366,31 @@ function publicationUrl(value: unknown, path: string, repository = false): void 
     return fail(path, message);
   }
   if (!url.hostname || url.username || url.password) fail(path, message);
+}
+/** Fill `documentation.operationUrl`; an operation whose tag has no slug fails the load. */
+function referenceUrl(
+  template: string,
+  id: string,
+  tags: unknown,
+  slugs: Record<string, string> | undefined,
+  path: string,
+): string {
+  const tag = Array.isArray(tags)
+    ? tags.find((t): t is string => typeof t === 'string')
+    : undefined;
+  return template.replace(/\{(operationId|tag|tagSlug)\}/g, (_, name: string) => {
+    if (name === 'operationId') return encodeURIComponent(id);
+    if (tag === undefined)
+      return fail(path + '/tags', `operation ${id} has no tag for documentation.operationUrl`);
+    if (name === 'tag') return encodeURIComponent(tag);
+    const slug = own(slugs, tag);
+    if (slug === undefined)
+      return fail(
+        path + '/tags',
+        `tag ${JSON.stringify(tag)} has no entry in config/documentation/tagSlugs`,
+      );
+    return slug;
+  });
 }
 function record(value: unknown, path: string): asserts value is Record<string, any> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) fail(path, 'expected an object');
@@ -1983,10 +2019,45 @@ function loadContractInput(
       diagnostics.check(() =>
         keys(
           config.documentation!,
-          ['overview', 'guides', 'examples', 'authShortcut'],
+          ['overview', 'guides', 'examples', 'authShortcut', 'apiName', 'operationUrl', 'tagSlugs'],
           'config/documentation',
         ),
       );
+      diagnostics.check(() => {
+        const { apiName, operationUrl, tagSlugs } = config.documentation!;
+        if (
+          apiName !== undefined &&
+          (typeof apiName !== 'string' || !apiName.trim() || /[\r\n]/.test(apiName))
+        )
+          fail('config/documentation/apiName', 'expected a nonempty one-line name such as "Flint"');
+        if (operationUrl !== undefined) {
+          const placeholders = [...String(operationUrl).matchAll(/\{([^}]*)\}/g)].map((m) => m[1]);
+          const unknown = placeholders.find((p) => !['operationId', 'tag', 'tagSlug'].includes(p!));
+          if (unknown !== undefined)
+            fail(
+              'config/documentation/operationUrl',
+              `unknown placeholder {${unknown}}; use {operationId}, {tag} or {tagSlug}`,
+            );
+          publicationUrl(
+            String(operationUrl).replace(/\{[^}]*\}/g, 'x'),
+            'config/documentation/operationUrl',
+          );
+          if (placeholders.includes('tagSlug') && tagSlugs === undefined)
+            fail(
+              'config/documentation/tagSlugs',
+              'operationUrl uses {tagSlug}; map every tag to a slug',
+            );
+        }
+        if (tagSlugs !== undefined) {
+          record(tagSlugs, 'config/documentation/tagSlugs');
+          for (const [tag, slug] of Object.entries(tagSlugs))
+            if (!tag || typeof slug !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(slug))
+              fail(
+                `config/documentation/tagSlugs/${pointerSegment(tag)}`,
+                'expected a URL path slug such as "payment-links"',
+              );
+        }
+      });
       diagnostics.check(() => {
         const name = config.documentation!.authShortcut;
         if (name === undefined) return;
@@ -2815,6 +2886,7 @@ function loadContractInput(
   }
   const resourceSpellings = new Map<string, string>();
   const operations: Operation[] = [];
+  const referenceUrls: Record<string, string> = {};
   const ids = new Set<string>();
   const publicNames = new Set<string>();
   const pathNames = avoidPathHelperCollisions(
@@ -3554,6 +3626,15 @@ function loadContractInput(
         if (payloadReturn && responseReturn.payloadPath) payloadSchemas(operation);
         if (requestStyle !== 'positional') delete operation.request;
         validatePositional(operation, definitions);
+        const urlTemplate = config.documentation?.operationUrl;
+        if (typeof urlTemplate === 'string')
+          referenceUrls[id] = referenceUrl(
+            urlTemplate,
+            id,
+            op.tags,
+            config.documentation!.tagSlugs,
+            p,
+          );
         operations.push(operation);
       } catch (error) {
         diagnostics.capture(error);
@@ -3864,6 +3945,7 @@ function loadContractInput(
   }
   const contract: Contract = {
     ...(defaultBaseUrl !== undefined ? { defaultBaseUrl } : {}),
+    ...(Object.keys(referenceUrls).length ? { referenceUrls } : {}),
     title: String(doc.info?.title ?? 'API'),
     apiVersion: config.apiVersion?.value ?? String(doc.info?.version ?? ''),
     operations,
