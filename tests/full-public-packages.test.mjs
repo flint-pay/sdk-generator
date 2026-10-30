@@ -8,6 +8,7 @@ import {
   assertDocumentedPhpExports,
 } from './helpers/docs-exports.mjs';
 import { npmPackResult } from '../dist/distribution.js';
+import { measurePackageBudgets, assertPackageBudgets } from './helpers/package-budgets.mjs';
 import { measureSdkWeight } from './helpers/sdk-weight.mjs';
 import { measureWebhookTypes } from './helpers/webhook-types.mjs';
 import test from 'node:test';
@@ -91,6 +92,11 @@ assert.deepEqual(preview(restored,${JSON.stringify(output)}).changes,[],'full ex
 `,
       );
       run(process.execPath, [script]);
+      // Measure pristine distribution contents before installing dependencies or
+      // introducing consumer files. Each compiler sample runs in a fresh process.
+      const packageBudgets = measurePackageBudgets(output);
+      console.log('Package and type-check budgets ' + JSON.stringify(packageBudgets));
+      assertPackageBudgets(packageBudgets);
       assertDocumentedModelExports(join(output, 'node'));
       assertDocumentedPhpExports(join(output, 'php'));
       const documentedContract = rawDocumentationInput(api, config);

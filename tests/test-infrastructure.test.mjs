@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import ts from 'typescript';
+import { median, assertPackageBudgets } from './helpers/package-budgets.mjs';
 import { requireTestNode, testBatches, runRequired } from './helpers/test-runner.mjs';
 import { OutputBaselines, hashEntries, recordFiles } from './helpers/output-baselines.mjs';
 import { substituteTemplate } from '../dist/template.js';
@@ -149,5 +150,37 @@ test('test modules defer explicit generation calls until hooks or tests run', ()
       ts.forEachChild(node, visit);
     };
     visit(file);
+  }
+});
+
+test('package budgets reject regressions and missing metrics while timing only warns', () => {
+  assert.equal(median([9, 2, 5]), 5);
+  assert.throws(() => median([1, NaN, 3]));
+  const measured = {
+    node: { packedBytes: 100, unpackedBytes: 200, files: 10 },
+    php: { packedBytes: 100, unpackedBytes: 200, files: 10 },
+    root: { loadedDts: 50, peakRssKiB: 1000, wallSeconds: 2 },
+    subpath: { loadedDts: 20, peakRssKiB: 500, wallSeconds: 1 },
+  };
+  const limits = structuredClone(measured);
+  assert.doesNotThrow(() => assertPackageBudgets(measured, limits));
+  for (const [group, metrics] of Object.entries(measured)) {
+    for (const metric of Object.keys(metrics)) {
+      const regression = structuredClone(measured);
+      regression[group][metric]++;
+      if (metric === 'wallSeconds') {
+        const warnings = [];
+        assertPackageBudgets(regression, limits, (message) => warnings.push(message));
+        assert.equal(warnings.length, 1);
+        assert.match(warnings[0], new RegExp(group + '.' + metric));
+      } else {
+        assert.throws(
+          () => assertPackageBudgets(regression, limits),
+          new RegExp(group + '.' + metric),
+        );
+      }
+      delete regression[group][metric];
+      assert.throws(() => assertPackageBudgets(regression, limits), /missing measurement/);
+    }
   }
 });
