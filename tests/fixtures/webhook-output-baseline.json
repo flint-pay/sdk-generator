@@ -5,8 +5,8 @@
       "name": "payment",
       "api": "tests/fixtures/payment-api.json",
       "config": "tests/fixtures/payment-sdk.json",
-      "nodeRuntimeSha256": "4604baf97a22c647f983915d1cd9b79611f769904010138a0f7249b53787afdb",
-      "phpSha256": "8111f78b7f5f05835eb04ad6c0cc9b971705006d315179c504e6cbf5d9ee28a0",
+      "nodeRuntimeSha256": "1f903444ecb1bd7565c7f9b0f9cf0074aa5db10904440d7b719e0fd3b6bfdd1d",
+      "phpSha256": "08a3ff5518fb9583e8078321d3b1215abdbc80707b55a7b0356a7d10e1f5b36e",
       "rootExports": [
         "SdkError",
         "Model",
@@ -17,7 +17,6 @@
         "RequestOptions",
         "Result",
         "Metadata",
-        "ErrorKind",
         "DiagnosticEvent",
         "InputValue",
         "ClientOptions",
@@ -43,17 +42,17 @@
         "WebhookVerificationOptions"
       ],
       "singleTarget": {
-        "node": "4604baf97a22c647f983915d1cd9b79611f769904010138a0f7249b53787afdb",
-        "php": "8111f78b7f5f05835eb04ad6c0cc9b971705006d315179c504e6cbf5d9ee28a0"
+        "node": "1f903444ecb1bd7565c7f9b0f9cf0074aa5db10904440d7b719e0fd3b6bfdd1d",
+        "php": "08a3ff5518fb9583e8078321d3b1215abdbc80707b55a7b0356a7d10e1f5b36e"
       },
-      "phpRuntimeSha256": "6532fda3a0e0f0ac7b39ebfa6f2c41a6a2129c753b4e3a3268351f585b850d78"
+      "phpRuntimeSha256": "b3eeaec9795398c41e20a4188d37572f6e12aaa1b009437802a0d737e508e5df"
     },
     {
       "name": "flint",
       "api": "tests/providers/flint/openapi.json",
       "config": "tests/providers/flint/sdk.json",
-      "nodeRuntimeSha256": "242808be6dc01bde9d938368bfa991bef3ff192e8889ffd241f6d432d3caf49e",
-      "phpSha256": "259bc2144849449392c08674d8ea2df58998eaa0057800a1cb386f41e0bdb988",
+      "nodeRuntimeSha256": "3faa1ae4ba0c1b0ffbb3ee38cfd2c4e817ac966d20789b2bf4cbb8f11bedda80",
+      "phpSha256": "765ef683b0000620df6360862c30dd16438d99b897be23f8f8a58df4f299fb46",
       "rootExports": [
         "SdkError",
         "errors",
@@ -65,7 +64,6 @@
         "RequestOptions",
         "Result",
         "Metadata",
-        "ErrorKind",
         "DiagnosticEvent",
         "InputValue",
         "CredentialProvider",
@@ -224,10 +222,10 @@
         "WebhookVerificationOptions"
       ],
       "singleTarget": {
-        "node": "6965be69694ee16f59baab5ec959b243b1a0172dd004a372381e46e90c9b8c53",
-        "php": "259bc2144849449392c08674d8ea2df58998eaa0057800a1cb386f41e0bdb988"
+        "node": "1c753682fdb6a8b0454284c3b5c9e6383be2a5779934d9f15c70f4e381309db4",
+        "php": "765ef683b0000620df6360862c30dd16438d99b897be23f8f8a58df4f299fb46"
       },
-      "phpRuntimeSha256": "999554a0fefe2514b819cc662c1d5a1ae166f66c7588c21ae6ad25f723206e48"
+      "phpRuntimeSha256": "f54b4469fe70f8a1a6b8a41290af2c0fe0bbb68fd750c2393336aa1ae94aff4e"
     }
   ]
 }

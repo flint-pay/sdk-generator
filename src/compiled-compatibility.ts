@@ -57,7 +57,13 @@ export function compareCompiledContracts(
   if (!node && !php) return findings;
   for (const target of ['node', 'php'] as const) {
     if (target === 'node' ? !node : !php) continue;
-    for (const feature of ['errorClasses', 'webhookReasons', 'standaloneWebhook'] as const)
+    if ((previous[target].errorSurfaceVersion ?? 1) !== (next[target].errorSurfaceVersion ?? 1))
+      findings.push({
+        severity: 'breaking',
+        subject: target + '.errorSurfaceVersion',
+        message: 'SDK error classes, constructors and call context changed.',
+      });
+    for (const feature of ['webhookReasons', 'standaloneWebhook'] as const)
       if (previous[target][feature] !== next[target][feature])
         findings.push({
           severity: next[target][feature] === true ? 'additive' : 'breaking',
@@ -523,7 +529,8 @@ export function compareCompiledContracts(
 
 /** Public API additions are compared above, separately from execution descriptors. */
 function executionDescriptors(target: CompiledSdkContract['node'] | CompiledSdkContract['php']) {
-  const { errorClasses, webhookReasons, standaloneWebhook, ...execution } = target;
+  const { errorClasses, errorSurfaceVersion, webhookReasons, standaloneWebhook, ...execution } =
+    target;
   if ('runtime' in execution)
     return {
       ...execution,

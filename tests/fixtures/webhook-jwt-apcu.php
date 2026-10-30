@@ -44,7 +44,7 @@ $verify = function (array $extra = []) use ($input, $headers, $options, $transpo
             'signing_method'
         ];
     } catch (SdkError $e) {
-        return $e->errorCode;
+        return $e->code;
     }
 };
 $newWorker = fn() => $states->setValue(null, []);

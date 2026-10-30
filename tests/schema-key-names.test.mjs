@@ -124,7 +124,7 @@ test('generated Node/PHP clients enforce key constraints and mixed-type unions o
       input: { body: value },
       responses: [],
       attempts: 0,
-      error: { kind: 'validation' },
+      error: { name: 'InvalidInputError' },
     });
     const control = valid.find(([name]) => name === operation)[1];
     // Existing anyOf response unions retain future variants. propertyNames is a strict
@@ -137,7 +137,7 @@ test('generated Node/PHP clients enforce key constraints and mixed-type unions o
       input: { body: control },
       expected: { method: 'POST', path: '/' + operation, body: JSON.stringify(control) },
       responses: [{ status: 200, body: JSON.stringify(value) }],
-      error: { kind: 'protocol' },
+      error: { name: 'UnexpectedResponseError' },
     });
   }
   const file = join(dir, 'cases.json');

@@ -68,17 +68,17 @@ test('Node SSE parser handles byte boundaries and releases on every exit', async
     idleTimeoutMs: 100,
     maxEventBytes: 1000,
   });
-  await assert.rejects(async () => Array.fromAsync(invalid), { kind: 'protocol' });
+  await assert.rejects(async () => Array.fromAsync(invalid), { name: 'UnexpectedResponseError' });
   const oversized = new EventStream(reader([Buffer.from('data: 12345\n\n')]), meta, {
     idleTimeoutMs: 100,
     maxEventBytes: 5,
   });
-  await assert.rejects(async () => Array.fromAsync(oversized), { kind: 'protocol' });
+  await assert.rejects(async () => Array.fromAsync(oversized), { name: 'UnexpectedResponseError' });
   const idle = new EventStream(new ReadableStream().getReader(), meta, {
     idleTimeoutMs: 10,
     maxEventBytes: 1000,
   });
-  await assert.rejects(async () => Array.fromAsync(idle), { kind: 'deadline' });
+  await assert.rejects(async () => Array.fromAsync(idle), { name: 'TimeoutError' });
   const controller = new AbortController();
   const cancelledStream = new EventStream(new ReadableStream().getReader(), meta, {
     idleTimeoutMs: 1000,
@@ -87,7 +87,7 @@ test('Node SSE parser handles byte boundaries and releases on every exit', async
   });
   const pending = Array.fromAsync(cancelledStream);
   controller.abort();
-  await assert.rejects(pending, { kind: 'cancelled' });
+  await assert.rejects(pending, { name: 'CancelledError' });
 });
 writeFileSync(
   join(dir, 'api.json'),
@@ -258,14 +258,16 @@ test('injected streams retain unknown events, reject malformed known payloads an
   const result = await client.events.watch();
   const iterator = result.data[Symbol.asyncIterator]();
   assert.equal((await iterator.next()).value.data, 'raw future payload');
-  await assert.rejects(iterator.next(), { kind: 'protocol' });
+  await assert.rejects(iterator.next(), { name: 'UnexpectedResponseError' });
   assert.equal(calls, 1);
   assert.equal(released, 1);
   const closeable = await client.events.watch();
   await client.close();
   assert.deepEqual(await Array.fromAsync(closeable.data), []);
   assert.equal(released, 2);
-  await assert.rejects(client.events.watch({}, { streamIdleTimeoutMs: 0 }), { kind: 'validation' });
+  await assert.rejects(client.events.watch({}, { streamIdleTimeoutMs: 0 }), {
+    name: 'InvalidInputError',
+  });
   assert.equal(calls, 2);
 
   writeFileSync(
@@ -287,7 +289,7 @@ $client=new Client(new ClientOptions(baseUrl:'https://example.invalid',transport
 }));
 $result=$client->events->watch();$seen=[];
 try { foreach($result->data as $event)$seen[]=$event->data;throw new Exception('accepted malformed event'); }
-catch(SdkError $error){if($error->kind!=='protocol')throw $error;}
+catch(SdkError $error){if(substr(strrchr(get_class($error), chr(92)), 1)!=='UnexpectedResponseError')throw $error;}
 if($seen!==['raw future payload']||$calls!==1||$closed!==1)throw new Exception('stream contract');
 $client->close();echo 'ok';
 `,
@@ -337,13 +339,13 @@ test('default streams bound slow-consumer memory and release idle, cancelled and
     assert.ok(peak - baseline < 24 * 1024 * 1024, `Node stream buffered ${peak - baseline} bytes`);
     for (const options of [{ streamIdleTimeoutMs: 30 }, { streamLifetimeMs: 30 }]) {
       const result = await client.events.watch({}, options);
-      await assert.rejects(async () => Array.fromAsync(result.data), { kind: 'deadline' });
+      await assert.rejects(async () => Array.fromAsync(result.data), { name: 'TimeoutError' });
     }
     const controller = new AbortController();
     const result = await client.events.watch({}, { signal: controller.signal });
     const pending = Array.fromAsync(result.data);
     setTimeout(() => controller.abort(), 30);
-    await assert.rejects(pending, { kind: 'cancelled' });
+    await assert.rejects(pending, { name: 'CancelledError' });
     await client.close();
     writeFileSync(
       join(dir, 'bounded.php'),
@@ -367,13 +369,13 @@ if($peak-$base>8*1024*1024)throw new Exception('unbounded PHP stream memory');
 foreach([new RequestOptions(streamIdleTimeoutMs:30),new RequestOptions(streamLifetimeMs:30)] as $options) {
  $result=$c->events->watch(options:$options);
  try{iterator_to_array($result->data);throw new Exception('missing deadline');}
- catch(SdkError $e){if($e->kind!=='deadline')throw $e;}
+ catch(SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='TimeoutError')throw $e;}
 }
 $cancel=new Cancellation();
 $result=$c->events->watch(options:new RequestOptions(cancellation:$cancel));
 pcntl_async_signals(true);pcntl_signal(SIGALRM,fn()=>$cancel->cancel());pcntl_alarm(1);
 try{iterator_to_array($result->data);throw new Exception('missing cancellation');}
-catch(SdkError $e){if($e->kind!=='cancelled')throw $e;}
+catch(SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='CancelledError')throw $e;}
 finally{pcntl_alarm(0);$c->close();}
 echo 'ok';
 `,
@@ -405,7 +407,7 @@ test('stream operations decode JSON HTTP errors before exposing an event iterato
             body: '{"code":"invalid_cursor"}',
           },
         ],
-        error: { kind: 'validation', code: 'invalid_cursor' },
+        error: { name: 'InvalidRequestError', code: 'invalid_cursor' },
       },
     ]),
   );
@@ -442,7 +444,7 @@ try {
   $c->events->watch(options:new \Example\Streams\RequestOptions(deadlineMs:200));
   throw new \Exception('Expected a truncated response error');
 } catch (\Example\Streams\SdkError $e) {
-  $results[]=['kind'=>$e->kind,'outcome'=>$e->outcome,'status'=>$e->status,'retryAfterMs'=>$e->retryAfterMs,'retryAllowed'=>$e->retryAllowed];
+  $results[]=['kind'=>substr(strrchr(get_class($e), chr(92)), 1),'outcome'=>$e->outcome,'status'=>$e->status,'retryAfterMs'=>$e->retryAfterMs,'retryAllowed'=>$e->retryAllowed];
 }
 }
 $c->close();echo json_encode($results);
@@ -453,7 +455,7 @@ $c->close();echo json_encode($results);
       assert.equal(requests, 10);
       for (const result of JSON.parse(stdout))
         assert.deepEqual(result, {
-          kind: 'transport',
+          kind: 'ConnectionError',
           outcome: 'unknown',
           status: row.status,
           retryAfterMs: row.retryAfterMs,
@@ -548,7 +550,7 @@ test('the default Node SSE transport preserves compressed event and HTTP-error d
         {},
         { maxAttempts: 1, headers: { 'x-encoding': encoding, 'x-scenario': 'error' } },
       ),
-      { kind: 'server', message: 'Synthetic server failure', status: 503 },
+      { name: 'ServerError', message: 'Synthetic server failure', status: 503 },
     );
   }
 });

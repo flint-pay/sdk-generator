@@ -193,7 +193,8 @@ test('Node response decoding preserves fields/enums, null, omission, and genuine
   });
   for (payload of cases)
     assert.deepEqual(JSON.parse(JSON.stringify(await client.api.getValues())), payload);
-  for (payload of malformed) await assert.rejects(client.api.getValues(), { kind: 'protocol' });
+  for (payload of malformed)
+    await assert.rejects(client.api.getValues(), { name: 'UnexpectedResponseError' });
 });
 
 test('PHP response getters hydrate known nullable entities and retain raw JSON values', () => {
@@ -211,7 +212,7 @@ foreach($fixtures['cases'] as $i=>$payload){
  if($i===1&&($r->getRisk()!==null||$r->getReversed()!==null||$r->getInline()!==null))exit(5);
  if($i===2&&($r->hasRisk()||$r->getRisk()!==null))exit(6);
 }
-foreach($fixtures['malformed'] as $payload){$body=json_encode($payload);try{$c->api->getValues();exit(8);}catch(SdkError $e){if($e->kind!=='protocol')throw $e;}}
+foreach($fixtures['malformed'] as $payload){$body=json_encode($payload);try{$c->api->getValues();exit(8);}catch(SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='UnexpectedResponseError')throw $e;}}
 echo 'ok';
 `),
     'ok',

@@ -6,29 +6,29 @@
       "name": "library",
       "api": "examples/library.openapi.json",
       "config": "examples/library.sdk.json",
-      "nodeDeclarationsSha256": "910040f6db24b34f39c7d73dffdbcd63f58ba4e5f8a0574b3ea19d59af6e9eeb",
-      "phpDeclarationsSha256": "fd70bd7cf04debb85daa22834d8b27dcf4bdad647c65cfe89a7a02bf42de6905"
+      "nodeDeclarationsSha256": "b66568d998e991944d287a05bd0af1370e79f63e8d498902d8878334b4d329ff",
+      "phpDeclarationsSha256": "72d158e58ae0778f1f4c6af9f9bf9de004e818f948703a160219f1bbf91f12e3"
     },
     {
       "name": "payment",
       "api": "tests/fixtures/payment-api.json",
       "config": "tests/fixtures/payment-sdk.json",
-      "nodeDeclarationsSha256": "67f2823725419a77a23a37b7eb9ee4c00ffe90637a2171570d45ffa620d63496",
-      "phpDeclarationsSha256": "4b03bacda6023ed0ec14be4be0ee7106786c077fa27b85f5c547246682ee362a"
+      "nodeDeclarationsSha256": "4788c9f52ebbce7996e956186ea965239cd72e9359b2d3d5ae06dd97a0c60e1f",
+      "phpDeclarationsSha256": "225abf974b85c6baf6712d41f2468c01595eb484a9b06c5f33597fdb688d9d3f"
     },
     {
       "name": "flint",
       "api": "tests/providers/flint/openapi.json",
       "config": "tests/providers/flint/sdk.json",
-      "nodeDeclarationsSha256": "65f6955791fce7b34439d3521731fb64ac0a79a6540e69a4c933ea47bb8addce",
-      "phpDeclarationsSha256": "166295848722f85d6cb83c654c7d8da61b120bd87ae036f132564de8f49b15a5"
+      "nodeDeclarationsSha256": "39f206dc79dbc914ccc57d65b3b07e8f5d3b70562e3e731754bdbb47834fc5eb",
+      "phpDeclarationsSha256": "4601739faf361f05c7af2a85aaf52fe7ea9f18c65e9646386cc43702a8d64be3"
     },
     {
       "name": "risk",
       "api": "tests/providers/flint/risk-openapi.json",
       "config": "tests/providers/flint/risk-sdk.json",
-      "nodeDeclarationsSha256": "43687ba1b9895ced3799e461860bcd9c269d8e8792d4342fa4f5ea9e08318dea",
-      "phpDeclarationsSha256": "73f372c16f7bab5cb06da114c4b70a708ab9d50694d74b12d65a260d2d98721e"
+      "nodeDeclarationsSha256": "4870cc7b944620b94d1cfcc6d94b8d325097f16911337234348bac37733aa4c5",
+      "phpDeclarationsSha256": "623892d0c26d58d8fa8be90a2168d4e911a9bfa1a0199c7133f0d5bc53f979bc"
     }
   ]
 }

@@ -118,7 +118,7 @@ const cases = [
     status: 501,
     failures: 1,
     attempts: 1,
-    error: 'server',
+    error: 'ServerError',
     eligible: false,
   },
   {
@@ -127,7 +127,7 @@ const cases = [
     client: { maxAttempts: 8 },
     failures: 3,
     attempts: 3,
-    error: 'server',
+    error: 'ServerError',
     eligible: true,
   },
   {
@@ -135,7 +135,7 @@ const cases = [
     op: 'read',
     failures: 3,
     attempts: 3,
-    error: 'server',
+    error: 'ServerError',
     eligible: true,
   },
   {
@@ -151,7 +151,7 @@ const cases = [
     options: { maxAttempts: 1000 },
     failures: 2,
     attempts: 2,
-    error: 'server',
+    error: 'ServerError',
     eligible: true,
   },
   {
@@ -169,7 +169,7 @@ const cases = [
     options: { maxAttempts: 1 },
     failures: 1,
     attempts: 1,
-    error: 'server',
+    error: 'ServerError',
     eligible: true,
   },
   {
@@ -177,7 +177,7 @@ const cases = [
     op: 'disabled',
     failures: 1,
     attempts: 1,
-    error: 'server',
+    error: 'ServerError',
     eligible: true,
   },
   {
@@ -185,7 +185,7 @@ const cases = [
     op: 'custom',
     failures: 1,
     attempts: 1,
-    error: 'server',
+    error: 'ServerError',
     eligible: false,
   },
   {
@@ -194,7 +194,7 @@ const cases = [
     transport: true,
     failures: 1,
     attempts: 1,
-    error: 'transport',
+    error: 'ConnectionError',
     eligible: false,
   },
   { name: 'custom status', op: 'custom', status: 502, failures: 1, attempts: 2 },
@@ -206,7 +206,7 @@ const cases = [
     input: body,
     failures: 1,
     attempts: 1,
-    error: 'server',
+    error: 'ServerError',
     eligible: false,
   },
   { name: 'optional key missing', op: 'keyed', input: body, attempts: 1 },
@@ -217,7 +217,7 @@ const cases = [
     options: { maxAttempts: 3 },
     failures: 1,
     attempts: 1,
-    error: 'server',
+    error: 'ServerError',
     eligible: false,
   },
   {
@@ -227,7 +227,7 @@ const cases = [
     transport: true,
     failures: 1,
     attempts: 1,
-    error: 'transport',
+    error: 'ConnectionError',
     eligible: false,
   },
   {
@@ -256,7 +256,7 @@ const cases = [
     options: { idempotencyKey: 'saved-key', maxAttempts: 3 },
     failures: 1,
     attempts: 1,
-    error: 'server',
+    error: 'ServerError',
     eligible: false,
     key: 'saved-key',
   },
@@ -264,7 +264,7 @@ const cases = [
     name: 'required key missing',
     op: 'required',
     attempts: 0,
-    error: 'validation',
+    error: 'InvalidInputError',
     eligible: false,
   },
   {
@@ -288,7 +288,7 @@ const cases = [
     op: 'plain',
     options: { idempotencyKey: 'saved-key' },
     attempts: 0,
-    error: 'validation',
+    error: 'InvalidInputError',
     eligible: false,
   },
   {
@@ -296,7 +296,7 @@ const cases = [
     op: 'keyed',
     options: { idempotencyKey: '' },
     attempts: 0,
-    error: 'validation',
+    error: 'InvalidInputError',
     eligible: false,
   },
   {
@@ -304,7 +304,7 @@ const cases = [
     op: 'keyed',
     options: { idempotencyKey: 'one', headers: { 'Idempotency-Key': 'two' } },
     attempts: 0,
-    error: 'validation',
+    error: 'InvalidInputError',
     eligible: false,
   },
   ...[0, -1, 1.5, 9007199254740992].flatMap((maxAttempts) =>
@@ -313,7 +313,7 @@ const cases = [
       op: 'read',
       [location]: { maxAttempts },
       attempts: 0,
-      error: 'validation',
+      error: 'InvalidInputError',
       eligible: false,
     })),
   ),
@@ -323,7 +323,7 @@ const cases = [
     status,
     failures: 1,
     attempts: 1,
-    error: 'conflict',
+    error: 'ConflictError',
     eligible: false,
   })),
   {
@@ -352,7 +352,7 @@ const cases = [
     headers: { 'retry-after': '10' },
     failures: 1,
     attempts: 1,
-    error: 'server',
+    error: 'ServerError',
     eligible: true,
   },
 ];
@@ -409,7 +409,7 @@ async function nodeCase(row, dynamic = false) {
       : await new sdk.Client(options).api[row.op](row.input ?? {}, row.options);
     return { calls, events, error: null, eligible: null, attempts: result.meta.attempts };
   } catch (error) {
-    return { calls, events, error: error.kind, eligible: error.retryAllowed };
+    return { calls, events, error: error.name, eligible: error.retryAllowed };
   }
 }
 
@@ -435,7 +435,7 @@ foreach($rows as $row){
     $c=new \RetryBudgets\Client($options);
     $result=$c->api->{$row['op']}($row['input']??[],new \RetryBudgets\RequestOptions(...($row['options']??[])));
     $results[]=['calls'=>$calls,'events'=>$events,'error'=>null,'eligible'=>null,'attempts'=>$result->meta['attempts']];
-  }catch(\RetryBudgets\SdkError $e){$results[]=['calls'=>$calls,'events'=>$events,'error'=>$e->kind,'eligible'=>$e->retryAllowed];}
+  }catch(\RetryBudgets\SdkError $e){$results[]=['calls'=>$calls,'events'=>$events,'error'=>substr(strrchr(get_class($e), chr(92)), 1),'eligible'=>$e->retryAllowed];}
 }
 echo json_encode($results,JSON_THROW_ON_ERROR);
 `;
@@ -455,7 +455,7 @@ test('nonfinite and unsafe request budgets fail before dispatch in both runtimes
         op: 'read',
         [location]: { maxAttempts },
         attempts: 0,
-        error: 'validation',
+        error: 'InvalidInputError',
         eligible: false,
       };
       verify(row, await nodeCase(row));
@@ -471,7 +471,7 @@ $c=new \RetryBudgets\Client(new \RetryBudgets\ClientOptions(baseUrl:'https://exa
 foreach([NAN,INF,-INF,9007199254740992] as $budget)foreach([false,true] as $client){
   $c=new \RetryBudgets\Client(new \RetryBudgets\ClientOptions(baseUrl:'https://example.invalid',maxAttempts:$client?$budget:null,transport:fn()=>throw new \Exception('Unexpected dispatch')));
   try{$c->api->read([],new \RetryBudgets\RequestOptions(maxAttempts:$client?null:$budget));throw new \Exception('Accepted invalid budget');}
-  catch(\RetryBudgets\SdkError $e){if($e->kind!=='validation')throw $e;}
+  catch(\RetryBudgets\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='InvalidInputError')throw $e;}
 }`,
     join(output, 'php'),
   ]);
@@ -705,7 +705,9 @@ test('cancellation stops default retries before dispatch and between attempts in
         return new Response('{}', { status: 503 });
       },
     });
-    await assert.rejects(client.api.read({}, { signal: controller.signal }), { kind: 'cancelled' });
+    await assert.rejects(client.api.read({}, { signal: controller.signal }), {
+      name: 'CancelledError',
+    });
     assert.equal(calls, before ? 0 : 1);
   }
   execFileSync('php', [
@@ -714,7 +716,7 @@ test('cancellation stops default retries before dispatch and between attempts in
 require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
 foreach([true,false]as $before){$calls=0;$token=new \RetryBudgets\Cancellation();if($before)$token->cancel();
 $c=new \RetryBudgets\Client(new \RetryBudgets\ClientOptions(baseUrl:'https://example.invalid',diagnostics:fn()=>$token->cancel(),transport:function()use(&$calls){$calls++;return ['status'=>503,'headers'=>[],'body'=>'{}'];}));
-try{$c->api->read([],new \RetryBudgets\RequestOptions(cancellation:$token));throw new \Exception('Ignored cancellation');}catch(\RetryBudgets\SdkError $e){if($e->kind!=='cancelled')throw $e;}
+try{$c->api->read([],new \RetryBudgets\RequestOptions(cancellation:$token));throw new \Exception('Ignored cancellation');}catch(\RetryBudgets\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='CancelledError')throw $e;}
 if($calls!==($before?0:1))throw new \Exception('Retried cancelled call');
 }`,
     join(output, 'php'),

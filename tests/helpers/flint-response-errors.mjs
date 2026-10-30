@@ -8,14 +8,14 @@ import { spawnSync } from 'node:child_process';
 // These expectations come from the documented HTTP status contract, independently
 // of the generated error factory. All other documented 4xx statuses use ApiError.
 const kinds = {
-  400: ['validation', 'ValidationError'],
-  401: ['authentication', 'AuthenticationError'],
-  403: ['authentication', 'AuthenticationError'],
-  404: ['not_found', 'NotFoundError'],
-  409: ['conflict', 'ConflictError'],
-  412: ['conflict', 'ConflictError'],
-  422: ['validation', 'ValidationError'],
-  429: ['rate_limit', 'RateLimitError'],
+  400: ['InvalidRequestError', 'InvalidRequestError'],
+  401: ['AuthenticationError', 'AuthenticationError'],
+  403: ['PermissionError', 'PermissionError'],
+  404: ['NotFoundError', 'NotFoundError'],
+  409: ['ConflictError', 'ConflictError'],
+  412: ['ConflictError', 'ConflictError'],
+  422: ['InvalidRequestError', 'InvalidRequestError'],
+  429: ['RateLimitError', 'RateLimitError'],
 };
 
 // Expected values come from source JSON, with only the documented exact numeric
@@ -146,7 +146,7 @@ async function nodeErrors(base, audit, entry = 'index.js') {
             error instanceof sdk.errors[errorClass],
             `${example.location}: expected ${errorClass}, got ${error.name}: ${error.message}`,
           );
-          assert.equal(error.kind, kind, example.location + ': kind');
+          assert.equal(error.name, kind, example.location + ': kind');
           assert.equal(error.status, Number(example.status), example.location + ': status');
           assert.equal(error.outcome, 'response', example.location + ': outcome');
           assert.equal(error.code, body.error.code, example.location + ': code');
@@ -157,12 +157,8 @@ async function nodeErrors(base, audit, entry = 'index.js') {
             JSON.parse(example.expectedDetailsJson),
             example.location + ': certified details',
           );
-          assert.equal(
-            error.meta.requestId,
-            body.error.request_id,
-            example.location + ': requestId',
-          );
-          assert.equal(error.meta.attempts, 1, example.location + ': attempts');
+          assert.equal(error.requestId, body.error.request_id, example.location + ': requestId');
+          assert.equal(error.attempts, 1, example.location + ': attempts');
           return true;
         },
         example.location,
@@ -206,7 +202,9 @@ export async function checkErrorResponseExamples(output, examples, routes, cases
         ),
         expectedError:
           kinds[example.status] ??
-          (Number(example.status) >= 500 ? ['server', 'ServerError'] : ['api', 'ApiError']),
+          (Number(example.status) >= 500
+            ? ['ServerError', 'ServerError']
+            : ['ApiError', 'ApiError']),
       };
     }),
   };

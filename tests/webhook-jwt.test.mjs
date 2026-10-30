@@ -123,13 +123,13 @@ test('all upstream synthetic cross-language JWT vectors pass through root, subpa
       else
         await assert.rejects(
           result,
-          { kind: 'authentication', code: 'webhook_' + codes[vector.name] },
+          { name: 'WebhookVerificationError', code: 'webhook_' + codes[vector.name] },
           vector.name,
         );
     }
   }
   const result = php(
-    `$results=[]; foreach($input['vectors'] as $v){foreach(['standalone','client'] as $mode){try{ $options=['endpoint_ids'=>$input['endpoint_ids'],'jwks'=>$input['jwks'],'base_url'=>$input['issuer'],'now_seconds'=>$input['now']]; $body=base64_decode($v['body_base64']); $headers=['Authorization'=>[$v['authorization']]]; $r=$mode==='standalone'?Webhooks::verifyDelivery($body,$headers,$options):(new Client(new ClientOptions(baseUrl:$input['issuer'])))->verifyWebhookDelivery($body,$headers,$options); $results[]=$r['signing_method']; }catch(SdkError $e){$results[]=$e->errorCode;}}} echo json_encode($results);`,
+    `$results=[]; foreach($input['vectors'] as $v){foreach(['standalone','client'] as $mode){try{ $options=['endpoint_ids'=>$input['endpoint_ids'],'jwks'=>$input['jwks'],'base_url'=>$input['issuer'],'now_seconds'=>$input['now']]; $body=base64_decode($v['body_base64']); $headers=['Authorization'=>[$v['authorization']]]; $r=$mode==='standalone'?Webhooks::verifyDelivery($body,$headers,$options):(new Client(new ClientOptions(baseUrl:$input['issuer'])))->verifyWebhookDelivery($body,$headers,$options); $results[]=$r['signing_method']; }catch(SdkError $e){$results[]=$e->code;}}} echo json_encode($results);`,
     vectors,
   );
   assert.deepEqual(
@@ -289,7 +289,7 @@ test('JWT is decisive; HMAC remains available with secrets and its complete head
   assert.equal(sdk.verifyWebhook(body, hmacHeaders, secret, vectors.now).signingMethod, undefined);
   assert.deepEqual(
     php(
-      `$rows=[]; foreach($input['cases'] as $c){$o=$c['options'];$renames=['endpointIds'=>'endpoint_ids','baseUrl'=>'base_url','nowSeconds'=>'now_seconds'];foreach($renames as $a=>$b)if(array_key_exists($a,$o)){$o[$b]=$o[$a];unset($o[$a]);}try{$r=Webhooks::verifyDelivery($input['body'],$c['headers'],$o);$rows[]=$r['signing_method'];}catch(SdkError $e){$rows[]=$e->errorCode;}}echo json_encode($rows);`,
+      `$rows=[]; foreach($input['cases'] as $c){$o=$c['options'];$renames=['endpointIds'=>'endpoint_ids','baseUrl'=>'base_url','nowSeconds'=>'now_seconds'];foreach($renames as $a=>$b)if(array_key_exists($a,$o)){$o[$b]=$o[$a];unset($o[$a]);}try{$r=Webhooks::verifyDelivery($input['body'],$c['headers'],$o);$rows[]=$r['signing_method'];}catch(SdkError $e){$rows[]=$e->code;}}echo json_encode($rows);`,
       { cases, body: body.toString() },
     ),
     cases.map((c) => (c.code ? 'webhook_' + c.code : c.method)),
@@ -318,7 +318,7 @@ test('signed claims, JOSE restrictions, time boundaries, exact bytes and decodin
       raw: '{',
       claims: { body_sha256: createHash('sha256').update('{').digest('base64url') },
       code: 'invalid_json',
-      kind: 'protocol',
+      kind: 'WebhookVerificationError',
     },
   ].map((c) => ({ ...c, authorization: 'Bearer ' + token(c.claims, c.jose) }));
   cases.push(...strictParsingCases());
@@ -329,19 +329,21 @@ test('signed claims, JOSE restrictions, time boundaries, exact bytes and decodin
       options,
     );
     if (c.code)
-      await assert.rejects(result, { code: 'webhook_' + c.code, kind: c.kind ?? 'authentication' });
+      await assert.rejects(result, { code: 'webhook_' + c.code, name: 'WebhookVerificationError' });
     else assert.equal((await result).known, true);
   }
   assert.deepEqual(
     php(
-      `$rows=[];foreach($input['cases'] as $c){try{$r=Webhooks::verifyDelivery($c['raw']??$input['body'],['authorization'=>$c['authorization']],$input['options']);$rows[]=$r['known'];}catch(SdkError $e){$rows[]=$e->kind.':'.$e->errorCode;}}echo json_encode($rows);`,
+      `$rows=[];foreach($input['cases'] as $c){try{$r=Webhooks::verifyDelivery($c['raw']??$input['body'],['authorization'=>$c['authorization']],$input['options']);$rows[]=$r['known'];}catch(SdkError $e){$rows[]=substr(strrchr(get_class($e), chr(92)), 1).':'.$e->code;}}echo json_encode($rows);`,
       {
         cases,
         body: body.toString(),
         options: { endpoint_ids: claims.aud, base_url: claims.iss, now_seconds: vectors.now, jwks },
       },
     ),
-    cases.map((c) => (c.code ? (c.kind ?? 'authentication') + ':webhook_' + c.code : true)),
+    cases.map((c) =>
+      c.code ? (c.kind ?? 'WebhookVerificationError') + ':webhook_' + c.code : true,
+    ),
   );
 });
 
@@ -417,12 +419,12 @@ test('bad verifier options use validation errors in both targets', async () => {
     { ...options, fetch: 'bad' },
   ])
     await assert.rejects(sdk.verifyWebhookAsync(body, headers, bad), {
-      kind: 'validation',
+      name: 'WebhookVerificationError',
       code: 'webhook_invalid_input',
     });
   assert.deepEqual(
     php(
-      `$rows=[];foreach([[],['endpoint_ids'=>[]],['secrets'=>[]],['endpoint_ids'=>1],['cache'=>new stdClass()],['http_client'=>new stdClass()],['now_seconds'=>1700000000000,'endpoint_ids'=>'fixture'],['endpoint_ids'=>'fixture','jwks'=>['keys'=>[['kty'=>'RSA']]],'base_url'=>$input['issuer'],'now_seconds'=>$input['now']]] as $o){try{Webhooks::verifyDelivery($input['body'],['authorization'=>$input['authorization']],$o);$rows[]='accepted';}catch(SdkError $e){$rows[]=$e->kind.':'.$e->errorCode;}}echo json_encode($rows);`,
+      `$rows=[];foreach([[],['endpoint_ids'=>[]],['secrets'=>[]],['endpoint_ids'=>1],['cache'=>new stdClass()],['http_client'=>new stdClass()],['now_seconds'=>1700000000000,'endpoint_ids'=>'fixture'],['endpoint_ids'=>'fixture','jwks'=>['keys'=>[['kty'=>'RSA']]],'base_url'=>$input['issuer'],'now_seconds'=>$input['now']]] as $o){try{Webhooks::verifyDelivery($input['body'],['authorization'=>$input['authorization']],$o);$rows[]='accepted';}catch(SdkError $e){$rows[]=substr(strrchr(get_class($e), chr(92)), 1).':'.$e->code;}}echo json_encode($rows);`,
       {
         issuer: claims.iss,
         now: vectors.now,
@@ -430,7 +432,7 @@ test('bad verifier options use validation errors in both targets', async () => {
         authorization: headers.Authorization,
       },
     ),
-    Array(8).fill('validation:webhook_invalid_input'),
+    Array(8).fill('WebhookVerificationError:webhook_invalid_input'),
   );
 });
 
@@ -488,13 +490,13 @@ test('JWKS selection ignores unrelated keys; unusable selected keys fail only th
     c.code === undefined
       ? 'jwt'
       : c.code === 'unknown_key'
-        ? 'authentication:webhook_unknown_key'
+        ? 'WebhookVerificationError:webhook_unknown_key'
         : // A unique but unusable selected key fails the token, never as a retryable outage.
           c.code === 'unusable'
-          ? 'authentication:webhook_invalid_token'
+          ? 'WebhookVerificationError:webhook_invalid_token'
           : fetched
-            ? 'transport:webhook_jwks_unavailable'
-            : 'validation:webhook_invalid_input';
+            ? 'WebhookVerificationError:webhook_jwks_unavailable'
+            : 'WebhookVerificationError:webhook_invalid_input';
   const issuer = (index) => 'https://selection' + index + '.example';
   const rows = cases.map((c, index) => ({
     ...c,
@@ -522,7 +524,7 @@ test('JWKS selection ignores unrelated keys; unusable selected keys fail only th
             )
           ).signingMethod;
         } catch (error) {
-          return error.kind + ':' + error.code;
+          return error.name + ':' + error.code;
         }
       };
       node.push(await settle());
@@ -534,7 +536,7 @@ test('JWKS selection ignores unrelated keys; unusable selected keys fail only th
   assert.deepEqual(node, expected);
   assert.deepEqual(
     php(
-      `$rows=[];foreach($input['rows'] as $c){foreach([false,true] as $fetched){if(!$fetched&&!empty($c['fetchedOnly']))continue;$o=['endpoint_ids'=>$input['aud'],'base_url'=>$c['issuer'],'now_seconds'=>$input['now']];if(!$fetched)$o['jwks']=json_decode($c['jwks'],true);$client=new Client(new ClientOptions(baseUrl:$c['issuer'],transport:fn($r)=>['status'=>200,'headers'=>[],'body'=>$c['jwks']]));try{$rows[]=$client->verifyWebhookDelivery($input['body'],['authorization'=>$c['authorization']],$o)['signing_method'];}catch(SdkError $e){$rows[]=$e->kind.':'.$e->errorCode;}}}echo json_encode($rows);`,
+      `$rows=[];foreach($input['rows'] as $c){foreach([false,true] as $fetched){if(!$fetched&&!empty($c['fetchedOnly']))continue;$o=['endpoint_ids'=>$input['aud'],'base_url'=>$c['issuer'],'now_seconds'=>$input['now']];if(!$fetched)$o['jwks']=json_decode($c['jwks'],true);$client=new Client(new ClientOptions(baseUrl:$c['issuer'],transport:fn($r)=>['status'=>200,'headers'=>[],'body'=>$c['jwks']]));try{$rows[]=$client->verifyWebhookDelivery($input['body'],['authorization'=>$c['authorization']],$o)['signing_method'];}catch(SdkError $e){$rows[]=substr(strrchr(get_class($e), chr(92)), 1).':'.$e->code;}}}echo json_encode($rows);`,
       { rows, aud: claims.aud, now: vectors.now, body: body.toString() },
     ),
     expected,
@@ -708,7 +710,7 @@ test('Node JWKS cache single-flight, TTL clamps, rotation throttle and stale-on-
   await sdk.verifyWebhookAsync(body, stale.auth, stale.opts);
   clock += 86400;
   await assert.rejects(sdk.verifyWebhookAsync(body, stale.auth, stale.opts), {
-    kind: 'transport',
+    name: 'WebhookVerificationError',
     code: 'webhook_jwks_unavailable',
   });
   const explicit = prepare();
@@ -809,7 +811,7 @@ test('JWKS timeout remains bounded even when an injected Node fetch ignores canc
         },
       },
     ),
-    { kind: 'transport', code: 'webhook_jwks_unavailable' },
+    { name: 'WebhookVerificationError', code: 'webhook_jwks_unavailable' },
   );
   assert.equal(signal.aborted, true);
 });
@@ -840,7 +842,7 @@ test('default Node and PHP HTTP transports fetch trusted keys and enforce the bo
   const script = join(root, 'default-http.php');
   writeFileSync(
     script,
-    `<?php require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';$i=json_decode(file_get_contents($argv[2]),true);try{$r=Example\\Jwt\\Webhooks::verifyDelivery($i['body'],['authorization'=>$i['authorization']],['endpoint_ids'=>'whep_fixture','base_url'=>$i['issuer'],'now_seconds'=>$i['now']]);echo json_encode($r['signing_method']);}catch(Example\\Jwt\\SdkError $e){echo json_encode($e->errorCode);}`,
+    `<?php require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';$i=json_decode(file_get_contents($argv[2]),true);try{$r=Example\\Jwt\\Webhooks::verifyDelivery($i['body'],['authorization'=>$i['authorization']],['endpoint_ids'=>'whep_fixture','base_url'=>$i['issuer'],'now_seconds'=>$i['now']]);echo json_encode($r['signing_method']);}catch(Example\\Jwt\\SdkError $e){echo json_encode($e->code);}`,
   );
   const input = script + '.json';
   writeFileSync(
@@ -931,7 +933,7 @@ test('the Flint wire lifetime stays bounded to 300 seconds even with a larger de
   });
   assert.equal(
     php(
-      `try{Example\\Jwt\\Runtime::verifyWebhookDeliveryFromPlan($input['plan'],$input['body'],['authorization'=>$input['authorization']],$input['options']);echo json_encode('accepted');}catch(SdkError $e){echo json_encode($e->errorCode);}`,
+      `try{Example\\Jwt\\Runtime::verifyWebhookDeliveryFromPlan($input['plan'],$input['body'],['authorization'=>$input['authorization']],$input['options']);echo json_encode('accepted');}catch(SdkError $e){echo json_encode($e->code);}`,
       {
         plan,
         body: body.toString(),

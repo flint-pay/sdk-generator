@@ -91,11 +91,15 @@ foreach ($cases as $case) {
     } catch (SdkError $e) {
         check(
             isset($case['error']),
-            $case['name'] . ': unexpected ' . $e->kind . ': ' . $e->getMessage(),
+            $case['name'] .
+                ': unexpected ' .
+                substr(strrchr(get_class($e), chr(92)), 1) .
+                ': ' .
+                $e->getMessage(),
         );
         foreach ($case['error'] as $k => $v) {
             $actual = match ($k) {
-                'status', 'requestId' => $e->meta[$k] ?? null,
+                'name' => substr(strrchr(get_class($e), chr(92)), 1),
                 default => $e->{$k},
             };
             check($actual === $v, $case['name'] . ': error ' . $k);
@@ -144,7 +148,10 @@ foreach (
         );
         throw new RuntimeException('Expected signature rejection');
     } catch (SdkError $e) {
-        check($e->kind === 'authentication', 'webhook rejection');
+        check(
+            substr(strrchr(get_class($e), chr(92)), 1) === 'WebhookVerificationError',
+            'webhook rejection',
+        );
     }
 }
 $token = new Cancellation();
@@ -156,7 +163,11 @@ try {
     );
     throw new RuntimeException('Expected cancellation');
 } catch (SdkError $e) {
-    check($e->kind === 'cancelled' && $e->outcome === 'not_sent', 'cancellation before dispatch');
+    check(
+        substr(strrchr(get_class($e), chr(92)), 1) === 'CancelledError' &&
+            $e->outcome === 'not_sent',
+        'cancellation before dispatch',
+    );
 }
 $count = 0;
 $paged = new Runtime(
@@ -198,7 +209,10 @@ try {
     iterator_to_array($unsafe->pages('listLinks'));
     throw new RuntimeException('Expected destination rejection');
 } catch (SdkError $e) {
-    check($e->kind === 'destination' && $count === 1, 'credential destination');
+    check(
+        substr(strrchr(get_class($e), chr(92)), 1) === 'ConfigurationError' && $count === 1,
+        'credential destination',
+    );
 }
 $client->close();
 echo json_encode($report, JSON_THROW_ON_ERROR);

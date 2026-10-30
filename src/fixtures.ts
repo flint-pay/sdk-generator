@@ -151,8 +151,7 @@ export async function validateFixturesWithProgress(
                 scenario.options,
               ),
               (e: any) => {
-                for (const [k, v] of Object.entries(scenario.error!))
-                  assert.deepEqual(['status', 'requestId'].includes(k) ? e.meta?.[k] : e[k], v);
+                for (const [k, v] of Object.entries(scenario.error!)) assert.deepEqual(e[k], v);
                 return true;
               },
             );

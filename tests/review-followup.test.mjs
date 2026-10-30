@@ -106,7 +106,7 @@ test('native SSE connection retries and empty headers agree in Node and PHP', as
 require $argv[1].'/php/src/Runtime.php';require $argv[1].'/php/src/Client.php';
 $c=new FollowupSdk\\Client(new FollowupSdk\\ClientOptions(baseUrl:$argv[2],allowInsecureHttp:true));
 try {$result=$c->events->watch(new FollowupSdk\\EventsWatchInput(['X-Context'=>'original']),new FollowupSdk\\RequestOptions(headers:['X-Context'=>''],maxAttempts:(int)$argv[3]));$result->data->close();echo json_encode(['attempts'=>$result->meta['attempts']]);}
-catch(FollowupSdk\\SdkError $e){echo json_encode(['kind'=>$e->kind]);}finally{$c->close();}
+catch(FollowupSdk\\SdkError $e){echo json_encode(['kind'=>substr(strrchr(get_class($e), chr(92)), 1)]);}finally{$c->close();}
 `,
   );
   try {
@@ -130,7 +130,7 @@ catch(FollowupSdk\\SdkError $e){echo json_encode(['kind'=>$e->kind]);}finally{$c
     );
     received = [];
     const failure = await exec('php', [php, out, baseUrl, '1']);
-    assert.deepEqual(JSON.parse(failure.stdout), { kind: 'transport' });
+    assert.deepEqual(JSON.parse(failure.stdout), { kind: 'ConnectionError' });
     assert.equal(received.length, 1);
   } finally {
     server.closeAllConnections();
@@ -256,5 +256,5 @@ test('long stream lifetime is preserved across native timer boundaries', async (
   now = duration;
   t.mock.timers.tick(1);
   assert.equal(closed, true);
-  await assert.rejects(async () => Array.fromAsync(stream), { kind: 'deadline' });
+  await assert.rejects(async () => Array.fromAsync(stream), { name: 'TimeoutError' });
 });

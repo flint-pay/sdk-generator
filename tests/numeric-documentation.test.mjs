@@ -131,11 +131,11 @@ test('numeric field docs agree with generated declarations and factories in both
     const sdk = await import(pathToFileURL(join(out, 'node/index.js')).href);
     for (const name of Object.keys(native)) {
       assert.equal(sdk.makeNumbers({ [name]: 15 }).toJSON()[name], 15);
-      assert.throws(() => sdk.makeNumbers({ [name]: '15' }), { kind: 'validation' });
+      assert.throws(() => sdk.makeNumbers({ [name]: '15' }), { name: 'InvalidInputError' });
     }
     for (const name of Object.keys(exact)) {
       assert.equal(sdk.makeNumbers({ [name]: '15' }).toJSON()[name], '15');
-      assert.throws(() => sdk.makeNumbers({ [name]: 15.5 }), { kind: 'validation' });
+      assert.throws(() => sdk.makeNumbers({ [name]: 15.5 }), { name: 'InvalidInputError' });
     }
     assert.equal(sdk.makeExactChoice(new sdk.ExactNumber('15')).toJSON(), '15');
     const php = spawnSync(
@@ -146,11 +146,11 @@ test('numeric field docs agree with generated declarations and factories in both
 use Example\Readings\{NumbersInput,ExactChoiceInput,ExactNumber,SdkError};
 foreach (json_decode($argv[2],true) as $name) {
  if ((new NumbersInput([$name=>15]))->jsonSerialize()->$name!==15) exit(2);
- try { new NumbersInput([$name=>'15']); exit(3); } catch (SdkError $e) { if($e->kind!=='validation') exit(4); }
+ try { new NumbersInput([$name=>'15']); exit(3); } catch (SdkError $e) { if(substr(strrchr(get_class($e), chr(92)), 1)!=='InvalidInputError') exit(4); }
 }
 foreach (json_decode($argv[3],true) as $name) {
  if ((new NumbersInput([$name=>'15']))->jsonSerialize()->$name!=='15') exit(5);
- try { new NumbersInput([$name=>15.5]); exit(6); } catch (SdkError $e) { if($e->kind!=='validation') exit(7); }
+ try { new NumbersInput([$name=>15.5]); exit(6); } catch (SdkError $e) { if(substr(strrchr(get_class($e), chr(92)), 1)!=='InvalidInputError') exit(7); }
 }
 if ((new ExactChoiceInput(new ExactNumber('15')))->jsonSerialize()!=='15') exit(8);
 echo 'ok';`,

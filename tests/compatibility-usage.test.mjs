@@ -80,15 +80,15 @@ function fixture(t, target, body) {
         }).api.submit({ body: input });
         return { sent };
       } catch (error) {
-        if (!error.kind) throw error;
-        return { sent, kind: error.kind };
+        if (!error.name) throw error;
+        return { sent, kind: error.name };
       }
     }
     const result = spawnSync(
       'php',
       [
         '-r',
-        String.raw`require $argv[1].'/src/Runtime.php'; require $argv[1].'/src/Client.php'; $input=json_decode($argv[2],true); $sent=0; $client=new UsageExample\Client(new UsageExample\ClientOptions('https://example.invalid',transport:function($request)use(&$sent,$input){$sent++;if(json_decode($request['body'],true)!==$input)throw new Exception('request changed');return ['status'=>200,'headers'=>[],'body'=>'{"code":"ok"}'];}));try{$client->api->submit(['body'=>$input]);echo json_encode(['sent'=>$sent]);}catch(UsageExample\SdkError $e){echo json_encode(['sent'=>$sent,'kind'=>$e->kind]);}`,
+        String.raw`require $argv[1].'/src/Runtime.php'; require $argv[1].'/src/Client.php'; $input=json_decode($argv[2],true); $sent=0; $client=new UsageExample\Client(new UsageExample\ClientOptions('https://example.invalid',transport:function($request)use(&$sent,$input){$sent++;if(json_decode($request['body'],true)!==$input)throw new Exception('request changed');return ['status'=>200,'headers'=>[],'body'=>'{"code":"ok"}'];}));try{$client->api->submit(['body'=>$input]);echo json_encode(['sent'=>$sent]);}catch(UsageExample\SdkError $e){echo json_encode(['sent'=>$sent,'kind'=>substr(strrchr(get_class($e), chr(92)), 1)]);}`,
         join(output, 'php'),
         JSON.stringify(input),
       ],
@@ -120,7 +120,7 @@ for (const [position, { schema, input }] of Object.entries(positions))
         JSON.stringify(findings),
       );
       generate(after, f.output);
-      assert.deepEqual(await f.call(input, 'after'), { sent: 0, kind: 'validation' });
+      assert.deepEqual(await f.call(input, 'after'), { sent: 0, kind: 'InvalidInputError' });
       assert.throws(() => prepareRelease(f.output, join(f.dir, 'minor')), /major/);
       f.cfg.version = '2.0.0';
       generate(f.load(), f.output);

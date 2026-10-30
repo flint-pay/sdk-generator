@@ -186,7 +186,7 @@ test('annotated refs retain both-target input requiredness and output omission w
     input: { body },
     responses: [],
     attempts: 0,
-    error: { kind: 'validation' },
+    error: { name: 'InvalidInputError' },
   });
   const accepted = (name, response, data = i.response) => ({
     name,
@@ -216,7 +216,7 @@ test('annotated refs retain both-target input requiredness and output omission w
       input: { body: i.input },
       expected: { method: 'POST', path: '/v1/records', body: JSON.stringify(i.input) },
       responses: [{ status: 200, body: JSON.stringify(missingLabel) }],
-      error: { kind: 'protocol' },
+      error: { name: 'UnexpectedResponseError' },
     },
   ];
   const file = join(i.dir, 'cases.json');

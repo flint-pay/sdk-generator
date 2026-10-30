@@ -114,7 +114,7 @@ test('native clients reject transport-normalized idempotency keys through every 
               : {};
         await assert.rejects(
           client.api.saveValue(input, options),
-          (e) => e.kind === 'validation' && e.outcome === 'not_sent',
+          (e) => e.name === 'InvalidInputError' && e.outcome === 'not_sent',
         );
       }
     assert.equal(received.length, 0);
@@ -133,7 +133,7 @@ $cases=json_decode(file_get_contents($argv[3]),true);$errors=[];
 foreach($cases['keys'] as $key) foreach(['option','header','input'] as $source){
   $input=new HardeningSdk\\ApiSaveValueInput($source==='input'?['Idempotency-Key'=>$key]:[]);
   $options=new RequestOptions(idempotencyKey:$source==='option'?$key:null,headers:$source==='header'?['iDeMpOtEnCy-KeY'=>$key]:[]);
-  try{$c->api->saveValue($input,$options);$errors[]='sent';}catch(SdkError $e){$errors[]=[$e->kind,$e->outcome];}
+  try{$c->api->saveValue($input,$options);$errors[]='sent';}catch(SdkError $e){$errors[]=[substr(strrchr(get_class($e), chr(92)), 1),$e->outcome];}
 }
 foreach($cases['valid'] as $key)$c->api->saveValue(new HardeningSdk\\ApiSaveValueInput(),new RequestOptions(idempotencyKey:$key));
 $c->api->saveValue();echo json_encode($errors);
@@ -141,7 +141,7 @@ $c->api->saveValue();echo json_encode($errors);
     );
     assert.deepEqual(
       await phpAsync(file, [i.output, baseUrl, cases]),
-      keys.flatMap(() => Array.from({ length: 3 }, () => ['validation', 'not_sent'])),
+      keys.flatMap(() => Array.from({ length: 3 }, () => ['InvalidInputError', 'not_sent'])),
     );
     assert.equal(nodeCount, (valid.length + 1) * 2);
     assert.equal(received.length, nodeCount * 2);
@@ -205,7 +205,7 @@ test('both clients stop resumed cursor and offset self-loops before yielding dup
         for await (const item of client.api.fetchValuesItems({ cursor: initial }))
           yielded.push(item);
       },
-      (e) => e.kind === 'protocol' && /repeated continuation/.test(e.message),
+      (e) => e.name === 'UnexpectedResponseError' && /repeated continuation/.test(e.message),
     );
     assert.equal(calls, 1);
     assert.deepEqual(yielded, ['one']);
@@ -217,7 +217,7 @@ test('both clients stop resumed cursor and offset self-loops before yielding dup
           // Model-wrapped cursors must be compared using the value sent on the wire.
         }
       },
-      (e) => e.kind === 'protocol',
+      (e) => e.name === 'UnexpectedResponseError',
     );
     assert.equal(calls, 1);
     const file = join(i.dir, 'pages.php');
@@ -227,13 +227,13 @@ test('both clients stop resumed cursor and offset self-loops before yielding dup
         `
 $calls=0;$items=[];$kind=null;
 $c=new Client(new ClientOptions(baseUrl:'https://example.invalid',transport:function($r)use(&$calls){$calls++;return ['status'=>200,'headers'=>[],'body'=>json_encode(['items'=>['one'],'next'=>json_decode($GLOBALS['argv'][3])])];}));
-try{foreach($c->api->fetchValuesItems(new HardeningSdk\\ApiFetchValuesInput(['cursor'=>json_decode($argv[2])])) as $item)$items[]=$item;}catch(SdkError $e){$kind=$e->kind;}
+try{foreach($c->api->fetchValuesItems(new HardeningSdk\\ApiFetchValuesInput(['cursor'=>json_decode($argv[2])])) as $item)$items[]=$item;}catch(SdkError $e){$kind=substr(strrchr(get_class($e), chr(92)), 1);}
 echo json_encode(['calls'=>$calls,'items'=>$items,'kind'=>$kind]);
 `,
     );
     assert.deepEqual(
       await phpAsync(file, [i.output, JSON.stringify(initial), JSON.stringify(next)]),
-      { calls: 1, items: ['one'], kind: 'protocol' },
+      { calls: 1, items: ['one'], kind: 'UnexpectedResponseError' },
     );
     // Advancing continuations and termination still work after resumption.
     let advanceCalls = 0;

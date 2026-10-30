@@ -77,7 +77,7 @@ test('named authentication modes send one complete credential alternative in bot
     options,
     responses: [],
     attempts: 0,
-    error: { kind: 'authentication' },
+    error: { name: 'ConfigurationError' },
   });
   const cases = [
     valid(
@@ -331,7 +331,7 @@ test('configured shortcuts preserve request isolation and explicit modes in Node
     { apiKey: '' },
     { apiKey: 'x\r\ny' },
   ])
-    await assert.rejects(client.api.checkoutCall({}, options), { kind: 'authentication' });
+    await assert.rejects(client.api.checkoutCall({}, options), { name: 'ConfigurationError' });
   await assert.rejects(client.api.customerCall(), /not permitted/);
   await assert.rejects(client.api.health({}, { apiKey: 'x' }), /not permitted/);
   assert.equal(seen.length, 5);
@@ -365,7 +365,7 @@ $c->api->checkoutCall(options:new RequestOptions(authMode:'checkout',credentials
 $c->api->customerCall(options:new RequestOptions(apiToken:'customer'));
 $c->api->merchantCall(); $c->api->health();
 if($seen[0]['authorization']!=='Bearer override'||$seen[1]['x-checkout-id']!=='id'||isset($seen[1]['authorization'])||$seen[2]['authorization']!=='Bearer customer'||$seen[3]['authorization']!=='Bearer default'||isset($seen[4]['authorization']))throw new Exception('headers');
-foreach([new RequestOptions(apiKey:'x',authMode:'merchant'),new RequestOptions(apiKey:'x',credentials:['Merchant'=>'x']),new RequestOptions(apiKey:'x',apiToken:'y'),new RequestOptions(apiKey:'')] as $o){try{$c->api->checkoutCall(options:$o);throw new Exception('accepted invalid auth');}catch(SdkError $e){if($e->kind!=='authentication')throw $e;}}
+foreach([new RequestOptions(apiKey:'x',authMode:'merchant'),new RequestOptions(apiKey:'x',credentials:['Merchant'=>'x']),new RequestOptions(apiKey:'x',apiToken:'y'),new RequestOptions(apiKey:'')] as $o){try{$c->api->checkoutCall(options:$o);throw new Exception('accepted invalid auth');}catch(SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='ConfigurationError')throw $e;}}
 ob_start();var_dump(new RequestOptions(apiKey:'secret-value'),new ClientOptions(baseUrl:'https://example.invalid',apiKey:'secret-value'));$debug=ob_get_clean();if(str_contains($debug,'secret-value'))throw new Exception('secret leaked');
 if(count($seen)!==5)throw new Exception('dispatched invalid request');
 $c->close();echo 'ok';`,
@@ -535,7 +535,7 @@ test('HTTP fixtures forward configured shortcuts in both targets', async () => {
         },
         responses: [],
         attempts: 0,
-        error: { kind: 'authentication' },
+        error: { name: 'ConfigurationError' },
       },
     ]),
   );

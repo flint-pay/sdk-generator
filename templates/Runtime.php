@@ -5,53 +5,46 @@ require_once __DIR__ . '/SchemaAdapter.php';
 
 class SdkError extends \RuntimeException implements \JsonSerializable
 {
-    public const KIND_TRANSPORT = 'transport';
-    public const KIND_TIMEOUT = 'timeout';
-    public const KIND_AUTHENTICATION = 'authentication';
-    public const KIND_VALIDATION = 'validation';
-    public const KIND_RATE_LIMIT = 'rate_limit';
-    public const KIND_NOT_FOUND = 'not_found';
-    public const KIND_CONFLICT = 'conflict';
-    public const KIND_SERVER = 'server';
-    public const KIND_API = 'api';
-    public const KIND_PROTOCOL = 'protocol';
-    public const KIND_CANCELLED = 'cancelled';
-    public const KIND_DEADLINE = 'deadline';
-    public const KIND_DESTINATION = 'destination';
     public const OUTCOME_NOT_SENT = 'not_sent';
     public const OUTCOME_RESPONSE = 'response';
     public const OUTCOME_UNKNOWN = 'unknown';
-    public readonly ?int $status;
-    public ?string $idempotencyKey = null;
-    public int|float|null $retryAfterMs = null;
-
-    /** @param array{status?: int|null, requestId?: string|null, attempts?: int, durationMs?: float, ...}|null $meta */
+    /** @var string */
+    public $code = '';
+    /** @var \WeakMap<SdkError, string>|null */
+    private static ?\WeakMap $kinds = null;
+    /** @param list<string> $requestIds
+     * @param array<string, string> $headers
+     */
     public function __construct(
-        public readonly string $kind,
         string $message,
+        string $code = '',
+        public ?string $operation = null,
         public readonly string $outcome = 'not_sent',
         public readonly bool $retryAllowed = false,
-        public readonly ?array $meta = null,
-        public readonly ?string $errorCode = null,
-        public readonly mixed $details = null,
-        ?\Throwable $previous = null,
+        public ?int $status = null,
+        public ?string $requestId = null,
+        public array $requestIds = [],
+        public ?string $idempotencyKey = null,
+        public int $attempts = 0,
+        public ?float $durationMs = null,
+        public int|float|null $retryAfterMs = null,
+        public array $headers = [],
         public readonly ?string $raw = null,
+        ?\Throwable $previous = null,
+        mixed $details = null,
     ) {
-        if (isset($meta['status'])) {
-            $context = ['HTTP ' . $meta['status']];
-            if ($errorCode !== null) {
-                $context[] = 'code ' . $errorCode;
-            }
-            if (isset($meta['requestId'])) {
-                $context[] = 'requestId ' . $meta['requestId'];
-            }
-            $message .= ' [' . implode(', ', $context) . ']';
+        parent::__construct($message, 0, $previous);
+        $this->code = $code;
+        if ($requestIds === [] && $requestId !== null) {
+            $this->requestIds = [$requestId];
         }
-        parent::__construct($message, $meta['status'] ?? 0, $previous);
-        $this->status = $meta['status'] ?? null;
-        $this->idempotencyKey = $meta['idempotencyKey'] ?? null;
+        if ($this instanceof Errors\ApiError) {
+            $this->details = $details;
+        }
     }
-    /** @param array{status?: int|null, requestId?: string|null, attempts?: int, durationMs?: float, ...}|null $meta */
+    /** Internal migration adapter; removed when call sites migrate.
+     * @param array<string, mixed>|null $meta
+     */
     public static function create(
         string $kind,
         string $message,
@@ -63,42 +56,80 @@ class SdkError extends \RuntimeException implements \JsonSerializable
         ?\Throwable $previous = null,
         ?string $raw = null,
     ): self {
-        $class = match ($kind) {
-            'transport' => Errors\ConnectionError::class,
-            'timeout' => Errors\TimeoutError::class,
-            'authentication' => Errors\AuthenticationError::class,
-            'validation' => Errors\ValidationError::class,
-            'rate_limit' => Errors\RateLimitError::class,
-            'not_found' => Errors\NotFoundError::class,
-            'conflict' => Errors\ConflictError::class,
-            'server' => Errors\ServerError::class,
-            'api' => Errors\ApiError::class,
-            'protocol' => Errors\ProtocolError::class,
-            'cancelled' => Errors\CancelledError::class,
-            'deadline' => Errors\DeadlineError::class,
-            'destination' => Errors\DestinationError::class,
-            default => self::class,
-        };
-        // Standalone runtime use (without the generated Errors\ classes) keeps the base class.
+        $status = $meta['status'] ?? null;
+        $class =
+            $status >= 400 &&
+            $status < 600 &&
+            !in_array($kind, ['transport', 'timeout', 'deadline', 'cancelled'], true)
+                ? match (true) {
+                    $status === 400 || $status === 422 => Errors\InvalidRequestError::class,
+                    $status === 401 => Errors\AuthenticationError::class,
+                    $status === 403 => Errors\PermissionError::class,
+                    $status === 404 => Errors\NotFoundError::class,
+                    $status === 409 || $status === 412 => Errors\ConflictError::class,
+                    $status === 429 => Errors\RateLimitError::class,
+                    $status >= 500 => Errors\ServerError::class,
+                    default => Errors\ApiError::class,
+                }
+                : match (true) {
+                    $kind === 'webhook' => Errors\WebhookVerificationError::class,
+                    $kind === 'transport' => Errors\ConnectionError::class,
+                    $kind === 'timeout' || $kind === 'deadline' => Errors\TimeoutError::class,
+                    $kind === 'cancelled' => Errors\CancelledError::class,
+                    $kind === 'protocol' ||
+                        $kind === 'api' ||
+                        ($kind === 'destination' && $meta !== null)
+                        => Errors\UnexpectedResponseError::class,
+                    $kind === 'authentication' || $kind === 'destination'
+                        => Errors\ConfigurationError::class,
+                    default => Errors\InvalidInputError::class,
+                };
         if (!class_exists($class)) {
             $class = self::class;
         }
         $error = new $class(
-            $kind,
             $message,
-            $outcome,
-            $retryAllowed,
-            $meta,
-            $errorCode,
-            $details,
-            $previous,
-            $raw,
+            code: $errorCode ?? '',
+            outcome: $outcome,
+            retryAllowed: $retryAllowed,
+            status: $status,
+            requestId: $meta['requestId'] ?? null,
+            requestIds: $meta['requestIds'] ?? [],
+            idempotencyKey: $meta['idempotencyKey'] ?? null,
+            attempts: $meta['attempts'] ?? 0,
+            durationMs: $meta['durationMs'] ?? null,
+            headers: $meta['headers'] ?? [],
+            details: $details,
+            previous: $previous,
+            raw: $raw,
         );
-        // The factory's call frame identifies the original construction site.
+        if ($error instanceof Errors\ConfigurationError && is_array($details)) {
+            $identity = $details;
+            if (array_key_exists('error_description', $identity)) {
+                $identity['errorDescription'] = $identity['error_description'];
+                unset($identity['error_description']);
+            }
+            $error->workloadIdentity = $identity;
+        }
+        if (
+            $error instanceof Errors\UnexpectedResponseError &&
+            is_array($details) &&
+            isset($details['eventId'], $details['position'])
+        ) {
+            $error->event = ['id' => $details['eventId'], 'position' => $details['position']];
+        }
+        self::$kinds ??= new \WeakMap();
+        self::$kinds[$error] = $kind;
         $caller = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 2)[0];
         $error->file = $caller['file'] ?? $error->file;
         $error->line = $caller['line'] ?? $error->line;
         return $error;
+    }
+    /** @internal */
+    public static function internalKind(self $error): ?string
+    {
+        return self::$kinds[$error] ??
+            ($error instanceof Errors\InvalidInputError ? 'validation' : null);
     }
     public function jsonSerialize(): array
     {
@@ -120,6 +151,14 @@ class SdkError extends \RuntimeException implements \JsonSerializable
         return static::class .
             ': ' .
             $this->message .
+            ($this->status !== null
+                ? ' [HTTP ' .
+                    $this->status .
+                    ', ' .
+                    $this->code .
+                    ($this->requestId !== null ? ', ' . $this->requestId : '') .
+                    ']'
+                : '') .
             ' in ' .
             $this->getFile() .
             ':' .
@@ -129,19 +168,28 @@ class SdkError extends \RuntimeException implements \JsonSerializable
     }
     public function __debugInfo(): array
     {
+        $previous = $this->getPrevious();
         return [
-            'kind' => $this->kind,
+            'name' => substr(strrchr(static::class, '\\') ?: static::class, 1),
             'message' => $this->message,
+            'code' => $this->code,
+            'operation' => $this->operation,
             'outcome' => $this->outcome,
-            'requestId' => $this->meta['requestId'] ?? null,
-            'status' => $this->status,
             'retryAllowed' => $this->retryAllowed,
-            'errorCode' => $this->errorCode,
-            'details' => $this->details,
+            'status' => $this->status,
+            'requestId' => $this->requestId,
+            'requestIds' => $this->requestIds,
             'idempotencyKey' => $this->idempotencyKey,
+            'attempts' => $this->attempts,
             'retryAfterMs' => $this->retryAfterMs,
-            'file' => $this->getFile(),
-            'line' => $this->getLine(),
+            ...$this instanceof Errors\ApiError ? ['details' => $this->details] : [],
+            'cause' =>
+                $previous !== null
+                    ? [
+                        'name' => $previous instanceof \TypeError ? 'TypeError' : 'Error',
+                        'code' => $previous->getCode(),
+                    ]
+                    : null,
             // Trace arguments can contain raw response bodies and credentials.
             'stack' => array_map(
                 fn($frame) => array_intersect_key(
@@ -695,7 +743,7 @@ final class AmbientCredentialProvider implements CredentialProvider
             if (
                 $cached &&
                 $cached['expiresAt'] - microtime(true) > 30 &&
-                $error->errorCode === 'exchange_unavailable'
+                $error->code === 'exchange_unavailable'
             ) {
                 $flight->result = $cached;
                 return $credential($cached);
@@ -1295,7 +1343,7 @@ final class EventStream implements \IteratorAggregate
                 }
             }
         } catch (SdkError $error) {
-            if ($error->kind !== 'validation') {
+            if (SdkError::internalKind($error) !== 'validation') {
                 throw $error;
             }
             throw SdkError::create(
@@ -2556,7 +2604,7 @@ final class Codec
                     }
                     return true;
                 } catch (SdkError $e) {
-                    if ($e->kind === 'validation') {
+                    if (SdkError::internalKind($e) === 'validation') {
                         return false;
                     }
                     throw $e;
@@ -2654,7 +2702,7 @@ final class Codec
                             );
                             return true;
                         } catch (SdkError $e) {
-                            if ($e->kind === 'validation') {
+                            if (SdkError::internalKind($e) === 'validation') {
                                 return false;
                             }
                             throw $e;
@@ -2678,7 +2726,7 @@ final class Codec
                 }
                 return ['value' => $candidate];
             } catch (SdkError $e) {
-                if ($budget->exhausted || $e->kind !== 'validation') {
+                if ($budget->exhausted || SdkError::internalKind($e) !== 'validation') {
                     throw $e;
                 }
                 return null;
@@ -2851,7 +2899,7 @@ final class Codec
                             );
                             return true;
                         } catch (SdkError $e) {
-                            if ($e->kind === 'validation') {
+                            if (SdkError::internalKind($e) === 'validation') {
                                 return false;
                             }
                             throw $e;
@@ -3081,7 +3129,7 @@ final class Codec
                             $candidates[$index] = $candidate;
                             return true;
                         } catch (SdkError $e) {
-                            if ($e->kind === 'validation') {
+                            if (SdkError::internalKind($e) === 'validation') {
                                 return false;
                             }
                             throw $e;
@@ -3142,7 +3190,7 @@ final class Codec
                         );
                     }
                 } catch (SdkError $e) {
-                    if ($e->kind !== 'validation') {
+                    if (SdkError::internalKind($e) !== 'validation') {
                         throw $e;
                     }
                     $failure ??= $e;
@@ -3230,7 +3278,7 @@ final class Codec
             );
             return $codec['when']['then'] ?? null;
         } catch (SdkError $error) {
-            if ($error->kind !== 'validation') {
+            if (SdkError::internalKind($error) !== 'validation') {
                 throw $error;
             }
             return $codec['when']['else'] ?? null;
@@ -3376,7 +3424,7 @@ final class Codec
                     $matched[] = [$branch, $allowUnknownFields, $result];
                     return true;
                 } catch (SdkError $e) {
-                    if ($e->kind === 'validation') {
+                    if (SdkError::internalKind($e) === 'validation') {
                         return false;
                     }
                     throw $e;
@@ -3732,7 +3780,7 @@ final class Codec
                             $found = true;
                             break;
                         } catch (SdkError $error) {
-                            if ($error->kind !== 'validation') {
+                            if (SdkError::internalKind($error) !== 'validation') {
                                 throw $error;
                             }
                         }
@@ -4442,7 +4490,7 @@ class Runtime
                 $this->decode($candidate, $codec, ['path' => $path]);
                 return;
             } catch (SdkError $error) {
-                if ($error->kind !== 'validation') {
+                if (SdkError::internalKind($error) !== 'validation') {
                     throw $error;
                 }
                 $failure ??= $error;
@@ -4581,6 +4629,8 @@ class Runtime
                     substr($hex, 20);
             }
         }
+        $context = ['attempts' => 0, 'requestIds' => []];
+        $callStart = self::now();
         try {
             $effective = $options;
             if (is_string($key)) {
@@ -4590,8 +4640,20 @@ class Runtime
                     ]),
                 );
             }
-            return $this->executeRequest($id, $input, $effective, $continuation);
+            return $this->executeRequest($id, $input, $effective, $continuation, $context);
         } catch (SdkError $error) {
+            $error->attempts = $context['attempts'];
+            $error->requestIds = $context['requestIds'];
+            $error->durationMs = self::now() - $callStart;
+            if (isset($context['lastResponse'])) {
+                $error->status = $context['lastResponse']['status'];
+                $error->headers = $context['lastResponse']['headers'];
+                $error->requestId = $context['lastResponse']['requestId'] ?? null;
+                $error->retryAfterMs = $context['retryAfterMs'] ?? null;
+            }
+            $error->operation = isset($op['resource'], $op['method'])
+                ? $op['resource'] . '.' . $op['method']
+                : $id;
             if (is_string($key)) {
                 $error->idempotencyKey = $key;
             }
@@ -4603,6 +4665,7 @@ class Runtime
         array $input = [],
         ?RequestOptions $options = null,
         ?string $continuation = null,
+        array &$context = [],
     ): Result {
         $o = $options ?? new RequestOptions();
         $op = $this->operation($id);
@@ -5128,6 +5191,7 @@ class Runtime
                 Codec::fail((string) $key, 'unknown input parameter');
             }
         }
+        $requestIds = &$context['requestIds'];
         $credentialRetries = 0;
         $mayHaveBeenSent = false;
         for ($attempt = 1; $attempt <= $attempts; $attempt++) {
@@ -5145,6 +5209,7 @@ class Runtime
             $response = null;
             $diagnosticError = null;
             try {
+                $context['attempts'] = $attempt;
                 $authenticate();
                 self::checkCancel($o->cancellation);
                 $remaining = $deadline - self::now();
@@ -5204,8 +5269,16 @@ class Runtime
                 if (isset($rh[$requestIdHeader])) {
                     $meta['requestId'] = $rh[$requestIdHeader];
                 }
+                if (isset($meta['requestId'])) {
+                    $requestIds[] = $meta['requestId'];
+                }
+                $meta['requestIds'] = $requestIds;
                 if (isset($rh['retry-after'])) {
                     $retryAfter = self::parseRetryAfter($rh['retry-after']);
+                }
+                if ($status > 0) {
+                    $context['lastResponse'] = $meta;
+                    $context['retryAfterMs'] = $retryAfter;
                 }
                 if ($status === 401 && $safe && $credentialRetries === 0 && $providers) {
                     $diagnosticError = 'authentication';
@@ -5509,7 +5582,7 @@ class Runtime
                 );
                 $error->retryAfterMs = $retryAfter;
             } catch (SdkError $error) {
-                $diagnosticError = $error->kind;
+                $diagnosticError = SdkError::internalKind($error);
                 throw $error;
             } catch (\Throwable $cause) {
                 if (($meta['status'] ?? null) === 401) {
@@ -5937,7 +6010,7 @@ class Runtime
     }
     private static function webhookError(string $kind, string $code, string $message): never
     {
-        throw SdkError::create($kind, $message, errorCode: 'webhook_' . $code);
+        throw SdkError::create('webhook', $message, errorCode: 'webhook_' . $code);
     }
     private static function webhookHeaderValues(
         array $headers,
@@ -6365,7 +6438,7 @@ class Runtime
                 return $flight->result = $state;
             }
             $flight->error = SdkError::create(
-                'transport',
+                'webhook',
                 'Webhook JWKS unavailable; respond with 5xx so delivery can retry',
                 errorCode: 'webhook_jwks_unavailable',
             );
@@ -6956,7 +7029,7 @@ class Runtime
             $event = Codec::parse($rawBody, true);
         } catch (\Throwable $cause) {
             throw SdkError::create(
-                'protocol',
+                'webhook',
                 'Invalid webhook JSON',
                 'response',
                 errorCode: 'webhook_invalid_json',
@@ -6973,11 +7046,11 @@ class Runtime
                     'path' => 'event',
                 ]);
             } catch (SdkError $cause) {
-                if ($cause->kind !== 'validation') {
+                if (SdkError::internalKind($cause) !== 'validation') {
                     throw $cause;
                 }
                 throw SdkError::create(
-                    'protocol',
+                    'webhook',
                     'Invalid webhook payload' .
                         (($reason = Codec::validationFailureMessage($cause)) !== null
                             ? ': ' . $reason
@@ -6995,7 +7068,7 @@ class Runtime
                 ]);
                 $known = true;
             } catch (SdkError $error) {
-                if ($error->kind !== 'validation') {
+                if (SdkError::internalKind($error) !== 'validation') {
                     throw $error;
                 }
             }

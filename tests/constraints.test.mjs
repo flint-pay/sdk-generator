@@ -214,7 +214,7 @@ test('both public clients enforce exact numeric, Unicode and array constraints b
       operation: 'saveValue',
       input: { body },
       responses: [],
-      error: { kind: 'validation' },
+      error: { name: 'InvalidInputError' },
       attempts: 0,
     })),
   );
@@ -421,7 +421,7 @@ test('schema business validation is explicit while default clients retain safe e
         operation: 'saveValue',
         input: { body: { unsigned: '-1' } },
         responses: [],
-        error: { kind: 'validation' },
+        error: { name: 'InvalidInputError' },
         attempts: 0,
       },
     ]),
@@ -448,7 +448,7 @@ test('JSON uniqueness has a bounded large-list cost in both runtime helpers', as
   const start = performance.now();
   assert.equal(serialize(values, schema), JSON.stringify(values));
   assert.throws(() => serialize([...values, { active: true, id: 'item-0' }], schema), {
-    kind: 'validation',
+    name: 'InvalidInputError',
   });
   assert.ok(performance.now() - start < 10000, 'Node uniqueness exceeded ten-second budget');
   writeFileSync(
@@ -461,7 +461,7 @@ $values=[];for($i=0;$i<15000;$i++)$values[]=(object)['id'=>'item-'.$i,'active'=>
 $start=microtime(true);
 if(Codec::encode(Codec::normalize($values,$schema))!==json_encode($values,JSON_THROW_ON_ERROR))throw new Exception('JSON changed');
 $values[]=(object)['active'=>true,'id'=>'item-0'];
-try{Codec::normalize($values,$schema);throw new Exception('duplicate accepted');}catch(SdkError $e){if($e->kind!=='validation')throw $e;}
+try{Codec::normalize($values,$schema);throw new Exception('duplicate accepted');}catch(SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='InvalidInputError')throw $e;}
 if(microtime(true)-$start>10)throw new Exception('PHP uniqueness exceeded ten-second budget');
 echo 'ok';
 `,

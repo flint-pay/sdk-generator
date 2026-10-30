@@ -222,7 +222,10 @@ test('generated Node and PHP preserve typed successes and actionable recovery on
         calls++;
         return new Response([204, 304].includes(c.status) ? null : c.raw, {
           status: c.status ?? 200,
-          headers: { 'content-type': 'application/json', 'x-request-id': 'req_00HAPCA3GDPS4T064K3TRG20D0' },
+          headers: {
+            'content-type': 'application/json',
+            'x-request-id': 'req_00HAPCA3GDPS4T064K3TRG20D0',
+          },
         });
       },
     });
@@ -231,11 +234,11 @@ test('generated Node and PHP preserve typed successes and actionable recovery on
         await assert.rejects(client.api[c.op](), (error) => {
           assert.ok(error instanceof SdkError);
           assert.equal(error.message, c.message, c.op);
-          assert.equal(error.kind, 'protocol');
+          assert.equal(error.name, 'UnexpectedResponseError');
           assert.equal(error.outcome, 'response');
           assert.equal(error.retryAllowed, false);
           assert.equal(error.status, c.status ?? 200);
-          assert.equal(error.meta.requestId, 'req_00HAPCA3GDPS4T064K3TRG20D0');
+          assert.equal(error.requestId, 'req_00HAPCA3GDPS4T064K3TRG20D0');
           assert.equal(error.raw, c.raw);
           assert.equal(Boolean(error.cause), c.cause);
           assert.ok(!inspect(error).includes('synthetic-private-value'));
@@ -287,9 +290,9 @@ foreach(json_decode(file_get_contents($argv[2]),true) as $case){
         }
     }catch(SdkError $error){
         ob_start();var_dump($error);$debug=ob_get_clean();
-        $row=['message'=>$error->getMessage(),'kind'=>$error->kind,'outcome'=>$error->outcome,
+        $row=['message'=>$error->getMessage(),'kind'=>substr(strrchr(get_class($error), chr(92)), 1),'outcome'=>$error->outcome,
             'retryAllowed'=>$error->retryAllowed,'status'=>$error->status,'raw'=>$error->raw,
-            'cause'=>$error->getPrevious()!==null,'requestId'=>$error->meta['requestId'],
+            'cause'=>$error->getPrevious()!==null,'requestId'=>$error->requestId,
             'leaked'=>str_contains($debug,'synthetic-private-value')];
     }finally{$client->close();}
     $row+=['calls'=>$calls,'events'=>$events];$results[]=$row;
@@ -313,9 +316,8 @@ echo json_encode($results,JSON_THROW_ON_ERROR);
       assert.deepEqual(
         { ...row, events: undefined },
         {
-          message:
-            c.message + ` [HTTP ${c.status ?? 200}, requestId req_00HAPCA3GDPS4T064K3TRG20D0]`,
-          kind: 'protocol',
+          message: c.message + ``,
+          kind: 'UnexpectedResponseError',
           outcome: 'response',
           retryAllowed: false,
           status: c.status ?? 200,
@@ -348,8 +350,9 @@ test('payload extraction retains raw response in both adapters', async (t) => {
     () => responsePayload({ data: { id: 'pay_recover' }, meta, raw }, ['payment']),
     (e) =>
       e.raw === raw &&
-      e.meta === meta &&
-      e.kind === 'protocol' &&
+      e.status === meta.status &&
+      e.requestId === meta.requestId &&
+      e.name === 'UnexpectedResponseError' &&
       e.outcome === 'response' &&
       !e.retryAllowed,
   );
@@ -361,14 +364,14 @@ test('payload extraction retains raw response in both adapters', async (t) => {
 require $argv[1].'/php/src/Runtime.php';require $argv[1].'/php/src/SdkResponse.php';
 use Example\Drift\{SdkResponse,Result,SdkError};
 try{SdkResponse::payload(new Result((object)['id'=>'pay_recover'],['status'=>200],$argv[2]),['payment']);}
-catch(SdkError $e){echo json_encode([$e->raw,$e->status,$e->kind,$e->outcome,$e->retryAllowed]);}
+catch(SdkError $e){echo json_encode([$e->raw,$e->status,substr(strrchr(get_class($e), chr(92)), 1),$e->outcome,$e->retryAllowed]);}
 `,
       f.out,
       raw,
     ],
     { encoding: 'utf8' },
   );
-  assert.deepEqual(JSON.parse(output), [raw, 200, 'protocol', 'response', false]);
+  assert.deepEqual(JSON.parse(output), [raw, 200, 'UnexpectedResponseError', 'response', false]);
 });
 
 test('compiled fallback is deterministic and malformed routing descriptors are rejected in both targets', (t) => {
@@ -426,7 +429,7 @@ namespace Example\Drift;
 require $argv[1].'/php/src/Runtime.php';
 class ExplodingResponse {
     public function __construct(array|object $data, array $redactFields) {
-        throw new SdkError('validation', 'synthetic-private-constructor-message');
+        throw new Errors\InvalidInputError('synthetic-private-constructor-message');
     }
 }
 $plan=SchemaRegistry::contract();
@@ -442,7 +445,7 @@ $runtime=new Runtime($plan,new ClientOptions('https://example.invalid',
 try{$runtime->request('create');}
 catch(SdkError $e){
     ob_start();var_dump($e);$debug=ob_get_clean();
-    echo json_encode([$e->getMessage(),$e->kind,$e->outcome,$e->retryAllowed,$e->status,$e->raw,
+    echo json_encode([$e->getMessage(),substr(strrchr(get_class($e), chr(92)), 1),$e->outcome,$e->retryAllowed,$e->status,$e->raw,
         $e->getPrevious()->getMessage(),$calls,$events[0]['errorKind'],str_contains($debug,'synthetic-private-constructor-message')]);
 }finally{$runtime->close();}
 `,
@@ -451,8 +454,8 @@ catch(SdkError $e){
     { encoding: 'utf8' },
   );
   assert.deepEqual(JSON.parse(output), [
-    schemaMessage + ' [HTTP 200]',
-    'protocol',
+    schemaMessage,
+    'UnexpectedResponseError',
     'response',
     false,
     200,

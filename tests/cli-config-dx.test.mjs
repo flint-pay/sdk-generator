@@ -269,7 +269,7 @@ test('SDK defaults resolve independently in both targets and overrides preserve 
         input: {},
         expected: { method: 'GET', path: '/v1/widgets' },
         responses: [{ status: 503, body: '{}' }],
-        error: { kind: 'server' },
+        error: { name: 'ServerError' },
         attempts: 1,
       },
     ]),

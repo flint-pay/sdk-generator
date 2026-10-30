@@ -66,7 +66,7 @@ test('generated Node and PHP pagination stop cycles, empty loops and page budget
           /* consume */
         }
       } catch (error) {
-        kind = error.kind;
+        kind = error.name;
       }
       assert.equal(kind, scenario.error, scenario.name);
       assert.equal(calls, scenario.calls, scenario.name);
@@ -87,7 +87,7 @@ foreach (json_decode(file_get_contents($argv[2]), true)['pagination'] as $case) 
     $kind = null;
     try {
       foreach ($client->payments->{'listAll'.$helper}(isset($case['initial']) ? ['cursor'=>$case['initial']] : [], new Example\Payments\RequestOptions(maxPages:$case['maxPages'] ?? null)) as $page) {}
-    } catch (Example\Payments\SdkError $e) { $kind = $e->kind; }
+    } catch (Example\Payments\SdkError $e) { $kind = substr(strrchr(get_class($e), chr(92)), 1); }
     $rows[] = [$case['name'], $helper, $calls, $kind];
   }
 }
@@ -141,26 +141,19 @@ test('Node serialization and native crash output hide raw responses, headers, UR
   const cause = new Error('https://example.invalid/?token=synthetic-query', {
     cause: new Error('synthetic-auth'),
   });
-  const error = new SdkError(
-    'transport',
-    'Safe transport failure',
-    'unknown',
-    false,
-    {
-      status: 502,
-      headers: { 'set-cookie': privateMarkers[1], authorization: privateMarkers[3] },
-      url: `https://example.invalid/?token=${privateMarkers[2]}`,
-      attempts: 1,
-      durationMs: 1,
-    },
-    'ECONNRESET',
-    { transportCode: 'ECONNRESET' },
-    { cause },
-    privateMarkers[0],
-  );
+  const error = new SdkError('Safe transport failure', {
+    outcome: 'unknown',
+    status: 502,
+    headers: { 'set-cookie': privateMarkers[1], authorization: privateMarkers[3] },
+    attempts: 1,
+    durationMs: 1,
+    code: 'ECONNRESET',
+    cause,
+    raw: privateMarkers[0],
+  });
   assert.equal(error.raw, privateMarkers[0]);
   assert.equal(error.cause, cause);
-  assert.equal(error.meta.headers['set-cookie'], privateMarkers[1]);
+  assert.equal(error.headers['set-cookie'], privateMarkers[1]);
   for (const text of [
     JSON.stringify(error),
     JSON.stringify(error.toJSON()),
@@ -174,10 +167,10 @@ test('Node serialization and native crash output hide raw responses, headers, UR
   writeFileSync(
     script,
     `import {SdkError} from ${JSON.stringify(pathToFileURL(sdkPath).href)};
-const meta = ${JSON.stringify(error.meta)};
+const meta = ${JSON.stringify({ headers: error.headers })};
 const cause = new Error('synthetic-auth');
 const raw = 'synthetic-raw-body';
-const error = new SdkError('transport','Safe transport failure','unknown',false,meta,'ECONNRESET',undefined,{cause},raw);
+const error = new SdkError('Safe transport failure',{...meta,outcome:'unknown',code:'ECONNRESET',cause,raw});
 throw error;`,
   );
   const crash = spawnSync(process.execPath, [script], { encoding: 'utf8' });
@@ -190,7 +183,7 @@ test('PHP JSON, debug and fatal rendering omit private error state and trace arg
     phpSetup +
       String.raw`
 function makeError($secret) {
-  return new Example\Payments\SdkError('transport', 'Safe transport failure', 'unknown', false, ['status'=>null,'headers'=>['set-cookie'=>'synthetic-cookie','authorization'=>'synthetic-auth'],'url'=>'https://example.invalid/?token=synthetic-query'], 'ECONNRESET', ['field'=>'safe'], new Exception('synthetic-cause'), 'synthetic-raw-body');
+  return new Example\Payments\SdkError('Safe transport failure', code:'ECONNRESET', outcome:'unknown', headers:['set-cookie'=>'synthetic-cookie','authorization'=>'synthetic-auth'],previous:new Exception('synthetic-cause'),raw:'synthetic-raw-body');
 }
 $e = makeError('synthetic-argument');
 ob_start(); var_dump($e); $debug = ob_get_clean();
@@ -213,7 +206,7 @@ echo json_encode([json_encode($e), $debug, (string)$e, $e->raw, $e->getPrevious(
     script,
     '<?php\n' +
       phpSetup +
-      String.raw`throw new Example\Payments\SdkError('transport','Safe transport failure',previous:new Exception('synthetic-cause'),raw:'synthetic-raw-body');`,
+      String.raw`throw new Example\Payments\SdkError('ConnectionError','Safe transport failure',previous:new Exception('synthetic-cause'),raw:'synthetic-raw-body');`,
   );
   const crash = spawnSync(
     'php',
@@ -237,7 +230,7 @@ test('transport codes identify refusal and DNS without exposing native messages'
     await assert.rejects(client.payments.retrieve({ id: 'p-synthetic' }), (error) => {
       assert.ok(error instanceof errors.ConnectionError);
       assert.equal(error.code, code);
-      assert.equal(error.details.transportCode, code);
+      assert.equal(error.cause.cause.code, code);
       assert.deepEqual(error.toJSON().cause, { name: 'TypeError', code });
       assert.match(inspect(error), /cause:/);
       assert.equal(error.outcome, 'not_sent');
@@ -253,16 +246,16 @@ test('transport codes identify refusal and DNS without exposing native messages'
 $rows = [];
 foreach ([7,6,5,28] as $code) {
   $c = new Example\Payments\Client(new Example\Payments\ClientOptions('https://example.invalid',token:'test',maxAttempts:1,transport:fn($r)=>['status'=>0,'headers'=>[],'body'=>'','failureCode'=>$code]));
-  try { $c->payments->retrieve(['id'=>'p-synthetic']); } catch (Example\Payments\SdkError $e) { $rows[] = [$e->kind,$e->errorCode,$e->outcome,$e->status,$e->meta['status'],$e->details['curlCode'],$e->details['curlError'] !== null]; }
+  try { $c->payments->retrieve(['id'=>'p-synthetic']); } catch (Example\Payments\SdkError $e) { $rows[] = [substr(strrchr(get_class($e), chr(92)), 1),$e->code,$e->outcome,$e->status,$e->status,$e->getPrevious()->getCode(),$e->getPrevious()->getCode() !== 0]; }
 }
 echo json_encode($rows);
 `,
     ),
     [
-      ['transport', 'ECONNREFUSED', 'not_sent', null, null, 7, true],
-      ['transport', 'ENOTFOUND', 'not_sent', null, null, 6, true],
-      ['transport', 'ENOTFOUND', 'not_sent', null, null, 5, true],
-      ['timeout', 'request_timeout', 'unknown', null, null, 28, true],
+      ['ConnectionError', 'ECONNREFUSED', 'not_sent', null, null, 7, true],
+      ['ConnectionError', 'ENOTFOUND', 'not_sent', null, null, 6, true],
+      ['ConnectionError', 'ENOTFOUND', 'not_sent', null, null, 5, true],
+      ['TimeoutError', 'request_timeout', 'unknown', null, null, 28, true],
     ],
   );
 });
@@ -286,7 +279,7 @@ test('default transports distinguish per-attempt timeouts, overall deadlines, re
       deadlineMs: deadline ? 30 : 2000,
     });
     await assert.rejects(client.payments.retrieve({ id: 'p-synthetic' }), (e) => {
-      assert.ok(e instanceof (deadline ? errors.DeadlineError : errors.TimeoutError));
+      assert.ok(e instanceof (deadline ? errors.TimeoutError : errors.TimeoutError));
       assert.equal(e.retryAllowed, false === deadline);
       assert.match(e.message, deadline ? /deadline/ : /timed out/);
       return true;
@@ -301,15 +294,15 @@ test('default transports distinguish per-attempt timeouts, overall deadlines, re
 $rows=[];
 foreach ([false,true] as $deadline) {
   $c=new Example\Payments\Client(new Example\Payments\ClientOptions($argv[2],token:'test',allowInsecureHttp:true,maxAttempts:1,timeoutMs:$deadline?2000:30,deadlineMs:$deadline?30:2000));
-  try { $c->payments->retrieve(['id'=>'p-synthetic']); } catch (Example\Payments\SdkError $e) { $rows[]=[$e->kind,$e->retryAllowed,$e->status,$e->details['curlCode']]; }
+  try { $c->payments->retrieve(['id'=>'p-synthetic']); } catch (Example\Payments\SdkError $e) { $rows[]=[substr(strrchr(get_class($e), chr(92)), 1),$e->retryAllowed,$e->status,$e->getPrevious()->getCode()]; }
 }
 echo json_encode($rows);
 `,
   );
   const result = await promisify(execFile)('php', [script, join(output, 'php'), baseUrl]);
   assert.deepEqual(JSON.parse(result.stdout), [
-    ['timeout', true, null, 28],
-    ['deadline', false, null, 28],
+    ['TimeoutError', true, null, 28],
+    ['TimeoutError', false, null, 28],
   ]);
   const refusal = createServer();
   await new Promise((r) => refusal.listen(0, '127.0.0.1', r));
@@ -323,7 +316,7 @@ echo json_encode($rows);
     await assert.rejects(client.payments.retrieve({ id: 'p-synthetic' }), {
       code,
       outcome: 'not_sent',
-      kind: 'transport',
+      name: 'ConnectionError',
     });
   }
   assert.deepEqual(
@@ -334,7 +327,7 @@ $rows=[];
 putenv('no_proxy=*'); putenv('NO_PROXY=*');
 foreach ([$argv[2], 'http://runtime-safety.invalid'] as $url) {
   $c=new Example\Payments\Client(new Example\Payments\ClientOptions($url,token:'test',allowInsecureHttp:true,maxAttempts:1));
-  try { $c->payments->retrieve(['id'=>'p-synthetic']); } catch (Example\Payments\SdkError $e) { $rows[]=[$e->errorCode,$e->outcome,$e->status]; }
+  try { $c->payments->retrieve(['id'=>'p-synthetic']); } catch (Example\Payments\SdkError $e) { $rows[]=[$e->code,$e->outcome,$e->status]; }
 }
 echo json_encode($rows);
 `,
@@ -367,10 +360,10 @@ test('unknown JavaScript client options and duplicated operation base paths fail
       phpSetup +
         String.raw`
 $c = new Example\Payments\Client(new Example\Payments\ClientOptions('https://example.invalid/v1', token:'test'));
-try { $c->payments->retrieve(['id'=>'p-synthetic']); } catch (Example\Payments\SdkError $e) { echo json_encode([$e->kind,$e->outcome,str_contains($e->getMessage(),'remove that path')]); }
+try { $c->payments->retrieve(['id'=>'p-synthetic']); } catch (Example\Payments\SdkError $e) { echo json_encode([substr(strrchr(get_class($e), chr(92)), 1),$e->outcome,str_contains($e->getMessage(),'remove that path')]); }
 `,
     ),
-    ['validation', 'not_sent', true],
+    ['InvalidInputError', 'not_sent', true],
   );
 });
 
@@ -398,10 +391,10 @@ test('webhook byte containers verify identically and millisecond clocks fail cle
     php(
       phpSetup +
         String.raw`
-try { Example\Payments\Webhooks::verify('{}', [], 'synthetic-signing-key',1700000000000); } catch (Example\Payments\SdkError $e) { echo json_encode([$e->kind,str_contains($e->getMessage(),'milliseconds')]); }
+try { Example\Payments\Webhooks::verify('{}', [], 'synthetic-signing-key',1700000000000); } catch (Example\Payments\SdkError $e) { echo json_encode([substr(strrchr(get_class($e), chr(92)), 1),str_contains($e->getMessage(),'milliseconds')]); }
 `,
     ),
-    ['validation', true],
+    ['WebhookVerificationError', true],
   );
 });
 
@@ -412,15 +405,15 @@ test('PHP rejects integer header values and model assignment as SDK validation e
         String.raw`
 $rows=[];
 $c=new Example\Payments\Client(new Example\Payments\ClientOptions('https://example.invalid',token:'test'));
-try { $c->payments->retrieve(['id'=>'p-synthetic'],new Example\Payments\RequestOptions(headers:['X-Test'=>42])); } catch (Example\Payments\SdkError $e) { $rows[]=[$e->kind,$e->outcome,str_contains($e->getMessage(),'header')]; }
+try { $c->payments->retrieve(['id'=>'p-synthetic'],new Example\Payments\RequestOptions(headers:['X-Test'=>42])); } catch (Example\Payments\SdkError $e) { $rows[]=[substr(strrchr(get_class($e), chr(92)), 1),$e->outcome,str_contains($e->getMessage(),'header')]; }
 $m=new Example\Payments\Payment(['id'=>'p-synthetic','amount'=>1,'status'=>'pending']);
-try { $m->status='failed'; } catch (Example\Payments\SdkError $e) { $rows[]=[$e->kind,$e->outcome,str_contains($e->getMessage(),'read-only')]; }
+try { $m->status='failed'; } catch (Example\Payments\SdkError $e) { $rows[]=[substr(strrchr(get_class($e), chr(92)), 1),$e->outcome,str_contains($e->getMessage(),'read-only')]; }
 echo json_encode($rows);
 `,
     ),
     [
-      ['validation', 'not_sent', true],
-      ['validation', 'not_sent', true],
+      ['InvalidInputError', 'not_sent', true],
+      ['InvalidInputError', 'not_sent', true],
     ],
   );
 });
@@ -448,7 +441,7 @@ test('malformed SSE events retain event id and one-based position, then release 
     },
     (e) => {
       assert.equal(e.code, 'sse_invalid_event');
-      assert.deepEqual(e.details, { eventId: 'event-2', position: 2 });
+      assert.deepEqual(e.event, { id: 'event-2', position: 2 });
       assert.match(e.message, /event 2/);
       return true;
     },
@@ -466,10 +459,10 @@ $source=new class implements Example\Payments\ByteStream {
 };
 $s=new Example\Payments\EventStream($source,['status'=>200],['idleTimeoutMs'=>100,'maxEventBytes'=>1000],fn($event,$raw)=>json_decode($raw,flags:JSON_THROW_ON_ERROR),fn()=>null);
 $count=0;
-try { foreach($s as $event)$count++; } catch(Example\Payments\SdkError $e) { echo json_encode([$count,$e->errorCode,$e->details]); }
+try { foreach($s as $event)$count++; } catch(Example\Payments\SdkError $e) { echo json_encode([$count,$e->code,$e->event]); }
 `,
     ),
-    [1, 'sse_invalid_event', { eventId: 'event-2', position: 2 }],
+    [1, 'sse_invalid_event', { id: 'event-2', position: 2 }],
   );
 });
 
@@ -489,7 +482,7 @@ test('a later refused connection cannot erase an earlier unknown request outcome
       },
     });
     await assert.rejects(client.payments.retrieve({ id: 'p-synthetic' }), {
-      kind: 'transport',
+      name: 'ConnectionError',
       outcome: unknownFirst ? 'unknown' : 'not_sent',
     });
     assert.equal(attempts, 3);
@@ -534,10 +527,10 @@ test('opaque custom transport exception text and codes remain private and unclas
       phpSetup +
         String.raw`
 $c=new Example\Payments\Client(new Example\Payments\ClientOptions('https://example.invalid',token:'test',maxAttempts:1,transport:fn($r)=>throw new RuntimeException('synthetic-secret-text',7)));
-try{$c->payments->retrieve(['id'=>'p-synthetic']);}catch(Example\Payments\SdkError $e){echo json_encode([$e->kind,$e->outcome,$e->details['curlCode'],str_contains(json_encode($e),'synthetic-secret-text'),$e->getPrevious()->getMessage()]);}
+try{$c->payments->retrieve(['id'=>'p-synthetic']);}catch(Example\Payments\SdkError $e){echo json_encode([substr(strrchr(get_class($e), chr(92)), 1),$e->outcome,$e->getPrevious()->getCode(),str_contains(json_encode($e),'synthetic-secret-text'),$e->getPrevious()->getMessage()]);}
 `,
     ),
-    ['transport', 'unknown', null, false, 'synthetic-secret-text'],
+    ['ConnectionError', 'unknown', 7, false, 'synthetic-secret-text'],
   );
 });
 
@@ -558,7 +551,7 @@ test('link pagination recognizes a cycle back to its original request URL', asyn
       for await (const _ of client.payments.linksPages()) {
       }
     },
-    { kind: 'protocol' },
+    { name: 'UnexpectedResponseError' },
   );
   assert.equal(calls, 2);
   assert.deepEqual(
@@ -567,10 +560,10 @@ test('link pagination recognizes a cycle back to its original request URL', asyn
         String.raw`
 $calls=0;
 $c=new Example\Payments\Client(new Example\Payments\ClientOptions('https://example.invalid',token:'test',maxAttempts:1,transport:function($r)use(&$calls){$calls++;return ['status'=>200,'headers'=>[],'body'=>json_encode(['items'=>[['id'=>'p-synthetic','amount'=>1,'status'=>'pending']],'next'=>$calls===1?'/v1/links?page=B':'/v1/links'])];}));
-try{foreach($c->payments->linksPages() as $page){}}catch(Example\Payments\SdkError $e){echo json_encode([$e->kind,$calls]);}
+try{foreach($c->payments->linksPages() as $page){}}catch(Example\Payments\SdkError $e){echo json_encode([substr(strrchr(get_class($e), chr(92)), 1),$calls]);}
 `,
     ),
-    ['protocol', 2],
+    ['UnexpectedResponseError', 2],
   );
 });
 
@@ -579,9 +572,9 @@ test('PHP fractional millisecond webhook clocks also explain the seconds convers
     php(
       phpSetup +
         String.raw`
-try{Example\Payments\Webhooks::verify('{}',[],'synthetic-signing-key',1700000000000.5);}catch(Example\Payments\SdkError $e){echo json_encode([$e->kind,str_contains($e->getMessage(),'milliseconds')]);}
+try{Example\Payments\Webhooks::verify('{}',[],'synthetic-signing-key',1700000000000.5);}catch(Example\Payments\SdkError $e){echo json_encode([substr(strrchr(get_class($e), chr(92)), 1),str_contains($e->getMessage(),'milliseconds')]);}
 `,
     ),
-    ['validation', true],
+    ['WebhookVerificationError', true],
   );
 });

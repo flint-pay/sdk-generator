@@ -157,7 +157,7 @@ function rejected(name, operation, body) {
     operation,
     input: { body },
     responses: [],
-    error: { kind: 'validation' },
+    error: { name: 'InvalidInputError' },
     attempts: 0,
   };
 }
@@ -342,7 +342,7 @@ test('generated quickstart inputs satisfy composed request schemas', async () =>
     });
     await assert.rejects(
       client.api[match[1]](new Function(`return (${match[2]})`)(), { maxAttempts: 1 }),
-      (e) => e.kind === 'transport',
+      (e) => e.name === 'ConnectionError',
       file,
     );
     assert.ok(dispatched, file);

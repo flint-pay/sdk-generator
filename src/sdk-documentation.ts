@@ -1196,7 +1196,7 @@ export function errorCodeDocumentation(c: Contract): {
   return {
     links,
     reference: values.size
-      ? `# ${errorCodesTitle(c)}\n\n[Runtime error reference](RUNTIME.md#error-reference)\n\nInspect the error code together with status and kind; retry only when the operation permits it. Declared values:\n\n` +
+      ? `# ${errorCodesTitle(c)}\n\n[Runtime error reference](RUNTIME.md#error-reference)\n\nInspect the error code together with status and class; retry only when the operation permits it. Declared values:\n\n` +
         [...values]
           .sort()
           .map((value) => '- ' + literal(value))

@@ -219,7 +219,7 @@ test('generated calls in both languages execute with dynamic schema compilation 
     const client=new Client({baseUrl:'https://example.invalid',transport:async()=>new Response(body)});
     assert.equal((await client.api.readValue()).data.entry.id,'abc');
     body='{"entry":{}}';
-    await assert.rejects(client.api.readValue(),e=>e.kind==='protocol' && /entry.id/.test(e.cause.message));
+    await assert.rejects(client.api.readValue(),e=>e.name==='UnexpectedResponseError' && /entry.id/.test(e.cause.message));
   `;
   run(process.execPath, ['--input-type=module', '-'], nodeProgram);
   const phpProgram = `<?php
@@ -228,7 +228,7 @@ test('generated calls in both languages execute with dynamic schema compilation 
     $client=new Example\\Compiled\\Client(new Example\\Compiled\\ClientOptions('https://example.invalid', transport:function($r)use(&$body){return ['status'=>200,'headers'=>[],'body'=>$body];}));
     if($client->api->readValue()->data->get('entry')['id']!=='abc')exit(2);
     $body='{"entry":{}}';
-    try{$client->api->readValue();exit(3);}catch(Example\\Compiled\\SdkError $e){if($e->kind!=='protocol'||!str_contains($e->getPrevious()->getMessage(),'entry.id'))throw $e;}
+    try{$client->api->readValue();exit(3);}catch(Example\\Compiled\\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='UnexpectedResponseError'||!str_contains($e->getPrevious()->getMessage(),'entry.id'))throw $e;}
   `;
   const script = join(f.dir, 'consumer.php');
   writeFileSync(script, phpProgram);

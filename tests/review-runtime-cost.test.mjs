@@ -97,10 +97,10 @@ const unrelated:ValuesInput = 123; // Items alone do not require an array.
       },
     });
     assert.deepEqual((await c.api.sendValue({ body: ['abc'] })).data, ['abc']);
-    await assert.rejects(c.api.sendValue({ body: [123] }), { kind: 'validation' });
+    await assert.rejects(c.api.sendValue({ body: [123] }), { name: 'InvalidInputError' });
     assert.equal(sent, 1);
     if (nullable) assert.equal((await c.api.sendValue({ body: null })).data, null);
-    else await assert.rejects(c.api.sendValue({ body: null }), { kind: 'validation' });
+    else await assert.rejects(c.api.sendValue({ body: null }), { name: 'InvalidInputError' });
   }
 });
 
@@ -161,8 +161,8 @@ const c=new Client({baseUrl:'https://example.invalid',transport:async(_url,r)=>{
 }});
 const plain=v=>JSON.parse(JSON.stringify(v));
 assert.deepEqual(plain((await c.api.sendValue({body:cases.valid})).data),cases.valid);
-await assert.rejects(c.api.sendValue({body:cases.invalid}),{kind:'validation'});
-await assert.rejects(c.api.sendValue({body:cases.future}),{kind:'validation'});
+await assert.rejects(c.api.sendValue({body:cases.invalid}),{name:'InvalidInputError'});
+await assert.rejects(c.api.sendValue({body:cases.future}),{name:'InvalidInputError'});
 assert.equal(sent,1);
 // An unmatched response retains its raw unknown numeric values. A uniquely
 // matching response with future fields retains the declared exact strings.
@@ -188,7 +188,7 @@ function same($a,$b){if(json_encode($a)!==json_encode($b))throw new Exception('w
 same($c->api->sendValue(new ReviewSdk\ApiSendValueInput(['body'=>$cases->valid]))->data,$cases->valid);
 foreach([$cases->invalid,$cases->future] as $bad){
   try{$c->api->sendValue(new ReviewSdk\ApiSendValueInput(['body'=>$bad]));throw new Exception('invalid accepted');}
-  catch(ReviewSdk\SdkError $e){if($e->kind!=='validation')throw $e;}
+  catch(ReviewSdk\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='InvalidInputError')throw $e;}
 }
 if($sent!==1)throw new Exception('invalid input dispatched');
 $response=$cases->invalidWire;same($c->api->sendValue(new ReviewSdk\ApiSendValueInput())->data,json_decode($cases->invalidWire));
@@ -224,7 +224,7 @@ if(context.mode==='response'){const until=performance.now()+40;while(performance
 import {Client} from ${JSON.stringify(pathToFileURL(join(out, 'node/index.js')).href)};
 const diagnostics=[];
 const c=new Client({baseUrl:'https://example.invalid',diagnostics:e=>diagnostics.push(e),transport:async()=>new Response('"ok"',{headers:{'x-request-id':'req_00BR6FFF8XZ8W32Y4B1KVDXQ6X'}})});
-await assert.rejects(c.api.sendValue({}, {deadlineMs:20}),e=>e.kind==='deadline'&&e.outcome==='response'&&e.retryAllowed===false&&e.meta.requestId==='req_00BR6FFF8XZ8W32Y4B1KVDXQ6X');
+await assert.rejects(c.api.sendValue({}, {deadlineMs:20}),e=>e.name==='TimeoutError'&&e.outcome==='response'&&e.retryAllowed===false&&e.requestId==='req_00BR6FFF8XZ8W32Y4B1KVDXQ6X');
 assert.equal(diagnostics.at(-1).errorKind,'deadline');
 assert.equal((await c.api.sendValue({}, {deadlineMs:1000})).data,'ok');
 `,
@@ -248,7 +248,7 @@ require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
 $events=[];
 $c=new ReviewSdk\Client(new ReviewSdk\ClientOptions('https://example.invalid',diagnostics:function($e)use(&$events){$events[]=$e;},transport:fn($r)=>['status'=>200,'headers'=>['x-request-id'=>'req_00BR6FFF8XZ8W32Y4B1KVDXQ6X'],'body'=>'"ok"']));
 try{$c->api->sendValue(new ReviewSdk\ApiSendValueInput(),new ReviewSdk\RequestOptions(deadlineMs:20));throw new Exception('late success');}
-catch(ReviewSdk\SdkError $e){if($e->kind!=='deadline'||$e->outcome!=='response'||$e->retryAllowed||$e->meta['requestId']!=='req_00BR6FFF8XZ8W32Y4B1KVDXQ6X')throw $e;}
+catch(ReviewSdk\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='TimeoutError'||$e->outcome!=='response'||$e->retryAllowed||$e->requestId!=='req_00BR6FFF8XZ8W32Y4B1KVDXQ6X')throw $e;}
 if(end($events)['errorKind']!=='deadline')throw new Exception('missing diagnostic');
 if($c->api->sendValue(new ReviewSdk\ApiSendValueInput(),new ReviewSdk\RequestOptions(deadlineMs:1000))->data!=='ok')throw new Exception('control');
 `,

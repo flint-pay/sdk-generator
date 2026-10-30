@@ -87,7 +87,7 @@ test('mappings retain aliases and inherited constraints through both compiled pu
     input: { body },
     responses: [],
     attempts: 0,
-    error: { kind: 'validation' },
+    error: { name: 'InvalidInputError' },
   });
   const cases = [
     valid({ kind: 'a', amount: '9007199254740993' }, '{"kind":"a","amount":9007199254740993}'),

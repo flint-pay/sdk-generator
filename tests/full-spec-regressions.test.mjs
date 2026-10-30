@@ -174,13 +174,13 @@ test(
       const { dir, sdk, op } = await build('timeout-', document);
       for (const body of ['trickle', 'stalled']) {
         for (const [kind, options] of [
-          ['deadline', { deadlineMs: 100, timeoutMs: 2000 }],
-          ['timeout', { deadlineMs: 2000, timeoutMs: 100 }],
+          ['TimeoutError', { deadlineMs: 100, timeoutMs: 2000 }],
+          ['TimeoutError', { deadlineMs: 2000, timeoutMs: 100 }],
         ]) {
           const client = new sdk.Client({ baseUrl, allowInsecureHttp: true });
           await assert.rejects(
             client[op.resource][op.method]({}, { ...options, headers: { 'x-test-body': body } }),
-            { kind },
+            { name: kind },
           );
           writeFileSync(
             join(dir, 'test.php'),
@@ -188,7 +188,7 @@ test(
               `
 $c=new Example\\Regressions\\Client(new Example\\Regressions\\ClientOptions(baseUrl:$argv[1],allowInsecureHttp:true));
 try {$c->${op.resource}->${op.method}(options:new Example\\Regressions\\RequestOptions(deadlineMs:${options.deadlineMs},timeoutMs:${options.timeoutMs},headers:['x-test-body'=>'${body}']));throw new Exception('expected timeout');}
-catch(Example\\Regressions\\SdkError $e){if($e->kind!=='${kind}')throw $e;}
+catch(Example\\Regressions\\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='${kind}')throw $e;}
 $c->close();echo 'ok';
 `,
           );
@@ -264,7 +264,7 @@ test('mapped variants sharing an allOf ancestor retain exact target and alias id
       input: { body },
       responses: [],
       attempts: 0,
-      error: { kind: 'validation' },
+      error: { name: 'InvalidInputError' },
     });
   const siblingSchemas = structuredClone(schemas);
   for (const name of ['A', 'B']) siblingSchemas[name] = Object.assign({}, ...schemas[name].allOf);
@@ -311,7 +311,7 @@ test('explicit numeric constants accept typed consumers and preserve numeric wir
   assert.deepEqual(bodies, ['{"scalar":0.25,"items":[0.250,"0.25"]}']);
   await assert.rejects(
     client[op.resource][op.method]({ body: { scalar: new sdk.ExactNumber('0.5'), items: [] } }),
-    { kind: 'validation' },
+    { name: 'InvalidInputError' },
   );
   writeFileSync(
     join(dir, 'consumer.ts'),
@@ -368,7 +368,9 @@ test('shared object alternatives retain response shape checks and future objects
         input: {},
         expected: { method: 'GET', path: '/v1/value' },
         responses: [{ status: 200, body }],
-        ...(body.startsWith('{') ? { data: JSON.parse(body) } : { error: { kind: 'protocol' } }),
+        ...(body.startsWith('{')
+          ? { data: JSON.parse(body) }
+          : { error: { name: 'UnexpectedResponseError' } }),
       }));
       writeFileSync(join(dir, 'cases.json'), JSON.stringify(cases));
       assert.deepEqual(
@@ -417,7 +419,7 @@ test('conditional direction policy preserves readOnly and writeOnly requiredness
         operation: 'save',
         input: { body: { ...body, id: 'forbidden' } },
         responses: [],
-        error: { kind: 'validation' },
+        error: { name: 'InvalidInputError' },
         attempts: 0,
       },
       {
@@ -425,7 +427,7 @@ test('conditional direction policy preserves readOnly and writeOnly requiredness
         operation: 'save',
         input: { body: withoutSecret },
         responses: [],
-        error: { kind: 'validation' },
+        error: { name: 'InvalidInputError' },
         attempts: 0,
       },
       {
@@ -433,7 +435,7 @@ test('conditional direction policy preserves readOnly and writeOnly requiredness
         name: `missing response id ${active}`,
         responses: [{ status: 200, body: JSON.stringify(withoutId) }],
         data: undefined,
-        error: { kind: 'protocol' },
+        error: { name: 'UnexpectedResponseError' },
       },
     ];
   });
@@ -442,7 +444,7 @@ test('conditional direction policy preserves readOnly and writeOnly requiredness
     operation: 'save',
     input: { body: { active: true, secret: 'private' } },
     responses: [],
-    error: { kind: 'validation' },
+    error: { name: 'InvalidInputError' },
     attempts: 0,
   });
   writeFileSync(join(dir, 'cases.json'), JSON.stringify(cases));
@@ -516,10 +518,10 @@ test('parent constants retain numeric representations through composed children'
     assert.deepEqual(bodies, ['{"scalar":1,"items":[1],"mapped":{"value":1},"legacy":1}']);
     await assert.rejects(
       client[op.resource][op.method]({ body: { ...body, scalar: new sdk.ExactNumber('2') } }),
-      { kind: 'validation' },
+      { name: 'InvalidInputError' },
     );
     await assert.rejects(client[op.resource][op.method]({ body: { ...body, scalar: '1' } }), {
-      kind: 'validation',
+      name: 'InvalidInputError',
     });
     writeFileSync(
       join(dir, 'consumer.ts'),
@@ -545,7 +547,7 @@ new Client({baseUrl:'https://example.invalid'}).api.save({body:{scalar:new Exact
 $calls=[];$c=new Example\\Regressions\\Client(new Example\\Regressions\\ClientOptions(baseUrl:'https://example.invalid',transport:function($r)use(&$calls){$calls[]=$r['body'];return ['status'=>204,'headers'=>[],'body'=>''];}));
 $body=['scalar'=>new Example\\Regressions\\ExactNumber('1'),'items'=>[new Example\\Regressions\\ExactNumber('1')],'mapped'=>(object)['value'=>new Example\\Regressions\\ExactNumber('1')],'legacy'=>'1'];
 $c->api->save(new Example\\Regressions\\ApiSaveInput(['body'=>$body]));
-foreach([new Example\\Regressions\\ExactNumber('2'),'1'] as $invalid){$body['scalar']=$invalid;try{$c->api->save(new Example\\Regressions\\ApiSaveInput(['body'=>$body]));throw new Exception('invalid constant accepted');}catch(Example\\Regressions\\SdkError $e){if($e->kind!=='validation')throw $e;}}
+foreach([new Example\\Regressions\\ExactNumber('2'),'1'] as $invalid){$body['scalar']=$invalid;try{$c->api->save(new Example\\Regressions\\ApiSaveInput(['body'=>$body]));throw new Exception('invalid constant accepted');}catch(Example\\Regressions\\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='InvalidInputError')throw $e;}}
 echo json_encode($calls);`,
     );
     assert.deepEqual(JSON.parse((await exec('php', [join(dir, 'test.php')])).stdout), bodies);
@@ -644,7 +646,7 @@ test('default streaming transports decode negotiated gzip events and JSON errors
           {},
           { headers: { 'accept-encoding': encoding, 'x-test-case': 'error' } },
         ),
-        { kind: 'validation', code: 'expected_error' },
+        { name: 'InvalidRequestError', code: 'expected_error' },
       );
     }
     await client.close();
@@ -658,7 +660,7 @@ foreach(['identity','gzip'] as $encoding) {
  $seen=[];foreach($r->data as $e)$seen[]=$e->data;
  if($seen!==['first','later'])throw new Exception('missing events');
  try{$c->api->getValue(options:new Example\\Regressions\\RequestOptions(headers:['accept-encoding'=>$encoding,'x-test-case'=>'error']));throw new Exception('missing error');}
- catch(Example\\Regressions\\SdkError $e){if($e->kind!=='validation'||$e->errorCode!=='expected_error')throw $e;}
+ catch(Example\\Regressions\\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='InvalidRequestError'||$e->code!=='expected_error')throw $e;}
 }
 $c->close();echo 'ok';`,
     );

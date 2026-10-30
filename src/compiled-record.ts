@@ -195,6 +195,12 @@ export function assertCompiledSnapshot(value: unknown): asserts value is Compile
     for (const feature of ['errorClasses', 'webhookReasons', 'standaloneWebhook'])
       if (target[feature] !== undefined && target[feature] !== true)
         throw new Error('Invalid compiled runtime API flag: ' + feature);
+  for (const target of [node, php])
+    if (
+      target.errorSurfaceVersion !== undefined &&
+      (!Number.isInteger(target.errorSurfaceVersion) || Number(target.errorSurfaceVersion) < 1)
+    )
+      throw new Error('Invalid compiled error surface version');
   fields(node, ['eventType'], 'string', 'node');
   if (node.eventDeclarations !== undefined) fields(node, ['eventDeclarations'], 'string', 'node');
   if (node.eventTypes !== undefined)

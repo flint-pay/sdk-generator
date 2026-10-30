@@ -77,10 +77,10 @@ try {
                 }
             };
             $check($error instanceof $class, 'error class');
-            $check($error->kind === $kind, 'kind');
+            $check(substr(strrchr(get_class($error), chr(92)), 1) === $kind, 'kind');
             $check($error->status === (int) $example['status'], 'status');
             $check($error->outcome === 'response', 'outcome');
-            $check($error->errorCode === $body->error->code, 'code');
+            $check($error->code === $body->error->code, 'code');
             // PHP exposes mixed error details with exact raw numeric tokens;
             // Node additionally certifies schema-directed typed details.
             $expectedDetails = json_decode(
@@ -93,11 +93,8 @@ try {
                 canonicalJson($error->details) === canonicalJson($expectedDetails),
                 'public error details',
             );
-            $check(
-                ($error->meta['requestId'] ?? null) === ($body->error->request_id ?? null),
-                'requestId',
-            );
-            $check(($error->meta['attempts'] ?? null) === 1, 'attempts');
+            $check(($error->requestId ?? null) === ($body->error->request_id ?? null), 'requestId');
+            $check(($error->attempts ?? null) === 1, 'attempts');
         }
     }
     if ($requests !== count($examples)) {

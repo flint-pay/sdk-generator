@@ -177,7 +177,7 @@ The process cache separates base origin, workload identity ID, audience, scope, 
 
 PHP `ClientOptions(credentialCache: $cache)` accepts a PSR-16 compatible object implementing `get`, `set`, and `delete`. APCu-backed implementations can share tokens between requests; protect the cache as a credential store. The SDK's static cache coordinates one process; cross-process locking is the cache implementation's responsibility.
 
-Failures are authentication errors with `code` (Node) or `errorCode` (PHP): `no_credentials`, `ambiguous_credentials`, `source_unavailable`, `subject_token_request_failed`, `audience_mismatch`, `exchange_rejected`, or `exchange_unavailable`. Safe messages/details identify the source, workload identity ID, JWT issuer/subject/audience, and server error description when available. Subject and access token values are redacted. Injected transports are a privileged boundary and necessarily receive tokens; avoid logging their headers or bodies.
+Failures are `ConfigurationError` with `code` in both targets: `no_credentials`, `ambiguous_credentials`, `source_unavailable`, `subject_token_request_failed`, `audience_mismatch`, `exchange_rejected`, or `exchange_unavailable`. Safe messages and `workloadIdentity` identify the source, workload identity ID, JWT issuer/subject/audience, and server error description when available. Subject and access token values are redacted. Injected transports are a privileged boundary and necessarily receive tokens; avoid logging their headers or bodies.
 
 ## Make a call
 
@@ -227,13 +227,13 @@ With `requests.style: "object"`, methods take one input object with path/query/h
 - Optional fields may be omitted.
 - Explicit null is accepted only where the field is nullable. It does not mean the server clears a value.
 - PHP inputs omit an array key for omission and use `['field' => null]` for explicit null.
-- PHP models provide `has()`, presence methods such as `hasDescription()`, and `get()`. Response getters, `get()` and magic properties return null for an omitted optional field, with nullable accessor types. `has()` distinguishes omission from present-null. Missing required fields fail during response decoding with `ProtocolError`; unknown property names fail with a validation error. Omitted input fields still throw when read.
+- PHP models provide `has()`, presence methods such as `hasDescription()`, and `get()`. Response getters, `get()` and magic properties return null for an omitted optional field, with nullable accessor types. `has()` distinguishes omission from present-null. Missing required fields fail during response decoding with `UnexpectedResponseError`; unknown property names fail with a validation error. Omitted input fields still throw when read.
 - PHP `valueOrDefault('description', 'fallback')` returns the fallback only when the field is omitted; explicit null stays null. Its name avoids the `getField()` namespace, so a wire field such as `orDefault` keeps its `getOrDefault()` getter.
 - With `validation: "schema"`, object property bounds count encoded keys, including explicit nulls and additional properties, but not omitted optional fields. Response decoding stays tolerant of these business bounds.
 
 ## Errors and retries
 
-PHP provides `SdkError::KIND_*` constants (for example `KIND_PROTOCOL`) and `OUTCOME_NOT_SENT`, `OUTCOME_RESPONSE`, `OUTCOME_UNKNOWN`. `getCode()` returns the HTTP status when available, otherwise 0; provider codes use `errorCode`. Server-originated messages append the HTTP status, provider code and request ID when available. Existing per-kind error subclasses are unchanged.
+PHP keeps `OUTCOME_NOT_SENT`, `OUTCOME_RESPONSE` and `OUTCOME_UNKNOWN`. Both `$e->code` and `$e->getCode()` return the string error code; `$e->status` carries the HTTP status. Messages are preserved verbatim; `__toString()` adds status, code and request ID for logs.
 
 Every error after a call resolves an idempotency key exposes `error.idempotencyKey` (Node) or `$error->idempotencyKey` (PHP), including validation and cancellation before sending. `WithResponse` results expose `meta.idempotencyKey` (PHP: `$result->meta['idempotencyKey']`). Keys are included in error inspection. Persist your key across process restarts and application resubmissions; automatically generated UUID v4 keys, including any configured prefix, last for one SDK call and are reused on every attempt.
 
@@ -245,7 +245,7 @@ await client.refunds.create(params, { idempotencyKey: refundJob.idempotencyKey }
 
 Providers may configure `errors.retry` to select a string in the error body, such as `error.remediation.retry`. A string signal overrides status and code rules; only configured retry values (for example `same_request`) retry. `after_refresh`, `none` and unknown strings stop immediately. Without a string signal, configured statuses apply; without body-driven configuration, existing status/code rules apply. HTTP 412 never retries. All retry signals still require a replay-safe operation and remain bounded by its attempt limit. Cancellation never retries, while per-attempt timeouts after sending may retry with the same key.
 
-Backoff waits uniformly between half and all of the exponential delay, capped by optional `retry.maxDelayMs`. `Retry-After` is a minimum wait. If a wait would reach the overall call deadline, the last error comes back unchanged, including its kind, code, status and details. Its optional `retryAfterMs` records the valid server wait in milliseconds. An attempt cut off mid-flight by the overall deadline still uses `kind: "deadline"`.
+Backoff waits uniformly between half and all of the exponential delay, capped by optional `retry.maxDelayMs`. `Retry-After` is a minimum wait. If a wait would reach the overall call deadline, the last error comes back unchanged, including its class, code, status and details. Its optional `retryAfterMs` records the valid server wait in milliseconds. An attempt cut off mid-flight by the overall deadline still raises `TimeoutError`.
 
 ```js
 import { SdkError, errors } from '@example/library';
@@ -261,9 +261,9 @@ try {
   console.error(
     error.message,
     error.status,
-    error.kind,
+    error.name,
     error.code,
-    error.meta?.requestId,
+    error.requestId,
     error.outcome,
   );
 }
@@ -283,37 +283,42 @@ try {
       ' status=' .
       ($error->status ?? 'none') .
       ' request=' .
-      ($error->meta['requestId'] ?? 'no request ID'),
+      ($error->requestId ?? 'no request ID'),
   );
 }
 ```
 
-| Field         | Node                    | PHP                         |
-| ------------- | ----------------------- | --------------------------- |
-| Provider code | `code`                  | `errorCode`                 |
-| Cause         | `cause`                 | `getPrevious()`             |
-| Request ID    | `meta?.requestId`       | `$error->meta['requestId']` |
-| HTTP status   | `status` or `undefined` | `status` or `null`          |
+| Field         | Node                    | PHP                 |
+| ------------- | ----------------------- | ------------------- |
+| Provider code | `code`                  | `code`              |
+| Cause         | `cause`                 | `getPrevious()`     |
+| Request ID    | `requestId`             | `$error->requestId` |
+| HTTP status   | `status` or `undefined` | `status` or `null`  |
 
-Node `SdkError.code` uses the schema’s known string codes plus an open string alternative. `SdkError.details` uses the configured error schema plus runtime failure details; narrow the shape before reading a field. Projected details are validated against their declared shapes even when the envelope is a future alternative. Narrowed integer-string fields require canonical decimal spelling: `+1`, `01`, `-01` and trailing whitespace are rejected. Invalid success payloads raise a protocol error with `raw` retained. Malformed API details, or redacted details that no longer fit the schema, are `undefined`; explicit `raw` access remains available for recovery.
+Node `SdkError.code` uses the schema’s known string codes plus an open string alternative. `errors.ApiError.details` uses the configured error schema plus runtime failure details; narrow the shape before reading a field. Projected details are validated against their declared shapes even when the envelope is a future alternative. Narrowed integer-string fields require canonical decimal spelling: `+1`, `01`, `-01` and trailing whitespace are rejected. Invalid success payloads raise a protocol error with `raw` retained. Malformed API details, or redacted details that no longer fit the schema, are `undefined`; explicit `raw` access remains available for recovery.
 
-`SdkError` and `kind` remain the authoritative API. Each runtime failure also has a subclass chosen solely from `kind`. Node exposes the classes through `errors` at the package root and resource subpaths; `errors.SdkError === SdkError`, and `errors.NotFoundError` works as a TypeScript type. PHP classes live in `Example\Library\Errors`, separate from generated models. Every subclass is still an `SdkError`. Node `name` and inspection show the subclass name, including in minified bundles. Node stacks and PHP exception file/line metadata identify the factory's calling site.
+All errors extend `SdkError`. Node exports subclasses through `errors` at the package root and resource subpaths; PHP subclasses live in `Example\\Library\\Errors`. API subclasses extend `ApiError` and follow HTTP status alone, never the code. `TimeoutError` extends `ConnectionError`. Other local classes extend `SdkError` directly. Node names survive minification.
 
-| Kind             | Class                 |
-| ---------------- | --------------------- |
-| `transport`      | `ConnectionError`     |
-| `timeout`        | `TimeoutError`        |
-| `authentication` | `AuthenticationError` |
-| `validation`     | `ValidationError`     |
-| `rate_limit`     | `RateLimitError`      |
-| `not_found`      | `NotFoundError`       |
-| `conflict`       | `ConflictError`       |
-| `server`         | `ServerError`         |
-| `api`            | `ApiError`            |
-| `protocol`       | `ProtocolError`       |
-| `cancelled`      | `CancelledError`      |
-| `deadline`       | `DeadlineError`       |
-| `destination`    | `DestinationError`    |
+| Status or trigger                   | Class                      |
+| ----------------------------------- | -------------------------- |
+| 400, 422                            | `InvalidRequestError`      |
+| 401                                 | `AuthenticationError`      |
+| 403                                 | `PermissionError`          |
+| 404                                 | `NotFoundError`            |
+| 409, 412                            | `ConflictError`            |
+| 429                                 | `RateLimitError`           |
+| 500–599                             | `ServerError`              |
+| Other 4xx                           | `ApiError`                 |
+| No usable response                  | `ConnectionError`          |
+| Attempt timeout or deadline         | `TimeoutError`             |
+| Invalid input                       | `InvalidInputError`        |
+| Options, credentials or destination | `ConfigurationError`       |
+| Cancellation                        | `CancelledError`           |
+| Unusable success                    | `UnexpectedResponseError`  |
+| Webhook verification                | `WebhookVerificationError` |
+| Pagination limit                    | `PaginationLimitError`     |
+
+Construct errors with a message and an init object in Node, or named arguments in PHP. Request context is available directly as `operation`, `outcome`, `retryAllowed`, `status`, `requestId`, `requestIds`, `idempotencyKey`, `attempts`, `durationMs`, `retryAfterMs` and `headers`. Error `kind` and `meta` are removed. `headers` and `raw` stay out of inspection; use them explicitly with application redaction.
 
 Messages and codes:
 
@@ -347,7 +352,7 @@ Sensitive data:
 
 - Error inspection shows the message, status, provider code, redacted details and stack frames. Messages, codes and details apply schema and `redactFields` redaction.
 - Error JSON serialization and native crash rendering omit raw bodies, headers, URLs and unsanitized causes. Explicit `raw`, `meta` and cause access remain available. PHP debug and exception traces omit call arguments.
-- Diagnostics callbacks get status and kind, without messages, details or stack traces.
+- Diagnostics callbacks get status and class, without messages, details or stack traces.
 - `raw`, response headers, arbitrary `data` logging and injected transports need application-level handling of sensitive information.
 
 For responses that fail schema decoding, see [schema drift](#successful-http-responses-and-schema-drift).
@@ -453,7 +458,7 @@ if (!$verified['known']) {
 }
 ```
 
-PHP's `Webhooks::verify(mixed $rawBody, mixed $headers, mixed $secrets, mixed $nowSeconds = null): array` validates argument types through the SDK guards. Invalid inputs throw `Errors\ValidationError`, signature failures throw `Errors\AuthenticationError`, and authenticated invalid JSON throws `Errors\ProtocolError`.
+PHP's `Webhooks::verify(mixed $rawBody, mixed $headers, mixed $secrets, mixed $nowSeconds = null): array` validates argument types through the SDK guards. Invalid inputs throw `Errors\InvalidInputError`, signature failures throw `Errors\AuthenticationError`, and authenticated invalid JSON throws `Errors\UnexpectedResponseError`.
 
 If a generated model is named `Webhooks` (case insensitive), PHP keeps the model name and omits the standalone verifier class. Use `$client->verifyWebhook($rawBody, $headers, $secrets)` in that package. Node's standalone `verifyWebhook` remains available.
 
@@ -539,7 +544,7 @@ Secret and header rules:
 - Repeated signatures are supported. Timestamp and event ID headers must each have one value.
 - The generated `RUNTIME.md` lists the configured header names, format and tolerance.
 
-Failures throw `SdkError`, with the code in `code` (Node) or `errorCode` (PHP):
+Failures throw `WebhookVerificationError`, with the code in `code` in both targets:
 
 | Kind             | Code                                 | Action                                                                          |
 | ---------------- | ------------------------------------ | ------------------------------------------------------------------------------- |
@@ -562,7 +567,7 @@ try {
   const verified = client.verifyWebhook(rawBody, headers, webhookSecret);
 } catch (error) {
   if (!(error instanceof SdkError)) throw error;
-  // Record error.kind and error.code without logging bodies or secrets.
+  // Record error.name and error.code without logging bodies or secrets.
   throw error; // Let the HTTP adapter choose the failure response.
 }
 ```
@@ -573,7 +578,7 @@ Verification does not deduplicate delivery. Commit a unique event ID and durable
 
 Unknown JavaScript client option keys raise a validation error. For example, replace `maxRetries` with `maxAttempts`, which counts the first attempt. A `baseUrl` that repeats an operation path prefix is rejected before sending: use `https://example.invalid` for operation paths starting with `/v1`, rather than appending `/v1`.
 
-Pass client defaults to `new Client({...})` in Node or `new Client(new ClientOptions(...))` in PHP. Pass request overrides as the last method argument. PHP request header names and values must be strings; invalid values raise `ValidationError` before dispatch.
+Pass client defaults to `new Client({...})` in Node or `new Client(new ClientOptions(...))` in PHP. Pass request overrides as the last method argument. PHP request header names and values must be strings; invalid values raise `InvalidInputError` before dispatch.
 
 | Option                                  | Where             | Default and behavior                                                                                                                                                |
 | --------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -714,7 +719,7 @@ Response types use the referenced component name, with structurally identical de
 
 ### PHP models
 
-Model properties are read-only. Assignment raises a `ValidationError`; construct a new model for updated values.
+Model properties are read-only. Assignment raises a `InvalidInputError`; construct a new model for updated values.
 
 Response getters return generated entities for declared nested objects, lists of entities, and PHP arrays for dictionaries.
 
@@ -797,7 +802,7 @@ Inside a catch block, recover a synthetic create response's top-level string `id
 ```js
 if (
   error instanceof SdkError &&
-  error.kind === 'protocol' &&
+  error.name === 'protocol' &&
   error.status >= 200 &&
   error.status < 300 &&
   error.raw
@@ -819,7 +824,7 @@ if (
 ```php
 if (
   $error instanceof SdkError &&
-  $error->kind === 'protocol' &&
+  $error instanceof \Example\Library\Errors\UnexpectedResponseError &&
   $error->status >= 200 &&
   $error->status < 300 &&
   $error->raw !== null

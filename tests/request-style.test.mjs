@@ -137,10 +137,12 @@ test('positional Node calls preserve URL, JSON body, headers, options, aliases a
   await c.api.ping({ headers: { 'x-test': 'ping' } });
   assert.equal(requests.at(-1).headers['x-test'], 'ping');
   const count = requests.length;
-  await assert.rejects(c.api.createCustomer(), { kind: 'validation' });
-  await assert.rejects(c.api.updateOrder('ord1', []), { kind: 'validation' });
-  await assert.rejects(c.api.updateOrder('ord1', { unexpected: true }), { kind: 'validation' });
-  await assert.rejects(c.api.getOrder({ order_id: 'old' }), { kind: 'validation' });
+  await assert.rejects(c.api.createCustomer(), { name: 'InvalidInputError' });
+  await assert.rejects(c.api.updateOrder('ord1', []), { name: 'InvalidInputError' });
+  await assert.rejects(c.api.updateOrder('ord1', { unexpected: true }), {
+    name: 'InvalidInputError',
+  });
+  await assert.rejects(c.api.getOrder({ order_id: 'old' }), { name: 'InvalidInputError' });
   assert.equal(requests.length, count);
 });
 test('PHP positional methods dispatch the same wire request', () => {
@@ -435,14 +437,14 @@ test('positional types allow option-supplied idempotency and query-only optional
   await c.api.createCustomer({ name: 'a' }, { idempotencyKey: 'key' });
   assert.equal(requests.at(-1).headers['idempotency-key'], 'key');
   await c.api.ping(undefined, { idempotencyKey: 'key' });
-  await assert.rejects(c.api.ping(), { kind: 'validation' });
+  await assert.rejects(c.api.ping(), { name: 'InvalidInputError' });
   await c.api.optional({ limit: 2 });
   assert.equal(requests.at(-1).path, '/optional?limit=2');
   assert.equal(requests.at(-1).body, undefined);
   await c.api.optional({ limit: 2, name: 'a' });
   assert.equal(requests.at(-1).body, '{"name":"a"}');
   await assert.rejects(c.api.optional({ limit: 2, description: 'partial' }), {
-    kind: 'validation',
+    name: 'InvalidInputError',
   });
   const file = join(f.output, 'node/check.ts');
   writeFileSync(

@@ -104,7 +104,7 @@ test('generated error details redact shared definitions for explicit and default
       await assert.rejects(client.api.readValue(), (error) => {
         assert.deepEqual(error.details, expected);
         assert.equal(error.raw, body);
-        return error.kind === 'validation';
+        return error.name === 'InvalidRequestError';
       });
       const result = php(
         f.output,
@@ -114,11 +114,11 @@ test('generated error details redact shared definitions for explicit and default
         'https://example.invalid', transport:fn($r)=>['status'=>400,'headers'=>[],'body'=>$body]
       ));
       try{$client->api->readValue();exit(2);}
-      catch(Example\Regression\SdkError $e){echo json_encode(['kind'=>$e->kind,'details'=>$e->details,'raw'=>$e->raw]);}
+      catch(Example\Regression\SdkError $e){echo json_encode(['kind'=>substr(strrchr(get_class($e), chr(92)), 1),'details'=>$e->details,'raw'=>$e->raw]);}
     `,
         body,
       );
-      assert.equal(result.kind, 'validation');
+      assert.equal(result.kind, 'InvalidRequestError');
       assert.deepEqual(result.details, expected);
       assert.equal(result.raw, body);
     }
@@ -156,7 +156,10 @@ test('generated clients and schema adapters retain unknown alternatives for obje
           assert.deepEqual(JSON.parse(JSON.stringify((await client.api.readValue()).data)), value);
           for (const call of evaluate) assert.deepEqual(JSON.parse(JSON.stringify(call())), value);
         } else {
-          await assert.rejects(client.api.readValue(), (error) => error.kind === 'protocol');
+          await assert.rejects(
+            client.api.readValue(),
+            (error) => error.name === 'UnexpectedResponseError',
+          );
           for (const call of evaluate)
             assert.throws(call, /expected an object response alternative/);
         }
@@ -173,7 +176,7 @@ test('generated clients and schema adapters retain unknown alternatives for obje
         ));
         foreach([false,true] as $dynamic){
           try{$data=$dynamic?Example\Regression\Codec::plainNumbers(Example\Regression\Codec::normalize($case->value,$schema,response:true)):$client->api->readValue()->data;$results[]=['data'=>$data];}
-          catch(Example\Regression\SdkError $e){$results[]=['kind'=>$e->kind];}
+          catch(Example\Regression\SdkError $e){$results[]=['kind'=>substr(strrchr(get_class($e), chr(92)), 1)];}
         }
       }
       echo json_encode($results);
@@ -185,7 +188,7 @@ test('generated clients and schema adapters retain unknown alternatives for obje
         cases.flatMap(({ value, accepted }) =>
           accepted
             ? [{ data: value }, { data: value }]
-            : [{ kind: 'protocol' }, { kind: 'validation' }],
+            : [{ kind: 'UnexpectedResponseError' }, { kind: 'InvalidInputError' }],
         ),
       );
     }

@@ -210,19 +210,27 @@ test('shared default credential conformance in Node and PHP', async () => {
           break;
         }
       }
-      assert.equal(error?.code, c.reason, c.name + ': ' + error?.message);
       assert.equal(
-        error?.kind,
-        c.reason || c.authenticationError ? 'authentication' : undefined,
+        error?.code,
+        c.reason ?? (error ? '' : undefined),
+        c.name + ': ' + error?.message,
+      );
+      assert.equal(
+        error?.name,
+        error
+          ? c.apiStatuses?.includes(401)
+            ? 'AuthenticationError'
+            : 'ConfigurationError'
+          : undefined,
         c.name,
       );
       assert.deepEqual(seen, c.headers ?? [], c.name);
       assert.equal(exchanges, c.exchanges?.length ?? 0, c.name);
       if (c.rotateFile) assert.notEqual(sentSubjects[0], sentSubjects[1]);
       if (c.echoToken) {
-        assert.equal(error.details.iss, 'synthetic-issuer');
-        assert.equal(error.details.sub, 'synthetic-subject');
-        assert.match(error.details.error_description, /Rejected \[REDACTED\]/);
+        assert.equal(error.workloadIdentity.iss, 'synthetic-issuer');
+        assert.equal(error.workloadIdentity.sub, 'synthetic-subject');
+        assert.match(error.workloadIdentity.errorDescription, /Rejected \[REDACTED\]/);
       }
       const debug =
         inspect([client, options.apiKey, error, events], { depth: 20 }) +
@@ -231,13 +239,13 @@ test('shared default credential conformance in Node and PHP', async () => {
         for (const value of [token, encodeURIComponent(token)]) {
           for (const surface of [
             error.message,
-            JSON.stringify(error.details),
+            JSON.stringify(error.workloadIdentity),
             inspect(error),
             debug,
           ])
             assert.ok(!surface.includes(value), c.name + ' response token leaked');
         }
-        assert.ok(error.details.error_description.includes('[REDACTED]'));
+        assert.ok(error.workloadIdentity.errorDescription.includes('[REDACTED]'));
       }
       if (subject) assert.ok(!debug.includes(subject), c.name + ' subject leaked');
       assert.doesNotMatch(debug, /synthetic-exchanged-|synthetic-api-key|synthetic-access-token/);
@@ -360,14 +368,14 @@ test('shared credential concurrency scenarios in Node', async () => {
           .catch((error) => error);
         // Allow the waiter to join the owner's exchange, then wake it independently.
         await new Promise((resolve) => setTimeout(resolve, 5));
-        if (c.stop === 'cancelled') controller.abort();
+        if (c.stop === 'CancelledError') controller.abort();
         else await new Promise((resolve) => setTimeout(resolve, c.deadlineMs + 10));
         if (c.ownerFirst) {
           release();
           await owner;
         }
         const error = await waiter;
-        assert.equal(error?.kind, c.stop, c.name);
+        assert.equal(error?.name, c.stop, c.name);
         if (!c.ownerFirst) {
           assert.equal(seen.length, 0, c.name + ' owner must still be waiting');
           release();
@@ -676,7 +684,7 @@ test('GitHub Actions source in Node and PHP: auto, single exchange, permission a
 require $argv[1] . '/src/autoload.php';
 $client = new Example\\Discovery\\Client(new Example\\Discovery\\ClientOptions(baseUrl: $argv[2], allowInsecureHttp: true));
 try { for ($i = 0; $i < 100; $i++) $client->api->read(); echo 'ok'; }
-catch (Example\\Discovery\\SdkError $e) { if (str_contains($e->getMessage(), 'synthetic-github-request-secret')) exit(2); echo $e->errorCode; }
+catch (Example\\Discovery\\SdkError $e) { if (str_contains($e->getMessage(), 'synthetic-github-request-secret')) exit(2); echo $e->code; }
 `,
   );
   try {

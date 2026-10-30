@@ -102,13 +102,13 @@ const rows = [
     })),
   ),
   { name: 'GET conflict', status: 409, signal: 'same_request', failures: 1, calls: 2 },
-  { name: 'none wins over status', signal: 'none', failures: 3, calls: 1, error: 'server' },
+  { name: 'none wins over status', signal: 'none', failures: 3, calls: 1, error: 'ServerError' },
   {
     name: 'after_refresh wins over status',
     signal: 'after_refresh',
     failures: 3,
     calls: 1,
-    error: 'server',
+    error: 'ServerError',
   },
   {
     name: 'after_refresh conflict',
@@ -116,16 +116,16 @@ const rows = [
     signal: 'after_refresh',
     failures: 3,
     calls: 1,
-    error: 'conflict',
+    error: 'ConflictError',
   },
-  { name: 'unknown signal vetoes', signal: 'future', failures: 3, calls: 1, error: 'server' },
+  { name: 'unknown signal vetoes', signal: 'future', failures: 3, calls: 1, error: 'ServerError' },
   {
     name: '412 never retries',
     status: 412,
     signal: 'same_request',
     failures: 3,
     calls: 1,
-    error: 'conflict',
+    error: 'ConflictError',
   },
   { name: 'proxy HTML fallback', status: 502, raw: '<html>proxy</html>', failures: 2, calls: 3 },
   ...[429, 500, 502, 503, 504].map((status) => ({
@@ -144,7 +144,7 @@ const rows = [
     status: 400,
     failures: 3,
     calls: 1,
-    error: 'validation',
+    error: 'InvalidRequestError',
   },
   { name: 'transport retry', op: 'auto', transport: true, failures: 2, calls: 3 },
   {
@@ -167,7 +167,7 @@ const rows = [
     name: 'required missing key',
     op: 'required',
     calls: 0,
-    error: 'validation',
+    error: 'InvalidInputError',
     outcome: 'not_sent',
     message: /api.required.*idempotencyKey/,
   },
@@ -177,7 +177,7 @@ const rows = [
     transport: true,
     failures: 2,
     calls: 1,
-    error: 'transport',
+    error: 'ConnectionError',
   },
   {
     name: 'none write response once',
@@ -185,7 +185,7 @@ const rows = [
     signal: 'same_request',
     failures: 2,
     calls: 1,
-    error: 'server',
+    error: 'ServerError',
   },
   {
     name: 'lower attempt budget',
@@ -194,7 +194,7 @@ const rows = [
     signal: 'same_request',
     failures: 3,
     calls: 1,
-    error: 'server',
+    error: 'ServerError',
   },
   {
     name: 'caller cannot raise limit',
@@ -203,7 +203,7 @@ const rows = [
     transport: true,
     failures: 10,
     calls: 3,
-    error: 'transport',
+    error: 'ConnectionError',
   },
   {
     name: 'transport exhausted exposes key',
@@ -211,14 +211,14 @@ const rows = [
     transport: true,
     failures: 3,
     calls: 3,
-    error: 'transport',
+    error: 'ConnectionError',
   },
   {
     name: 'pre-send validation exposes generated key',
     op: 'auto',
     options: { maxAttempts: 0 },
     calls: 0,
-    error: 'validation',
+    error: 'InvalidInputError',
     outcome: 'not_sent',
   },
   {
@@ -226,7 +226,7 @@ const rows = [
     op: 'required',
     options: { idempotencyKey: 'saved-key', maxAttempts: 0 },
     calls: 0,
-    error: 'validation',
+    error: 'InvalidInputError',
     outcome: 'not_sent',
   },
   {
@@ -237,7 +237,7 @@ const rows = [
     signal: 'same_request',
     failures: 3,
     calls: 1,
-    error: 'server',
+    error: 'ServerError',
     retryAfterMs: 10000,
   },
   {
@@ -248,7 +248,7 @@ const rows = [
     signal: 'same_request',
     failures: 3,
     calls: 1,
-    error: 'server',
+    error: 'ServerError',
     date: true,
   },
   {
@@ -258,7 +258,7 @@ const rows = [
     signal: 'same_request',
     failures: 3,
     calls: 1,
-    error: 'server',
+    error: 'ServerError',
   },
   {
     name: 'capped half-to-full jitter',
@@ -316,7 +316,7 @@ async function nodeCase(row) {
     return { calls, key: result.meta.idempotencyKey ?? null, elapsed: performance.now() - start };
   } catch (error) {
     if (row.message) assert.match(error.message, row.message);
-    if (row.error === 'server') {
+    if (row.error === 'ServerError') {
       assert.equal(error.code, 'old_rule');
       assert.equal(
         error.details.remediation.retry,
@@ -328,7 +328,7 @@ async function nodeCase(row) {
     return {
       calls,
       key: error.idempotencyKey ?? null,
-      error: error.kind,
+      error: error.name,
       outcome: error.outcome,
       retryAfterMs: error.retryAfterMs,
       elapsed: performance.now() - start,
@@ -374,7 +374,7 @@ foreach(json_decode(file_get_contents($argv[2]),true) as $row){
     $calls[]=$request['headers']['idempotency-key']??null;
     if(count($calls)<=($row['failures']??0)){
       if($row['transport']??false)throw new \RuntimeException('Synthetic reset');
-      if($row['timeout']??false){usleep(6000);throw new \RuntimeException('Synthetic timeout after send');}
+      if($row['deadline']??false){usleep(6000);throw new \RuntimeException('Synthetic timeout after send');}
       return ['status'=>$row['status']??503,'headers'=>$row['headers']??[],'body'=>$row['raw']];
     }
     return ['status'=>204,'headers'=>[],'body'=>''];
@@ -382,8 +382,8 @@ foreach(json_decode(file_get_contents($argv[2]),true) as $row){
   try{$result=$client->api->{$row['op']??'read'}([],new \RetrySignals\RequestOptions(...($row['options']??[])));$results[]=['calls'=>$calls,'key'=>$result->meta['idempotencyKey']??null,'elapsed'=>(hrtime(true)-$start)/1000000];}
   catch(\RetrySignals\SdkError $error){
     if(($row['name']??'')==='required missing key' && !str_contains($error->getMessage(),'api.required requires idempotencyKey'))throw new \Exception('Missing method/key guidance');
-    if(($row['error']??null)==='server' && ($error->errorCode!=='old_rule'||$error->outcome!=='response'))throw new \Exception('Lost last error');
-    $results[]=['calls'=>$calls,'key'=>$error->idempotencyKey,'error'=>$error->kind,'outcome'=>$error->outcome,'retryAfterMs'=>$error->retryAfterMs,'elapsed'=>(hrtime(true)-$start)/1000000];
+    if(($row['error']??null)==='ServerError' && ($error->code!=='old_rule'||$error->outcome!=='response'))throw new \Exception('Lost last error');
+    $results[]=['calls'=>$calls,'key'=>$error->idempotencyKey,'error'=>substr(strrchr(get_class($error), chr(92)), 1),'outcome'=>$error->outcome,'retryAfterMs'=>$error->retryAfterMs,'elapsed'=>(hrtime(true)-$start)/1000000];
   }
 }
 echo json_encode($results,JSON_THROW_ON_ERROR);`,
@@ -578,7 +578,7 @@ test('default transports retry a timeout after send with the same key and preser
     assert.equal(calls.get(result.meta.idempotencyKey), 2);
     await assert.rejects(
       client.api.auto({}, { idempotencyKey: 'node-deadline', timeoutMs: 1000, deadlineMs: 100 }),
-      (error) => error.kind === 'deadline' && error.idempotencyKey === 'node-deadline',
+      (error) => error.name === 'TimeoutError' && error.idempotencyKey === 'node-deadline',
     );
     assert.equal(calls.get('node-deadline'), 1);
     const { stdout } = await promisify(execFile)('php', [
@@ -590,7 +590,7 @@ $r=$c->api->auto([],new \RetrySignals\RequestOptions(timeoutMs:100,deadlineMs:30
 if($r->meta['attempts']!==2)throw new \Exception('Did not retry timeout');
 echo $r->meta['idempotencyKey'];
 try{$c->api->auto([],new \RetrySignals\RequestOptions(idempotencyKey:'php-deadline',timeoutMs:1000,deadlineMs:100));throw new \Exception('No deadline');}
-catch(\RetrySignals\SdkError $e){if($e->kind!=='deadline'||$e->idempotencyKey!=='php-deadline')throw $e;}
+catch(\RetrySignals\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='TimeoutError'||$e->idempotencyKey!=='php-deadline')throw $e;}
 $c->close();`,
       join(output, 'php'),
       baseUrl,
@@ -641,7 +641,7 @@ test('truncated responses retain Retry-After and the HTTP 412 veto in generated 
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   const assertError = (error, row, key) => {
-    assert.equal(error.kind, 'transport', row.name);
+    assert.equal(error.name, 'ConnectionError', row.name);
     assert.equal(error.outcome, 'unknown', row.name);
     assert.equal(error.status, row.status, row.name);
     assert.equal(error.retryAfterMs, row.retryAfterMs, row.name);
@@ -675,7 +675,7 @@ foreach(json_decode($argv[3],true) as $row){
     $result=$c->api->auto([],new \RetrySignals\RequestOptions(idempotencyKey:$key,deadlineMs:1000));
     $results[]=['attempts'=>$result->meta['attempts']];
   }catch(\RetrySignals\SdkError $e){
-    $results[]=['kind'=>$e->kind,'outcome'=>$e->outcome,'status'=>$e->status,'retryAfterMs'=>$e->retryAfterMs,'retryAllowed'=>$e->retryAllowed,'idempotencyKey'=>$e->idempotencyKey];
+    $results[]=['name'=>substr(strrchr(get_class($e), chr(92)), 1),'outcome'=>$e->outcome,'status'=>$e->status,'retryAfterMs'=>$e->retryAfterMs,'retryAllowed'=>$e->retryAllowed,'idempotencyKey'=>$e->idempotencyKey];
   }
 }
 $c->close();echo json_encode($results);`,
@@ -697,7 +697,7 @@ $c->close();echo json_encode($results);`,
 });
 
 test('keyed cancellation and protocol failures expose their resolved key without retrying', async () => {
-  for (const failure of ['cancelled', 'protocol']) {
+  for (const failure of ['CancelledError', 'UnexpectedResponseError']) {
     let calls = 0;
     const client = new sdk.Client({
       baseUrl: 'https://example.invalid',
@@ -707,21 +707,21 @@ test('keyed cancellation and protocol failures expose their resolved key without
       },
     });
     await assert.rejects(
-      client.api.auto({}, failure === 'cancelled' ? { signal: AbortSignal.abort() } : {}),
-      (error) => error.kind === failure && /^flint-sdk-/.test(error.idempotencyKey),
+      client.api.auto({}, failure === 'CancelledError' ? { signal: AbortSignal.abort() } : {}),
+      (error) => error.name === failure && /^flint-sdk-/.test(error.idempotencyKey),
     );
-    assert.equal(calls, failure === 'cancelled' ? 0 : 1);
+    assert.equal(calls, failure === 'CancelledError' ? 0 : 1);
   }
   execFileSync('php', [
     '-r',
     String.raw`
 require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
-foreach(['cancelled','protocol'] as $kind){
-$calls=0;$token=new \RetrySignals\Cancellation();if($kind==='cancelled')$token->cancel();
+foreach(['CancelledError','UnexpectedResponseError'] as $kind){
+$calls=0;$token=new \RetrySignals\Cancellation();if($kind==='CancelledError')$token->cancel();
 $c=new \RetrySignals\Client(new \RetrySignals\ClientOptions(baseUrl:'https://example.invalid',transport:function()use(&$calls){$calls++;return ['status'=>200,'headers'=>[],'body'=>'unexpected body'];}));
 try{$c->api->auto([],new \RetrySignals\RequestOptions(cancellation:$token));throw new \Exception('No failure');}
-catch(\RetrySignals\SdkError $e){if($e->kind!==$kind||!str_starts_with($e->idempotencyKey??'','flint-sdk-')||$e->__debugInfo()['idempotencyKey']!==$e->idempotencyKey)throw $e;}
-if($calls!==($kind==='cancelled'?0:1))throw new \Exception('Unexpected retry');
+catch(\RetrySignals\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!==$kind||!str_starts_with($e->idempotencyKey??'','flint-sdk-')||$e->__debugInfo()['idempotencyKey']!==$e->idempotencyKey)throw $e;}
+if($calls!==($kind==='CancelledError'?0:1))throw new \Exception('Unexpected retry');
 }`,
     join(output, 'php'),
   ]);

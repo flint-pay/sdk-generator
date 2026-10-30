@@ -53,7 +53,7 @@ for (const scenario of cases) {
         }
       };
       if (scenario.error) {
-        await assert.rejects(consume, { kind: scenario.error });
+        await assert.rejects(consume, { name: scenario.error });
         assert.equal(calls, 1);
         assert.deepEqual(seen, []);
       } else {
@@ -113,7 +113,7 @@ foreach (json_decode(file_get_contents($argv[2]), true) as $case) {
                 $seen[] = $helper === 'Pages' ? $data['items'][0]['id'] : $data['id'];
                 $GLOBALS['clockMs'] += $case['consumerMs'];
             }
-        } catch (\Example\Payments\SdkError $e) { $error = $e->kind; }
+        } catch (\Example\Payments\SdkError $e) { $error = substr(strrchr(get_class($e), chr(92)), 1); }
         check($error === ($case['error'] ?? null), $case['name'].' '.$helper.': unexpected error '.($error ?? 'none'));
         if ($error !== null) {
             check($calls === 1 && $seen === [], 'slow page must fail before yielding');

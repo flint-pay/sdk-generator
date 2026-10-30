@@ -338,56 +338,55 @@ function internEnumerationLists(files: Map<string, string>, target: string): voi
 }
 
 const errorRows = [
-  ['400, 422', 'validation', 'ValidationError', 'Fix the input; do not retry unchanged.'],
-  ['401, 403', 'authentication', 'AuthenticationError', 'Fix credentials or permissions.'],
-  ['404', 'not_found', 'NotFoundError', 'Check the identifier and environment.'],
-  ['409, 412', 'conflict', 'ConflictError', 'Read current state and reconcile; 412 never retries.'],
-  ['429', 'rate_limit', 'RateLimitError', 'Honor retryAfterMs within the retry budget.'],
-  ['500-599', 'server', 'ServerError', 'Retry only when replay-safe; reconcile unknown mutations.'],
-  ['Other HTTP errors', 'api', 'ApiError', 'Inspect the error code and correct the request.'],
+  ['400, 422', 'InvalidRequestError', 'ApiError', 'Fix the request.'],
+  ['401', 'AuthenticationError', 'ApiError', 'Fix credentials.'],
+  ['403', 'PermissionError', 'ApiError', 'Check permissions.'],
+  ['404', 'NotFoundError', 'ApiError', 'Check the identifier and environment.'],
+  ['409, 412', 'ConflictError', 'ApiError', 'Read current state and reconcile.'],
+  ['429', 'RateLimitError', 'ApiError', 'Honor retryAfterMs.'],
+  ['500-599', 'ServerError', 'ApiError', 'Retry only when allowed.'],
+  ['Other error statuses', 'ApiError', 'SdkError', 'Inspect status and code.'],
+  ['No usable response', 'ConnectionError', 'SdkError', 'Reconcile unknown outcomes.'],
   [
-    'No HTTP response',
-    'transport',
-    'ConnectionError',
-    'Retry when allowed; reconcile unknown outcomes.',
-  ],
-  [
-    'Attempt timeout',
-    'timeout',
+    'Attempt timeout or overall deadline',
     'TimeoutError',
-    'Retry only when replay-safe; reconcile unknown outcomes.',
+    'ConnectionError',
+    'Reconcile before resubmitting.',
   ],
-  ['Overall deadline', 'deadline', 'DeadlineError', 'Reconcile before starting another call.'],
+  ['Invalid call input', 'InvalidInputError', 'SdkError', 'Fix the input.'],
   [
-    'Local cancellation',
-    'cancelled',
-    'CancelledError',
-    'Remote work may continue; reconcile its state.',
+    'Invalid options, credentials or destination',
+    'ConfigurationError',
+    'SdkError',
+    'Fix configuration.',
   ],
+  ['Caller cancellation', 'CancelledError', 'SdkError', 'Remote work may continue.'],
+  ['Unusable success response', 'UnexpectedResponseError', 'SdkError', 'Inspect raw explicitly.'],
   [
-    'Invalid response',
-    'protocol',
-    'ProtocolError',
-    'Inspect raw explicitly; do not blindly resubmit.',
+    'Rejected webhook',
+    'WebhookVerificationError',
+    'SdkError',
+    'Check the delivery and verification arguments.',
   ],
-  ['Rejected destination', 'destination', 'DestinationError', 'Fix baseUrl or allowedOrigins.'],
+  ['Pagination limit', 'PaginationLimitError', 'SdkError', 'Resume pagination explicitly.'],
 ] as const;
+function statusErrorRow(status: number) {
+  return (
+    errorRows.find(([statuses]) => statuses.split(', ').includes(String(status))) ??
+    (status >= 500 && status < 600 ? errorRows[6]! : errorRows[7]!)
+  );
+}
 export function operationErrors(op: Operation): string {
   const rows = Object.entries(op.responses)
     .filter(([status, response]) => response.classification === 'error' || status === 'default')
-    .map(([status]) => {
-      if (status === 'default')
-        return '| Other error statuses (default) | Status-dependent (see error reference) | Status-dependent |';
-      const code = Number(status);
-      const row =
-        errorRows.find(([statuses]) => statuses.split(', ').includes(status)) ??
-        (code >= 500 && code < 600 ? errorRows[5]! : errorRows[6]!);
-      return `| ${status} | ${row[2]} | ${row[1]} |`;
-    });
-  return `#### Errors\n\n${rows.length ? '| Status | Error class | Kind |\n| --- | --- | --- |\n' + rows.join('\n') + '\n\n' : 'No explicit HTTP error responses declared.\n\n'}Other failures: [runtime error reference](RUNTIME.md#error-reference).\n\n`;
+    .map(
+      ([status]) =>
+        `| ${status} | ${status === 'default' ? 'Status-dependent (see error reference)' : statusErrorRow(Number(status))[1]} |`,
+    );
+  return `#### Errors\n\n${rows.length ? '| Status | Error class |\n| --- | --- |\n' + rows.join('\n') + '\n\n' : 'No explicit HTTP error responses declared.\n\n'}Other failures: [runtime error reference](RUNTIME.md#error-reference).\n\n`;
 }
 export function errorReference(target: 'node' | 'php', apiNameText = 'the API'): string {
-  return `## Error reference\n\nEvery class below extends \`SdkError\`. ${target === 'node' ? 'Import subclasses through `errors`.' : 'Subclasses live in the `Errors` namespace.'}\n\n| Status or trigger | Kind | Class | Action |\n| --- | --- | --- | --- |\n${errorRows.map((r) => '| ' + r.join(' | ') + ' |').join('\n')}\n\n| Field | Meaning |\n| --- | --- |\n| ${target === 'node' ? 'code' : 'errorCode'} | Error code from ${apiNameText}, or a stable local reason; distinct from HTTP status. |\n| details | Structured details from ${apiNameText} or the runtime, when available. |\n| ${target === 'node' ? 'meta.requestId' : "meta['requestId']"} | Server request ID for support and correlation; may be absent. |\n| idempotencyKey | Resolved key; persist it with the action. |\n| retryAfterMs | Valid server Retry-After, in milliseconds. |\n| outcome | not_sent: no dispatch; response: an HTTP response; unknown: remote completion uncertain. |\n| status | HTTP status, or ${target === 'node' ? 'undefined' : 'null'} without a response. |\n| retryAllowed | Whether the failure permits another replay-safe attempt. |\n| raw | Original buffered body for explicit recovery; may contain sensitive data. |\n\nAn unknown outcome requires reconciliation using the original action and saved key before resubmission. An automatic key protects one SDK call only; persist an application key for recovery across calls.\n\n`;
+  return `## Error reference\n\nEvery error extends \`SdkError\`. ${target === 'node' ? 'Import subclasses through `errors`.' : 'Subclasses live in the `Errors` namespace.'} API classes follow HTTP status alone, never the error code. Constructors accept a message and ${target === 'node' ? 'an init object' : 'named arguments'}.\n\n| Status or trigger | Class | Parent | Action |\n| --- | --- | --- | --- |\n${errorRows.map((r) => '| ' + r.join(' | ') + ' |').join('\n')}\n\n| Field | Meaning |\n| --- | --- |\n| code | Error code from ${apiNameText}${target === 'php' ? '; getCode() returns the same string.' : '.'} |\n| status | HTTP status, absent without a response. |\n| operation | SDK method for the call. |\n| outcome | not_sent, response or unknown. Reconcile unknown outcomes before resubmitting. |\n| retryAllowed | Whether another replay-safe attempt is allowed. |\n| requestId | Last response request ID. |\n| requestIds | Request IDs received across attempts, in order. |\n| idempotencyKey | Resolved key; persist it with the action. |\n| attempts | Number of attempts, including credential retries. |\n| durationMs | Whole-call duration. |\n| retryAfterMs | Valid Retry-After in milliseconds. |\n| headers | Last response headers; excluded from inspection. |\n| raw | Buffered body for explicit recovery; excluded from inspection. |\n\nAPI errors retain structured \`details\` from ${apiNameText} when available. An automatic key protects one SDK call only; persist an application key for recovery across calls.\n\n`;
 }
 
 type Option = readonly [string, string, string, string];

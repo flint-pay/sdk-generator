@@ -14,11 +14,7 @@ import {
   schemaEnumValues,
   type SchemaEnumValues,
 } from './schema-documentation.js';
-import {
-  publicTypePlanner,
-  publicTypeDeclarations,
-  RUNTIME_ERROR_DETAILS,
-} from './public-type-plan.js';
+import { publicTypePlanner, publicTypeDeclarations } from './public-type-plan.js';
 import type { TypeCertificate } from './type-certificate.js';
 import { REQUEST_OPTIONS } from './request-options.js';
 import { responseOnlyModels } from './schema-usage.js';
@@ -778,6 +774,7 @@ export interface CompiledSdkContract {
   node: {
     /** Absent in historical records predating these additive runtime APIs. */
     errorClasses?: true;
+    errorSurfaceVersion?: number;
     webhookReasons?: true;
     standaloneWebhook?: true;
     authentication?: NodeAuthenticationPlan;
@@ -824,6 +821,7 @@ export interface CompiledSdkContract {
   };
   php: {
     errorClasses?: true;
+    errorSurfaceVersion?: number;
     webhookReasons?: true;
     standaloneWebhook?: true;
     runtime: CompiledRuntimePlan;
@@ -1099,7 +1097,7 @@ export function compileSdkContract(source: Contract): {
       ]),
     ),
     node: {
-      errorClasses: true,
+      errorSurfaceVersion: 2,
       ...(c.config.webhook ? { webhookReasons: true, standaloneWebhook: true } : {}),
       clientOptions: {
         declaration: compileClientOptions(c),
@@ -1193,7 +1191,7 @@ export function compileSdkContract(source: Contract): {
       ...webhookDeclarations(c, models),
     },
     php: {
-      errorClasses: true,
+      errorSurfaceVersion: 2,
       ...(c.config.webhook ? { webhookReasons: true } : {}),
       // PHP class names are case-insensitive. Preserve a public Webhooks model
       // instead of emitting the optional standalone verifier over its class file.
@@ -1475,7 +1473,6 @@ export function compileSdkContract(source: Contract): {
     });
     if (plan.node.errorTypes) {
       const typed = plan.node.errorTypes.details !== 'unknown';
-      plan.node.errorTypes.details += ' | (' + RUNTIME_ERROR_DETAILS + ')';
       if (typed) plan.runtime.errorDetailsCertificate = certificate(plan.node.errorTypes.details);
     }
     for (const operation of plan.runtime.operations) {

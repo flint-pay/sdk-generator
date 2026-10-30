@@ -129,7 +129,7 @@ test('portable digit and word classes match ECMAScript in both generated clients
       operation: 'save',
       input: { body: { ['p' + i]: value } },
       responses: [],
-      error: { kind: 'validation' },
+      error: { name: 'InvalidInputError' },
       attempts: 0,
     })),
   ]);
@@ -185,7 +185,7 @@ test('untyped HTTP parameters fail diagnosis while explicit scalar parameters re
         operation: 'read',
         input: { value: null },
         responses: [],
-        error: { kind: 'validation' },
+        error: { name: 'InvalidInputError' },
         attempts: 0,
       },
       {
@@ -193,7 +193,7 @@ test('untyped HTTP parameters fail diagnosis while explicit scalar parameters re
         operation: 'read',
         input: { value: {} },
         responses: [],
-        error: { kind: 'validation' },
+        error: { name: 'InvalidInputError' },
         attempts: 0,
       },
     ]),
@@ -247,7 +247,7 @@ test('dictionary narrowing rejects formerly accepted values and blocks a patch r
     },
   };
   await new before.Client(options).api.save({ body: { flag: true } });
-  const phpCall = String.raw`$sent=0;$c=new PolicySdk\Client(new PolicySdk\ClientOptions('https://example.invalid',transport:function($r)use(&$sent){$sent++;return ['status'=>204,'headers'=>[],'body'=>''];}));try{$c->api->save(new PolicySdk\ApiSaveInput(['body'=>['flag'=>true]]));echo json_encode(['sent'=>$sent]);}catch(PolicySdk\SdkError $e){echo json_encode(['sent'=>$sent,'kind'=>$e->kind]);}`;
+  const phpCall = String.raw`$sent=0;$c=new PolicySdk\Client(new PolicySdk\ClientOptions('https://example.invalid',transport:function($r)use(&$sent){$sent++;return ['status'=>204,'headers'=>[],'body'=>''];}));try{$c->api->save(new PolicySdk\ApiSaveInput(['body'=>['flag'=>true]]));echo json_encode(['sent'=>$sent]);}catch(PolicySdk\SdkError $e){echo json_encode(['sent'=>$sent,'kind'=>substr(strrchr(get_class($e), chr(92)), 1)]);}`;
   assert.deepEqual(php(f, phpCall), { sent: 1 });
   f.doc.paths['/values'].post.requestBody.content['application/json'].schema.additionalProperties =
     { type: 'string' };
@@ -255,10 +255,10 @@ test('dictionary narrowing rejects formerly accepted values and blocks a patch r
   assert(emit(f).compatibility.some((c) => c.severity === 'breaking'));
   const after = await import(pathToFileURL(join(f.out, 'node/index.js')).href + '?after');
   await assert.rejects(new after.Client(options).api.save({ body: { flag: true } }), {
-    kind: 'validation',
+    name: 'InvalidInputError',
   });
   assert.equal(sent, 1);
-  assert.deepEqual(php(f, phpCall), { sent: 0, kind: 'validation' });
+  assert.deepEqual(php(f, phpCall), { sent: 0, kind: 'InvalidInputError' });
   assert.throws(() => prepareRelease(f.out, join(f.dir, 'patch')), /major/);
   f.cfg.version = '2.0.0';
   emit(f);
@@ -348,7 +348,7 @@ test('irrelevant dictionary policies preserve Node/PHP requests and allow patch 
         await c.api.save({ body: value });
         assert.equal(body, JSON.stringify(value));
         assert.equal(php(f, call), body);
-        await assert.rejects(c.api.save({ body: {} }), { kind: 'validation' });
+        await assert.rejects(c.api.save({ body: {} }), { name: 'InvalidInputError' });
       }
       assert.equal(prepareRelease(f.out, join(f.dir, 'patch')).version, '1.0.1');
     }
@@ -482,7 +482,7 @@ Object.values((await c.api.read()).data).map(value=>value.toUpperCase());`;
   // An extra key selects the dictionary member in the public union. Its string
   // promise must be certified even though the new closed schema accepts this body.
   await assert.rejects(client.api.read(), (error) => {
-    assert.equal(error.kind, 'protocol');
+    assert.equal(error.name, 'UnexpectedResponseError');
     assert.equal(error.raw, '{"flag":123}');
     return true;
   });
@@ -526,7 +526,7 @@ consume((await c.api.read()).data);`;
   assert.equal((await client('{"id":"abc"}').api.read()).data.id, 'abc');
   await assert.rejects(
     client('{}').api.read(),
-    (error) => error.kind === 'protocol' && /required/.test(error.cause?.message),
+    (error) => error.name === 'UnexpectedResponseError' && /required/.test(error.cause?.message),
   );
   assert.throws(() => prepareRelease(f.out, join(f.dir, 'patch')), /major/);
   f.cfg.version = '2.0.0';
@@ -567,7 +567,7 @@ const c=new Client({baseUrl:'https://example.invalid'});
   assert.equal(consume((await new Before(options(200, '{"id":"abc"}')).api.read()).data), 'ABC');
   await assert.rejects(
     new Before(options(200, '{}')).api.read(),
-    (error) => error.kind === 'protocol' && /required/.test(error.cause?.message),
+    (error) => error.name === 'UnexpectedResponseError' && /required/.test(error.cause?.message),
   );
 
   // A different schema that retains the runtime guarantee remains compatible.
@@ -1101,7 +1101,7 @@ test('scalar-or-array query filters retain both input shapes in Node and PHP', a
           operation: 'read',
           input: { status },
           responses: [],
-          error: { kind: 'validation' },
+          error: { name: 'InvalidInputError' },
           attempts: 0,
         })),
       ]),

@@ -67,38 +67,31 @@ function fixture(t, errors, operations) {
   return { source, config, output: join(dir, 'sdk') };
 }
 
-function phpErrorContext(row, status, requestId) {
-  return {
-    ...row,
-    message:
-      row.message +
-      ` [HTTP ${status}${row.code !== null ? ', code ' + row.code : ''}${requestId ? ', requestId ' + requestId : ''}]`,
-  };
-}
+const phpErrorContext = (row) => row;
 
 const cases = [
   {
     status: 404,
     payload: { code: 'NOT_FOUND', message: 'Payment intent pi_1 not found' },
     message: 'Payment intent pi_1 not found',
-    kind: 'not_found',
+    kind: 'NotFoundError',
   },
   {
     status: 500,
     payload: { message: 'Payment service unavailable' },
     message: 'Payment service unavailable',
-    kind: 'server',
+    kind: 'ServerError',
   },
-  { status: 503, payload: { message: 'Try later' }, message: 'Try later', kind: 'server' },
+  { status: 503, payload: { message: 'Try later' }, message: 'Try later', kind: 'ServerError' },
   ...[
-    [400, 'validation'],
-    [422, 'validation'],
-    [401, 'authentication'],
-    [403, 'authentication'],
-    [409, 'conflict'],
-    [412, 'conflict'],
-    [429, 'rate_limit'],
-    [418, 'api'],
+    [400, 'InvalidRequestError'],
+    [422, 'InvalidRequestError'],
+    [401, 'AuthenticationError'],
+    [403, 'PermissionError'],
+    [409, 'ConflictError'],
+    [412, 'ConflictError'],
+    [429, 'RateLimitError'],
+    [418, 'ApiError'],
   ].map(([status, kind]) => ({
     status,
     payload: { message: 'Provider explanation' },
@@ -119,19 +112,19 @@ const cases = [
     status: 404,
     payload: { message },
     message: 'API returned HTTP 404',
-    kind: 'not_found',
+    kind: 'NotFoundError',
   })),
   ...['\u0085', '\0', ' café 😀 '].map((message) => ({
     status: 404,
     payload: { message },
     message,
-    kind: 'not_found',
+    kind: 'NotFoundError',
   })),
   ...['', '<html>Bad gateway</html>', '{broken', 'null', '42', '"just a string"'].map((raw) => ({
     status: 502,
     raw,
     message: 'API returned HTTP 502',
-    kind: 'server',
+    kind: 'ServerError',
   })),
 ];
 
@@ -186,27 +179,19 @@ for (const nested of [false, true]) {
         assert.ok(error instanceof SdkError);
         assert.equal(error.message, c.message);
         assert.equal(error.status, c.status);
-        assert.equal(error.meta.status, c.status);
-        assert.equal(error.kind, c.kind);
-        assert.equal(error.code, c.payload?.code);
+        assert.equal(error.status, c.status);
+        assert.equal(error.name, c.kind);
+        assert.equal(error.code, c.payload?.code ?? '');
         assert.equal(error.outcome, 'response');
         assert.equal(error.retryAllowed, [408, 429, 500, 502, 503, 504].includes(c.status));
         assert.equal(error.raw, c.raw);
-        assert.equal(error.meta.requestId, 'req_000MH8MWQ7PKC0N7TXERB9CJ9P');
+        assert.equal(error.requestId, 'req_000MH8MWQ7PKC0N7TXERB9CJ9P');
         if (nested && c.payload) assert.deepEqual(error.details, { reason: 'Missing payment' });
         const logged = inspect(error);
         assert.ok(logged.includes('stack:'));
         assert.ok(logged.includes('code:'));
         assert.ok(logged.includes('details:'));
-        const className = {
-          authentication: 'AuthenticationError',
-          validation: 'ValidationError',
-          rate_limit: 'RateLimitError',
-          not_found: 'NotFoundError',
-          conflict: 'ConflictError',
-          server: 'ServerError',
-          api: 'ApiError',
-        }[c.kind];
+        const className = c.kind;
         assert.equal(error.name, className);
         assert.ok(logged.includes(className + ':'));
         assert.ok(!logged.includes('cookie-secret'));
@@ -214,18 +199,30 @@ for (const nested of [false, true]) {
           message: c.message,
           status: c.status,
           kind: c.kind,
-          code: c.payload?.code ?? null,
+          code: c.payload?.code ?? '',
           details: error.details ?? null,
           raw: c.raw,
         });
         return true;
       });
       assert.equal(events.length, [408, 429, 500, 502, 503, 504].includes(c.status) ? 3 : 1);
-      assert.equal(events[0].errorKind, c.kind);
+      assert.equal(
+        events[0].errorKind,
+        {
+          400: 'validation',
+          422: 'validation',
+          401: 'authentication',
+          403: 'authentication',
+          404: 'not_found',
+          409: 'conflict',
+          412: 'conflict',
+          429: 'rate_limit',
+        }[c.status] ?? (c.status >= 500 ? 'server' : 'api'),
+      );
       assert.equal(events[0].status, c.status);
       assert.equal(events[0].message, undefined);
     }
-    const local = new SdkError('validation', 'Invalid input');
+    const local = new SdkError('Invalid input');
     assert.equal(local.status, undefined);
     const result = spawnSync(
       'php',
@@ -240,14 +237,14 @@ foreach(json_decode(stream_get_contents(STDIN),true) as $c){
   $client=new Example\Errors\Client(new Example\Errors\ClientOptions('https://example.invalid',transport:fn($r)=>['status'=>$c['status'],'headers'=>['Trace-Id'=>'req_000MH8MWQ7PKC0N7TXERB9CJ9P','x-request-id'=>'req_000MH8MWQ7PKC0N7TXERB9CJ9P','set-cookie'=>'cookie-secret'],'body'=>$c['raw']]));
   try{$client->api->readValue();throw new Exception('Expected error');}
   catch(Example\Errors\SdkError $e){
-    if($e->status!==$e->meta['status']||$e->outcome!=='response'||$e->retryAllowed!==in_array($c['status'],[408,429,500,502,503,504],true)||$e->meta['requestId']!=='req_000MH8MWQ7PKC0N7TXERB9CJ9P')throw $e;
+    if($e->status!==$e->status||$e->outcome!=='response'||$e->retryAllowed!==in_array($c['status'],[408,429,500,502,503,504],true)||$e->requestId!=='req_000MH8MWQ7PKC0N7TXERB9CJ9P')throw $e;
     if(!array_key_exists('stack',$e->__debugInfo())||!$e->__debugInfo()['stack'])throw new Exception('Missing stack');
     ob_start();var_dump($e);$logged=ob_get_clean();
-    if(str_contains($logged,'cookie-secret')||!str_contains($logged,'details')||!str_contains($logged,'errorCode'))throw new Exception('Invalid debug output');
-    $results[]=['message'=>$e->getMessage(),'status'=>$e->status,'kind'=>$e->kind,'code'=>$e->errorCode,'details'=>$e->details,'raw'=>$e->raw];
+    if(str_contains($logged,'cookie-secret')||!str_contains($logged,'details')||!str_contains($logged,'code'))throw new Exception('Invalid debug output');
+    $results[]=['message'=>$e->getMessage(),'status'=>$e->status,'kind'=>substr(strrchr(get_class($e), chr(92)), 1),'code'=>$e->code,'details'=>$e->details,'raw'=>$e->raw];
   }
 }
-if((new Example\Errors\SdkError('validation','Invalid input'))->status!==null)throw new Exception('Unexpected status');
+if((new Example\Errors\SdkError('Invalid input'))->status!==null)throw new Exception('Unexpected status');
 echo json_encode($results);
 `,
         join(f.output, 'php'),
@@ -255,10 +252,7 @@ echo json_encode($results);
       { encoding: 'utf8', input: JSON.stringify(wireCases) },
     );
     assert.equal(result.status, 0, result.stderr + result.stdout);
-    assert.deepEqual(
-      JSON.parse(result.stdout),
-      expected.map((row) => phpErrorContext(row, row.status, 'req_000MH8MWQ7PKC0N7TXERB9CJ9P')),
-    );
+    assert.deepEqual(JSON.parse(result.stdout), expected);
   });
 }
 
@@ -305,7 +299,7 @@ require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
 $body=stream_get_contents(STDIN);
 $client=new Example\Errors\Client(new Example\Errors\ClientOptions('https://example.invalid',redactFields:['customField'],transport:fn($r)=>['status'=>404,'headers'=>[],'body'=>$body]));
 try{$client->api->readValue();exit(1);}catch(Example\Errors\SdkError $e){
-  if($e->getMessage()!=='[REDACTED] [HTTP 404, code [REDACTED]]'||$e->errorCode!=='[REDACTED]'||$e->raw!==$body)throw $e;
+  if($e->getMessage()!=='[REDACTED]'||$e->code!=='[REDACTED]'||$e->raw!==$body)throw $e;
   ob_start();var_dump($e);$logged=ob_get_clean();
   if(str_contains($logged,'hidden-')||!str_contains($logged,'Missing payment'))throw new Exception('Invalid redaction');
 }
@@ -381,7 +375,7 @@ test('redaction does not turn invalid messages or codes into valid strings', asy
   );
   const expected = bodies.map((body) => ({
     message: 'API returned HTTP 404',
-    code: typeof JSON.parse(body).error.privateDetail === 'string' ? '[REDACTED]' : null,
+    code: typeof JSON.parse(body).error.privateDetail === 'string' ? '[REDACTED]' : '',
   }));
   for (const [i, body] of bodies.entries()) {
     const client = new Client({
@@ -390,7 +384,7 @@ test('redaction does not turn invalid messages or codes into valid strings', asy
     });
     await assert.rejects(client.api.readValue(), (error) => {
       assert.equal(error.message, expected[i].message);
-      assert.equal(error.code ?? null, expected[i].code);
+      assert.equal(error.code, expected[i].code);
       return true;
     });
   }
@@ -402,7 +396,7 @@ test('redaction does not turn invalid messages or codes into valid strings', asy
 require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';$rows=[];
 foreach(json_decode(stream_get_contents(STDIN)) as $body){
 $c=new Example\Errors\Client(new Example\Errors\ClientOptions('https://example.invalid',transport:fn($r)=>['status'=>404,'headers'=>[],'body'=>$body]));
-try{$c->api->readValue();exit(1);}catch(Example\Errors\SdkError $e){$rows[]=['message'=>$e->getMessage(),'code'=>$e->errorCode];}}
+try{$c->api->readValue();exit(1);}catch(Example\Errors\SdkError $e){$rows[]=['message'=>$e->getMessage(),'code'=>$e->code];}}
 echo json_encode($rows);
 `,
       join(f.output, 'php'),
@@ -454,7 +448,7 @@ for (const redacted of [false, true]) {
           expected: {
             attempts: string ? 2 : 1,
             message: string ? (redacted ? '[REDACTED]' : token) : 'API returned HTTP 503',
-            code: string ? (redacted ? '[REDACTED]' : token) : null,
+            code: string ? (redacted ? '[REDACTED]' : token) : '',
             retryAllowed: string,
             details: {
               [redacted ? 'privateMessage' : 'message']: publicValue,
@@ -480,7 +474,7 @@ for (const redacted of [false, true]) {
           {
             attempts,
             message: error.message,
-            code: error.code ?? null,
+            code: error.code,
             retryAllowed: error.retryAllowed,
             details: error.details,
             raw: error.raw,
@@ -499,7 +493,7 @@ require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';$rows=[];
 foreach(json_decode(stream_get_contents(STDIN),true) as $body){
   $attempts=0;
   $c=new Example\Errors\Client(new Example\Errors\ClientOptions('https://example.invalid',transport:function($r)use(&$attempts,$body){$attempts++;return ['status'=>503,'headers'=>[],'body'=>$body];}));
-  try{$c->api->readValue();exit(1);}catch(Example\Errors\SdkError $e){$rows[]=['attempts'=>$attempts,'message'=>$e->getMessage(),'code'=>$e->errorCode,'retryAllowed'=>$e->retryAllowed,'details'=>$e->details,'raw'=>$e->raw];}
+  try{$c->api->readValue();exit(1);}catch(Example\Errors\SdkError $e){$rows[]=['attempts'=>$attempts,'message'=>$e->getMessage(),'code'=>$e->code,'retryAllowed'=>$e->retryAllowed,'details'=>$e->details,'raw'=>$e->raw];}
 }
 echo json_encode($rows);
 `,
@@ -544,7 +538,7 @@ test('error field paths cannot traverse internal numeric token wrappers in eithe
   });
   await assert.rejects(client.api.readValue(), (error) => {
     assert.equal(error.message, 'API returned HTTP 503');
-    assert.equal(error.code, undefined);
+    assert.equal(error.code, '');
     assert.equal(error.retryAllowed, false);
     assert.equal(attempts, 1);
     return true;
@@ -556,7 +550,7 @@ test('error field paths cannot traverse internal numeric token wrappers in eithe
       String.raw`
 require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';$attempts=0;$body=stream_get_contents(STDIN);
 $c=new Example\Errors\Client(new Example\Errors\ClientOptions('https://example.invalid',transport:function($r)use(&$attempts,$body){$attempts++;return ['status'=>503,'headers'=>[],'body'=>$body];}));
-try{$c->api->readValue();exit(1);}catch(Example\Errors\SdkError $e){echo json_encode(['message'=>$e->getMessage(),'code'=>$e->errorCode,'retryAllowed'=>$e->retryAllowed,'attempts'=>$attempts]);}
+try{$c->api->readValue();exit(1);}catch(Example\Errors\SdkError $e){echo json_encode(['message'=>$e->getMessage(),'code'=>$e->code,'retryAllowed'=>$e->retryAllowed,'attempts'=>$attempts]);}
 `,
       join(f.output, 'php'),
     ],
@@ -564,8 +558,8 @@ try{$c->api->readValue();exit(1);}catch(Example\Errors\SdkError $e){echo json_en
   );
   assert.equal(result.status, 0, result.stderr + result.stdout);
   assert.deepEqual(JSON.parse(result.stdout), {
-    message: 'API returned HTTP 503 [HTTP 503]',
-    code: null,
+    message: 'API returned HTTP 503',
+    code: '',
     retryAllowed: false,
     attempts: 1,
   });
@@ -601,7 +595,7 @@ test('error field paths traverse JSON containers without indexing scalar strings
       expected: {
         attempts: row.message ? 2 : 1,
         message: row.message && !redacted ? row.message : 'API returned HTTP 503',
-        code: row.message && !redacted ? '1' : null,
+        code: row.message && !redacted ? '1' : '',
         retryAllowed: !!row.message,
         details: redacted
           ? { message: '[REDACTED]', code: '[REDACTED]' }
@@ -625,7 +619,7 @@ test('error field paths traverse JSON containers without indexing scalar strings
         {
           attempts,
           message: error.message,
-          code: error.code ?? null,
+          code: error.code,
           retryAllowed: error.retryAllowed,
           details: error.details,
           raw: error.raw,
@@ -646,7 +640,7 @@ require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';$rows=[];
 foreach(json_decode(stream_get_contents(STDIN),true) as $case){
   $attempts=0;$body=$case['body'];
   $c=new Example\Errors\Client(new Example\Errors\ClientOptions('https://example.invalid',redactFields:$case['redacted']?['message','code']:[],transport:function($r)use(&$attempts,$body){$attempts++;return ['status'=>503,'headers'=>[],'body'=>$body];}));
-  try{$c->api->readValue();exit(1);}catch(Example\Errors\SdkError $e){$rows[]=['attempts'=>$attempts,'message'=>$e->getMessage(),'code'=>$e->errorCode,'retryAllowed'=>$e->retryAllowed,'details'=>$e->details,'raw'=>$e->raw];}
+  try{$c->api->readValue();exit(1);}catch(Example\Errors\SdkError $e){$rows[]=['attempts'=>$attempts,'message'=>$e->getMessage(),'code'=>$e->code,'retryAllowed'=>$e->retryAllowed,'details'=>$e->details,'raw'=>$e->raw];}
 }
 echo json_encode($rows);
 `,
@@ -677,7 +671,7 @@ test('error detail paths cannot expose array length but retain JSON object membe
       transport: async () => new Response(body, { status: 503 }),
     });
     await assert.rejects(client.api.readValue(), (error) => {
-      assert.equal(error.kind, 'server');
+      assert.equal(error.name, 'ServerError');
       assert.equal(error.status, 503);
       assert.equal(error.details ?? null, details);
       assert.equal(error.raw, body);
@@ -692,7 +686,7 @@ test('error detail paths cannot expose array length but retain JSON object membe
 require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';$rows=[];
 foreach(json_decode(stream_get_contents(STDIN),true) as $body){
   $c=new Example\Errors\Client(new Example\Errors\ClientOptions('https://example.invalid',maxAttempts:1,transport:fn()=>['status'=>503,'headers'=>[],'body'=>$body]));
-  try{$c->api->readValue();exit(1);}catch(Example\Errors\SdkError $e){$rows[]=['kind'=>$e->kind,'status'=>$e->status,'details'=>$e->details,'raw'=>$e->raw];}
+  try{$c->api->readValue();exit(1);}catch(Example\Errors\SdkError $e){$rows[]=['kind'=>substr(strrchr(get_class($e), chr(92)), 1),'status'=>$e->status,'details'=>$e->details,'raw'=>$e->raw];}
 }
 echo json_encode($rows);
 `,
@@ -703,6 +697,6 @@ echo json_encode($rows);
   assert.equal(result.status, 0, result.stderr + result.stdout);
   assert.deepEqual(
     JSON.parse(result.stdout),
-    cases.map(({ body, details }) => ({ kind: 'server', status: 503, details, raw: body })),
+    cases.map(({ body, details }) => ({ kind: 'ServerError', status: 503, details, raw: body })),
   );
 });

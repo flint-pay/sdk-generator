@@ -19,13 +19,13 @@
     "pageMs": 30001,
     "consumerMs": 0,
     "client": { "timeoutMs": 60000 },
-    "error": "deadline"
+    "error": "TimeoutError"
   },
   {
     "name": "slow page still exceeds request deadline",
     "pageMs": 101,
     "consumerMs": 0,
     "request": { "deadlineMs": 100 },
-    "error": "deadline"
+    "error": "TimeoutError"
   }
 ]

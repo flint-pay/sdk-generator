@@ -160,9 +160,9 @@ for (const surface of surfaces)
           break;
         }
       }
-      assert.equal(error?.kind, surface === 'token' ? (c.legacyError ?? c.error) : c.error, c.name);
+      assert.equal(error?.name, surface === 'token' ? (c.legacyError ?? c.error) : c.error, c.name);
       if (c.bodyFailures && error) {
-        assert.equal(error.meta.status, 401, c.name);
+        assert.equal(error.status, 401, c.name);
         assert.equal(error.outcome, 'response', c.name);
       }
       if (c.message) assert.equal(error.message, c.message, c.name);
@@ -253,10 +253,10 @@ test('default transports preserve the 401 refresh policy after truncated bodies'
       } catch (e) {
         error = e;
       }
-      assert.equal(error?.kind, c.error, c.name);
+      assert.equal(error?.name, c.error, c.name);
       if (error) {
         assert.equal(error.retryAllowed, false, c.name);
-        assert.equal(error.meta.status, 401, c.name);
+        assert.equal(error.status, 401, c.name);
       }
       assert.deepEqual(seen, c.headers, c.name);
       assert.equal(calls, c.calls, c.name);

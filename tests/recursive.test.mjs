@@ -101,7 +101,7 @@ test('selected recursive models preserve aliases, exact numbers and wire behavio
       operation: 'saveTree',
       input: { body: { id: 'a', amount: '1', children: [{ id: 'b' }] } },
       responses: [],
-      error: { kind: 'validation' },
+      error: { name: 'InvalidInputError' },
       attempts: 0,
     },
   ];
@@ -224,11 +224,11 @@ test('cyclic caller values fail before dispatch through the generated clients', 
   body.children = [body];
   await assert.rejects(
     client.api.saveTree({ body }),
-    (e) => e.kind === 'validation' && e.message.includes('nesting'),
+    (e) => e.name === 'InvalidInputError' && e.message.includes('nesting'),
   );
   assert.equal(calls, 0);
-  const php = `require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';$body=(object)['id'=>'cycle','amount'=>'1'];$body->children=[$body];try{new Example\\Trees\\ApiSaveTreeInput(['body'=>$body]);exit(1);}catch(Example\\Trees\\SdkError $e){echo $e->kind;}`;
+  const php = `require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';$body=(object)['id'=>'cycle','amount'=>'1'];$body->children=[$body];try{new Example\\Trees\\ApiSaveTreeInput(['body'=>$body]);exit(1);}catch(Example\\Trees\\SdkError $e){echo substr(strrchr(get_class($e), chr(92)), 1);}`;
   const result = spawnSync('php', ['-r', php, join(output, 'php')], { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, 'validation');
+  assert.equal(result.stdout, 'InvalidInputError');
 });

@@ -67,7 +67,7 @@ function rejected(name, body) {
     input: { body },
     responses: [],
     attempts: 0,
-    error: { kind: 'validation' },
+    error: { name: 'InvalidInputError' },
   };
 }
 async function fixtures(i, cases, disableAdapters = true) {
@@ -876,7 +876,10 @@ test('recursive field, item and dictionary siblings survive compaction and enfor
   });
   const cycle = { id: 'a', extra: true };
   cycle.child = cycle;
-  await assert.rejects(client.api.sendValue({ body: cycle }), (e) => e.kind === 'validation');
+  await assert.rejects(
+    client.api.sendValue({ body: cycle }),
+    (e) => e.name === 'InvalidInputError',
+  );
   assert.equal(attempts, 0);
   const file = join(i.output, 'node/consumer.ts');
   writeFileSync(
@@ -960,7 +963,7 @@ test('scalar and scalar-array parameter siblings preserve constraints and wire s
     input,
     responses: [],
     attempts: 0,
-    error: { kind: 'validation' },
+    error: { name: 'InvalidInputError' },
   });
   await fixtures(i, [
     {
@@ -1345,7 +1348,7 @@ test('composed tagged responses retain guards and PHP variants with all sibling 
         input: {},
         expected: { method: 'POST', path: '/v1/values' },
         responses: [{ status: 200, body: '{"kind":"paid","amount":5}' }],
-        error: { kind: 'protocol' },
+        error: { name: 'UnexpectedResponseError' },
       },
     ]);
     const sdk = await import(pathToFileURL(join(i.output, 'node/index.js')).href);
@@ -1415,9 +1418,9 @@ if(isApiSendValueResponseKnown(value)) {
       if($value->getAmount()!=='5'||$value->getTraceId()!=='abc')exit(3);
       var_dump($value);
       try { new SiblingsSdk\ApiSendValueResponse200Variant0(['kind'=>'paid','amount'=>'5']);exit(4); }
-      catch(SiblingsSdk\SdkError $e){if($e->kind!=='validation')throw $e;}
+      catch(SiblingsSdk\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='InvalidInputError')throw $e;}
       try { new SiblingsSdk\ApiSendValueResponse200Variant0(['kind'=>'paid','amount'=>'5','traceId'=>'abc','forbidden'=>true]);exit(5); }
-      catch(SiblingsSdk\SdkError $e){if($e->kind!=='validation')throw $e;}
+      catch(SiblingsSdk\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='InvalidInputError')throw $e;}
     `,
         join(i.output, 'php'),
       ],
@@ -1564,7 +1567,7 @@ test('dynamic numeric negation matches the established JSON kind', () => {
   assert.throws(
     () => serialize('7', { type: 'string', not: { not: { type: 'number', format: 'decimal' } } }),
     {
-      kind: 'validation',
+      name: 'InvalidInputError',
     },
   );
 });
@@ -1626,7 +1629,7 @@ test('recursive numeric siblings enforce bounds and enums at every value depth',
       const sdk = await import(pathToFileURL(join(i.output, 'node/index.js')).href);
       assert.throws(
         () => sdk.makeBranch({ amount: '1', child: { amount: '1' } }),
-        (e) => e.kind === 'validation',
+        (e) => e.name === 'InvalidInputError',
       );
       const php = spawnSync(
         'php',
@@ -1635,7 +1638,7 @@ test('recursive numeric siblings enforce bounds and enums at every value depth',
           String.raw`
         require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
         try { new SiblingsSdk\BranchInput(['amount'=>'1','child'=>['amount'=>'1']]);exit(2); }
-        catch(SiblingsSdk\SdkError $e){if($e->kind!=='validation')throw $e;}
+        catch(SiblingsSdk\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='InvalidInputError')throw $e;}
       `,
           join(i.output, 'php'),
         ],
@@ -1767,7 +1770,7 @@ test('optional undefined union fields are omitted before selection in generated 
         { requiredChoice: true, optionalChoice: null },
         { requiredChoice: true, optionalChoice: 5 },
       ])
-        await assert.rejects(client.api.sendValue({ body }), { kind: 'validation' });
+        await assert.rejects(client.api.sendValue({ body }), { name: 'InvalidInputError' });
       assert.equal(wires.length, sent);
     }
   }
@@ -1931,7 +1934,7 @@ client.api.sendValue({body:${input('text', "'5'")}});
           client.api.sendValue({
             body: form === 'nested' ? { values: [invalid], map: { first: value } } : invalid,
           }),
-          { kind: 'validation' },
+          { name: 'InvalidInputError' },
         );
       assert.equal(sent, 1);
     }
@@ -2561,7 +2564,7 @@ test('joint numeric search fails closed at its combination limit in both runtime
       String.raw`
 require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
 try{new SiblingsSdk\ApiSendValueInput(['body'=>['a'=>'99','b'=>'99']]);exit(2);}
-catch(SiblingsSdk\SdkError $e){if($e->kind!=='validation'||!str_contains($e->getMessage(),'256 alternative combinations'))throw $e;}
+catch(SiblingsSdk\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='InvalidInputError'||!str_contains($e->getMessage(),'256 alternative combinations'))throw $e;}
 `,
       join(i.output, 'php'),
     ],
@@ -2726,7 +2729,7 @@ test('numeric interpretations from invalidated alternatives fail before dispatch
 require 'templates/Runtime.php';
 foreach(json_decode(stream_get_contents(STDIN),true) as $schema){
   try { \SdkNamespace\Codec::normalize((object)['x'=>'2','y'=>'1'],$schema); throw new Exception('accepted invalidated contribution'); }
-  catch(\SdkNamespace\SdkError $e){ if($e->kind!=='validation'||!str_contains($e->getMessage(),'unmatched alternative'))throw $e; }
+  catch(\SdkNamespace\SdkError $e){ if(\SdkNamespace\SdkError::internalKind($e)!=='validation'||!str_contains($e->getMessage(),'unmatched alternative'))throw $e; }
   if(\SdkNamespace\Codec::encode(\SdkNamespace\Codec::normalize((object)['x'=>'2','y'=>'3'],$schema))!=='{"x":2,"y":3}')throw new Exception('wrong control wire');
 }
 `,

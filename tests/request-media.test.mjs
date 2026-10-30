@@ -93,7 +93,7 @@ test('selected JSON schema controls generated public request bytes in both targe
       operation: 'exchange',
       input: { body: { form_only: 7 } },
       responses: [],
-      error: { kind: 'validation' },
+      error: { name: 'InvalidInputError' },
       attempts: 0,
     },
   ];

@@ -168,12 +168,12 @@ foreach ($cases as $index => $case) {
         }
         check(
             isset($case['error']),
-            $case['name'] . ': unexpected ' . $e->kind . ': ' . $e->getMessage(),
+            $case['name'] . ': unexpected ' . get_class($e) . ': ' . $e->getMessage(),
         );
         foreach ($case['error'] as $k => $v) {
             $actual = match ($k) {
-                'status', 'requestId' => $e->meta[$k] ?? null,
-                'code' => $e->errorCode,
+                'name' => substr(strrchr(get_class($e), chr(92)), 1),
+                'code' => $e->code,
                 'details' => json_decode(
                     json_encode($e->details, JSON_THROW_ON_ERROR),
                     true,

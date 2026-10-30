@@ -500,16 +500,16 @@ test('API and signed webhooks share exact numeric types and decoding; plain inte
   assert.equal(plain.known, true);
   assert.equal(plain.event.data.signed, 5000);
   assert.throws(() => verify('{"event_type":"plain.updated","data":{"signed":9007199254740993}}'), {
-    kind: 'protocol',
+    name: 'WebhookVerificationError',
   });
   for (const raw of [
     '{"signed":1.5,"unsigned":2,"ordinary":1}',
     '{"signed":1,"unsigned":2,"ordinary":9007199254740993}',
   ]) {
     body = raw;
-    await assert.rejects(client.api.read(), { kind: 'protocol' });
+    await assert.rejects(client.api.read(), { name: 'UnexpectedResponseError' });
     assert.throws(() => verify('{"event_type":"reading.updated","data":' + raw + '}'), {
-      kind: 'protocol',
+      name: 'WebhookVerificationError',
     });
   }
   const consumer = join(f.output, 'node/consumer.ts');
@@ -545,9 +545,9 @@ foreach(json_decode(file_get_contents($argv[2]),true) as $case){
 if($verify('{"event_type":"plain.updated","data":{"signed":5000}}')['event']->getData()->getSigned()!==5000)throw new Exception('Plain integer changed');
 foreach(['{"signed":1.5,"unsigned":2,"ordinary":1}','{"signed":1,"unsigned":2,"ordinary":9007199254740993}'] as $raw){
  $body=$raw;
- foreach([fn()=>$c->api->read(),fn()=>$verify('{"event_type":"reading.updated","data":'.$raw.'}')] as $call){try{$call();throw new Exception('Expected protocol error');}catch(Example\Types\SdkError $e){if($e->kind!=='protocol')throw $e;}}
+ foreach([fn()=>$c->api->read(),fn()=>$verify('{"event_type":"reading.updated","data":'.$raw.'}')] as $index=>$call){try{$call();throw new Exception('Expected protocol error');}catch(Example\Types\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!==($index===0?'UnexpectedResponseError':'WebhookVerificationError'))throw $e;}}
 }
-try{$verify('{"event_type":"plain.updated","data":{"signed":9007199254740993}}');throw new Exception('Unsafe plain integer');}catch(Example\Types\SdkError $e){if($e->kind!=='protocol')throw $e;}
+try{$verify('{"event_type":"plain.updated","data":{"signed":9007199254740993}}');throw new Exception('Unsafe plain integer');}catch(Example\Types\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='WebhookVerificationError')throw $e;}
 `,
     join(f.output, 'php'),
     join(f.dir, 'cases.json'),
@@ -705,13 +705,13 @@ for (const style of ['object', 'positional']) {
       assert.equal(seen[0][name], value);
     await assert.rejects(
       c.api.send(...args, { credentials: { SessionID: 'x', SessionSecret: 'session-secret' } }),
-      { kind: 'validation' },
+      { name: 'InvalidInputError' },
     );
-    await assert.rejects(c.api.send(...args, { headers: { 'X-Session-ID': 'conflict' } }), {
-      kind: 'authentication',
+    await assert.rejects(c.api.send(...args, { headers: { 'X-Session-ID': 'ConflictError' } }), {
+      name: 'ConfigurationError',
     });
-    await assert.rejects(c.api.send(...args, { idempotencyKey: 'conflict' }), {
-      kind: 'validation',
+    await assert.rejects(c.api.send(...args, { idempotencyKey: 'ConflictError' }), {
+      name: 'InvalidInputError',
     });
     assert.equal(seen.length, 1);
     const consumer = join(f.output, 'node/consumer.ts');
@@ -749,7 +749,7 @@ $c=new Example\Types\Client(new Example\Types\ClientOptions(baseUrl:'https://exa
 if($response->meta['requestId']!=='req_007ARQX9HRSSV4DWBYC52DZKJ6')throw new Exception('Request ID metadata');
 foreach(['x-session-id'=>'session-id','x-session-secret'=>'session-secret','x-api-version'=>'v1','idempotency-key'=>'saved-key','x-request-id'=>'caller-id','x-tenant'=>'tenant'] as $name=>$value)if($seen[0][$name]!==$value)throw new Exception('Header '.$name);
 ` +
-        `foreach([new Example\\Types\\RequestOptions(credentials:['SessionID'=>'x','SessionSecret'=>'session-secret']),new Example\\Types\\RequestOptions(headers:['X-Session-ID'=>'conflict']),new Example\\Types\\RequestOptions(idempotencyKey:'conflict')] as $options){try{$c->api->send(${phpArgs},$options);throw new Exception('Expected failure');}catch(Example\\Types\\SdkError $e){}}\n` +
+        `foreach([new Example\\Types\\RequestOptions(credentials:['SessionID'=>'x','SessionSecret'=>'session-secret']),new Example\\Types\\RequestOptions(headers:['X-Session-ID'=>'ConflictError']),new Example\\Types\\RequestOptions(idempotencyKey:'ConflictError')] as $options){try{$c->api->send(${phpArgs},$options);throw new Exception('Expected failure');}catch(Example\\Types\\SdkError $e){}}\n` +
         String.raw`
 if(count($seen)!==1)throw new Exception('Invalid headers dispatched');
 `,
@@ -890,7 +890,9 @@ test('single-scheme credentials omit only authenticated header inputs and preser
   assert.equal(seen[0].headers['x-key'], 'client-key');
   assert.equal(seen[0].headers['x-version'], 'manual');
   assert.equal(seen[1].headers['x-key'], 'ordinary-value');
-  await assert.rejects(c.api.readProtected({ 'x-key': 'stale-value' }), { kind: 'validation' });
+  await assert.rejects(c.api.readProtected({ 'x-key': 'stale-value' }), {
+    name: 'InvalidInputError',
+  });
   writeFileSync(join(f.dir, 'raw.json'), JSON.stringify(raw));
   ok('php', [
     '-r',
@@ -903,7 +905,7 @@ $c->api->readAnonymous(['x-key'=>'ordinary-value']);
 $r=new Example\Types\Runtime(json_decode(file_get_contents($argv[2]),true),$options);
 $r->request('readProtected',['X-Version'=>'manual']);
 if($seen[0]['headers']['x-key']!=='client-key'||$seen[1]['headers']['x-key']!=='ordinary-value'||$seen[2]['headers']['x-key']!=='client-key')throw new Exception('Credential routing');
-try{$c->api->readProtected(['x-key'=>'stale-value']);throw new Exception('Expected stale input rejection');}catch(Example\Types\SdkError $e){if($e->kind!=='validation')throw $e;}
+try{$c->api->readProtected(['x-key'=>'stale-value']);throw new Exception('Expected stale input rejection');}catch(Example\Types\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='InvalidInputError')throw $e;}
 `,
     join(f.output, 'php'),
     join(f.dir, 'raw.json'),
@@ -997,7 +999,7 @@ for (const named of [false, true]) {
       for (const value of scenario.invalid)
         await assert.rejects(
           client(value).api['read' + scenario.id[0].toUpperCase() + scenario.id.slice(1)](),
-          { kind: 'validation' },
+          { name: 'InvalidInputError' },
           scenario.id,
         );
       assert.deepEqual(seen, [scenario.value], 'invalid credentials dispatched: ' + scenario.id);
@@ -1012,7 +1014,7 @@ foreach(json_decode(file_get_contents($argv[2]),true) as $case){
   $seen=[];
   $client=function($value)use($named,&$seen){return new Example\Types\Client(new Example\Types\ClientOptions(baseUrl:'https://example.invalid',token:$named?null:$value,authMode:$named?'key':null,credentials:$named?['key'=>['Key'=>$value]]:[],transport:function($r)use(&$seen){$seen[]=$r['headers']['x-key'];return ['status'=>204,'headers'=>[],'body'=>''];}));};
   $method='read'.ucfirst($case['id']);$client($case['value'])->api->$method();
-  foreach($case['invalid'] as $value){try{$client($value)->api->$method();throw new Exception('Invalid credential accepted: '.$method);}catch(Example\Types\SdkError $e){if($e->kind!=='validation')throw $e;}}
+  foreach($case['invalid'] as $value){try{$client($value)->api->$method();throw new Exception('Invalid credential accepted: '.$method);}catch(Example\Types\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='InvalidInputError')throw $e;}}
   if($seen!==[$case['value']])throw new Exception('Credential wire value: '.$method);
 }
 `,
@@ -1106,9 +1108,9 @@ c.api.bearer({});
   await c.api.checkout({}, { authMode: 'checkout' });
   assert.equal(seen[0]['x-checkout-id'], 'id');
   for (const method of ['anonymous', 'bearer']) {
-    await assert.rejects(c.api[method]({}), { kind: 'validation' });
+    await assert.rejects(c.api[method]({}), { name: 'InvalidInputError' });
     // origin/main already rejects these conflicting headers; retaining declarations does not change that guard.
-    await assert.rejects(c.api[method]({ 'x-checkout-id': 'id' }), { kind: 'authentication' });
+    await assert.rejects(c.api[method]({ 'x-checkout-id': 'id' }), { name: 'ConfigurationError' });
   }
   assert.equal(seen.length, 1);
   writeFileSync(join(f.dir, 'raw.json'), JSON.stringify(raw));
@@ -1125,7 +1127,7 @@ foreach([Example\Types\ApiAnonymousInput::class,Example\Types\ApiBearerInput::cl
 if((new ReflectionClass(Example\Types\ApiCheckoutInput::class))->hasMethod('getXCheckoutId'))throw new Exception('Credential getter retained');
 $seen=[];$c=new Example\Types\Client(new Example\Types\ClientOptions(baseUrl:'https://example.invalid',authMode:'bearer',credentials:['bearer'=>['Bearer'=>'synthetic-token'],'checkout'=>['CheckoutID'=>'id','CheckoutSecret'=>'secret']],transport:function($r)use(&$seen){$seen[]=$r['headers'];return ['status'=>204,'headers'=>[],'body'=>''];}));
 $c->api->checkout(options:new Example\Types\RequestOptions(authMode:'checkout'));
-foreach(['anonymous','bearer'] as $method)foreach([[] ,['x-checkout-id'=>'id']] as $input){try{$c->api->$method($input);throw new Exception('Expected rejection');}catch(Example\Types\SdkError $e){if($e->kind!==($input?'authentication':'validation'))throw $e;}}
+foreach(['anonymous','bearer'] as $method)foreach([[] ,['x-checkout-id'=>'id']] as $input){try{$c->api->$method($input);throw new Exception('Expected rejection');}catch(Example\Types\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!==($input?'ConfigurationError':'InvalidInputError'))throw $e;}}
 if(count($seen)!==1||$seen[0]['x-checkout-id']!=='id')throw new Exception('Credential dispatch');
 `,
     join(f.output, 'php'),
@@ -1243,8 +1245,8 @@ const missing:ApiSendInput={};
     },
   });
   const options = { idempotencyKey: 'saved', ifMatch: 'tag' };
-  await assert.rejects(c.api.send({}, options), { kind: 'validation' });
-  await assert.rejects(c.api.send({ 'X-Request-Id': 'caller' }), { kind: 'validation' });
+  await assert.rejects(c.api.send({}, options), { name: 'InvalidInputError' });
+  await assert.rejects(c.api.send({ 'X-Request-Id': 'caller' }), { name: 'InvalidInputError' });
   await c.api.send({ 'X-Request-Id': 'caller' }, options);
   assert.equal(seen.length, 1);
   assert.equal(seen[0]['x-request-id'], 'caller');
@@ -1256,7 +1258,7 @@ const missing:ApiSendInput={};
 require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
 $seen=[];$c=new Example\Types\Client(new Example\Types\ClientOptions(baseUrl:'https://example.invalid',transport:function($r)use(&$seen){$seen[]=$r['headers'];return ['status'=>204,'headers'=>[],'body'=>''];}));
 $options=new Example\Types\RequestOptions(idempotencyKey:'saved',ifMatch:'tag');
-foreach([[[],$options],[['X-Request-Id'=>'caller'],null]] as [$input,$o]){try{$c->api->send($input,$o);throw new Exception('Expected required header failure');}catch(Example\Types\SdkError $e){if($e->kind!=='validation')throw $e;}}
+foreach([[[],$options],[['X-Request-Id'=>'caller'],null]] as [$input,$o]){try{$c->api->send($input,$o);throw new Exception('Expected required header failure');}catch(Example\Types\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='InvalidInputError')throw $e;}}
 $c->api->send(['X-Request-Id'=>'caller'],$options);
 if(count($seen)!==1||$seen[0]['x-request-id']!=='caller'||$seen[0]['idempotency-key']!=='saved'||$seen[0]['if-match']!=='tag')throw new Exception('Required header dispatch');
 `,
@@ -1439,7 +1441,7 @@ test('Node consumers get canonical payload names, closed inputs, integer strings
   const source = join(f.output, 'node/consumer.ts');
   writeFileSync(
     source,
-    `import {Client, SdkError, errors, makeUpdateThingRequest, makeInputChild, type Thing, type DistinctThing, type InputValue} from './index.js';
+    `import {Client, errors, makeUpdateThingRequest, makeInputChild, type Thing, type DistinctThing, type InputValue} from './index.js';
 const c = new Client({baseUrl:'https://example.invalid'});
 const request = makeUpdateThingRequest({amount:9007199254740993n, status:'pending', child:makeInputChild({enabled:true})});
 const value: Promise<Thing> = c.things.update({body:request});
@@ -1464,10 +1466,11 @@ c.things.lookup({body:{id:'one',name:'one'}});
 c.things.lookup({body:{}});
 // @ts-expect-error the declared version retains its integer type
 c.things.lookup({body:{id:'one',expected_version:'2.5'}});
-declare const error: SdkError;
+declare const error: errors.ApiError;
 const code: 'INVALID_AMOUNT' | 'NOT_READY' | (string & {}) | undefined = error.code;
 if (error.details && 'field' in error.details) { const field: string | undefined = error.details.field; }
-if (error instanceof errors.ValidationError && error.details && 'message' in error.details) { const message: string | undefined = error.details.message; }
+// @ts-expect-error local errors do not expose API details
+new errors.InvalidInputError('synthetic').details;
 // @ts-expect-error response-only factories are absent
 import {makeThing} from './index.js';
 // @ts-expect-error redundant result names are absent
@@ -1558,13 +1561,15 @@ const omitted: InputValue<undefined> = undefined;
   );
   await assert.rejects(
     client.things.update({ body: { amount: 1n, status: 'pending', fixed: 8n } }),
-    { kind: 'validation' },
+    { name: 'InvalidInputError' },
   );
   unknownPayload = true;
   await assert.rejects(
     client.things.choose(),
     (error) =>
-      error.kind === 'protocol' && error.meta.status === 200 && error.raw.includes('future'),
+      error.name === 'UnexpectedResponseError' &&
+      error.status === 200 &&
+      error.raw.includes('future'),
   );
   assert.deepEqual(
     { ...(await client.things.chooseWithResponse()).body },
@@ -1685,8 +1690,8 @@ for (const nesting of ['direct', 'object', 'array', 'nullable']) {
     const source = join(f.output, 'node/consumer.ts');
     writeFileSync(
       source,
-      `import {SdkError, type Client} from './index.js';
-export function inspectError(error: SdkError) {
+      `import {errors, type Client} from './index.js';
+export function inspectError(error: errors.ApiError) {
   const details = ${errorAccess};
   if (details && 'foo' in details) return details.foo.toUpperCase();
   if (details && 'bar' in details) return details.bar.toFixed(1);
@@ -1739,7 +1744,7 @@ export function inspectPayload(value: Awaited<ReturnType<Client['choices']['get'
       status = 200;
       if (expected === undefined)
         await assert.rejects(client.choices.get(), (error) => {
-          assert.equal(error.kind, 'protocol');
+          assert.equal(error.name, 'UnexpectedResponseError');
           assert.deepEqual(JSON.parse(error.raw).data, value);
           return true;
         });
@@ -1756,7 +1761,7 @@ export function inspectPayload(value: Awaited<ReturnType<Client['choices']['get'
         return true;
       });
       status = 200;
-      await assert.rejects(client.choices.get(), { kind: 'protocol' });
+      await assert.rejects(client.choices.get(), { name: 'UnexpectedResponseError' });
     }
     const { plan } = compileSdkContract(f.contract);
     assert.equal(plan.php.runtime.errorDetailsCertificate, undefined);
@@ -1817,8 +1822,8 @@ test('nested future alternatives retain uncertainty through property guards on e
     const source = join(f.output, 'node/nested.ts');
     writeFileSync(
       source,
-      `import {SdkError, type Client} from './index.js';
-export function error(e:SdkError) {
+      `import {errors, type Client} from './index.js';
+export function error(e:errors.ApiError) {
  if(e.details && 'content' in e.details && 'foo' in e.details.content) {
   // @ts-expect-error future nested alternatives keep foo unknown
   e.details.content.foo.toUpperCase();
@@ -1857,7 +1862,7 @@ export async function full(c:Client) {
   }
 });
 
-test('error certification includes other statuses, operations and built-in detail keys', async (t) => {
+test('error certification includes other statuses and operations without local runtime detail keys', async (t) => {
   const object = (properties) => ({
     type: 'object',
     properties,
@@ -1904,17 +1909,13 @@ test('error certification includes other statuses, operations and built-in detai
   const source = join(f.output, 'node/error-union.ts');
   writeFileSync(
     source,
-    `import {SdkError} from './index.js';
-export function inspect(e:SdkError) {
+    `import {errors} from './index.js';
+export function inspect(e:errors.ApiError) {
  const v=e.details;
  if(!v) return;
  if('foo' in v) v.foo.toUpperCase();
  if('bar' in v) v.bar.toFixed();
  if('baz' in v) v.baz.toUpperCase();
- if('transportCode' in v && v.transportCode!==null) v.transportCode.toUpperCase();
- if('eventId' in v) v.eventId.toUpperCase();
- if('position' in v) v.position.toFixed();
- if('reason' in v) v.reason.toUpperCase();
 }`,
   );
   typecheck(source, ['--exactOptionalPropertyTypes']);
@@ -1931,15 +1932,7 @@ export function inspect(e:SdkError) {
     baseUrl: 'https://example.invalid',
     transport: async () => new Response(JSON.stringify({ error: detail }), { status: 400 }),
   });
-  for (const extra of [
-    { bar: 'invalid' },
-    { baz: 42 },
-    { transportCode: 42 },
-    { eventId: 42 },
-    { position: 'invalid' },
-    { reason: 42 },
-    { reason: 'valid key, missing required runtime companions' },
-  ]) {
+  for (const extra of [{ bar: 'invalid' }, { baz: 42 }]) {
     detail = { foo: 'safe', ...extra };
     await assert.rejects(client.api.first(), (e) => {
       assert.equal(e.details, undefined);
@@ -1954,22 +1947,7 @@ export function inspect(e:SdkError) {
     assert.doesNotThrow(() => consumer.inspect(e));
     return true;
   });
-  for (const detail of [
-    { transportCode: 'ETIMEDOUT' },
-    { eventId: 'evt_synthetic', position: 1 },
-  ]) {
-    const e = new sdk.SdkError(
-      'transport',
-      'Synthetic',
-      'unknown',
-      false,
-      undefined,
-      undefined,
-      detail,
-    );
-    assert.deepEqual(e.details, detail);
-    assert.doesNotThrow(() => consumer.inspect(e));
-  }
+  assert.equal('details' in new sdk.errors.ConnectionError('Synthetic'), false);
   const { plan } = compileSdkContract(f.contract);
   for (const certificate of [
     plan.runtime.errorDetailsCertificate,
@@ -2078,7 +2056,7 @@ export function webhook(v:VerifiedWebhook){if(v.known){if('foo' in v.event.data)
       assert.deepEqual(await Array.fromAsync(client.api.readItems(), consumer.item), ['SAFE']);
     else
       await assert.rejects(Array.fromAsync(client.api.readItems()), (e) => {
-        assert.equal(e.kind, 'protocol');
+        assert.equal(e.name, 'UnexpectedResponseError');
         assert.deepEqual(JSON.parse(e.raw).data, [body]);
         return true;
       });
@@ -2145,7 +2123,7 @@ for (const extra of [true, { type: 'string' }]) {
     const source = join(f.output, 'node/open.ts');
     writeFileSync(
       source,
-      `import {SdkError,type Client} from './index.js';
+      `import {errors,type Client} from './index.js';
 export function inspect(v: Awaited<ReturnType<Client['choices']['get']>>) {
  if ('bar' in v) {
  // @ts-expect-error an open member admits bar without promising a number
@@ -2156,7 +2134,7 @@ export function inspect(v: Awaited<ReturnType<Client['choices']['get']>>) {
 export function inspectFuture(v: Awaited<ReturnType<Client['choices']['get']>>) {
  if ('future' in v) return v.foo.toUpperCase();
 }
-export function inspectError(e:SdkError) {
+export function inspectError(e:errors.ApiError) {
  if(e.details && 'transportCode' in e.details) {
  // @ts-expect-error open API details retain unknown index-signature values
  e.details.transportCode.toUpperCase();
@@ -2215,7 +2193,7 @@ export function inspectError(e:SdkError) {
     ]) {
       value = bad;
       status = 200;
-      await assert.rejects(client.choices.get(), { kind: 'protocol' });
+      await assert.rejects(client.choices.get(), { name: 'UnexpectedResponseError' });
       status = 400;
       await assert.rejects(client.choices.get(), (error) => {
         assert.equal(error.details, undefined);
@@ -2271,8 +2249,8 @@ test('canonical integer strings uphold bigint template types in projected respon
   const source = join(f.output, 'node/integer.ts');
   writeFileSync(
     source,
-    `import {SdkError,type Client} from './index.js';
-export function inspect(e:SdkError): \`\${bigint}\`|undefined {
+    `import {errors,type Client} from './index.js';
+export function inspect(e:errors.ApiError): \`\${bigint}\`|undefined {
  if(e.details && 'amount' in e.details) return e.details.amount;
 }
 export function payload(v:Awaited<ReturnType<Client['choices']['get']>>): \`\${bigint}\`|undefined {
@@ -2315,7 +2293,7 @@ const newline: \`\${bigint}\`='1\\n';
     amount = spelling;
     status = 200;
     await assert.rejects(client.choices.get(), (e) => {
-      assert.equal(e.kind, 'protocol');
+      assert.equal(e.name, 'UnexpectedResponseError');
       assert.equal(JSON.parse(e.raw).data.amount, spelling);
       return true;
     });

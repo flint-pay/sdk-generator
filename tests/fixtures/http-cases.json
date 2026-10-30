@@ -250,9 +250,9 @@
       }
     ],
     "error": {
-      "kind": "transport",
       "outcome": "unknown",
-      "retryAllowed": true
+      "retryAllowed": true,
+      "name": "ConnectionError"
     },
     "attempts": 3
   },
@@ -279,10 +279,10 @@
       }
     ],
     "error": {
-      "kind": "server",
       "outcome": "response",
       "status": 503,
-      "requestId": "req_00AV1QVJN55GPCW6QWTJX01DR5"
+      "requestId": "req_00AV1QVJN55GPCW6QWTJX01DR5",
+      "name": "ServerError"
     }
   },
   {
@@ -302,9 +302,9 @@
       }
     ],
     "error": {
-      "kind": "protocol",
       "outcome": "response",
-      "status": 200
+      "status": 200,
+      "name": "UnexpectedResponseError"
     }
   },
   {
@@ -333,10 +333,10 @@
       }
     ],
     "error": {
-      "kind": "conflict",
       "outcome": "response",
       "status": 412,
-      "retryAllowed": false
+      "retryAllowed": false,
+      "name": "ConflictError"
     }
   },
   {
@@ -359,9 +359,9 @@
       }
     ],
     "error": {
-      "kind": "destination",
       "outcome": "response",
-      "status": 302
+      "status": 302,
+      "name": "UnexpectedResponseError"
     }
   },
   {
@@ -405,8 +405,8 @@
       }
     ],
     "error": {
-      "kind": "server",
-      "outcome": "response"
+      "outcome": "response",
+      "name": "ServerError"
     }
   },
   {
@@ -423,8 +423,8 @@
     },
     "responses": [],
     "error": {
-      "kind": "validation",
-      "outcome": "not_sent"
+      "outcome": "not_sent",
+      "name": "InvalidInputError"
     },
     "attempts": 0
   },
@@ -439,8 +439,8 @@
     },
     "responses": [],
     "error": {
-      "kind": "validation",
-      "outcome": "not_sent"
+      "outcome": "not_sent",
+      "name": "InvalidInputError"
     },
     "attempts": 0
   },

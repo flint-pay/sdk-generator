@@ -201,7 +201,7 @@ for (const style of ['object', 'positional']) {
       const call = () =>
         client.api[scenario.operation ?? 'sendValue'](scenario.input, scenario.options);
       if (scenario.error) {
-        await assert.rejects(call(), { kind: 'validation' }, scenario.name);
+        await assert.rejects(call(), { name: 'InvalidInputError' }, scenario.name);
         assert.equal(requests.length, 0, scenario.name);
       } else {
         await call();
@@ -263,7 +263,7 @@ foreach($cases as $case){
  try{$method=$case['operation']??'sendValue';$c->api->$method($case['input'],new ManagedHeaders\RequestOptions(...$case['options']));}
  catch(ManagedHeaders\SdkError $e){$error=$e;}
  if(!empty($case['error'])){
-  if($error?->kind!=='validation'||count($requests)!==0)throw new Exception($case['name']);
+  if(substr(strrchr(get_class($error), chr(92)), 1)!=='InvalidInputError'||count($requests)!==0)throw new Exception($case['name']);
  }else{
   if($error)throw $error;
   if(count($requests)!==(!empty($case['retry'])?2:1))throw new Exception($case['name']);

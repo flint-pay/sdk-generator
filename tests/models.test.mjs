@@ -77,7 +77,7 @@ test('scalar, array, nullable and nested model factories serialize through both 
   });
   await client.api.save({ body: payload });
   assert.equal(wire, '{"title":"hello","tags":["one"],"note":null}');
-  const php = String.raw`require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';$title=new Example\Models\TitleInput('hello');$tags=new Example\Models\TagsInput(['one']);$note=new Example\Models\NoteInput(null);$p=new Example\Models\PayloadInput(['title'=>$title,'tags'=>$tags,'note'=>$note]);$client=new Example\Models\Client(new Example\Models\ClientOptions('https://example.invalid',transport:function($r){echo $r['body'];return ['status'=>204,'headers'=>[],'body'=>''];}));$client->api->save(new Example\Models\ApiSaveInput(['body'=>$p]));if($tags->jsonSerialize()!==['one']||$note->jsonSerialize()!==null)exit(2);try{new Example\Models\TitleInput('');exit(3);}catch(Example\Models\SdkError $e){if($e->kind!=='validation')exit(4);}`;
+  const php = String.raw`require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';$title=new Example\Models\TitleInput('hello');$tags=new Example\Models\TagsInput(['one']);$note=new Example\Models\NoteInput(null);$p=new Example\Models\PayloadInput(['title'=>$title,'tags'=>$tags,'note'=>$note]);$client=new Example\Models\Client(new Example\Models\ClientOptions('https://example.invalid',transport:function($r){echo $r['body'];return ['status'=>204,'headers'=>[],'body'=>''];}));$client->api->save(new Example\Models\ApiSaveInput(['body'=>$p]));if($tags->jsonSerialize()!==['one']||$note->jsonSerialize()!==null)exit(2);try{new Example\Models\TitleInput('');exit(3);}catch(Example\Models\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='InvalidInputError')exit(4);}`;
   const r = spawnSync('php', ['-r', php, join(out, 'php')], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, wire);
@@ -131,10 +131,10 @@ test('cyclic opaque additional values fail before either client sends a request'
       throw Error('sent');
     },
   });
-  await assert.rejects(c.api.save({ body }), (e) => e.kind === 'validation');
+  await assert.rejects(c.api.save({ body }), (e) => e.name === 'InvalidInputError');
   assert.equal(calls, 0);
-  const php = String.raw`require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';$extra=[];$extra[]=&$extra;$client=new Example\Models\Client(new Example\Models\ClientOptions('https://example.invalid',transport:function(){exit(2);}));try{$client->api->save(new Example\Models\ApiSaveInput(['body'=>['title'=>'hello','tags'=>[],'note'=>null,'extra'=>$extra]]));exit(3);}catch(Example\Models\SdkError $e){echo $e->kind;}`;
+  const php = String.raw`require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';$extra=[];$extra[]=&$extra;$client=new Example\Models\Client(new Example\Models\ClientOptions('https://example.invalid',transport:function(){exit(2);}));try{$client->api->save(new Example\Models\ApiSaveInput(['body'=>['title'=>'hello','tags'=>[],'note'=>null,'extra'=>$extra]]));exit(3);}catch(Example\Models\SdkError $e){echo substr(strrchr(get_class($e), chr(92)), 1);}`;
   const r = spawnSync('php', ['-r', php, join(out, 'php')], { encoding: 'utf8', timeout: 5000 });
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout, 'validation');
+  assert.equal(r.stdout, 'InvalidInputError');
 });
