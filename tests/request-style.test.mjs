@@ -17,6 +17,7 @@ const body = {
   type: 'object',
   additionalProperties: false,
   properties: { metadata: { type: 'object', additionalProperties: string } },
+  example: { metadata: { source: 'store' } },
 };
 const response = { type: 'object', required: ['id'], properties: { id: string } };
 const path = (name) => ({ name, in: 'path', required: true, schema: string });
@@ -271,6 +272,68 @@ await c.api.updateOrder('id');`;
   for (const op of f.contract.operations)
     execFileSync('php', ['-l', join(f.output, 'php/examples/api-' + op.method + '.php')]);
 });
+test('operation wire inputs stay internal while positional params and component inputs stay public', () => {
+  for (const style of [null, 'object']) {
+    const f = fixture({
+      style,
+      bodySchema: { $ref: '#/components/schemas/MetadataPayload' },
+      apiEdit(api) {
+        api.components = { schemas: { MetadataPayload: body } };
+      },
+    });
+    const file = join(f.output, 'node/input-visibility.ts');
+    writeFileSync(
+      file,
+      `import { Client, type MetadataPayloadInput } from './index.js';
+// @ts-expect-error Operation wire inputs are not exported from the root.
+import type { ApiUpdateOrderInput } from './index.js';
+// @ts-expect-error Operation wire inputs are not exported from resource subpaths.
+import type { ApiUpdateOrderInput as ScopedWireInput } from './resources/api.js';
+const body: MetadataPayloadInput = { metadata: { source: 'store' } };
+const client = new Client({ baseUrl: 'https://example.invalid' });
+${
+  style === 'object'
+    ? "client.api.updateOrder({ order_id: 'id', body });"
+    : `import type { ApiUpdateOrderParams } from './index.js';
+import type { ApiUpdateOrderParams as ScopedParams } from './resources/api.js';
+const params: ApiUpdateOrderParams = body;
+const scoped: ScopedParams = params;
+client.api.updateOrder('id', scoped);`
+}
+`,
+    );
+    execFileSync(
+      process.execPath,
+      [
+        resolve('node_modules/typescript/bin/tsc'),
+        '--strict',
+        '--noEmit',
+        '--module',
+        'NodeNext',
+        '--target',
+        'ES2022',
+        '--typeRoots',
+        resolve('node_modules/@types'),
+        file,
+      ],
+      { stdio: 'pipe' },
+    );
+    const wire = f.read('php/src/classes/ApiUpdateOrderInput.php');
+    assert.match(wire, /\* @internal\b/);
+    if (style !== 'object') {
+      assert.doesNotMatch(f.read('php/src/classes/ApiUpdateOrderParams.php'), /@internal/);
+      assert.match(f.read('php/src/classes/ApiResource.php'), /ApiUpdateOrderParams/);
+    }
+    assert.equal(
+      php(
+        f,
+        `echo str_contains((new ReflectionClass('Example\\\\Requests\\\\ApiUpdateOrderInput'))->getDocComment(), '@internal') ? 'internal' : 'public';`,
+      ),
+      'internal',
+    );
+  }
+});
+
 test('global legacy object style remains explicit; operation object overrides fail and migration is breaking', async () => {
   const old = fixture({ style: 'object' });
   const next = fixture();

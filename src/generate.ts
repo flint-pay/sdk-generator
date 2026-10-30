@@ -521,13 +521,14 @@ function phpModel(
   plan: PhpModelPlan,
   recursive: boolean,
   validation: Config['validation'],
+  internal: boolean,
 ): string {
   const expression = `SchemaRegistry::source()->model(${php(plan.name)})`;
   const properties = plan.getters
     .filter((getter) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(getter.field))
     .map((getter) => ` * @property-read ${comment(getter.doc)} $${getter.field}`)
     .join('\n');
-  let code = `/**${properties ? '\n' + properties + '\n *' : ''} Presence-aware ${plan.response ? 'response' : 'input'}; ${plan.response ? 'omitted optional fields return null' : 'omitted fields throw when accessed'}. */\nfinal class ${plan.name} extends Model {\n    /** @param ${comment(plan.constructorDoc)} $values */\n    public function __construct(${plan.constructorType} $values${plan.defaultObject ? ' = []' : ''}, array $redactFields = []) { parent::__construct($values, [], ${plan.response ? 'true' : 'false'}, $redactFields, ['constraints' => ${validation === 'schema' ? 'true' : 'false'}] + ${expression}); }\n`;
+  let code = `/**${internal ? '\n * @internal\n *' : ''}${properties ? '\n' + properties + '\n *' : ''} Presence-aware ${plan.response ? 'response' : 'input'}; ${plan.response ? 'omitted optional fields return null' : 'omitted fields throw when accessed'}. */\nfinal class ${plan.name} extends Model {\n    /** @param ${comment(plan.constructorDoc)} $values */\n    public function __construct(${plan.constructorType} $values${plan.defaultObject ? ' = []' : ''}, array $redactFields = []) { parent::__construct($values, [], ${plan.response ? 'true' : 'false'}, $redactFields, ['constraints' => ${validation === 'schema' ? 'true' : 'false'}] + ${expression}); }\n`;
   for (const getter of plan.getters) {
     if (getter.method)
       code += `    /** ${comment(plan.documentation?.[getter.field]?.description || getter.field).replace(/[\r\n]+/g, ' ')}\n     * @return ${comment(getter.doc)}\n${plan.response ? '' : `     * @throws SdkError When ${comment(getter.field)} is omitted; use has${getter.method.slice(3)}() or valueOrDefault().\n`}     */\n    public function ${getter.method}(): ${getter.type} { return $this->get(${php(getter.field)}); }\n    public function has${getter.method.slice(3)}(): bool { return $this->has(${php(getter.field)}); }\n`;
@@ -1315,6 +1316,9 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
   const files = new Map<string, string>();
   const targets = c.config.targets ?? ['node', 'php'];
   const groups = [...new Set(c.operations.map((o) => o.resource))].sort();
+  const operationInputNames = new Set(
+    c.operations.map((op) => pascal(op.resource) + pascal(op.method) + 'Input'),
+  );
   const models = targetPlan.node.models;
   const modelExports = Object.fromEntries(
     Object.entries(models).map(([name, model]) => [
@@ -1532,7 +1536,8 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       targetPlan.node.operations[op.id]!.responseType!;
     const responseAliases = new Set<string>();
     for (const op of c.operations) {
-      declarations += `export type ${pascal(op.resource)}${pascal(op.method)}Input = ${targetPlan.node.operations[op.id]!.documentedInput ?? targetPlan.node.operations[op.id]!.input};\n`;
+      if (!positional(op))
+        declarations += `type ${pascal(op.resource)}${pascal(op.method)}Input = ${targetPlan.node.operations[op.id]!.documentedInput ?? targetPlan.node.operations[op.id]!.input};\n`;
       if (positional(op) && hasParams(op)) {
         const call = targetPlan.requestCalls![op.id]!;
         declarations += `export type ${call.paramsName} = ${call.paramsType};\n`;
@@ -1721,6 +1726,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         path,
         files.get(path)! +
           [...(selectiveTypes.get(group) ?? [])]
+            .filter((name) => !operationInputNames.has(name))
             .map((name) => `export type { ${name} } from '../declarations/${name}.js';\n`)
             .join('') +
           factories
@@ -1956,7 +1962,12 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       public static function codecs(): array { return self::contract()['definitions'] ?? []; }
     }\n`;
     for (const model of targetPlan.php.models)
-      code += phpModel(model, Boolean(c.definitions), c.config.validation);
+      code += phpModel(
+        model,
+        Boolean(c.definitions),
+        c.config.validation,
+        operationInputNames.has(model.name),
+      );
     if (c.config.webhook)
       put(
         'examples/webhook-inbox.php',
@@ -3767,7 +3778,7 @@ function runtimeGuide(
     (node ? '' : ' and closures') +
     ' never trigger this refresh retry. Credential provider exceptions become authentication errors without retaining potentially sensitive causes.\n\n' +
     (c.config.auth && 'defaultCredentials' in c.config.auth && c.config.auth.defaultCredentials
-      ? 'Default credential discovery is lazy and runs only when no credential option is passed on either the client or the request, and ambientCredentials is not false. It tries configured API key/access token environment variables (both set is ambiguous_credentials), then configured workload identity. Set ambientCredentials: false to disable it. defaultCredentials() and workloadIdentityCredentials(options) return credential providers supporting token, token_file and github_actions sources and cached refresh.\n\n'
+      ? 'Default credential discovery is lazy and runs only when no credential option is passed on either the client or the request, and ambientCredentials is not false. It tries configured API key/access token environment variables (setting both throws ConfigurationError with code credential_conflict), then configured workload identity. Set ambientCredentials: false to disable it. defaultCredentials() and workloadIdentityCredentials(options) return credential providers supporting token, token_file and github_actions sources and cached refresh.\n\n'
       : 'This SDK does not discover credentials from environment variables. The example scripts explicitly read FLINT_BASE_URL and their named credential variables.\n\n') +
     (c.authShortcuts?.apiKey
       ? 'For a multi-tenant application, pass the tenant credential explicitly and disable ambient discovery:\n\n' +

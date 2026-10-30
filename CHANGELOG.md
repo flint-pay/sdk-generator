@@ -4,6 +4,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ## Unreleased
 
+- Breaking: per-operation wire `*Input` aliases are no longer exported from Node root or resource entry points. Positional `*Params` and component input types stay public. PHP retains the wire classes with `@internal` docblocks. Generated runtime guides use the public `credential_conflict` code for conflicting ambient credentials.
+
 - Restore published compatibility records with the former PHP `client_request_id` option spelling and pre-envelope error types. Saved identities remain unchanged for migration comparison; executable plans still require current names and validation.
 
 - Response component references reuse their declared types in both targets, including PHP model classes. Inline response names that collide with declared components receive deterministic `OperationResponse` suffixes, reported by `diagnose`, instead of failing generation.

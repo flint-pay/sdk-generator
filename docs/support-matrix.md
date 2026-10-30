@@ -117,7 +117,7 @@ Operation naming supports tag inference (default) and opt-in path inference in b
 
 Positional requests support object-only `oneOf` and `anyOf` bodies in both targets, including referenced variants. Query/header parameter conflicts and typed dictionaries are checked in every branch. Per-operation object request overrides are rejected.
 
-Both targets name positional params and preserve path/query parameter descriptions. Declared idempotency headers are accepted only through `idempotencyKey` options, with the original wire schema enforced. PHP uses `clientRequestId` for caller correlation.
+Both targets name public positional params and preserve path/query parameter descriptions. Per-operation wire `*Input` aliases are internal: Node omits them from package and resource exports, while PHP marks their classes `@internal`. Component input types remain public. Declared idempotency headers are accepted only through `idempotencyKey` options, with the original wire schema enforced. PHP uses `clientRequestId` for caller correlation.
 
 Opt-in scalar query arrays are supported in Node and PHP for exploded form array parameters. Scalars normalize to singleton arrays before validation; other parameter encodings retain their original input shapes.
 

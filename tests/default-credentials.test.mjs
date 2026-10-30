@@ -71,6 +71,13 @@ before(async () => {
   generate(loadContract(join(root, 'api.json'), join(root, 'sdk.json')), output);
   sdk = await import(pathToFileURL(join(output, 'node/index.js')).href);
 });
+test('generated runtime guides name the public credential conflict code in both targets', () => {
+  for (const target of ['node', 'php']) {
+    const guide = readFileSync(join(output, target, 'RUNTIME.md'), 'utf8');
+    assert.match(guide, /setting both throws ConfigurationError with code credential_conflict/);
+    assert.doesNotMatch(guide, /ambiguous_credentials/);
+  }
+});
 const jwt = (claims, now) =>
   [
     Buffer.from('{}').toString('base64url'),

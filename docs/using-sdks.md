@@ -191,6 +191,8 @@ Positional argument order is the same in Node and PHP:
 2. A params object (Node) or array (PHP) holding body fields and query/header parameters. There is no `body` wrapper. Omit this argument when the operation has no body and no query/header parameters.
 3. Request options: a plain object in Node, `new RequestOptions(...)` in PHP.
 
+Positional calls use public `{Namespace}{Method}Params` types, such as `BooksCreateParams`. Per-operation wire `*Input` types are internal: Node does not export them from package or resource entry points, and PHP marks the classes `@internal`. Named component input types remain public.
+
 ```js
 const book = await client.books.retrieve('book/123', { headers: { 'X-Tenant': 'tenant-example' } });
 ```
