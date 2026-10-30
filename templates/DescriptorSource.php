@@ -170,7 +170,10 @@ final class DescriptorSource
     {
         $resource = $this->routes[$id] ?? null;
         if (!is_string($resource)) {
-            \SdkNamespace\Codec::fail('operation', 'operation is not included in this SDK');
+            throw new \SdkNamespace\Errors\ConfigurationError(
+                'operation is not included in this SDK',
+                code: 'operation_unavailable',
+            );
         }
         if (!isset($this->loaded[$resource])) {
             $group = $this->read('resources/' . rawurlencode($resource));

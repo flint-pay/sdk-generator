@@ -146,9 +146,17 @@ foreach (['provider', 'closureString', 'closureCredential'] as $form) {
         }
         same(
             $error !== null ? substr(strrchr(get_class($error), chr(92)), 1) : null,
-            $surface === 'token' ? $c['legacyError'] ?? ($c['error'] ?? null) : $c['error'] ?? null,
+            $c['error'] ?? null,
             $c['name'],
         );
+        if (isset($c['code'])) {
+            // Typed Credential construction throws inside these provider forms before returning.
+            $expectedCode =
+                !is_string($c['value'] ?? '') && $form !== 'closureString'
+                    ? 'credential_provider_failed'
+                    : $c['code'];
+            same($error->code, $expectedCode, $c['name']);
+        }
         if (isset($c['bodyFailures']) && $error !== null) {
             same($error->status, 401, $c['name']);
             same($error->outcome, 'unknown', $c['name']);

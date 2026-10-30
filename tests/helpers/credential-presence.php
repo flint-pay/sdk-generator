@@ -90,7 +90,7 @@ foreach (json_decode(file_get_contents($argv[2]), true, flags: JSON_THROW_ON_ERR
                 $name . ' phase',
             );
             check(
-                $error->code === 'credential_missing' && $error->param === $c['param'],
+                $error->code === 'credential_missing' && $error->param === null,
                 $name . ' code/param',
             );
             check(
@@ -101,7 +101,7 @@ foreach (json_decode(file_get_contents($argv[2]), true, flags: JSON_THROW_ON_ERR
                 $name . ' secret',
             );
         } else {
-            check($error->code === '', $name . ' existing missing error');
+            check($error->code === 'credential_missing', $name . ' missing credential code');
         }
     } else {
         check($error === null, $name . ': ' . ($error?->getMessage() ?? ''));

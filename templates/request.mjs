@@ -1,18 +1,25 @@
 import { isModel, modelInputValue, createSdkError } from './runtime.js';
 
+const invalid = (param, code, message) =>
+  createSdkError('validation', message, 'not_sent', false, undefined, 'INVALID_REQUEST', [
+    { code, param },
+  ]);
+
 export function requestInput(paths, values, fields, body, required, params, managed = []) {
   if (isModel(params)) params = modelInputValue(params);
   if (params !== undefined && (!params || typeof params !== 'object' || Array.isArray(params)))
-    throw createSdkError('validation', 'Expected a params object', 'not_sent');
+    throw invalid('body', 'INVALID_VALUE', 'body must be an object');
   const input = Object.fromEntries(paths.map((name, index) => [name, values[index]]));
   const rest = { ...(params ?? {}) };
-  for (const name of Object.keys(rest))
-    if (managed.includes(name.toLowerCase()))
-      throw createSdkError(
-        'validation',
-        'Supply SDK-managed headers through request options',
-        'not_sent',
+  for (const name of Object.keys(rest)) {
+    const header = managed.find((field) => field.toLowerCase() === name.toLowerCase());
+    if (header)
+      throw invalid(
+        header,
+        'NOT_ALLOWED',
+        `${header} can't be sent: supply this header through request options`,
       );
+  }
   for (const name of fields) {
     if (Object.hasOwn(rest, name)) {
       Object.defineProperty(input, name, { value: rest[name], enumerable: true });
@@ -29,10 +36,10 @@ export function requestInput(paths, values, fields, body, required, params, mana
     // Keep unknown keys so the canonical request validator rejects them.
     for (const [name, value] of Object.entries(rest)) {
       if (Object.hasOwn(input, name))
-        throw createSdkError(
-          'validation',
-          'Path values belong in positional arguments',
-          'not_sent',
+        throw invalid(
+          name,
+          'NOT_ALLOWED',
+          `${name} can't be sent: path values belong in positional arguments`,
         );
       Object.defineProperty(input, name, { value, enumerable: true });
     }

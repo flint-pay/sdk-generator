@@ -210,11 +210,8 @@ test('shared default credential conformance in Node and PHP', async () => {
           break;
         }
       }
-      assert.equal(
-        error?.code,
-        c.reason ?? (error ? '' : undefined),
-        c.name + ': ' + error?.message,
-      );
+      assert.equal(error?.code, c.code ?? (error ? '' : undefined), c.name + ': ' + error?.message);
+      if (c.reason) assert.equal(error.workloadIdentity.reason, c.reason, c.name);
       assert.equal(
         error?.name,
         error
@@ -684,7 +681,7 @@ test('GitHub Actions source in Node and PHP: auto, single exchange, permission a
 require $argv[1] . '/src/autoload.php';
 $client = new Example\\Discovery\\Client(new Example\\Discovery\\ClientOptions(baseUrl: $argv[2], allowInsecureHttp: true));
 try { for ($i = 0; $i < 100; $i++) $client->api->read(); echo 'ok'; }
-catch (Example\\Discovery\\SdkError $e) { if (str_contains($e->getMessage(), 'synthetic-github-request-secret')) exit(2); echo $e->code; }
+catch (Example\\Discovery\\SdkError $e) { if (str_contains($e->getMessage(), 'synthetic-github-request-secret')) exit(2); if ($e->code !== 'workload_identity_failed') exit(3); echo $e->workloadIdentity['reason'] ?? ''; }
 `,
   );
   try {
@@ -725,7 +722,8 @@ catch (Example\\Discovery\\SdkError $e) { if (str_contains($e->getMessage(), 'sy
               await Promise.all(Array.from({ length: 100 }, () => client.api.read()));
             else await client.api.read();
           } catch (e) {
-            result = e.code;
+            assert.equal(e.code, 'workload_identity_failed', name);
+            result = e.workloadIdentity.reason;
             assert.ok(!e.message.includes(secret));
           }
           assert.equal(result, expected, name);

@@ -2,7 +2,7 @@
 
 A capability must be declared to generate its public helper. Both targets implement the declared contract through bundled compiled codecs, with the target differences described below. A missing provider capability is not inferred from a payment resource name or field name. GET/HEAD/OPTIONS have bounded default retries; mutation retries and idempotency still require declarations.
 
-Runtime safety in both targets includes a default 1,000-page pagination cap, continuation-cycle and consecutive-empty-page detection, distinct timeout/deadline errors, and consistent decimal-seconds/GMT HTTP-date `Retry-After` parsing. See [errors and retries](using-sdks.md#errors-and-retries) and [pagination](using-sdks.md#pagination-and-polling).
+Runtime safety in both targets includes an implicit 1,000-page pagination limit that raises `PaginationLimitError` when a continuation remains (explicit `maxPages` ends quietly), continuation-cycle and consecutive-empty-page detection, distinct timeout/deadline errors, and consistent decimal-seconds/GMT HTTP-date `Retry-After` parsing. See [errors and retries](using-sdks.md#errors-and-retries) and [pagination](using-sdks.md#pagination-and-polling).
 
 Both runtimes track retry-chain outcomes and caller retry eligibility, preserve completely read successes past the deadline, and accept per-operation timeout/deadline defaults with request > client > operation > global precedence. See [errors and retries](using-sdks.md#errors-and-retries) and [operation time budgets](configuration.md#operation-time-budgets).
 

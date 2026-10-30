@@ -1814,7 +1814,9 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
               Object.values(targetPlan.requestOptionPlans ?? {})
                 .map((option) => `        public readonly ?string $${option.php} = null,\n`)
                 .join('') +
-              '    ) {}',
+              '        mixed ...$unknown,\n    ) { if ($unknown) throw new \\' +
+              ns +
+              '\\Errors\\ConfigurationError(\"Unknown request option \" . array_key_first($unknown), code: \"invalid_option\"); }',
           ],
           [
             '    ) {\n        /* AUTH_SHORTCUT_CLIENT_PARAMETERS */\n    }',
@@ -1826,7 +1828,9 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
                   `        public readonly string|CredentialProvider|\\Closure|Omitted|null $${key} = Omitted::Value,\n`,
               )
               .join('') +
-              '        public readonly bool $ambientCredentials = true,\n        public readonly ?object $credentialCache = null,\n    ) {}',
+              '        public readonly bool $ambientCredentials = true,\n        public readonly ?object $credentialCache = null,\n        mixed ...$unknown,\n    ) { if ($unknown) throw new \\' +
+              ns +
+              '\\Errors\\ConfigurationError(\"Unknown client option \" . array_key_first($unknown), code: \"invalid_option\"); }',
           ],
           [
             '/* AUTH_SHORTCUT_RESERVED */ []',
@@ -2017,7 +2021,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       const modifier = name === 'ApiError' || name === 'ConnectionError' ? '' : 'final ';
       put(
         `src/classes/Errors/${name}.php`,
-        `<?php\ndeclare(strict_types=1);\nnamespace ${ns}\\Errors;\n${modifier}class ${name} extends ${base} {${name === 'ApiError' ? "\n    public const RETRY_SAME_REQUEST = 'same_request';\n    public const RETRY_AFTER_REFRESH = 'after_refresh';\n    public const RETRY_NONE = 'none';\n    /** @var list<array<string, mixed>> */\n    public array $details = [];\n    public ?string $type = null;\n    public ?string $errorSource = null;\n    public ?string $docUrl = null;\n    public ?string $requestLogUrl = null;\n    public ?array $remediation = null;\n    public mixed $body = null;\n" : name === 'InvalidInputError' ? '\n    /** @var list<array{code: string, param: string}> */\n    public array $details = [];\n' : name === 'ConfigurationError' ? '\n    public mixed $workloadIdentity = null;\n' : name === 'UnexpectedResponseError' ? '\n    public ?array $event = null;\n' : ''}}\n`,
+        `<?php\ndeclare(strict_types=1);\nnamespace ${ns}\\Errors;\n${modifier}class ${name} extends ${base} {${name === 'ApiError' ? "\n    public const RETRY_SAME_REQUEST = 'same_request';\n    public const RETRY_AFTER_REFRESH = 'after_refresh';\n    public const RETRY_NONE = 'none';\n    /** @var list<array<string, mixed>> */\n    public array $details = [];\n    public ?string $type = null;\n    public ?string $errorSource = null;\n    public ?string $docUrl = null;\n    public ?string $requestLogUrl = null;\n    public ?array $remediation = null;\n    public mixed $body = null;\n" : name === 'InvalidInputError' ? '\n    /** @var list<array{code: string, param: string}> */\n    public array $details = [];\n' : name === 'ConfigurationError' ? '\n    public mixed $workloadIdentity = null;\n' : name === 'PaginationLimitError' ? '\n    public mixed $nextPageToken = null;\n    public int $pages = 0;\n' : name === 'UnexpectedResponseError' ? '\n    public ?array $event = null;\n' : ''}}\n`,
       );
       classmap[ns + '\\Errors\\' + name] = 'classes/Errors/' + name + '.php';
     }
@@ -3766,7 +3770,7 @@ function runtimeGuide(
     idempotencyReference(c) +
     `Only operations declaring idempotency accept idempotencyKey. Persist a key with the original input before the first attempt and reuse it for the same action. When automatic keys are enabled, the SDK creates one per call and reuses it across attempts; automatic keys do not span separate calls. Resolved keys are exposed on errors and response metadata, including not_sent failures after key resolution.\n\nAn outcome of unknown means remote completion is uncertain. Reconcile the action with ${apiName(c)} using the saved key before resubmitting. Cancellation and timeouts cannot undo remote work.\n\n` +
     recoveryReference(c, target) +
-    `\n## Pagination and polling\n\n${pagination}Pagination is lazy and defaults to at most 1000 pages. maxPages and maxItems cap work. Repeated continuations (including cursor cycles) and two consecutive empty pages still advertising a continuation raise protocol errors. An isolated or terminal empty page is valid. Iteration does not guarantee a stable snapshot or durable continuation. Each page gets a fresh deadline; processing yielded values does not consume it. Polling shares an overall deadline. Per-operation references list helper names and terminal states.\n\n` +
+    `\n## Pagination and polling\n\n${pagination}Pagination is lazy. If page 1000 still has a continuation, the implicit cap throws PaginationLimitError (code pagination_limit_exceeded) with nextPageToken and pages. A terminal page 1000 succeeds. An explicit maxPages stops quietly; maxItems also caps work. Repeated continuations (including cursor cycles) and two consecutive empty pages still advertising a continuation raise protocol errors. An isolated or terminal empty page is valid. Iteration does not guarantee a stable snapshot or durable continuation. Each page gets a fresh deadline; processing yielded values does not consume it. Polling shares an overall deadline. Per-operation references list helper names and terminal states.\n\n` +
     `## Timeouts, streaming and cancellation\n\nTimeout is per attempt, including buffered body consumption. Deadline covers attempts and retry waits for one call. Overall deadlines use TimeoutError with retryAllowed false. For SSE these limits bound setup; streamIdleTimeoutMs controls idle reads and streamLifetimeMs optionally caps lifetime. Malformed known events raise UnexpectedResponseError with code sse_invalid_event and event containing id and one-based position. Close streams or the client to release resources; breaking iteration also closes a stream. Resume cursors and reconnection belong to the application.\n\n` +
     (node
       ? 'Use AbortSignal for cancellation. Unconsumed default SSE sockets and timers do not keep Node alive; iteration retains the connection until close.\n\n'

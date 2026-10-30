@@ -39,9 +39,23 @@ class SdkError extends \RuntimeException implements \JsonSerializable
         ?string $requestLogUrl = null,
         ?array $remediation = null,
         mixed $body = null,
+        mixed $nextPageToken = null,
+        int $pages = 0,
     ) {
         parent::__construct($message, 0, $previous);
-        $this->code = $code;
+        $this->code =
+            $code !== ''
+                ? $code
+                : ($this instanceof Errors\PaginationLimitError
+                    ? 'pagination_limit_exceeded'
+                    : '');
+        if ($this instanceof Errors\ConfigurationError) {
+            $this->param = null;
+        }
+        if ($this instanceof Errors\PaginationLimitError) {
+            $this->nextPageToken = $nextPageToken;
+            $this->pages = $pages;
+        }
         if ($requestIds === [] && $requestId !== null) {
             $this->requestIds = [$requestId];
         }
@@ -96,12 +110,23 @@ class SdkError extends \RuntimeException implements \JsonSerializable
                         $kind === 'api' ||
                         ($kind === 'destination' && $meta !== null)
                         => Errors\UnexpectedResponseError::class,
-                    $kind === 'authentication' || $kind === 'destination'
+                    $kind === 'authentication' ||
+                        $kind === 'destination' ||
+                        $kind === 'configuration'
                         => Errors\ConfigurationError::class,
                     default => Errors\InvalidInputError::class,
                 };
         if (!class_exists($class)) {
             $class = self::class;
+        }
+        if (is_a($class, Errors\InvalidInputError::class, true)) {
+            $errorCode = 'INVALID_REQUEST';
+            if (!is_array($details) || !array_is_list($details) || !$details) {
+                $details = [['code' => 'INVALID_VALUE', 'param' => 'body']];
+            }
+        }
+        if (is_a($class, Errors\ConfigurationError::class, true) && $errorCode === null) {
+            $errorCode = $kind === 'destination' ? 'invalid_destination' : 'credential_invalid';
         }
         $error = new $class(
             $message,
@@ -116,6 +141,9 @@ class SdkError extends \RuntimeException implements \JsonSerializable
             durationMs: $meta['durationMs'] ?? null,
             headers: $meta['headers'] ?? [],
             details: $details,
+            param: is_a($class, Errors\InvalidInputError::class, true)
+                ? $details[0]['param'] ?? 'body'
+                : null,
             previous: $previous,
             raw: $raw,
         );
@@ -210,6 +238,9 @@ class SdkError extends \RuntimeException implements \JsonSerializable
                 ]
                 : [],
             ...$this instanceof Errors\InvalidInputError ? ['details' => $this->details] : [],
+            ...$this instanceof Errors\PaginationLimitError
+                ? ['nextPageToken' => $this->nextPageToken, 'pages' => $this->pages]
+                : [],
             'cause' =>
                 $previous !== null
                     ? [
@@ -374,7 +405,11 @@ final class AmbientCredentialProvider implements CredentialProvider
                 'not_sent',
                 false,
                 null,
-                $reason,
+                $reason === 'ambiguous_credentials'
+                    ? 'credential_conflict'
+                    : ($reason === 'no_credentials'
+                        ? 'credential_missing'
+                        : 'workload_identity_failed'),
                 $details,
             );
         };
@@ -765,12 +800,14 @@ final class AmbientCredentialProvider implements CredentialProvider
                         'not_sent',
                         false,
                         null,
-                        'exchange_unavailable',
+                        'workload_identity_failed',
+                        ['reason' => 'exchange_unavailable'],
                     );
             if (
                 $cached &&
                 $cached['expiresAt'] - microtime(true) > 30 &&
-                $error->code === 'exchange_unavailable'
+                $error instanceof Errors\ConfigurationError &&
+                ($error->workloadIdentity['reason'] ?? null) === 'exchange_unavailable'
             ) {
                 $flight->result = $cached;
                 return $credential($cached);
@@ -4353,6 +4390,23 @@ class Runtime
     private readonly ?Internal\DescriptorSource $descriptors;
     private mixed $curl = null;
     private array $streams = [];
+    private static function configuration(string $code, string $message): never
+    {
+        throw SdkError::create('configuration', $message, errorCode: $code);
+    }
+    private static function inputError(string $param, string $code, string $message): never
+    {
+        throw SdkError::create(
+            'validation',
+            $message,
+            errorCode: 'INVALID_REQUEST',
+            details: [['code' => $code, 'param' => $param]],
+        );
+    }
+    private static function notAllowed(string $param, string $reason): never
+    {
+        self::inputError($param, 'NOT_ALLOWED', "$param can't be sent: $reason");
+    }
     public function __construct(
         array|Internal\DescriptorSource $contract,
         private readonly ClientOptions $options,
@@ -4370,12 +4424,15 @@ class Runtime
         $this->credentialOptionsPassed($options);
         $baseUrl = $options->baseUrl ?? ($this->contract['defaultBaseUrl'] ?? null);
         if ($baseUrl === null) {
-            Codec::fail('baseUrl', 'required: pass baseUrl because this SDK has no default server');
+            self::configuration(
+                'invalid_destination',
+                'baseUrl is required: pass baseUrl because this SDK has no default server',
+            );
         }
         if (!self::validBaseUrl($baseUrl)) {
-            Codec::fail(
-                'baseUrl',
-                'expected an absolute URL without credentials, whitespace, backslash, query or fragment',
+            self::configuration(
+                'invalid_destination',
+                'baseUrl must be an absolute URL without credentials, whitespace, backslash, query or fragment',
             );
         }
         $this->baseUrl = $baseUrl;
@@ -4390,15 +4447,25 @@ class Runtime
                 'authentication',
                 'token is not configured for this SDK; use ' .
                     ($shortcuts ? implode(', ', $shortcuts) : 'authMode and credentials'),
+                errorCode: 'auth_mode_not_permitted',
             );
         }
         $this->allowed = $options->allowedOrigins ?? [self::origin($this->baseUrl)];
         $this->checkUrl($this->baseUrl);
         if (
+            $options->maxAttempts !== null &&
+            (!is_finite($options->maxAttempts) ||
+                floor($options->maxAttempts) != $options->maxAttempts ||
+                $options->maxAttempts < 1 ||
+                $options->maxAttempts > 9007199254740991)
+        ) {
+            self::configuration('invalid_option', 'maxAttempts must be a positive safe integer');
+        }
+        if (
             ($options->timeoutMs !== null && $options->timeoutMs <= 0) ||
             ($options->deadlineMs !== null && $options->deadlineMs <= 0)
         ) {
-            Codec::fail('options', 'timeouts must be positive');
+            self::configuration('invalid_option', 'timeoutMs and deadlineMs must be positive');
         }
     }
     /** Validate presence without resolving a provider or reading the environment. */
@@ -5097,7 +5164,7 @@ class Runtime
                 return $op;
             }
         }
-        Codec::fail('operation', 'operation is not included in this SDK');
+        self::configuration('operation_unavailable', 'operation is not included in this SDK');
     }
     public function request(
         string $id,
@@ -5172,7 +5239,7 @@ class Runtime
         $op = $this->operation($id);
         foreach (['streamIdleTimeoutMs', 'streamLifetimeMs'] as $key) {
             if ($o->{$key} !== null && $o->{$key} <= 0) {
-                Codec::fail($key, 'must be positive');
+                self::configuration('invalid_option', $key . ' must be positive');
             }
         }
         $start = self::now();
@@ -5182,7 +5249,7 @@ class Runtime
             $o->deadlineMs ??
             ($this->options->deadlineMs ?? ($op['defaults']['deadlineMs'] ?? 30000));
         if ($timeout <= 0 || $duration <= 0) {
-            Codec::fail('options', 'timeouts must be positive');
+            self::configuration('invalid_option', 'timeoutMs and deadlineMs must be positive');
         }
         $deadline = $start + $duration;
         $policy = $op['retry'];
@@ -5193,7 +5260,7 @@ class Runtime
             $budget > 9007199254740991 ||
             floor($budget) != $budget
         ) {
-            Codec::fail('maxAttempts', 'must be a positive safe integer');
+            self::configuration('invalid_option', 'maxAttempts must be a positive safe integer');
         }
         $attempts = min((int) $budget, $policy['maxAttempts']);
         $headers = [
@@ -5221,13 +5288,19 @@ class Runtime
                 !preg_match('/^[!#$%&\x27*+.^_`|~0-9A-Za-z-]+$/', $name) ||
                 preg_match('/[\r\n]/', $value)
             ) {
-                Codec::fail('headers', 'invalid HTTP header');
+                self::configuration(
+                    'invalid_option',
+                    'headers must contain valid HTTP names and values',
+                );
             }
             $headers[strtolower($name)] = $value;
         };
         foreach ($o->headers as $name => $value) {
             if (strtolower($op['idempotency']['header'] ?? '') === strtolower((string) $name)) {
-                Codec::fail((string) $name, 'supply this header through options.idempotencyKey');
+                self::notAllowed(
+                    $op['idempotency']['header'],
+                    'supply this header through options.idempotencyKey',
+                );
             }
             $set($name, $value);
         }
@@ -5237,9 +5310,9 @@ class Runtime
             $basePath !== '' &&
             ($op['path'] === $basePath || str_starts_with($op['path'], $basePath . '/'))
         ) {
-            Codec::fail(
-                'baseUrl',
-                'already includes the operation base path; remove that path from baseUrl',
+            self::configuration(
+                'invalid_destination',
+                'baseUrl already includes the operation base path; remove that path from baseUrl',
             );
         }
         $path = $op['path'];
@@ -5247,13 +5320,16 @@ class Runtime
         foreach ($op['parameters'] as $p) {
             if (($p['source'] ?? null) === 'authentication') {
                 if (array_key_exists($p['name'], $input)) {
-                    Codec::fail($p['name'], 'supply this header through authentication options');
+                    self::notAllowed(
+                        $p['name'],
+                        'supply this header through authentication options',
+                    );
                 }
                 continue;
             }
             if (($p['source'] ?? null) === 'request-option') {
                 if (array_key_exists($p['name'], $input)) {
-                    Codec::fail($p['name'], 'supply this header through request options');
+                    self::notAllowed($p['name'], 'supply this header through request options');
                 }
                 continue;
             }
@@ -5264,7 +5340,10 @@ class Runtime
                 strtolower($op['idempotency']['header'] ?? '') === strtolower($p['name'])
             ) {
                 if ($present) {
-                    Codec::fail($p['name'], 'supply this header through options.idempotencyKey');
+                    self::notAllowed(
+                        $p['name'],
+                        'supply this header through options.idempotencyKey',
+                    );
                 }
                 $value = $o->idempotencyKey;
                 $present = $value !== null;
@@ -5275,7 +5354,7 @@ class Runtime
                     strtolower($p['name']) &&
                 $present
             ) {
-                Codec::fail($p['name'], 'API version is managed by the SDK');
+                self::notAllowed($p['name'], 'API version is managed by the SDK');
             }
             if (
                 $p['in'] === 'header' &&
@@ -5312,14 +5391,15 @@ class Runtime
             }
             if (!$present) {
                 if ($p['required'] ?? false) {
-                    Codec::fail(
+                    self::inputError(
                         $p['name'],
+                        'REQUIRED',
                         strtolower($op['idempotency']['header'] ?? '') === strtolower($p['name'])
                             ? $op['resource'] .
                                 '.' .
                                 $op['method'] .
-                                ' requires idempotencyKey; save and reuse the key on retry'
-                            : 'required parameter is missing',
+                                ' requires idempotencyKey: save a key with the action before the first attempt and reuse it on every retry'
+                            : $p['name'] . ' is required',
                     );
                 }
                 continue;
@@ -5402,7 +5482,7 @@ class Runtime
             $value = $o->{$name};
             $supplied = $headers[strtolower($p['name'])] ?? null;
             if ($value !== null && $supplied !== null && $value !== $supplied) {
-                Codec::fail($name, 'conflicting request option and header values');
+                self::notAllowed($p['name'], 'conflicting request option and header values');
             }
             $effective = $value ?? $supplied;
             if ($effective !== null) {
@@ -5432,6 +5512,13 @@ class Runtime
             string $message,
             bool $rejectNewlines = true,
         ) use (&$providers, $credentialContext): string {
+            if (
+                $source === null ||
+                $source === Omitted::Value ||
+                (is_string($source) && trim($source) === '')
+            ) {
+                throw SdkError::create('authentication', $message, errorCode: 'credential_missing');
+            }
             $value = $source;
             if ($source instanceof CredentialProvider || $source instanceof \Closure) {
                 try {
@@ -5450,7 +5537,11 @@ class Runtime
                         throw $error;
                     }
                     // Do not retain provider exceptions, which may include secret values.
-                    throw SdkError::create('authentication', 'Credential provider failed');
+                    throw SdkError::create(
+                        'authentication',
+                        'Credential provider failed',
+                        errorCode: 'credential_provider_failed',
+                    );
                 }
                 if (
                     $source instanceof CredentialProvider &&
@@ -5467,9 +5558,9 @@ class Runtime
             if (
                 !is_string($value) ||
                 $value === '' ||
-                ($rejectNewlines && preg_match('/[\r\n]/', $value))
+                ($rejectNewlines && preg_match('/[\x00-\x1f\x7f]/', $value))
             ) {
-                throw SdkError::create('authentication', $message);
+                throw SdkError::create('authentication', $message, errorCode: 'credential_invalid');
             }
             return $value;
         };
@@ -5506,6 +5597,7 @@ class Runtime
                         throw SdkError::create(
                             'authentication',
                             'Use one authentication shortcut or explicit authMode/credentials, not both',
+                            errorCode: 'credential_conflict',
                         );
                     }
                     return $supplied[0] ?? null;
@@ -5555,6 +5647,7 @@ class Runtime
                     throw SdkError::create(
                         'authentication',
                         'Authentication is required; ' . $authHint($permitted),
+                        errorCode: 'credential_missing',
                     );
                 }
                 $selected =
@@ -5568,6 +5661,7 @@ class Runtime
                     throw SdkError::create(
                         'authentication',
                         'Authentication mode is not permitted; ' . $authHint($permitted),
+                        errorCode: 'auth_mode_not_permitted',
                     );
                 }
                 $expected = [];
@@ -5608,6 +5702,7 @@ class Runtime
                             throw SdkError::create(
                                 'authentication',
                                 'Request headers conflict with the selected authentication mode',
+                                errorCode: 'credential_conflict',
                             );
                         }
                     }
@@ -5625,12 +5720,13 @@ class Runtime
                     throw SdkError::create(
                         'authentication',
                         'Explicit API credentials are required',
+                        errorCode: 'credential_missing',
                     );
                 }
                 $credential = $resolveCredential(
                     $this->options->token,
                     'Explicit API credentials are required',
-                    false, // Legacy header validation owns newline rejection.
+                    true,
                 );
                 $set(
                     $auth['header'],
@@ -5650,15 +5746,16 @@ class Runtime
                 $value = $headers[strtolower($p['name'])] ?? null;
                 if ($value === null) {
                     if ($p['required'] ?? false) {
-                        Codec::fail(
+                        self::inputError(
                             $p['name'],
+                            'REQUIRED',
                             strtolower($op['idempotency']['header'] ?? '') ===
                             strtolower($p['name'])
                                 ? $op['resource'] .
                                     '.' .
                                     $op['method'] .
-                                    ' requires idempotencyKey; save and reuse the key on retry'
-                                : 'required parameter is missing',
+                                    ' requires idempotencyKey: save a key with the action before the first attempt and reuse it on every retry'
+                                : $p['name'] . ' is required',
                         );
                     }
                 } else {
@@ -5668,22 +5765,24 @@ class Runtime
         };
         if ($o->ifMatch !== null) {
             if (!isset($op['conditional'])) {
-                Codec::fail('ifMatch', 'operation does not declare conditional requests');
+                self::notAllowed('If-Match', 'operation does not declare conditional requests');
             }
             $set($op['conditional']['header'], $o->ifMatch);
         }
         $key = $o->idempotencyKey;
         if ($key !== null) {
             if (!isset($op['idempotency']) || $key === '') {
-                Codec::fail(
-                    'idempotencyKey',
+                self::notAllowed(
+                    $op['idempotency']['header'] ?? 'Idempotency-Key',
                     'a nonempty key and declared capability are required',
                 );
             }
             if (preg_match('/^[ \t]|[ \t]$/D', $key)) {
-                Codec::fail(
-                    'idempotencyKey',
-                    'leading or trailing HTTP whitespace would change the key on the wire',
+                self::inputError(
+                    $op['idempotency']['header'] ?? 'Idempotency-Key',
+                    'INVALID_VALUE',
+                    ($op['idempotency']['header'] ?? 'Idempotency-Key') .
+                        ' must not contain leading or trailing HTTP whitespace',
                 );
             }
             $set($op['idempotency']['header'], $key);
@@ -5700,16 +5799,20 @@ class Runtime
         $body = null;
         if (array_key_exists('body', $input)) {
             if (!isset($op['body'])) {
-                Codec::fail('body', 'operation does not accept a body');
+                self::notAllowed('body', 'operation does not accept a body');
             }
             $body = Codec::encode($this->decode($input['body'], $op['body']));
             $set('content-type', $op['mediaType']);
         } elseif ($op['bodyRequired']) {
-            Codec::fail('body', 'required body is missing');
+            self::inputError('body', 'REQUIRED', 'body is required');
         }
         foreach (array_keys($input) as $key) {
             if ($key !== 'body' && !in_array($key, array_column($op['parameters'], 'name'), true)) {
-                Codec::fail((string) $key, 'unknown input parameter');
+                self::inputError(
+                    (string) $key,
+                    'UNKNOWN_FIELD',
+                    $key . ' is not a field of this input',
+                );
             }
         }
         $requestIds = &$context['requestIds'];
@@ -5833,7 +5936,8 @@ class Runtime
                             'Credential provider invalidation failed',
                             'response',
                             false,
-                            $meta,
+                            null,
+                            'credential_provider_failed',
                         );
                     }
                     $credentialRetries++;
@@ -6495,20 +6599,23 @@ class Runtime
         $o = $options ?? new RequestOptions();
         $p = $this->operation($id)['pagination'] ?? null;
         if (!$p) {
-            Codec::fail('pagination', 'capability is not declared');
+            self::configuration('operation_unavailable', 'pagination capability is not declared');
         }
         $next = null;
         $limit = $o->maxPages ?? 1000;
         $seen = [];
         $emptyPages = 0;
         if ($limit < 1) {
-            Codec::fail('maxPages', 'must be positive');
+            self::configuration('invalid_option', 'maxPages must be positive');
         }
         for ($i = 0; $i < $limit; $i++) {
             self::checkCancel($o->cancellation);
             // Each page owns its request deadline; time spent consuming yields is unbounded.
             $result = $this->request($id, $input, $o, $p['kind'] === 'link' ? $next : null);
             yield $result;
+            if ($o->maxPages !== null && $i + 1 >= $limit) {
+                return;
+            }
             $previous =
                 $p['kind'] === 'link'
                     ? $next ?? $result->meta['url']
@@ -6519,6 +6626,25 @@ class Runtime
             $next = self::field($result->data, $p['next']);
             if ($next === null || $next === '') {
                 return;
+            }
+            if ($o->maxPages === null && $i + 1 === $limit) {
+                throw new Errors\PaginationLimitError(
+                    'Pagination exceeded the implicit limit of 1000 pages',
+                    code: 'pagination_limit_exceeded',
+                    operation: $this->operation($id)['resource'] .
+                        '.' .
+                        $this->operation($id)['method'],
+                    outcome: 'response',
+                    status: $result->meta['status'],
+                    requestId: $result->meta['requestId'] ?? null,
+                    requestIds: $result->meta['requestIds'] ?? [],
+                    idempotencyKey: $result->meta['idempotencyKey'] ?? null,
+                    attempts: $result->meta['attempts'],
+                    durationMs: $result->meta['durationMs'],
+                    headers: $result->meta['headers'] ?? [],
+                    nextPageToken: $next,
+                    pages: $i + 1,
+                );
             }
             $values = self::field($result->data, $p['items']);
             $emptyPages = is_array($values) && count($values) === 0 ? $emptyPages + 1 : 0;
@@ -6568,12 +6694,12 @@ class Runtime
     ): \Generator {
         $p = $this->operation($id)['pagination'] ?? null;
         if (!$p) {
-            Codec::fail('pagination', 'capability is not declared');
+            self::configuration('operation_unavailable', 'pagination capability is not declared');
         }
         $count = 0;
         $limit = $options?->maxItems ?? PHP_INT_MAX;
         if ($limit < 1) {
-            Codec::fail('maxItems', 'must be positive');
+            self::configuration('invalid_option', 'maxItems must be positive');
         }
         foreach ($this->pages($id, $input, $options) as $page) {
             $items = self::field($page->data, $p['items']);
@@ -6599,7 +6725,7 @@ class Runtime
         $op = $this->operation($id);
         $p = $op['polling'] ?? null;
         if (!$p) {
-            Codec::fail('polling', 'capability is not declared');
+            self::configuration('operation_unavailable', 'polling capability is not declared');
         }
         $deadline =
             self::now() +
@@ -7164,7 +7290,7 @@ class Runtime
                 ? $source->webhook()
                 : $source['webhook'] ?? null;
         if (!$w) {
-            Codec::fail('webhook', 'capability is not declared');
+            self::configuration('operation_unavailable', 'webhook capability is not declared');
         }
         if (
             array_diff(array_keys($options), [
@@ -7465,7 +7591,7 @@ class Runtime
                 ? $source->webhook()
                 : $source['webhook'] ?? null;
         if (!$w || ($w['algorithm'] ?? null) !== 'hmac-sha256') {
-            Codec::fail('webhook', 'HMAC capability is not declared');
+            self::configuration('operation_unavailable', 'webhook HMAC capability is not declared');
         }
         if (!is_string($rawBody)) {
             self::webhookError(

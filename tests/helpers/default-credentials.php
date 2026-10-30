@@ -201,9 +201,15 @@ namespace {
             }
         }
         check(
-            ($error?->code ?? null) === ($c['reason'] ?? ($error !== null ? '' : null)),
+            ($error?->code ?? null) === ($c['code'] ?? ($error !== null ? '' : null)),
             $c['name'] . ' reason: ' . ($error?->getMessage() ?? 'none'),
         );
+        if (isset($c['reason'])) {
+            check(
+                ($error->workloadIdentity['reason'] ?? null) === $c['reason'],
+                $c['name'] . ' workload identity reason',
+            );
+        }
         check(
             (($error !== null ? substr(strrchr(get_class($error), chr(92)), 1) : null) ?? null) ===
                 (isset($c['reason']) || ($c['authenticationError'] ?? false)

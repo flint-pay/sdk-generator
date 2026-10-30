@@ -766,7 +766,7 @@ function compileRequestCall(op: Operation, c: Contract, optionsType: string) {
           ...(c.config.apiVersion ? { apiVersion: c.config.apiVersion } : {}),
         }) !== 'input',
     )
-    .map((p) => p.name.toLowerCase());
+    .map((p) => p.name);
   const nodeInput = `_sdkRequestInput(${js(paths.map((p) => p.name))}, [${names.join(', ')}], ${js(fields.map((p) => p.name))}, ${Boolean(op.body)}, ${op.bodyRequired}, ${hasParams(op) ? 'params' : 'undefined'}, ${js(managed)})`;
   const phpSignature = [
     ...names.map(
@@ -784,22 +784,22 @@ function compileRequestCall(op: Operation, c: Contract, optionsType: string) {
     paths
       .map(
         (p, i) =>
-          `if ($${names[i]} instanceof Model && (is_array($${names[i]}->jsonSerialize()) || is_object($${names[i]}->jsonSerialize()))) throw SdkError::create('validation', ${php('Path parameter ' + p.name + ' requires a scalar value or a scalar model; entity models are not identifiers')}); `,
+          `if ($${names[i]} instanceof Model && (is_array($${names[i]}->jsonSerialize()) || is_object($${names[i]}->jsonSerialize()))) throw SdkError::create('validation', ${php('Path parameter ' + p.name + ' requires a scalar value or a scalar model; entity models are not identifiers')}, errorCode: 'INVALID_REQUEST', details: [['code' => 'INVALID_VALUE', 'param' => ${php(p.name)}]]); `,
       )
       .join('') +
     `$input = [${paths.map((p, i) => `${php(p.name)} => $${names[i]}`).join(', ')}]; `;
   if (hasParams(op)) {
     phpPrelude +=
-      "$params = $params instanceof Model ? $params->toInputArray() : $params; $rest = $params ?? []; if ($rest && array_is_list($rest)) throw SdkError::create('validation', 'Expected associative params', 'not_sent'); ";
+      "$params = $params instanceof Model ? $params->toInputArray() : $params; $rest = $params ?? []; if ($rest && array_is_list($rest)) throw SdkError::create('validation', 'body must be an object', 'not_sent', errorCode: 'INVALID_REQUEST', details: [['code' => 'INVALID_VALUE', 'param' => 'body']]); ";
     if (managed.length)
-      phpPrelude += `foreach (array_keys($rest) as $name) { if (in_array(strtolower((string)$name), ${'[' + managed.map(php).join(', ') + ']'}, true)) throw SdkError::create('validation', 'Supply SDK-managed headers through request options'); } `;
+      phpPrelude += `foreach (array_keys($rest) as $name) { foreach (${'[' + managed.map(php).join(', ') + ']'} as $header) { if (strtolower((string)$name) === strtolower($header)) throw SdkError::create('validation', $header . " can't be sent: supply this header through request options", errorCode: 'INVALID_REQUEST', details: [['code' => 'NOT_ALLOWED', 'param' => $header]]); } } `;
     for (const p of fields)
       phpPrelude += `if (array_key_exists(${php(p.name)}, $rest)) { $input[${php(p.name)}] = $rest[${php(p.name)}]; unset($rest[${php(p.name)}]); } `;
     if (op.body)
       phpPrelude += `if (${op.bodyRequired ? 'true' : '$params !== null && (!$params || $rest)'}) $input['body'] = (object) $rest; `;
     else
       phpPrelude +=
-        "foreach ($rest as $name => $value) { if (array_key_exists($name, $input)) throw SdkError::create('validation', 'Path values belong in positional arguments', 'not_sent'); $input[$name] = $value; } ";
+        "foreach ($rest as $name => $value) { if (array_key_exists($name, $input)) throw SdkError::create('validation', $name . \" can't be sent: path values belong in positional arguments\", 'not_sent', errorCode: 'INVALID_REQUEST', details: [['code' => 'NOT_ALLOWED', 'param' => $name]]); $input[$name] = $value; } ";
   }
   return {
     paramsName,
@@ -1197,7 +1197,7 @@ export function compileSdkContract(source: Contract): {
       ]),
     ),
     node: {
-      errorSurfaceVersion: 4,
+      errorSurfaceVersion: 5,
       ...(c.config.webhook ? { webhookReasons: true, standaloneWebhook: true } : {}),
       clientOptions: {
         declaration: compileClientOptions(c),
@@ -1291,7 +1291,7 @@ export function compileSdkContract(source: Contract): {
       ...webhookDeclarations(c, models),
     },
     php: {
-      errorSurfaceVersion: 4,
+      errorSurfaceVersion: 5,
       ...(c.config.webhook ? { webhookReasons: true } : {}),
       // PHP class names are case-insensitive. Preserve a public Webhooks model
       // instead of emitting the optional standalone verifier over its class file.

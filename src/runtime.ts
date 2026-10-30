@@ -189,6 +189,9 @@ export class SdkError extends Error {
           }
         : {}),
       ...(this instanceof errors.InvalidInputError ? { details: this.details } : {}),
+      ...(this instanceof errors.PaginationLimitError
+        ? { nextPageToken: this.nextPageToken, pages: this.pages }
+        : {}),
       cause:
         this.cause instanceof Error
           ? {
@@ -263,13 +266,28 @@ export namespace errors {
   }
   export class ConfigurationError extends BaseSdkError {
     workloadIdentity?: unknown;
+    constructor(message: string, init: SdkErrorInit = {}) {
+      super(message, init);
+      delete this.param;
+    }
   }
   export class CancelledError extends BaseSdkError {}
   export class UnexpectedResponseError extends BaseSdkError {
     event?: { id: string; position: number };
   }
   export class WebhookVerificationError extends BaseSdkError {}
-  export class PaginationLimitError extends BaseSdkError {}
+  export class PaginationLimitError extends BaseSdkError {
+    nextPageToken: unknown;
+    pages: number;
+    constructor(
+      message: string,
+      init: SdkErrorInit & { nextPageToken?: unknown; pages?: number } = {},
+    ) {
+      super(message, { code: 'pagination_limit_exceeded', ...init });
+      this.nextPageToken = init.nextPageToken;
+      this.pages = init.pages ?? 0;
+    }
+  }
 }
 const errorNames = new Map<typeof SdkError, string>([
   [SdkError, 'SdkError'],
@@ -321,11 +339,24 @@ export function createSdkError(
                 : kind === 'authentication' || kind === 'destination'
                   ? errors.ConfigurationError
                   : errors.InvalidInputError;
+  if (Class === errors.InvalidInputError && !Array.isArray(details))
+    details = [{ code: 'INVALID_VALUE', param: 'body' }];
   const error = new Class(message, {
     ...meta,
     outcome,
     retryAllowed,
-    ...(code !== undefined ? { code } : {}),
+    code:
+      code ??
+      (kind === 'destination'
+        ? 'invalid_destination'
+        : kind === 'authentication'
+          ? 'credential_invalid'
+          : Class === errors.InvalidInputError
+            ? 'INVALID_REQUEST'
+            : ''),
+    ...(Class === errors.InvalidInputError && Array.isArray(details)
+      ? { param: details[0]?.param }
+      : {}),
     ...(raw !== undefined ? { raw } : {}),
     ...options,
     ...(Class.prototype instanceof errors.ApiError ||
@@ -519,7 +550,11 @@ class AmbientCredentialProvider implements CredentialProvider {
         'not_sent',
         false,
         undefined,
-        reason,
+        reason === 'ambiguous_credentials'
+          ? 'credential_conflict'
+          : reason === 'no_credentials'
+            ? 'credential_missing'
+            : 'workload_identity_failed',
         details,
       );
     };
@@ -813,8 +848,9 @@ class AmbientCredentialProvider implements CredentialProvider {
         if (
           cached &&
           cached.expiresAt.getTime() - Date.now() > 30000 &&
-          error instanceof SdkError &&
-          error.code === 'exchange_unavailable'
+          error instanceof errors.ConfigurationError &&
+          isErrorObject(error.workloadIdentity) &&
+          error.workloadIdentity.reason === 'exchange_unavailable'
         )
           return cached;
         throw error;
@@ -860,11 +896,14 @@ async function resolveCredential(
     } catch (error) {
       if (input instanceof AmbientCredentialProvider && error instanceof SdkError) throw error;
       // Provider exceptions may contain credentials, including in their causes.
-      throw createSdkError('authentication', 'Credential provider failed');
+      throw configuration('credential_provider_failed', 'Credential provider failed');
     }
   }
-  if (typeof value !== 'string' || !value || (rejectNewlines && /[\r\n]/.test(value)))
-    throw createSdkError('authentication', message);
+  if (typeof value !== 'string' || !value || (rejectNewlines && /[\x00-\x1f\x7f]/.test(value)))
+    throw configuration(
+      input === undefined || input === null ? 'credential_missing' : 'credential_invalid',
+      message,
+    );
   return value;
 }
 
@@ -3018,8 +3057,17 @@ const encoded = (s: string): string =>
 function scalar(v: unknown): string {
   return v instanceof RawNumber ? v.value : String(v);
 }
+function configuration(code: string, message: string): errors.ConfigurationError {
+  return new errors.ConfigurationError(message, { code });
+}
+function invalidOption(label: string, message: string): never {
+  throw configuration('invalid_option', `${label}: ${message}`);
+}
+function notAllowed(param: string, reason: string): never {
+  return issue(param, 'notAllowed', { reason });
+}
 function positive(v: number, label: string): number {
-  if (!Number.isFinite(v) || v <= 0) bad(label, 'must be a positive finite number');
+  if (!Number.isFinite(v) || v <= 0) invalidOption(label, 'must be a positive finite number');
   return v;
 }
 function settleCallError(error: SdkError, context: ErrorCallContext): void {
@@ -3146,16 +3194,19 @@ function parseRetryAfter(instruction: string): number | undefined {
 
 function clientBaseUrl(baseUrl: unknown): URL {
   if (baseUrl === undefined)
-    return bad('baseUrl', 'required: pass baseUrl because this SDK has no default server');
+    throw configuration(
+      'invalid_destination',
+      'baseUrl: required: pass baseUrl because this SDK has no default server',
+    );
   if (!isBaseUrlSyntax(baseUrl))
-    return bad(
-      'baseUrl',
-      'expected an absolute URL without credentials, whitespace, backslash, query or fragment',
+    throw configuration(
+      'invalid_destination',
+      'baseUrl: expected an absolute URL without credentials, whitespace, backslash, query or fragment',
     );
   try {
     return new URL(baseUrl.endsWith('/') ? baseUrl : baseUrl + '/');
   } catch {
-    return bad('baseUrl', 'expected a valid absolute URL');
+    throw configuration('invalid_destination', 'baseUrl: expected a valid absolute URL');
   }
 }
 
@@ -3446,7 +3497,7 @@ export async function verifyWebhookAsyncFromPlan(
   redactFields: string[] = [],
 ): Promise<WebhookVerification & { signingMethod: 'jwt' | 'hmac' }> {
   const w = source instanceof DescriptorSource ? source.webhook() : source.webhook;
-  if (!w) return bad('webhook', 'capability is not declared');
+  if (!w) throw configuration('operation_unavailable', 'webhook capability is not declared');
   if (
     !webhookRecord(options) ||
     Object.keys(options).some(
@@ -3634,7 +3685,7 @@ export function verifyWebhookFromPlan(
 ): WebhookVerification {
   const w = source instanceof DescriptorSource ? source.webhook() : source.webhook;
   if (!w || w.algorithm !== 'hmac-sha256' || !w.header || w.toleranceSeconds === undefined)
-    return bad('webhook', 'HMAC capability is not declared');
+    throw configuration('operation_unavailable', 'webhook HMAC capability is not declared');
   if (rawBody instanceof ArrayBuffer) rawBody = new Uint8Array(rawBody);
   if (!(rawBody instanceof Uint8Array))
     return webhookError(
@@ -3766,7 +3817,7 @@ function decodeWebhookFromPlan(
         source instanceof DescriptorSource ? source.definitions() : (source.definitions ?? {}),
     });
   const w = source instanceof DescriptorSource ? source.webhook() : source.webhook;
-  if (!w) return bad('webhook', 'capability is not declared');
+  if (!w) throw configuration('operation_unavailable', 'webhook capability is not declared');
   let event: unknown;
   try {
     event = parseJson(
@@ -3870,7 +3921,7 @@ class CompiledRuntime {
     this.compiledContract = compiled instanceof DescriptorSource ? compiled.settings : compiled;
     if (!this.descriptors) assertRuntimePlan(this.compiledContract);
     if (!options || typeof options !== 'object' || Array.isArray(options))
-      bad('options', 'expected a client options object');
+      invalidOption('options', 'expected a client options object');
     const allowedOptions = new Set([
       'ambientCredentials',
       'baseUrl',
@@ -3889,7 +3940,7 @@ class CompiledRuntime {
     ]);
     for (const key of Object.keys(options))
       if (!allowedOptions.has(key))
-        bad(
+        invalidOption(
           `options.${key}`,
           `unknown client option${key === 'maxRetries' ? '; use maxAttempts (total attempts, including the first)' : '; see ClientOptions for supported keys'}`,
         );
@@ -3902,7 +3953,10 @@ class CompiledRuntime {
       options.baseUrl === undefined ? this.compiledContract.defaultBaseUrl : options.baseUrl,
     );
     if (!this.base.hostname || this.base.username || this.base.password)
-      bad('baseUrl', 'expected an absolute URL without embedded credentials');
+      throw configuration(
+        'invalid_destination',
+        'baseUrl: expected an absolute URL without embedded credentials',
+      );
     if (
       this.compiledContract.authentication &&
       options.token !== undefined &&
@@ -3915,11 +3969,20 @@ class CompiledRuntime {
             .sort()
             .join(', ') || 'authMode and credentials'
         }`,
+        'not_sent',
+        false,
+        undefined,
+        'auth_mode_not_permitted',
       );
     this.allowed = new Set(options.allowedOrigins ?? [this.base.origin]);
     this.checkUrl(this.base);
     positive(options.timeoutMs ?? 10000, 'timeoutMs');
     positive(options.deadlineMs ?? 30000, 'deadlineMs');
+    if (
+      options.maxAttempts !== undefined &&
+      (!Number.isSafeInteger(options.maxAttempts) || options.maxAttempts < 1)
+    )
+      invalidOption('maxAttempts', 'must be a positive safe integer');
   }
   [inspectCustom]() {
     return { baseUrl: this.base.origin, credentials: '[REDACTED]' };
@@ -4088,7 +4151,28 @@ class CompiledRuntime {
     if (!input || typeof input !== 'object' || Array.isArray(input))
       bad('input', 'expected an object');
     if (!options || typeof options !== 'object' || Array.isArray(options))
-      bad('options', 'expected an object');
+      invalidOption('options', 'expected an object');
+    const op = this.operation(id);
+    if (!op) throw configuration('operation_unavailable', 'operation is not included in this SDK');
+    const allowedOptions = new Set([
+      ...op.parameters.flatMap((p) => (p.requestOption ? [p.requestOption.node] : [])),
+      'headers',
+      'timeoutMs',
+      'deadlineMs',
+      'maxAttempts',
+      'signal',
+      'idempotencyKey',
+      'ifMatch',
+      'maxPages',
+      'maxItems',
+      'streamIdleTimeoutMs',
+      'streamLifetimeMs',
+      'authMode',
+      'credentials',
+      ...Object.keys(this.contract.authShortcuts ?? {}),
+    ]);
+    for (const key of Object.keys(options))
+      if (!allowedOptions.has(key)) invalidOption(`options.${key}`, 'unknown request option');
     const requestCredentialsPassed = credentialOptionsPassed(
       options,
       Object.keys(this.contract.authShortcuts ?? {}),
@@ -4100,8 +4184,6 @@ class CompiledRuntime {
       true,
     );
     const { apiVersion } = this.contract;
-    const op = this.operation(id);
-    if (!op) return bad('operation', 'operation is not included in this SDK');
     const start = performance.now();
     const deadline =
       start +
@@ -4120,7 +4202,7 @@ class CompiledRuntime {
     const policy = op.retry;
     const budget = options.maxAttempts ?? this.options.maxAttempts ?? policy.maxAttempts;
     if (!Number.isSafeInteger(budget) || budget < 1)
-      bad('maxAttempts', 'must be a positive safe integer');
+      invalidOption('maxAttempts', 'must be a positive safe integer');
     let attempts = Math.min(budget, policy.maxAttempts);
     const headers: Record<string, string> = Object.assign(Object.create(null), {
       accept:
@@ -4136,28 +4218,32 @@ class CompiledRuntime {
     });
     const setHeader = (name: string, value: string) => {
       if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) || /[\r\n]/.test(value))
-        bad('headers', 'invalid HTTP header');
+        invalidOption('headers', 'invalid HTTP header');
       headers[name.toLowerCase()] = value;
     };
     const basePath = this.base.pathname.replace(/\/$/, '');
     if (!continuation && basePath && (op.path === basePath || op.path.startsWith(basePath + '/')))
-      bad('baseUrl', 'already includes the operation base path; remove that path from baseUrl');
+      throw configuration(
+        'invalid_destination',
+        'baseUrl: already includes the operation base path; remove that path from baseUrl',
+      );
     let path = op.path;
     const query: string[] = [];
     for (const p of op.parameters) {
       if (p.source === 'authentication') {
         if (Object.hasOwn(input, p.name))
-          bad(p.name, 'supply this header through authentication options');
+          notAllowed(p.name, 'supply this header through authentication options');
         continue;
       }
       if (p.source === 'request-option') {
-        if (Object.hasOwn(input, p.name)) bad(p.name, 'supply this header through request options');
+        if (Object.hasOwn(input, p.name))
+          notAllowed(p.name, 'supply this header through request options');
         continue;
       }
       let value = Object.hasOwn(input, p.name) ? input[p.name] : undefined;
       if (p.in === 'header' && op.idempotency?.header.toLowerCase() === p.name.toLowerCase()) {
         if (Object.hasOwn(input, p.name))
-          bad(p.name, 'supply this header through options.idempotencyKey');
+          notAllowed(p.name, 'supply this header through options.idempotencyKey');
         value = options.idempotencyKey;
       }
       if (
@@ -4165,7 +4251,7 @@ class CompiledRuntime {
         apiVersion?.header.toLowerCase() === p.name.toLowerCase() &&
         Object.hasOwn(input, p.name)
       )
-        bad(p.name, 'API version is managed by the SDK');
+        notAllowed(p.name, 'API version is managed by the SDK');
       if (
         p.in === 'header' &&
         [op.conditional?.header, apiVersion?.header].some(
@@ -4183,13 +4269,14 @@ class CompiledRuntime {
           value = options.ifMatch;
       }
       if (value === undefined) {
-        if (p.required)
-          bad(
-            p.name,
+        if (p.required) {
+          throw new errors.InvalidInputError(
             op.idempotency?.header.toLowerCase() === p.name.toLowerCase()
-              ? `${op.resource}.${op.method} requires idempotencyKey; save and reuse the key on retry`
-              : 'required parameter is missing',
+              ? `${op.resource}.${op.method} requires idempotencyKey: save a key with the action before the first attempt and reuse it on every retry`
+              : `${p.name} is required`,
+            { param: p.name, details: [{ code: 'REQUIRED', param: p.name }] },
           );
+        }
         continue;
       }
       if (p.scalarArray) {
@@ -4227,7 +4314,7 @@ class CompiledRuntime {
     this.checkUrl(url);
     for (const [k, v] of Object.entries(options.headers ?? {})) {
       if (op.idempotency?.header.toLowerCase() === k.toLowerCase())
-        bad(k, 'supply this header through options.idempotencyKey');
+        notAllowed(op.idempotency.header, 'supply this header through options.idempotencyKey');
       setHeader(k, v);
     }
     for (const p of op.parameters) {
@@ -4236,7 +4323,7 @@ class CompiledRuntime {
       const value = (options as Record<string, unknown>)[p.requestOption.node];
       const supplied = headers[p.name.toLowerCase()];
       if (value !== undefined && supplied !== undefined && value !== supplied)
-        bad(p.requestOption.node, 'conflicting request option and header values');
+        notAllowed(p.name, 'conflicting request option and header values');
       const effective = value === undefined ? supplied : value;
       if (effective !== undefined) {
         const normalized = this.decode(effective, p.codec, {
@@ -4274,8 +4361,8 @@ class CompiledRuntime {
             supplied.length > 1 ||
             (supplied.length && (value.authMode !== undefined || value.credentials !== undefined))
           )
-            throw createSdkError(
-              'authentication',
+            throw configuration(
+              'credential_conflict',
               'Use one authentication shortcut or explicit authMode/credentials, not both',
             );
           const entry = supplied[0];
@@ -4316,15 +4403,15 @@ class CompiledRuntime {
         if (modeName === undefined && op.authenticated && permitted.length === 1)
           modeName = permitted[0];
         if (modeName === undefined && op.authenticated)
-          throw createSdkError(
-            'authentication',
+          throw configuration(
+            'credential_missing',
             `Authentication is required; ${authHint(permitted)}`,
           );
         const selected =
           modeName === undefined ? undefined : this.contract.authentication[modeName];
         if (modeName !== undefined && (!selected || !permitted.includes(modeName)))
-          throw createSdkError(
-            'authentication',
+          throw configuration(
+            'auth_mode_not_permitted',
             `Authentication mode is not permitted; ${authHint(permitted)}`,
           );
         const expected: Record<string, string> = Object.create(null);
@@ -4358,19 +4445,19 @@ class CompiledRuntime {
           for (const scheme of mode.schemes) {
             const name = scheme.header.toLowerCase();
             if (suppliedHeaders[name] !== undefined && suppliedHeaders[name] !== expected[name])
-              throw createSdkError(
-                'authentication',
+              throw configuration(
+                'credential_conflict',
                 'Request headers conflict with the selected authentication mode',
               );
           }
         for (const [name, value] of Object.entries(expected)) setHeader(name, value);
       } else if (op.authenticated || (op.optionalAuthentication && this.options.token)) {
         if (!this.options.token || !this.contract.auth)
-          throw createSdkError('authentication', 'Explicit API credentials are required');
+          throw configuration('credential_missing', 'Explicit API credentials are required');
         const credential = await resolveCredential(
           this.options.token,
           'Explicit API credentials are required',
-          false, // Legacy header validation owns newline rejection for strings and providers.
+          true,
           credentialContext,
           providers,
         );
@@ -4384,28 +4471,31 @@ class CompiledRuntime {
         if (p.source !== 'authentication') continue;
         const value = headers[p.name.toLowerCase()];
         if (value === undefined) {
-          if (p.required)
-            bad(
-              p.name,
-              op.idempotency?.header.toLowerCase() === p.name.toLowerCase()
-                ? `${op.resource}.${op.method} requires idempotencyKey; save and reuse the key on retry`
-                : 'required parameter is missing',
-            );
+          if (p.required) issue(p.name, 'required');
         } else this.validateHeaderValue(value, p.codec, p.name);
       }
     };
     if (options.ifMatch !== undefined) {
-      if (!op.conditional) bad('ifMatch', 'operation does not declare conditional requests');
+      if (!op.conditional)
+        notAllowed('If-Match', 'operation does not declare conditional requests');
       setHeader(op.conditional!.header, options.ifMatch);
     }
     const key = options.idempotencyKey;
     if (key !== undefined) {
       if (!op.idempotency || !key)
-        bad('idempotencyKey', 'a nonempty key and declared capability are required');
+        notAllowed(
+          op.idempotency?.header ?? 'Idempotency-Key',
+          'a nonempty key and declared capability are required',
+        );
       if (/^[ \t]|[ \t]$/.test(key))
-        bad(
-          'idempotencyKey',
-          'leading or trailing HTTP whitespace would change the key on the wire',
+        throw new errors.InvalidInputError(
+          `${op.idempotency?.header ?? 'Idempotency-Key'} must not contain leading or trailing HTTP whitespace`,
+          {
+            param: op.idempotency?.header ?? 'Idempotency-Key',
+            details: [
+              { code: 'INVALID_VALUE', param: op.idempotency?.header ?? 'Idempotency-Key' },
+            ],
+          },
         );
       setHeader(op.idempotency!.header, key);
     }
@@ -4416,12 +4506,12 @@ class CompiledRuntime {
     if (!safe) attempts = 1;
     let body: string | undefined;
     if (Object.hasOwn(input, 'body') && input.body !== undefined) {
-      if (!op.body) bad('body', 'operation does not accept a body');
+      if (!op.body) notAllowed('body', 'operation does not accept a body');
       if (['GET', 'HEAD'].includes(op.verb))
         bad('body', 'GET/HEAD request bodies are unsupported by the Node transport');
       body = encode(this.decode(input.body, op.body!, { mode: 'request' }));
       setHeader('content-type', op.mediaType!);
-    } else if (op.bodyRequired) bad('body', 'required body is missing');
+    } else if (op.bodyRequired) issue('body', 'required');
     for (const key of Object.keys(input))
       if (key !== 'body' && !op.parameters.some((p) => p.name === key))
         issue(key, 'unknown', {
@@ -4521,7 +4611,8 @@ class CompiledRuntime {
               'Credential provider invalidation failed',
               'response',
               false,
-              meta,
+              undefined,
+              'credential_provider_failed',
             );
           }
           credentialRetries++;
@@ -4935,7 +5026,8 @@ class CompiledRuntime {
     options: RequestOptions = {},
   ): AsyncGenerator<Result<T>> {
     const op = this.operation(id);
-    if (!op?.pagination) return bad('pagination', 'capability is not declared');
+    if (!op?.pagination)
+      throw configuration('operation_unavailable', 'pagination capability is not declared');
     const p = op.pagination;
     let next: unknown;
     const request = { ...input };
@@ -4943,7 +5035,7 @@ class CompiledRuntime {
     const seen = new Set<string>();
     let emptyPages = 0;
     if (!Number.isSafeInteger(limit) || limit < 1)
-      bad('maxPages', 'must be a positive safe integer');
+      invalidOption('maxPages', 'must be a positive safe integer');
     for (let page = 0; page < limit; page++) {
       stopped(options.signal);
       // Each page owns its request deadline; time spent consuming yields is unbounded.
@@ -4954,10 +5046,22 @@ class CompiledRuntime {
         p.kind === 'link' && typeof next === 'string' ? next : undefined,
       );
       yield result;
+      if (options.maxPages !== undefined && page + 1 >= limit) return;
       const sent = p.kind === 'link' ? (next ?? result.meta.url) : request[p.parameter!];
       const previous = sent instanceof CompiledModel ? sent.toJSON() : sent;
       next = field(result.data, p.next);
       if (next === undefined || next === null || next === '') return;
+      if (page + 1 >= limit)
+        throw new errors.PaginationLimitError(
+          'Pagination exceeded the implicit limit of 1000 pages',
+          {
+            ...result.meta,
+            operation: op.resource + '.' + op.method,
+            outcome: 'response',
+            nextPageToken: next,
+            pages: page + 1,
+          },
+        );
       const values = field(result.data, p.items);
       emptyPages = Array.isArray(values) && values.length === 0 ? emptyPages + 1 : 0;
       if (emptyPages >= 2)
@@ -4995,10 +5099,10 @@ class CompiledRuntime {
     options: RequestOptions = {},
   ): AsyncGenerator<T> {
     const p = this.operation(id)?.pagination;
-    if (!p) return bad('pagination', 'capability is not declared');
+    if (!p) throw configuration('operation_unavailable', 'pagination capability is not declared');
     const limit = options.maxItems ?? Number.MAX_SAFE_INTEGER;
     if (!Number.isSafeInteger(limit) || limit < 1)
-      bad('maxItems', 'must be a positive safe integer');
+      invalidOption('maxItems', 'must be a positive safe integer');
     let count = 0;
     for await (const page of this.pages(id, input, options)) {
       const values = field(page.data, p.items);
@@ -5031,7 +5135,7 @@ class CompiledRuntime {
   ): Promise<Result<T>> {
     const op = this.operation(id);
     const p = op?.polling;
-    if (!p) return bad('polling', 'capability is not declared');
+    if (!p) throw configuration('operation_unavailable', 'polling capability is not declared');
     const deadline =
       performance.now() +
       positive(

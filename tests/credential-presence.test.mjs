@@ -236,9 +236,9 @@ test('explicit credential presence fails closed in Node and PHP, including named
           assert.equal(error.attempts, 0, c.name);
           assert.equal(phase, c.level === 'client' ? 'construction' : 'request', c.name);
           assert.equal(error.code, 'credential_missing', c.name);
-          assert.equal(error.param, c.param, c.name);
+          assert.equal(error.param, undefined, c.name);
           assert.doesNotMatch(error.message, /synthetic-platform|synthetic-client|FLINT_API_KEY/);
-        } else assert.equal(error.code, '', c.name + ': existing missing-credential error');
+        } else assert.equal(error.code, 'credential_missing', c.name);
       } else assert.equal(error, undefined, c.name);
     }
     writeFileSync(join(root, 'cases.json'), JSON.stringify(cases));
