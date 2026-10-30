@@ -1715,8 +1715,15 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     // Each PHP event class reuses its reserved Node identity once. Other
     // response classes with that name must still produce a collision.
     const reservedEventModels = new Set(Object.values(eventModels));
+    const reservedResponses = new Set(
+      c.operations.map((op) => pascal(op.resource) + pascal(op.method) + 'Response'),
+    );
     for (const model of targetPlan.php.models.filter((model) => model.response))
-      if (!Object.hasOwn(models, model.name) && !reservedEventModels.delete(model.name))
+      if (
+        !Object.hasOwn(models, model.name) &&
+        !reservedEventModels.delete(model.name) &&
+        !reservedResponses.delete(model.name)
+      )
         reserve(model.name);
     put(
       'composer.json',
@@ -3536,7 +3543,7 @@ function webhookReference(target: 'node' | 'php', jwt: boolean): string {
       : '') +
     'Verify original request bytes with signing headers and one secret or a rotation array. Returns { known, event }; only matched declared envelopes are known. When known is false, reason is unknown_event for undeclared names or unmatched_envelope for declared names with no matching payload. Known deliveries have no reason. ' +
     (target === 'node'
-      ? 'The return type is `VerifiedWebhook`: checking `known` exposes `KnownWebhookEvent`, the union of the `WebhookEvent<EventName>` types exported by the root and `webhooks` subpath. Unknown events remain `unknown`; check `reason` when `known` is false. '
+      ? 'The return type is `VerifiedWebhook`: checking `known` exposes `KnownWebhookEvent`, the union of the `<EventName>Event` types exported by the root and `webhooks` subpath. Unknown events remain `unknown`; check `reason` when `known` is false. '
       : '') +
     'See [signatures, framework examples, and errors](RUNTIME.md#webhooks-and-recovery).\n\n'
   );
@@ -3611,7 +3618,7 @@ if (verified.known) {
 } else {
   const event = verified.event; // unknown: validate before accessing fields.
 }
-\`\`\`\n\nThe package root and webhooks subpath export these types, together with one WebhookEvent<EventName> type per declared event. Event names use PascalCase in the WebhookEvent<EventName> type. For an envelope with a data field, use that event type's ['data'] indexed access for its payload. A top-level typeField supports exhaustive switch narrowing with a never default. Dotted typeField paths require the named type or Extract<KnownWebhookEvent, { meta: { name: 'entity.updated' } }> (adapt that path and literal to your configuration). When no events are declared, KnownWebhookEvent is never.\n\n`;
+\`\`\`\n\nThe package root and webhooks subpath export these types, together with one <EventName>Event type per declared event. Event names use PascalCase in the <EventName>Event type. For an envelope with a data field, use that event type's ['data'] indexed access for its payload. A top-level typeField supports exhaustive switch narrowing with a never default. Dotted typeField paths require the named type or Extract<KnownWebhookEvent, { meta: { name: 'entity.updated' } }> (adapt that path and literal to your configuration). When no events are declared, KnownWebhookEvent is never.\n\n`;
   const phpFramework = `### PSR-7\n\nLoad Composer's vendor/autoload.php in your application. Pass an unmodified request body and getHeaders() arrays directly:\n\n\`\`\`php
 use ${c.config.composer.namespace}\\Client;
 

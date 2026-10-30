@@ -83,7 +83,7 @@ test('Flint reference pins local source, all seven selected operations and recur
       .digest('hex'),
   );
   assert.equal(contract.operations.length, 7);
-  assert.equal(Object.keys(contract.models).length, 101);
+  assert.equal(Object.keys(contract.models).length, 100);
   assert.ok(contract.models.PaymentCollection);
   assert.ok(Object.keys(contract.definitions).length > 0);
   const bytes = (path) =>

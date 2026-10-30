@@ -25,10 +25,10 @@ parameters:
 			path: "*/php/src/classes/BooksRetrieveInput.php"
 
 		-
-			message: '#^Default value of the parameter \#1 \$values \(array\{\}\) of method Example\\Library\\BooksRetrieveResponse200\:\:__construct\(\) is incompatible with type array\{title\: string, \.\.\.\}\|object\.$#'
+			message: '#^Default value of the parameter \#1 \$values \(array\{\}\) of method Example\\Library\\BooksRetrieveResponse\:\:__construct\(\) is incompatible with type array\{title\: string, \.\.\.\}\|object\.$#'
 			identifier: parameter.defaultValue
 			count: 1
-			path: "*/php/src/classes/BooksRetrieveResponse200.php"
+			path: "*/php/src/classes/BooksRetrieveResponse.php"
 
 		-
 			message: '#^Empty array passed to foreach\.$#'

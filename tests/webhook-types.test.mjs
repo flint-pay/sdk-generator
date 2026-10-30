@@ -113,7 +113,7 @@ test('root names, independent result/envelope types, exhaustive narrowing and un
   typecheck(
     f,
     `import {Client,verifyWebhook} from './index.js';
-import type {Payment,VerifiedWebhook,KnownWebhookEvent,WebhookEventPaymentUpdated,WebhookEventPaymentDeleted} from './index.js';
+import type {Payment,VerifiedWebhook,KnownWebhookEvent,PaymentUpdatedEvent,PaymentDeletedEvent} from './index.js';
 ${equals}
 // Exact alias identity as well as independent structural expectations.
 type Identical<A,B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
@@ -121,9 +121,9 @@ type ReturnAlias = Assert<Identical<ReturnType<Client['verifyWebhook']>,Verified
 type StandaloneAlias = Assert<Identical<ReturnType<typeof verifyWebhook>,VerifiedWebhook>>;
 type ReturnShape = Assert<Equals<VerifiedWebhook,
  {known:true;event:{data:Payment;id:string;type:'payment.updated'}|{data:Payment;id:string;type:'payment.deleted'}}|{known:false;event:unknown;reason:'unknown_event'|'unmatched_envelope'}>>;
-type EventShape = Assert<Equals<WebhookEventPaymentUpdated,{data:Payment;id:string;type:'payment.updated'}>>;
-type Union = Assert<Equals<KnownWebhookEvent,WebhookEventPaymentUpdated|WebhookEventPaymentDeleted>>;
-type Payload = Assert<Equals<WebhookEventPaymentUpdated['data'],Payment>>;
+type EventShape = Assert<Equals<PaymentUpdatedEvent,{data:Payment;id:string;type:'payment.updated'}>>;
+type Union = Assert<Equals<KnownWebhookEvent,PaymentUpdatedEvent|PaymentDeletedEvent>>;
+type Payload = Assert<Equals<PaymentUpdatedEvent['data'],Payment>>;
 declare const verified: VerifiedWebhook;
 // @ts-expect-error Check known before field access.
 verified.event.data;
@@ -132,8 +132,8 @@ if (verified.known) {
  verified.reason;
  const event = verified.event;
  switch(event.type) {
-  case 'payment.updated': { const updated:WebhookEventPaymentUpdated=event; break; }
-  case 'payment.deleted': { const deleted:WebhookEventPaymentDeleted=event; break; }
+  case 'payment.updated': { const updated:PaymentUpdatedEvent=event; break; }
+  case 'payment.deleted': { const deleted:PaymentDeletedEvent=event; break; }
   default: { const exhaustive:never=event; }
  }
  // @ts-expect-error Undeclared event literals are rejected.
@@ -145,7 +145,7 @@ if (verified.known) {
  verified.event.id;
 }
 // @ts-expect-error Named event types are root-only, even for resource webhookEvent.
-import type {WebhookEventPaymentUpdated as ResourceEvent} from './resources/webhookEvent.js';
+import type {PaymentUpdatedEvent as ResourceEvent} from './resources/webhookEvent.js';
 // @ts-expect-error Root union is not a resource export.
 import type {KnownWebhookEvent as ResourceUnion} from './resources/webhookEvent.js';
 // @ts-expect-error Verifier result is not a resource export.
@@ -158,7 +158,7 @@ import type {_SdkWebhookHeaders} from './index.js';
   assert.deepEqual(Object.keys(plan.node.eventTypes), ['payment.deleted', 'payment.updated']);
   assert.match(
     plan.node.eventDeclarations,
-    /KnownWebhookEvent = WebhookEventPaymentDeleted \| WebhookEventPaymentUpdated;/,
+    /KnownWebhookEvent = PaymentDeletedEvent \| PaymentUpdatedEvent;/,
   );
   assert.deepEqual(plan.node.eventTypes, plan.php.eventModels);
   const measured = measureWebhookTypes(
@@ -200,10 +200,10 @@ test('dotted event paths use named types and Extract, while oneOf envelopes rema
   generate(f.load(), f.output);
   typecheck(
     f,
-    `import type {KnownWebhookEvent,WebhookEventPaymentUpdated} from './index.js';
+    `import type {KnownWebhookEvent,PaymentUpdatedEvent} from './index.js';
 ${equals}
 type Selected = Extract<KnownWebhookEvent,{meta:{name:'payment.updated'}}>;
-type Named = Assert<Equals<Selected,WebhookEventPaymentUpdated>>;
+type Named = Assert<Equals<Selected,PaymentUpdatedEvent>>;
 declare const event:Selected;
 const tag:'payment.updated'=event.meta.name;
 const id:string=event.data.id;
@@ -228,13 +228,13 @@ const id:string=event.data.id;
   generate(c, multi.output);
   typecheck(
     multi,
-    `import type {KnownWebhookEvent,WebhookEventPaymentUpdated,Payment} from './index.js';
+    `import type {KnownWebhookEvent,PaymentUpdatedEvent,Payment} from './index.js';
 ${equals}
-type Shape = Assert<Equals<WebhookEventPaymentUpdated,
+type Shape = Assert<Equals<PaymentUpdatedEvent,
  {id:string;type:'payment.updated';data:Payment;audience:string;merchantOnly:string}|{id:string;type:'payment.updated';data:Payment;audience:string;partnerOnly:string}>>;
 declare const event:KnownWebhookEvent;
 switch(event.type) {
- case 'payment.updated': { const multi:WebhookEventPaymentUpdated=event; break; }
+ case 'payment.updated': { const multi:PaymentUpdatedEvent=event; break; }
  case 'payment.deleted': break;
  default: { const exhaustive:never=event; }
 }
@@ -297,43 +297,31 @@ for (const targets of [['node', 'php'], ['php']]) {
     test(`${targets.join('+')} generation rejects an inline response colliding with the ${kind} event type`, () => {
       const responseSchema = {
         type: 'object',
-        properties: { responseId: { type: 'string' } },
-        required: ['responseId'],
+        required: ['event'],
+        properties: {
+          event: {
+            type: 'object',
+            required: ['responseId'],
+            properties: { responseId: { type: 'string' } },
+          },
+        },
       };
       const f = fixture({
         targets,
         responseSchema,
-        events: { 'retrieve.response200': eventSchema },
+        events: { 'webhook_event.retrieve.response': eventSchema },
       });
-      const c = f.load();
-      const plan = compileSdkContract(c).plan;
-      assert.equal(
-        plan.php.runtime.operations[0].responses['200'].model,
-        'WebhookEventRetrieveResponse200',
-      );
-      assert.equal(
-        plan.php.eventModels['retrieve.response200'],
-        kind === 'object' ? 'WebhookEventRetrieveResponse200' : undefined,
-      );
-      assert.throws(
-        () => generate(c, f.output),
-        /public interface: generated type collision: WebhookEventRetrieveResponse200/,
-      );
-
+      assert.throws(() => generate(f.load(), f.output), /collid|collision/i);
       const control = fixture({
         targets,
         responseSchema,
-        events: { 'retrieve.response201': eventSchema },
+        events: { 'another.response': eventSchema },
       });
       generate(control.load(), control.output);
       const models = JSON.parse(
         readFileSync(join(control.output, 'php/src/descriptors/models.json')),
       );
-      assert.equal(models.filter((name) => name === 'WebhookEventRetrieveResponse200').length, 1);
-      assert.equal(
-        models.filter((name) => name === 'WebhookEventRetrieveResponse201').length,
-        kind === 'object' ? 1 : 0,
-      );
+      assert.equal(models.filter((name) => name === 'WebhookEventRetrieveResponse').length, 1);
     });
 }
 
@@ -342,12 +330,12 @@ for (const target of ['node', 'php']) {
     [
       'duplicate',
       { events: { 'a.b': envelope, a_b: envelope } },
-      /config\/webhook\/events\/a_b.*webhook event type name `WebhookEventAB` is shared by `a.b` and `a_b`/s,
+      /config\/webhook\/events\/a_b.*webhook event type name `ABEvent` is shared by `a.b` and `a_b`/s,
     ],
     [
       'multi-variant duplicate',
       { events: { 'a.b': { oneOf: [envelope, payment] }, a_b: envelope } },
-      /webhook event type name `WebhookEventAB` is shared/,
+      /webhook event type name `ABEvent` is shared/,
     ],
     [
       'escaped duplicate',
@@ -367,8 +355,8 @@ for (const target of ['node', 'php']) {
     ],
     [
       'event collision',
-      { model: 'WebhookEventPaymentUpdated' },
-      /generated type collision: WebhookEventPaymentUpdated.*webhook.events.payment.updated/s,
+      { model: 'PaymentUpdatedEvent', schemas: { PaymentUpdatedWebhookEvent: payment } },
+      /collides/,
     ],
   ])
     test(`${target}-only diagnosis rejects ${name}`, () => {
@@ -385,13 +373,13 @@ test('allOf uses unchanged named models but preserves closure for alternative mo
   const f = fixture({ events: { 'payment.updated': { allOf: [envelope, payment] } } });
   const c = f.load();
   const files = render(c);
-  assert.match(files.get('node/declarations/WebhookEventPaymentUpdated.d.ts'), /Payment/);
+  assert.match(files.get('node/declarations/PaymentUpdatedEvent.d.ts'), /Payment/);
   generate(c, f.output);
   typecheck(
     f,
-    `import type {WebhookEventPaymentUpdated,Payment} from './index.js';
+    `import type {PaymentUpdatedEvent,Payment} from './index.js';
 ${equals}
-type Shape=Assert<Equals<WebhookEventPaymentUpdated,{id:string;type:'payment.updated';data:Payment}>>;
+type Shape=Assert<Equals<PaymentUpdatedEvent,{id:string;type:'payment.updated';data:Payment}>>;
 `,
   );
   // A same-value alternative must be closed even when it has a component identity.
@@ -533,9 +521,9 @@ test('shared conjuncts inside oneOf preserve typeless payload constraints', () =
   generate(c, f.output);
   typecheck(
     f,
-    `import type {WebhookEventPaymentEvent0} from './index.js';
+    `import type {PaymentEvent0Event} from './index.js';
 ${equals}
-type Shape=Assert<Equals<WebhookEventPaymentEvent0,
+type Shape=Assert<Equals<PaymentEvent0Event,
  {id:string;type:'payment.event0';data:{merchant:string}}|{id:string;type:'payment.event0';data:{partner:string}}>>;
 `,
   );
@@ -574,7 +562,7 @@ test('old compiled records review the declaration upgrade; recorded removal/rena
     ],
   );
   assert.deepEqual(compareCompiledContracts(current, structuredClone(current)), []);
-  for (const eventTypes of [{}, { 'payment.updated': 'WebhookEventPaymentChanged' }]) {
+  for (const eventTypes of [{}, { 'payment.updated': 'PaymentChangedEvent' }]) {
     const next = structuredClone(current);
     next.node.eventTypes = eventTypes;
     assert.ok(

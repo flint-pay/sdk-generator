@@ -4,6 +4,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ## Unreleased (generator 0.1.0)
 
+- Name webhook declarations after events (`OrderPaidEvent`) and distinct audiences (`OrderPaidMerchantEvent`); stop exporting hashed incoming payload unions. Single-value event tags narrow exactly, and `x-flint-partial-of` projects Node previous attributes as `Partial<Resource>`. Request names append `Request` once, PHP responses omit redundant status suffixes, and root JSDoc omits shape/type boilerplate.
+
 - Add opt-in native integer counters with `integers: "number"` and exact component exceptions via `{ mode: "number", exactComponents: ["Money"] }`. Both targets enforce the shared safe range; money integers remain exact strings when their component is listed. Codec semantics advance to 5.
 
 - Add opt-in `queryArrays: "scalar-or-array"` for exploded form array query parameters in Node and PHP, preserving per-item validation and wire encoding. Node accepts readonly arrays.

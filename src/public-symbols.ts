@@ -1,7 +1,7 @@
 import { positional, hasParams } from './request-style.js';
 import type { Contract } from './contract.js';
 import { Diagnostic } from './diagnostic.js';
-import { webhookEventTypeName } from './naming.js';
+import { eventTypeName } from './webhook-names.js';
 const pascal = (s: string) => s[0]!.toUpperCase() + s.slice(1);
 
 /** Reserve shared public identities before target-specific class compilation. */
@@ -59,7 +59,7 @@ export function reservePublicSymbols(
             'AsyncGenerator',
             'Record',
             'Omit',
-            ...(c.authentication ? ['Partial'] : []),
+            'Partial',
             'Exclude',
             'Object',
             'Array',
@@ -108,8 +108,10 @@ export function reservePublicSymbols(
     reserve('verifyWebhookAsync', 'webhook');
     reserve('verifyWebhookDelivery', 'webhook');
     reserve('WebhookVerificationOptions', 'webhook');
-    for (const event of Object.keys(c.config.webhook.events))
-      reserve(webhookEventTypeName(event), 'webhook.events.' + event);
+    for (const event of Object.keys(c.config.webhook.events)) {
+      const name = eventTypeName(c, event);
+      if (!modelNames.includes(name)) reserve(name, 'webhook.events.' + event);
+    }
   }
   reserve('SchemaRegistry');
   return reserve;

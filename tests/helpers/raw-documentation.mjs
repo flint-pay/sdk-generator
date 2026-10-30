@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { protectedAnnotations } from './documentation-publication.mjs';
 // Test-owned OpenAPI/profile derivation. No generated interface, compiler plan,
 // documentation schema, or production semantic helper is an expectation input.
@@ -125,6 +124,18 @@ export function rawDocumentationInput(api, profile) {
   const protectedNodes = protectedAnnotations(document);
   const schemas = document.components?.schemas ?? {};
   const rename = Object.fromEntries(Object.keys(schemas).map((n) => [n, config.models?.[n] ?? n]));
+  for (const [event, item] of Object.entries(document.webhooks ?? {})) {
+    const body = item.post?.requestBody?.content?.['application/json']?.schema;
+    for (const branch of body?.oneOf ?? body?.anyOf ?? (body ? [body] : [])) {
+      if (!branch.$ref?.startsWith('#/components/schemas/')) continue;
+      const original = branch.$ref.slice(21).replaceAll('~1', '/').replaceAll('~0', '~');
+      rename[original] =
+        config.models?.[original] ??
+        pascal(event) +
+          (body.oneOf?.length > 1 || body.anyOf?.length > 1 ? pascal(branch.title) : '') +
+          'Event';
+    }
+  }
   const normalize = (s) => {
     if (!s || typeof s !== 'object') return s;
     const out = { ...s };
@@ -169,35 +180,13 @@ export function rawDocumentationInput(api, profile) {
   const models = Object.fromEntries(
     Object.entries(schemas).map(([n, s]) => [rename[n], normalize(s)]),
   );
-  // Incoming payload and event names are publication naming rules, derived
-  // from their raw source keys rather than a generated contract inventory.
-  for (const [key, item] of Object.entries(document.webhooks ?? {}))
+  for (const [event, item] of Object.entries(document.webhooks ?? {}))
     for (const method of ['post', 'put', 'get', 'patch', 'delete', 'head', 'options']) {
       const body = item[method]?.requestBody?.content?.['application/json']?.schema;
-      if (body) {
-        const name =
-          'IncomingWebhook' +
-          createHash('sha256')
-            .update(key + '/' + method)
-            .digest('hex')
-            .slice(0, 12) +
-          'Payload';
-        models[name] = normalize(body);
-      }
-    }
-  if (config.webhook)
-    for (const [name, schema] of Object.entries(models).filter(([n]) =>
-      n.startsWith('IncomingWebhook'),
-    )) {
-      const values = payloadSchemas(
-        { responses: { 200: { schema } }, response: { payloadPath: config.webhook.typeField } },
-        models,
-      ).flatMap((s) => rawEnumDomain(s, models) ?? []);
-      for (const event of values)
-        if (typeof event === 'string') models['WebhookEvent' + pascal(event)] ??= schema;
+      if (body) models[pascal(event) + 'Event'] ??= normalize(body);
     }
   for (const [event, schema] of Object.entries(config.webhook?.events ?? {}))
-    models['WebhookEvent' + pascal(event)] ??= normalize(schema);
+    models[pascal(event) + 'Event'] ??= normalize(schema);
   const operations = [];
   for (const [path, item] of Object.entries(document.paths ?? {}))
     for (const verb of ['get', 'post', 'put', 'patch', 'delete', 'head', 'options']) {
@@ -582,8 +571,13 @@ export function documentedModels(directory, input) {
             op.method[0].toUpperCase() +
             op.method.slice(1) +
             'Response' +
-            status[0].toUpperCase() +
-            status.slice(1),
+            (new Set(
+              Object.entries(op.responses)
+                .filter(([key]) => /^2\d\d$/.test(key) || key === 'default')
+                .map(([, r]) => JSON.stringify(r.schema)),
+            ).size > 1
+              ? status[0].toUpperCase() + status.slice(1)
+              : ''),
           r.schema,
           true,
         );
@@ -600,8 +594,13 @@ export function documentedModels(directory, input) {
               op.method[0].toUpperCase() +
               op.method.slice(1) +
               'Response' +
-              status[0].toUpperCase() +
-              status.slice(1);
+              (new Set(
+                Object.entries(op.responses)
+                  .filter(([key]) => /^2\d\d$/.test(key) || key === 'default')
+                  .map(([, r]) => JSON.stringify(r.schema)),
+              ).size > 1
+                ? status[0].toUpperCase() + status.slice(1)
+                : '');
             for (const [index, branch] of (choice.oneOf ?? choice.anyOf).entries())
               add(
                 prefix + 'Variant' + index,

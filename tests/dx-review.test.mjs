@@ -172,7 +172,7 @@ test('PHP preserves orDefault field getters alongside the collision-safe fallbac
     },
   });
   const program = String.raw`require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
-$model=new Example\DxReview\ApiCreateValueResponse200(['orDefault'=>'wire value','valueOrDefault'=>'another value','nullable'=>null]);
+$model=new Example\DxReview\ApiCreateValueResponse(['orDefault'=>'wire value','valueOrDefault'=>'another value','nullable'=>null]);
 if($model->getOrDefault()!=='wire value'||!$model->hasOrDefault())throw new Exception('old getter');
 if($model->getValueOrDefault()!=='another value'||!$model->hasValueOrDefault())throw new Exception('new-name field getter');
 if($model->valueOrDefault('absent','fallback')!=='fallback')throw new Exception('fallback');

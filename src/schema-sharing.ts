@@ -120,6 +120,7 @@ export function shareContractSchemas(
       return {
         'x-sdk-ref': name,
         ...(name !== reference ? { 'x-sdk-type-name': reference } : {}),
+        ...(schema['x-sdk-event-tag'] ? { 'x-sdk-event-tag': true } : {}),
         ...Object.fromEntries(Object.entries(schema).filter(([key]) => isSchemaAnnotation(key))),
       };
     }
@@ -130,6 +131,7 @@ export function shareContractSchemas(
         'x-sdk-ref': name,
         ...(schema[EXAMPLE_PROTECTION_MARKER] ? { [EXAMPLE_PROTECTION_MARKER]: true } : {}),
         ...(typeName && typeName !== name ? { 'x-sdk-type-name': typeName } : {}),
+        ...(schema['x-sdk-event-tag'] ? { 'x-sdk-event-tag': true } : {}),
         ...(schema.readOnly ? { readOnly: true } : {}),
         ...(schema.writeOnly ? { writeOnly: true } : {}),
         ...(schema['x-sensitive'] ? { 'x-sensitive': true } : {}),

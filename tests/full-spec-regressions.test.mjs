@@ -108,7 +108,7 @@ set_error_handler(function($level,$message){throw new Exception($message);});
 $payload='{"kind":"a","value":"hello"}';
 $c=new Example\\Regressions\\Client(new Example\\Regressions\\ClientOptions(baseUrl:'https://example.invalid',transport:function($r)use(&$payload){return ['status'=>200,'headers'=>[],'body'=>$payload];}));
 $result=$c->${op.resource}->${op.method}();
-if(!($result->data instanceof Example\\Regressions\\ApiGetValueResponse200Variant0))throw new Exception('missing variant class');
+if(!($result->data instanceof Example\\Regressions\\ApiGetValueResponseVariant0))throw new Exception('missing variant class');
 if($result->data->getValue()!=='hello')throw new Exception('missing typed getter');
 $payload='{"kind":"future","value":"hello"}';
 if(get_class($c->${op.resource}->${op.method}()->data)!=='stdClass')throw new Exception('unknown variant lost');

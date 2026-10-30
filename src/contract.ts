@@ -1,3 +1,4 @@
+import { webhookNames } from './webhook-names.js';
 import { integerMode, markIntegerMode, sameObjectShape } from './integer-policy.js';
 import { scalarQueryArray } from './query-arrays.js';
 import { isReservedTypeName } from './naming.js';
@@ -298,6 +299,8 @@ export interface Config {
   release?: { baseUrl?: string; policy?: 'review' | 'semver' };
 }
 export interface Contract {
+  webhookTypeNames?: Record<string, string>;
+  webhookAudienceModels?: string[];
   /** Private compatibility proof captured before reference/composition inlining. */
   schemaUsage?: { fingerprint: string; responseOnlyModels: string[] };
   /** Private publication provenance; excluded from compiled compatibility facts and effective output. */
@@ -1509,6 +1512,43 @@ function loadContractInput(
   }
   const resolvedSchema = <T>(value: T, file: string, sourcePath: string, context: Context): T => {
     if (context === 'schema' && value && typeof value === 'object') {
+      if (/\/properties\/event_type$/.test(sourcePath)) {
+        const tag = Reflect.get(value, 'enum');
+        if (
+          typeof Reflect.get(value, 'const') === 'string' ||
+          (Array.isArray(tag) && tag.length === 1 && typeof tag[0] === 'string')
+        )
+          Reflect.set(value, 'x-sdk-event-tag', true);
+      }
+      const properties: unknown = Reflect.get(value, 'properties');
+      if (/\/properties\/data$/.test(sourcePath) && properties && typeof properties === 'object') {
+        const previous: unknown = Reflect.get(properties, 'previous_attributes');
+        const object: unknown = Reflect.get(properties, 'object');
+        if (
+          previous &&
+          typeof previous === 'object' &&
+          object &&
+          typeof object === 'object' &&
+          !Reflect.has(previous, 'x-flint-partial-of')
+        ) {
+          const resource = typeNames.get(object) ?? Reflect.get(object, 'x-sdk-ref');
+          if (typeof resource === 'string') {
+            Reflect.set(previous, 'x-flint-partial-of', resource);
+            referenceNames.delete(value);
+            typeNames.delete(value);
+          }
+        }
+      }
+      const partial: unknown = Reflect.get(value, 'x-flint-partial-of');
+      if (partial !== undefined) {
+        if (
+          typeof partial === 'string' &&
+          (Object.hasOwn(raw.components?.schemas ?? {}, partial) ||
+            [...inferredModels.values()].includes(partial))
+        )
+          Reflect.set(value, 'x-flint-partial-of', publicModel(partial));
+        else fail(sourcePath + '/x-flint-partial-of', 'expected a source component name');
+      }
       // Resolution owns this copy. Component boundaries cover refs, aliases and allOf.
       const component = /^\/components\/schemas\/([^/]+)$/
         .exec(sourcePath)?.[1]
@@ -2447,7 +2487,11 @@ function loadContractInput(
         );
   }
   diagnostics.finish();
-  inferredModels = modelNames(Object.keys(raw.components?.schemas ?? {}), config.models);
+  const webhookNaming = webhookNames(raw, Object.keys(config.webhook?.events ?? {}), config.models);
+  inferredModels = modelNames(Object.keys(raw.components?.schemas ?? {}), {
+    ...webhookNaming.models,
+    ...config.models,
+  });
   const includedOperation = (op: unknown): boolean => {
     const id: unknown = op && typeof op === 'object' ? Reflect.get(op, 'operationId') : undefined;
     const capability = typeof id === 'string' ? own(config.operations, id) : undefined;
@@ -2793,6 +2837,12 @@ function loadContractInput(
   ][]) {
     try {
       const mapped = publicModel(original);
+      if (
+        models[mapped] &&
+        webhookNaming.models[original] === mapped &&
+        !Object.hasOwn(config.models ?? {}, original)
+      )
+        continue;
       modelName(mapped, `models/${pointerSegment(original)}`, config.targets);
       if (Object.keys(models).some((k) => k.toLowerCase() === mapped.toLowerCase()))
         fail(`models/${pointerSegment(original)}`, 'model name collision');
@@ -2835,11 +2885,7 @@ function loadContractInput(
     definitions[mapped] = value;
     models[mapped] ??= value;
   }
-  for (const declaration of incoming) {
-    if (Object.hasOwn(models, declaration.model))
-      fail(declaration.pointer, 'incoming model name collision');
-    models[declaration.model] = declaration.schema;
-  }
+  // Incoming payload unions remain private runtime descriptors; event types own the public surface.
   let auth: Auth | undefined;
   let authentication: Record<string, AuthenticationMode> | undefined;
   const schemes = doc.components?.securitySchemes ?? {};
@@ -4036,6 +4082,14 @@ function loadContractInput(
   const contract: Contract = {
     ...(defaultBaseUrl !== undefined ? { defaultBaseUrl } : {}),
     ...(Object.keys(referenceUrls).length ? { referenceUrls } : {}),
+    webhookTypeNames: webhookNaming.names,
+    webhookAudienceModels: [
+      ...new Set(
+        Object.entries(webhookNaming.models).map(
+          ([original, name]) => config.models?.[original] ?? name,
+        ),
+      ),
+    ],
     title: String(doc.info?.title ?? 'API'),
     apiVersion: config.apiVersion?.value ?? String(doc.info?.version ?? ''),
     operations,

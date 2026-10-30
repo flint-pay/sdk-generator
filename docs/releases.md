@@ -196,7 +196,7 @@ A matching existing shape produces a review finding for its HTTP semantics, unle
 
 ### PHP class names
 
-- PHP object and tagged response classes include the response status: `Response201` does not satisfy a consumer expecting `Response200`. Adding a success or default response with a matching JSON schema is breaking when PHP is a selected target, unless the previous return type already includes `mixed` or `object`. Node-only matching shapes produce a review finding. Existing PHP class names are preserved.
+- PHP object and tagged response classes use the operation name without a status suffix when its successful schemas agree. Distinct successful schemas retain status disambiguation. Adding a success or default response with a matching JSON schema preserves the PHP class identity. Adding a distinct successful schema can introduce status-disambiguated classes and is checked for compatibility. Node-only matching shapes produce a review finding.
 - PHP tagged response classes include their `oneOf` branch positions. Reordering or inserting branches can reassign a class to another tag and is breaking when PHP is a selected target. Append new alternatives to keep positions, or make a major upgrade and update class-based dispatch. Node-only reordering does not produce this finding.
 
 ### Saved baselines
@@ -220,7 +220,7 @@ For CI, `preview API_JSON SDK_JSON OUTPUT --fail-on breaking` prints the ordinar
 Repeated shared-schema changes are reported at the exported model instead of every response use site. Input and response guarantees remain distinct. Generic declaration reviews for the same changed model are grouped; independent compiled guarantees, PHP identities and historical uncertainty still participate.
 
 - Error subclasses and unrecognized-webhook reasons are recorded as additive runtime APIs; Node and PHP standalone verification are additive when declared. Existing `SdkError` catches and `kind` checks keep working. Node error names and inspection now show the subclass name.
-- Node webhook event types are public identities. Removing or renaming a recorded `WebhookEvent<EventName>` export is breaking. Additions follow the existing event-configuration compatibility check.
+- Node webhook event types are public identities. Removing or renaming a recorded `<EventName>Event` export is breaking. Additions follow the existing event-configuration compatibility check.
 - The first regeneration with named Node webhook types produces the existing `webhook` declaration and `compiled codecs` review findings. The equivalent named return shape preserves consumers; the declaration upgrade alone produces no breaking finding. Older records without the event-name map remain readable.
 
 - The private generation record saves compiled contracts and runtime identities with source provenance and the release comparison baseline. Regeneration preserves that baseline even when a generator-only change affects compatibility without changing generated files.

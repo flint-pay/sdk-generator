@@ -8,11 +8,7 @@ import { compileSdkContract } from '../dist/target-plan.js';
 
 const events = ['payment.updated', 'payment.deleted', 'payment.created'];
 const orderedEvents = ['payment.created', 'payment.deleted', 'payment.updated'];
-const eventNames = [
-  'WebhookEventPaymentCreated',
-  'WebhookEventPaymentDeleted',
-  'WebhookEventPaymentUpdated',
-];
+const eventNames = ['PaymentCreatedEvent', 'PaymentDeletedEvent', 'PaymentUpdatedEvent'];
 const envelope = (event) => ({
   type: 'object',
   properties: {
@@ -125,7 +121,7 @@ for (const fixture of ['configured', 'incoming', 'payment', 'flint']) {
           );
           assert.match(
             freshFiles.get('node/declarations/KnownWebhookEvent.d.ts'),
-            /KnownWebhookEvent = WebhookEventPaymentCreated \| WebhookEventPaymentDeleted \| WebhookEventPaymentUpdated;/,
+            /KnownWebhookEvent = PaymentCreatedEvent \| PaymentDeletedEvent \| PaymentUpdatedEvent;/,
           );
           const rootExports = freshFiles.get('node/index.d.ts');
           assert.ok(rootExports.indexOf(eventNames[0]) < rootExports.indexOf(eventNames[1]));

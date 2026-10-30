@@ -53,7 +53,7 @@ test('Markdown schema constraints and sample values remain literal while prose l
   );
   assert.equal(
     schemaComment(child).trim(),
-    `/** Shape $ (Value): string. ${schemaNotes(child)} Value enum: ${JSON.stringify(example)}. */`,
+    `/** ${schemaNotes(child)} Value enum: ${JSON.stringify(example)}. */`,
   );
 });
 

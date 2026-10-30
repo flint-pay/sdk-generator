@@ -246,7 +246,8 @@ export function factSourceDocumentation(
         ),
       ].join(' ');
       const enums = factEnumsForComment(position.fact, definitions);
-      return `Shape ${position.path} (${position.presence}): ${type}. ${notes} ${enums}`.trim();
+      if (position.path === '$') return `${notes} ${enums}`.trim();
+      return `${position.path.replace(/^\$\.?/, '')} (${position.presence}): ${type}. ${notes} ${enums}`.trim();
     })
     .join(' ');
 }

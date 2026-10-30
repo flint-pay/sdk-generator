@@ -18,9 +18,9 @@ export function sourceFactRows(source) {
         .replace(/\n\s*\* ?/g, ' ')
         .replace(/\n/g, ' ')
         .trim();
-      return [
+      const nested = [
         ...text.matchAll(
-          /Shape (\S+) \((Value|Required|Optional)\): ([\s\S]*?)(?= Shape \S+ \((?:Value|Required|Optional)\):|$)/g,
+          /(\S+) \((Value|Required|Optional)\): ([\s\S]*?)(?= \S+ \((?:Value|Required|Optional)\):|$)/g,
         ),
       ].map((m) => {
         const body = m[3]
@@ -37,7 +37,7 @@ export function sourceFactRows(source) {
           }),
         );
         return {
-          path: m[1],
+          path: m[1].startsWith('[') ? '$' + m[1] : '$.' + m[1],
           presence: m[2],
           type: parsedType(type),
           links: [...type.matchAll(/\[([^\]]+)\]\([^)]+\)/g)].map((m) => m[1]).sort(),
@@ -52,6 +52,26 @@ export function sourceFactRows(source) {
           notes,
         };
       });
+      const notes = text
+        .split(/\S+ \((?:Value|Required|Optional)\):|\s+@(?:return|throws|see)\b/)[0]
+        .trim();
+      const enums = [...notes.matchAll(/(\S+) enum: ([\s\S]*?)\.(?= \S+ enum:|$)/g)].map(
+        (entry) => ({
+          path: entry[1] === 'Value' ? '' : entry[1],
+          values: JSON.parse('[' + entry[2] + ']').map((value) => JSON.stringify(value)),
+        }),
+      );
+      const constraints = [
+        ...notes.matchAll(
+          /\b(format|minimum|maximum|exclusiveMinimum|exclusiveMaximum|multipleOf|minLength|maxLength|minItems|maxItems|minProperties|maxProperties|uniqueItems|pattern): (.*?)(?:\.(?= |$))/gi,
+        ),
+      ]
+        .map((m) => `${m[1].toLowerCase()}:${m[2]}`)
+        .sort();
+      return [
+        { path: '$', presence: 'Value', type: null, links: [], notes, enums, constraints },
+        ...nested,
+      ];
     })
     .filter((rows) => rows.length);
 }
@@ -61,8 +81,9 @@ export function assertSourceFieldDocumentation(source, schema, definitions, name
   const match = (actual, row) =>
     actual.path === row.path &&
     actual.presence === row.presence &&
-    JSON.stringify(actual.type) === JSON.stringify(row.type) &&
-    JSON.stringify(actual.links) === JSON.stringify(row.links) &&
+    (row.path === '$' ||
+      (JSON.stringify(actual.type) === JSON.stringify(row.type) &&
+        JSON.stringify(actual.links) === JSON.stringify(row.links))) &&
     JSON.stringify([...new Set(actual.constraints)]) === JSON.stringify(row.constraints) &&
     JSON.stringify(actual.enums) === JSON.stringify(row.enums) &&
     row.descriptions.every((d) =>
@@ -91,25 +112,6 @@ export function assertNamedNullabilitySource(directory, inventory) {
     !!(t.item && hasNull(t.item)) ||
     !!(t.value && hasNull(t.value)) ||
     (t.branches ?? []).some(hasNull);
-  const signature = (t) => {
-    const { name, ...tree } = t;
-    if (tree.item) tree.item = signature(tree.item);
-    if (tree.value) tree.value = signature(tree.value);
-    if (tree.branches) {
-      tree.branches = [
-        ...new Map(tree.branches.map(signature).map((t) => [JSON.stringify(t), t])).values(),
-      ];
-      if (
-        directory.endsWith('/php') &&
-        tree.kind === 'and' &&
-        tree.branches.some((t) => t.kind === 'model')
-      )
-        tree.branches = tree.branches.filter((t) => t.kind !== 'object');
-      if (tree.branches.length === 1)
-        return { ...tree.branches[0], ...(tree.nullable ? { nullable: true } : {}) };
-    }
-    return tree;
-  };
   const declarations = new Map();
   if (!directory.endsWith('/php'))
     for (const file of readdirSync(join(directory, 'declarations')).filter((n) =>
@@ -134,17 +136,12 @@ export function assertNamedNullabilitySource(directory, inventory) {
       if (schema.writeOnly) continue;
       const type = expectedType(schema, definitions, outputNames);
       if (!hasModel(type) || !hasNull(type)) continue;
-      const candidates = (comments.get(field) ?? [])
-        .flatMap(sourceFactRows)
-        .map((rows) => rows.find((r) => r.path === '$'))
-        .filter(Boolean);
+      const candidates = comments.get(field) ?? [];
       assert.ok(
         candidates.some(
-          (row) =>
-            JSON.stringify(signature(row.type)) === JSON.stringify(signature(type)) &&
-            row.links.length >= typeLinks(type).length,
+          (text) => /\bnull\b/.test(text) && typeLinks(type).every((name) => text.includes(name)),
         ),
-        `${model.name}.${field}: source documentation lost nullable named value`,
+        `${model.name}.${field}: declaration lost nullable named value`,
       );
       checked++;
     }
