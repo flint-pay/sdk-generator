@@ -4474,5 +4474,6 @@
       "next": "next_page_token",
       "parameter": "page_token"
     }
-  }
+  },
+  "queryArrays": "scalar-or-array"
 }

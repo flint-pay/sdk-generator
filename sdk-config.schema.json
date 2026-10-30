@@ -443,6 +443,9 @@
     },
     "operationNames": {
       "enum": ["tags", "path"]
+    },
+    "queryArrays": {
+      "enum": ["scalar-or-array"]
     }
   },
   "additionalProperties": false,

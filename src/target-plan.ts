@@ -146,7 +146,8 @@ export function namedType(
   response = false,
   documentation = false,
 ): string {
-  if (s['x-sdk-type-name']) return s['x-sdk-type-name'] + (response ? '' : 'Input');
+  if (!s['x-sdk-query-array-items'] && s['x-sdk-type-name'])
+    return s['x-sdk-type-name'] + (response ? '' : 'Input');
   return typescriptType(s, response, undefined, false, undefined, undefined, models, documentation);
 }
 export function operationInputType(

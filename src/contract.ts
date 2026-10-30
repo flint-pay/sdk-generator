@@ -1,3 +1,4 @@
+import { scalarQueryArray } from './query-arrays.js';
 import { isReservedTypeName } from './naming.js';
 import { locateDiagnostic } from './input-diagnostics.js';
 import { requestOption } from './request-options.js';
@@ -47,6 +48,7 @@ import { createHash } from 'node:crypto';
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export type Schema = {
+  'x-sdk-query-array-items'?: Schema;
   'x-sdk-ref'?: string;
   /** Source component name for Node declarations; codecs retain their shared reference. */
   'x-sdk-type-name'?: string;
@@ -228,6 +230,7 @@ export type CapabilityOverride = Omit<Capability, DefaultCapability | 'request'>
 };
 export interface Config {
   operationNames?: 'tags' | 'path';
+  queryArrays?: 'scalar-or-array';
   $schema?: string;
   defaults?: { [K in DefaultCapability]?: Partial<NonNullable<Capability[K]>> };
   requests?: RequestStyle;
@@ -1838,6 +1841,7 @@ function loadContractInput(
     keys(
       config,
       [
+        'queryArrays',
         'operationNames',
         'requests',
         'responses',
@@ -1909,6 +1913,10 @@ function loadContractInput(
   diagnostics.check(() => {
     if (config.operationNames !== undefined && !['tags', 'path'].includes(config.operationNames))
       fail('config/operationNames', 'expected tags or path');
+  });
+  diagnostics.check(() => {
+    if (config.queryArrays !== undefined && config.queryArrays !== 'scalar-or-array')
+      fail('config/queryArrays', 'expected scalar-or-array');
   });
   checkConfig(['requests'], () => {
     if (config.requests !== undefined) validateRequestStyle(config.requests, 'config/requests');
@@ -3231,6 +3239,13 @@ function loadContractInput(
             fail(p, `unsupported parameter style ${style}`);
           if ((param as any).allowReserved || (param as any).content)
             fail(p, 'allowReserved/content parameters are unsupported');
+          if (
+            config.queryArrays === 'scalar-or-array' &&
+            param.in === 'query' &&
+            style === 'form' &&
+            param.explode !== false
+          )
+            param.schema = scalarQueryArray(param.schema) ?? param.schema;
           params.set(`${param.in}:${param.name}`, param);
         }
         const parameters = [...params.values()];

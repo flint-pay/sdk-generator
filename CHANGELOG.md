@@ -4,6 +4,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ## Unreleased (generator 0.1.0)
 
+- Add opt-in `queryArrays: "scalar-or-array"` for exploded form array query parameters in Node and PHP, preserving per-item validation and wire encoding. Node accepts readonly arrays.
+
 - Positional calls use named `*Params` types/models with parameter descriptions and path `@param` documentation. Declared idempotency keys must use `options.idempotencyKey`; params and generic-header channels are rejected. PHP's caller-correlation option is now `clientRequestId`.
 
 - Union request bodies now support positional path IDs and flat union-typed params in Node and PHP. Per-operation object request overrides are rejected; remove them to use the positional default. The SDK-wide legacy style setting remains available. Reference headings use discriminator values, model names or titles instead of ordinal body variants.

@@ -4389,6 +4389,15 @@ class Runtime
             }
             foreach ($op['parameters'] as $parameter) {
                 if (
+                    array_key_exists('scalarArray', $parameter) &&
+                    ($parameter['scalarArray'] !== true ||
+                        ($parameter['in'] ?? '') !== 'query' ||
+                        ($parameter['explode'] ?? true) === false ||
+                        ($parameter['style'] ?? 'form') !== 'form')
+                ) {
+                    throw new \InvalidArgumentException('Invalid compiled scalar query array');
+                }
+                if (
                     array_key_exists('source', $parameter) &&
                     (!in_array($parameter['source'], ['authentication', 'request-option'], true) ||
                         ($parameter['in'] ?? null) !== 'header')
@@ -4941,6 +4950,14 @@ class Runtime
                     );
                 }
                 continue;
+            }
+            if ($p['scalarArray'] ?? false) {
+                if ($value instanceof Model) {
+                    $value = $value->jsonSerialize();
+                }
+                if (!is_array($value)) {
+                    $value = [$value];
+                }
             }
             $v = $this->decode($value, $p['codec'], ['path' => $p['name']]);
             $scalar = fn($v) => $v instanceof RawNumber

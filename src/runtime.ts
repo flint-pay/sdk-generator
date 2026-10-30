@@ -3976,6 +3976,10 @@ class CompiledRuntime {
           );
         continue;
       }
+      if (p.scalarArray) {
+        if (isModel(value)) value = modelInputValue(value);
+        if (!Array.isArray(value)) value = [value];
+      }
       const normalized = this.decode(value, p.codec, { mode: 'request', path: p.name });
       const values = Array.isArray(normalized) ? normalized.map(scalar) : [scalar(normalized)];
       if (p.in === 'path') {
