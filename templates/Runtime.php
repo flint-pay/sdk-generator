@@ -1343,6 +1343,7 @@ final class EventStream implements \IteratorAggregate
                             'response',
                             false,
                             $this->transportMeta,
+                            errorCode: 'invalid_event',
                         );
                     }
                     break;
@@ -1387,6 +1388,7 @@ final class EventStream implements \IteratorAggregate
                             'response',
                             false,
                             $this->transportMeta,
+                            errorCode: 'invalid_event',
                         );
                     }
                     if ($character !== "\r" && $character !== "\n") {
@@ -1407,6 +1409,7 @@ final class EventStream implements \IteratorAggregate
                             'response',
                             false,
                             $this->transportMeta,
+                            errorCode: 'invalid_event',
                         );
                     }
                     if ($line === '') {
@@ -1427,7 +1430,7 @@ final class EventStream implements \IteratorAggregate
                                     'response',
                                     false,
                                     $this->transportMeta,
-                                    'sse_invalid_event',
+                                    'invalid_event',
                                     ['eventId' => $id, 'position' => $position],
                                     previous: $cause,
                                 );
@@ -1478,6 +1481,7 @@ final class EventStream implements \IteratorAggregate
                 false,
                 $this->transportMeta,
                 previous: $error,
+                errorCode: 'invalid_event',
             );
         } catch (\Throwable $error) {
             throw SdkError::create(
@@ -1487,6 +1491,7 @@ final class EventStream implements \IteratorAggregate
                 false,
                 $this->transportMeta,
                 previous: $error,
+                errorCode: 'invalid_event',
             );
         } finally {
             $this->close();
@@ -1528,6 +1533,7 @@ class Model implements \JsonSerializable
                     false,
                     $result->internalMeta(),
                     raw: $result->raw,
+                    errorCode: 'missing_payload',
                 );
             }
         }
@@ -6213,6 +6219,7 @@ class Runtime
                         'response',
                         false,
                         $meta,
+                        errorCode: 'unexpected_media_type',
                     );
                 }
                 $data = null;
@@ -6228,6 +6235,7 @@ class Runtime
                             'response',
                             false,
                             $meta,
+                            'invalid_json',
                             previous: $cause,
                             raw: $raw,
                         );
@@ -6240,6 +6248,7 @@ class Runtime
                         'response',
                         false,
                         $meta,
+                        'unexpected_redirect',
                     );
                 }
                 if (($status >= 200 && $status < 300) || $status === 304 || $redirect) {
@@ -6252,10 +6261,13 @@ class Runtime
                             false,
                             $meta,
                             raw: $raw,
+                            errorCode: 'undeclared_status',
                         );
                     }
+                    $responseErrorCode = 'schema_mismatch';
                     try {
                         if ($binary) {
+                            $responseErrorCode = 'unexpected_media_type';
                             $contentType = strtolower(
                                 trim(explode(';', $rh['content-type'] ?? '')[0]),
                             );
@@ -6266,6 +6278,7 @@ class Runtime
                             }
                             $data = $raw;
                         } elseif ($redirect) {
+                            $responseErrorCode = 'unexpected_redirect';
                             $location = $rh['location'] ?? null;
                             if (($declared['locationRequired'] ?? false) && !$location) {
                                 throw new \RuntimeException('Missing Location header');
@@ -6282,6 +6295,7 @@ class Runtime
                                     : (object) ['location' => $location];
                         } elseif (isset($declared['codec'])) {
                             if ($raw === '') {
+                                $responseErrorCode = 'missing_payload';
                                 throw new \RuntimeException('Missing body');
                             }
                             $data = Codec::plainNumbers(
@@ -6351,6 +6365,7 @@ class Runtime
                             'response',
                             false,
                             $meta,
+                            $responseErrorCode,
                             previous: $cause,
                             raw: $raw,
                         );
@@ -6889,11 +6904,16 @@ class Runtime
                     'response',
                     false,
                     $result->internalMeta(),
-                    'pagination_empty_pages',
+                    'invalid_pagination',
                 );
             }
             if ($p['kind'] === 'link' && !is_string($next)) {
-                throw SdkError::create('protocol', 'Expected a pagination URL', 'response');
+                throw SdkError::create(
+                    'protocol',
+                    'Expected a pagination URL',
+                    'response',
+                    errorCode: 'invalid_pagination',
+                );
             }
             if ($p['kind'] === 'link') {
                 $next = self::resolveLink($next, $result->internalMeta()['url']);
@@ -6910,6 +6930,7 @@ class Runtime
                     'protocol',
                     'Pagination returned a repeated continuation (cursor cycle)',
                     'response',
+                    errorCode: 'invalid_pagination',
                 );
             }
             if ($previous !== null) {
@@ -6942,6 +6963,7 @@ class Runtime
                     'protocol',
                     'Pagination items field is not an array',
                     'response',
+                    errorCode: 'invalid_pagination',
                 );
             }
             foreach ($items as $item) {

@@ -1694,7 +1694,13 @@ export function compileSdkContract(source: Contract): {
           result.model &&
           (Object.keys(shape.properties ?? {}).length || shape.additionalProperties === false)
         )
-          result.phpRepresentation = representations.model(result.model, response.schema);
+          result.phpRepresentation = representations.model(
+            result.model,
+            response.schema,
+            responseComponent(response.schema, Object.keys(models))
+              ? 'models.' + result.model
+              : result.model,
+          );
         else if (result.variants && response.schema.oneOf && response.schema.discriminator) {
           const variants: Record<string, PhpRepresentation> = {};
           for (const [tag, index] of Object.entries(discriminatorBindings(response.schema) ?? {})) {

@@ -446,7 +446,7 @@ test('malformed SSE events retain event id and one-based position, then release 
       for await (const event of stream) count++;
     },
     (e) => {
-      assert.equal(e.code, 'sse_invalid_event');
+      assert.equal(e.code, 'invalid_event');
       assert.deepEqual(e.event, { id: 'event-2', position: 2 });
       assert.match(e.message, /event 2/);
       return true;
@@ -468,7 +468,7 @@ $count=0;
 try { foreach($s as $event)$count++; } catch(Example\Payments\SdkError $e) { echo json_encode([$count,$e->code,$e->event]); }
 `,
     ),
-    [1, 'sse_invalid_event', { id: 'event-2', position: 2 }],
+    [1, 'invalid_event', { id: 'event-2', position: 2 }],
   );
 });
 
@@ -557,7 +557,7 @@ test('link pagination recognizes a cycle back to its original request URL', asyn
       for await (const _ of client.payments.linksPages()) {
       }
     },
-    { name: 'UnexpectedResponseError' },
+    { name: 'UnexpectedResponseError', code: 'invalid_pagination' },
   );
   assert.equal(calls, 2);
   assert.deepEqual(
@@ -566,10 +566,10 @@ test('link pagination recognizes a cycle back to its original request URL', asyn
         String.raw`
 $calls=0;
 $c=new Example\Payments\Client(new Example\Payments\ClientOptions('https://example.invalid',token:'test',maxAttempts:1,transport:function($r)use(&$calls){$calls++;return ['status'=>200,'headers'=>[],'body'=>json_encode(['items'=>[['id'=>'p-synthetic','amount'=>1,'status'=>'pending']],'next'=>$calls===1?'/v1/links?page=B':'/v1/links'])];}));
-try{foreach($c->payments->linksPages() as $page){}}catch(Example\Payments\SdkError $e){echo json_encode([substr(strrchr(get_class($e), chr(92)), 1),$calls]);}
+try{foreach($c->payments->linksPages() as $page){}}catch(Example\Payments\SdkError $e){echo json_encode([substr(strrchr(get_class($e), chr(92)), 1),$calls,$e->code]);}
 `,
     ),
-    ['UnexpectedResponseError', 2],
+    ['UnexpectedResponseError', 2, 'invalid_pagination'],
   );
 });
 

@@ -1244,7 +1244,7 @@ export class EventStream implements AsyncIterable<ServerSentEvent> {
               'response',
               false,
               this.#meta,
-              'sse_invalid_event',
+              'invalid_event',
               { eventId: id, position },
               { cause },
             );
@@ -1321,6 +1321,9 @@ export class EventStream implements AsyncIterable<ServerSentEvent> {
                   'protocol',
                   'SSE event exceeds configured size limit',
                   'response',
+                  false,
+                  undefined,
+                  'invalid_event',
                 );
               continue;
             }
@@ -1337,6 +1340,7 @@ export class EventStream implements AsyncIterable<ServerSentEvent> {
                 'response',
                 false,
                 this.#meta,
+                'invalid_event',
               );
             skipLF = character === '\r';
             const frame = consumeLine();
@@ -1350,6 +1354,7 @@ export class EventStream implements AsyncIterable<ServerSentEvent> {
                 'response',
                 false,
                 this.#meta,
+                'invalid_event',
               );
             line += character;
           }
@@ -1364,7 +1369,7 @@ export class EventStream implements AsyncIterable<ServerSentEvent> {
         'response',
         false,
         this.#meta,
-        undefined,
+        'invalid_event',
         undefined,
         { cause },
       );
@@ -4102,7 +4107,7 @@ class CompiledRuntime {
         'response',
         false,
         metadata(result),
-        undefined,
+        'schema_mismatch',
         undefined,
         { cause },
         typeof result.raw === 'string' ? result.raw : undefined,
@@ -4758,6 +4763,7 @@ class CompiledRuntime {
             'response',
             false,
             meta,
+            'unexpected_media_type',
           );
         const redirect = op.responses[String(response.status)]?.classification === 'redirect';
         if (response.ok && declaredResponse?.bodyKind === 'binary') {
@@ -4773,6 +4779,7 @@ class CompiledRuntime {
               'response',
               false,
               meta,
+              'unexpected_media_type',
             );
           meta.durationMs = performance.now() - start;
           const data = new Uint8Array(bytes);
@@ -4796,7 +4803,7 @@ class CompiledRuntime {
               'response',
               false,
               meta,
-              undefined,
+              'invalid_json',
               undefined,
               { cause },
               raw,
@@ -4809,6 +4816,7 @@ class CompiledRuntime {
             'response',
             false,
             meta,
+            'unexpected_redirect',
           );
         if (response.ok || response.status === 304 || redirect) {
           const declared = declaredResponse;
@@ -4819,13 +4827,15 @@ class CompiledRuntime {
               'response',
               false,
               meta,
-              undefined,
+              'undeclared_status',
               undefined,
               undefined,
               raw,
             );
+          let responseErrorCode = 'schema_mismatch';
           try {
             if (redirect) {
+              responseErrorCode = 'unexpected_redirect';
               const location = response.headers.get('location');
               if (declared.locationRequired && !location)
                 throw new Error('Missing Location header');
@@ -4833,7 +4843,10 @@ class CompiledRuntime {
                 throw new Error('Invalid Location header');
               data = location === null ? {} : { location };
             } else if (declared.codec) {
-              if (data === undefined) throw new Error('Missing body');
+              if (data === undefined) {
+                responseErrorCode = 'missing_payload';
+                throw new Error('Missing body');
+              }
               data = plainNumbers(
                 this.decode(data, declared.codec, {
                   mode: 'response',
@@ -4854,7 +4867,7 @@ class CompiledRuntime {
               'response',
               false,
               meta,
-              undefined,
+              responseErrorCode,
               undefined,
               { cause },
               raw,
@@ -5159,10 +5172,17 @@ class CompiledRuntime {
           'response',
           false,
           metadata(result),
-          'pagination_empty_pages',
+          'invalid_pagination',
         );
       if (p.kind === 'link' && typeof next !== 'string')
-        throw createSdkError('protocol', 'Expected a pagination URL', 'response');
+        throw createSdkError(
+          'protocol',
+          'Expected a pagination URL',
+          'response',
+          false,
+          undefined,
+          'invalid_pagination',
+        );
       if (p.kind === 'link')
         next = destinationUrl(next as string, metadata(result).url ?? this.base).href;
       if (
@@ -5175,6 +5195,9 @@ class CompiledRuntime {
           'protocol',
           'Pagination returned a repeated continuation (cursor cycle)',
           'response',
+          false,
+          undefined,
+          'invalid_pagination',
         );
       if (previous !== undefined) seen.add(String(previous));
       seen.add(String(next));
@@ -5195,7 +5218,14 @@ class CompiledRuntime {
     for await (const page of this.pages(id, input, options)) {
       const values = field(page.data, p.items);
       if (!Array.isArray(values))
-        throw createSdkError('protocol', 'Pagination items field is not an array', 'response');
+        throw createSdkError(
+          'protocol',
+          'Pagination items field is not an array',
+          'response',
+          false,
+          undefined,
+          'invalid_pagination',
+        );
       for (const value of values) {
         stopped(options.signal);
         const certificate = this.operation(id)?.itemCertificate;
@@ -5206,7 +5236,7 @@ class CompiledRuntime {
             'response',
             false,
             metadata(page),
-            undefined,
+            'invalid_pagination',
             undefined,
             undefined,
             typeof page.raw === 'string' ? page.raw : undefined,

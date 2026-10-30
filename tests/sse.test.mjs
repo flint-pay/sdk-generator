@@ -68,12 +68,18 @@ test('Node SSE parser handles byte boundaries and releases on every exit', async
     idleTimeoutMs: 100,
     maxEventBytes: 1000,
   });
-  await assert.rejects(async () => Array.fromAsync(invalid), { name: 'UnexpectedResponseError' });
+  await assert.rejects(async () => Array.fromAsync(invalid), {
+    name: 'UnexpectedResponseError',
+    code: 'invalid_event',
+  });
   const oversized = new EventStream(reader([Buffer.from('data: 12345\n\n')]), meta, {
     idleTimeoutMs: 100,
     maxEventBytes: 5,
   });
-  await assert.rejects(async () => Array.fromAsync(oversized), { name: 'UnexpectedResponseError' });
+  await assert.rejects(async () => Array.fromAsync(oversized), {
+    name: 'UnexpectedResponseError',
+    code: 'invalid_event',
+  });
   const idle = new EventStream(new ReadableStream().getReader(), meta, {
     idleTimeoutMs: 10,
     maxEventBytes: 1000,
@@ -144,6 +150,26 @@ writeFileSync(
 const out = join(dir, 'out');
 before(() => {
   generate(loadContract(join(dir, 'api.json'), join(dir, 'sdk.json')), out);
+});
+test('SSE handshake failures expose the media code in both generated clients', async () => {
+  const fixtures = join(dir, 'handshake.json');
+  writeFileSync(
+    fixtures,
+    JSON.stringify([
+      {
+        name: 'JSON in place of an event stream',
+        operation: 'watch',
+        input: {},
+        expected: { method: 'GET', path: '/v1/events' },
+        responses: [{ status: 200, headers: { 'content-type': 'application/json' }, body: '{}' }],
+        error: { name: 'UnexpectedResponseError', code: 'unexpected_media_type' },
+      },
+    ]),
+  );
+  assert.deepEqual(
+    (await validateFixtures(out, fixtures)).map((row) => row.scenarios),
+    [1, 1],
+  );
 });
 test('PHP parser matches independently specified event frames for split UTF-8 and lines', async () => {
   writeFileSync(
@@ -259,7 +285,7 @@ test('injected streams retain unknown events, reject malformed known payloads an
   const result = await client.events.watch();
   const iterator = result.data[Symbol.asyncIterator]();
   assert.equal((await iterator.next()).value.data, 'raw future payload');
-  await assert.rejects(iterator.next(), { name: 'UnexpectedResponseError' });
+  await assert.rejects(iterator.next(), { name: 'UnexpectedResponseError', code: 'invalid_event' });
   assert.equal(calls, 1);
   assert.equal(released, 1);
   const closeable = await client.events.watch();
@@ -290,7 +316,7 @@ $client=new Client(new ClientOptions(baseUrl:'https://example.invalid',transport
 }));
 $result=$client->events->watch();$seen=[];
 try { foreach($result->data as $event)$seen[]=$event->data;throw new Exception('accepted malformed event'); }
-catch(SdkError $error){if(substr(strrchr(get_class($error), chr(92)), 1)!=='UnexpectedResponseError')throw $error;}
+catch(SdkError $error){if(substr(strrchr(get_class($error), chr(92)), 1)!=='UnexpectedResponseError'||$error->code!=='invalid_event')throw $error;}
 if($seen!==['raw future payload']||$calls!==1||$closed!==1)throw new Exception('stream contract');
 $client->close();echo 'ok';
 `,
