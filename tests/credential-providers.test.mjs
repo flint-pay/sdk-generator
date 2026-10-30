@@ -144,10 +144,14 @@ for (const surface of surfaces)
         delete options.authMode;
         delete options.credentials;
       }
-      const client = new Client(clientOptions);
+      let client, error;
+      try {
+        client = new Client(clientOptions);
+      } catch (e) {
+        error = e;
+      }
       assert.equal(calls, 0, 'construction must not resolve credentials');
-      let error;
-      for (let i = 0; i < (c.requests ?? 1); i++) {
+      for (let i = 0; i < (error ? 0 : (c.requests ?? 1)); i++) {
         try {
           const op = c.operation ?? 'keyed';
           const result = await client.api[op](
@@ -167,7 +171,8 @@ for (const surface of surfaces)
       }
       if (c.message) assert.equal(error.message, c.message, c.name);
       if (c.error) assert.equal(error.retryAllowed, false, c.name);
-      if (Object.hasOwn(c, 'value') && !c.legacyError)
+      if (c.kind === 'string' && c.value === '') assert.equal(error.code, 'credential_missing');
+      else if (Object.hasOwn(c, 'value') && !c.legacyError)
         assert.match(
           error.message,
           surface === 'token'

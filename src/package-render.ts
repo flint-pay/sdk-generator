@@ -622,7 +622,7 @@ export function compactNodeDeclarations(files: Map<string, string>, prefix: stri
 /** PHP lexical scan: braces inside strings and comments do not delimit classes. */
 export function splitPhpClasses(text: string): Map<string, string> {
   const result = new Map<string, string>();
-  const pattern = /^(?:(?:final|abstract) )?(?:class|interface|trait) (\w+)/gm;
+  const pattern = /^(?:(?:final|abstract) )?(?:class|interface|trait|enum) (\w+)/gm;
   let match: RegExpExecArray | null;
   let previousEnd = text.indexOf(';', text.indexOf('namespace ')) + 1;
   while ((match = pattern.exec(text))) {

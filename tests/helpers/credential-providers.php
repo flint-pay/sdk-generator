@@ -118,15 +118,20 @@ foreach (['provider', 'closureString', 'closureCredential'] as $form) {
             unset($options['apiKey'], $options['authMode'], $options['credentials']);
         }
         $clientSettings = new ClientOptions(...$clientOptions);
-        $client = new Client($clientSettings);
-        same($provider->calls, 0, 'construction resolves no credentials');
+        $client = null;
         $error = null;
+        try {
+            $client = new Client($clientSettings);
+        } catch (SdkError $e) {
+            $error = $e;
+        }
+        same($provider->calls, 0, 'construction resolves no credentials');
         $op = $c['operation'] ?? 'keyed';
         if ($op === 'keyed') {
             $options['idempotencyKey'] = 'synthetic-key';
         }
         $requestSettings = new RequestOptions(...$options);
-        for ($i = 0; $i < ($c['requests'] ?? 1); $i++) {
+        for ($i = 0; $i < ($error ? 0 : $c['requests'] ?? 1); $i++) {
             try {
                 $result = $client->api->$op(options: $requestSettings->withDeadline(30000));
                 same(
@@ -184,7 +189,7 @@ foreach (['provider', 'closureString', 'closureCredential'] as $form) {
             'debug redaction',
         );
         same($error?->getPrevious(), null, 'no provider cause retained');
-        $client->close();
+        $client?->close();
     }
 }
 echo 'ok';

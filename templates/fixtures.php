@@ -56,9 +56,10 @@ foreach ($cases as $index => $case) {
     };
     $client = new $clientClass(
         new $clientOptionsClass(
-            baseUrl: $case['baseUrl'] ?? 'https://api.example.invalid/v1',
-            token: $contract['composedAuthentication'] ?? false ? null : 'test-token',
-            transport: $transport,
+            ...[
+                'baseUrl' => $case['baseUrl'] ?? 'https://api.example.invalid/v1',
+                'transport' => $transport,
+            ] + ($contract['composedAuthentication'] ?? false ? [] : ['token' => 'test-token']),
         ),
     );
     $o = $case['options'] ?? [];
@@ -128,7 +129,7 @@ foreach ($cases as $index => $case) {
                 'timeoutMs' => $o['timeoutMs'] ?? null,
                 'headers' => $o['headers'] ?? [],
                 'authMode' => $o['authMode'] ?? null,
-                'credentials' => $o['credentials'] ?? null,
+                ...array_intersect_key($o, ['credentials' => true]),
                 ...array_intersect_key($o, $contract['authShortcuts'] ?? []),
                 ...$requestOptions,
             ],

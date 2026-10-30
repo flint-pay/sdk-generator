@@ -17,6 +17,7 @@ export function reservePublicSymbols(
       'Client',
       ...(hasPayloadReturns ? ['SdkResponse'] : []),
       'Runtime',
+      ...(targets.includes('php') ? ['Omitted'] : []),
       'Model',
       'Result',
       'SdkError',

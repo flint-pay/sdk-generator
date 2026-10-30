@@ -4,6 +4,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ## Unreleased (generator 0.1.0)
 
+- Breaking: Node and PHP reject explicitly passed undefined/null/empty/blank credentials with `ConfigurationError` code `credential_missing` before sending. Default discovery runs only when no credential option is passed; request credentials replace client credentials. Omit credential options to use ambient discovery, and set `ambientCredentials: false` with explicit tenant credentials in multi-tenant applications. PHP credential defaults use an internal enum marker so omitted named arguments remain distinct from explicit null.
+
 - Breaking: Node and PHP errors use a status-based ApiError hierarchy, flattened call context and message-plus-init constructors. Removed kind, error meta and the old validation/protocol/deadline/destination classes. PHP code and getCode() now return the string error code; status carries the HTTP status. Compiled error surface version 2 reports this upgrade as breaking.
 
 - Add opt-in `operationNames: "path"` naming for Node and PHP, with automatic pagination helper collision fallback and diagnosis errors for unexplained explicit names. Tag inference remains the default.

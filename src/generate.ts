@@ -153,7 +153,7 @@ function runtimeIdentity(
               ? /^node\/(runtime|type-certificate|codec-plan|runtime-plan|request-options|descriptor-source|package-plan|response|request)\.js$/.test(
                   name,
                 )
-              : /^php\/src\/(SchemaAdapter|classes\/(?:Runtime|Codec|Model|SdkError|Result|RequestOptions|ClientOptions|AmbientCredentialProvider|Credential|CredentialProvider|EventStream|ServerSentEvent|Cancellation|ByteStream|CurlByteStream|RawNumber|ParsedNumber|ExactNumber|SdkResponse|Errors\/\w+|Internal\/DescriptorSource))\.php$/.test(
+              : /^php\/src\/(SchemaAdapter|classes\/(?:Runtime|Codec|Model|SdkError|Result|RequestOptions|ClientOptions|Omitted|AmbientCredentialProvider|Credential|CredentialProvider|EventStream|ServerSentEvent|Cancellation|ByteStream|CurlByteStream|RawNumber|ParsedNumber|ExactNumber|SdkResponse|Errors\/\w+|Internal\/DescriptorSource))\.php$/.test(
                   name,
                 ),
           ),
@@ -886,8 +886,10 @@ function exampleParts(
           ? `authMode: ${php(credentials.mode)},\n  credentials: [\n    ${php(credentials.mode)} => [\n${credentials.values.map((value) => `      ${php(value.key)} => ${credentialValue(value)},`).join('\n')}\n    ],\n  ]`
           : `authMode: ${supplied} ? ${php(credentials.mode)} : null,\n  credentials: ${supplied} ? [\n    ${php(credentials.mode)} => [\n${credentials.values.map((value) => `      ${php(value.key)} => ${credentialValue(value)},`).join('\n')}\n    ],\n  ] : []`
       : credentials.kind === 'option'
-        ? target === 'node' && !credentials.required
-          ? `...(${supplied} ? { ${option(credentials.value.key, credentialValue(credentials.value))} } : {})`
+        ? !credentials.required
+          ? target === 'node'
+            ? `...(${supplied} ? { ${option(credentials.value.key, credentialValue(credentials.value))} } : {})`
+            : `...(${supplied} ? [${php(credentials.value.key)} => ${credentialValue(credentials.value)}] : [])`
           : option(credentials.value.key, credentialValue(credentials.value))
         : '';
   const printed =
@@ -933,7 +935,7 @@ function exampleParts(
   }
   return {
     symbols,
-    setup: `$baseUrl = getenv('API_BASE_URL');\nif ($baseUrl === false || $baseUrl === '') throw new \\RuntimeException('Set API_BASE_URL to your sandbox or local mock URL');\n${credentialSetup}$${client} = new Client(new ClientOptions(\n  baseUrl: $baseUrl,\n  allowInsecureHttp: in_array(parse_url($baseUrl, PHP_URL_HOST), ['localhost', '127.0.0.1'], true) && parse_url($baseUrl, PHP_URL_SCHEME) === 'http',\n${authOptions ? '  ' + authOptions + ',\n' : ''}));\n`,
+    setup: `$baseUrl = getenv('API_BASE_URL');\nif ($baseUrl === false || $baseUrl === '') throw new \\RuntimeException('Set API_BASE_URL to your sandbox or local mock URL');\n${credentialSetup}$${client} = new Client(new ClientOptions(\n${authOptions ? '  ' + authOptions + ',\n' : ''}  baseUrl: $baseUrl,\n  allowInsecureHttp: in_array(parse_url($baseUrl, PHP_URL_HOST), ['localhost', '127.0.0.1'], true) && parse_url($baseUrl, PHP_URL_SCHEME) === 'http',\n));\n`,
     call:
       key.keySetup +
       `${positional(op) ? '' : `$input = ${phpExampleSource(input, 0, true, syntax)};\n`}${assign}$${client}->${op.resource}->${method}(${positional(op) ? publicArguments(op, input, 'php', syntax, false, Boolean(requestOptions)) : '$input'}${requestOptions ? `${requestArguments(op, input).length ? ', ' : ''}new RequestOptions(${requestOptions})` : ''});\n${output}` +
@@ -1781,7 +1783,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
               .sort()
               .map(
                 (key) =>
-                  `        public readonly string|CredentialProvider|\\Closure|null $${key} = null,\n`,
+                  `        public readonly string|CredentialProvider|\\Closure|Omitted|null $${key} = Omitted::Value,\n`,
               )
               .join('') +
               Object.values(targetPlan.requestOptionPlans ?? {})
@@ -1796,7 +1798,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
               .sort()
               .map(
                 (key) =>
-                  `        public readonly string|CredentialProvider|\\Closure|null $${key} = null,\n`,
+                  `        public readonly string|CredentialProvider|\\Closure|Omitted|null $${key} = Omitted::Value,\n`,
               )
               .join('') +
               '        public readonly bool $ambientCredentials = true,\n        public readonly ?object $credentialCache = null,\n    ) {}',
@@ -3709,12 +3711,21 @@ function runtimeGuide(
     (node
       ? 'Credentials accept strings or CredentialProvider objects. getCredential() returns a Promise of { value: string, expiresAt?: Date }; optional invalidate() clears application caches.\n\n'
       : 'Credentials accept strings, CredentialProvider objects with getCredential(): Credential, or closures returning a string or Credential. A Credential holds a value and optional DateTimeInterface expiry.\n\n') +
+    `A credential option is passed when its key is present, including a shortcut or an entry in credentials. Passing ${node ? 'undefined, null, ' : 'null, '}an empty string or a blank string throws ConfigurationError with code credential_missing, outcome not_sent and param naming the option. Client credentials are checked during construction; request credentials are checked when the call starts. A request credential map or shortcut replaces the client credential for that call. Omit credential options to allow default discovery.\n\n` +
     'Credential providers resolve on every request attempt; the application owns caching and expiry. A replay-safe HTTP 401 invalidates credential providers implementing invalidate() and retries once, adding at most one attempt beyond the ordinary budget, even with maxAttempts: 1. The idempotency key is preserved. String credentials' +
     (node ? '' : ' and closures') +
     ' never trigger this refresh retry. Credential provider exceptions become authentication errors without retaining potentially sensitive causes.\n\n' +
     (c.config.auth && 'defaultCredentials' in c.config.auth && c.config.auth.defaultCredentials
-      ? 'Default credential discovery is lazy: explicit credentials, then configured API key/access token environment variables (both set is ambiguous_credentials), then configured workload identity. Set ambientCredentials: false to disable it. defaultCredentials() and workloadIdentityCredentials(options) return credential providers supporting token, token_file and github_actions sources and cached refresh.\n\n'
+      ? 'Default credential discovery is lazy and runs only when no credential option is passed on either the client or the request, and ambientCredentials is not false. It tries configured API key/access token environment variables (both set is ambiguous_credentials), then configured workload identity. Set ambientCredentials: false to disable it. defaultCredentials() and workloadIdentityCredentials(options) return credential providers supporting token, token_file and github_actions sources and cached refresh.\n\n'
       : 'This SDK does not discover credentials from environment variables. The example scripts explicitly read API_BASE_URL and their named credential variables.\n\n') +
+    (c.authShortcuts?.apiKey
+      ? 'For a multi-tenant application, pass the tenant credential explicitly and disable ambient discovery:\n\n' +
+        snippet(
+          node
+            ? 'const client = new Client({ apiKey: tenant.flintKey, ambientCredentials: false });\n'
+            : '$client = new Client(new ClientOptions(apiKey: $tenant->flintKey, ambientCredentials: false));\n',
+        )
+      : '') +
     `## Responses and errors\n\nPayload methods return the decoded body or configured payload path directly. WithResponse companions return SdkResponse with body, meta and raw without unwrapping. Each invocation makes its own request; choose one form per action. Result-mode methods return Result with data (the complete body), meta and raw. API envelopes remain inside that body. Pagination Pages and polling Wait follow the base return mode; their WithResponse companions expose the complete body and metadata. Items yields individual items.\n\n${node ? 'Metadata uses properties, and binary bodies are Uint8Array.' : 'Metadata uses array keys, and binary bodies are binary-safe strings.'} Raw JSON is buffered text and may contain sensitive data.\n\n### Errors\n\n` +
     snippet(errorClassExample(c, target)) +
     errorReference(target, apiName(c)) +

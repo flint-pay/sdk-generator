@@ -133,12 +133,12 @@ On HTTP 401, a replay-safe request using a provider with a public `invalidate():
 
 ### Default credentials
 
-When the provider declares `auth.defaultCredentials`, a client without explicit credentials tries the configured API key and access token environment variables (both set is `ambiguous_credentials`), then workload identity only when its configured ID variable is set. Client and request credentials always win. Anonymous operations do not discover credentials. Use `ambientCredentials: false` for applications that must never use the process's identity implicitly.
+When the provider declares `auth.defaultCredentials`, a client without explicit credentials tries the configured API key and access token environment variables (both set is `ambiguous_credentials`), then workload identity only when its configured ID variable is set. Discovery runs only when no credential option is passed on the client or request. Passing a shortcut or credential-map entry as `undefined` (Node), `null`, empty or blank throws `ConfigurationError` with code `credential_missing`, `outcome: "not_sent"` and `param` naming the option. Client options fail during construction; request options fail when the call starts. A request credential replaces the client credential for that call. Anonymous operations do not discover credentials. Use `ambientCredentials: false` for applications that must never use the process's identity implicitly.
 
 ```js
 import { Client, defaultCredentials, workloadIdentityCredentials } from 'example-sdk';
 const ambient = new Client();
-const isolated = new Client({ ambientCredentials: false });
+const isolated = new Client({ apiKey: tenant.flintKey, ambientCredentials: false });
 const explicit = new Client({
   apiKey: workloadIdentityCredentials({
     workloadIdentityId: 'wid_example',
@@ -154,7 +154,7 @@ const explicit = new Client({
 use Example\Sdk\{Client, ClientOptions};
 use function Example\Sdk\{defaultCredentials, workloadIdentityCredentials};
 $ambient = new Client(new ClientOptions());
-$isolated = new Client(new ClientOptions(ambientCredentials: false));
+$isolated = new Client(new ClientOptions(apiKey: $tenant->flintKey, ambientCredentials: false));
 $explicit = new Client(
   new ClientOptions(
     apiKey: workloadIdentityCredentials([
