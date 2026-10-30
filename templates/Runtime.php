@@ -32,6 +32,7 @@ class SdkError extends \RuntimeException implements \JsonSerializable
         public readonly ?string $raw = null,
         ?\Throwable $previous = null,
         mixed $details = null,
+        public ?string $param = null,
     ) {
         parent::__construct($message, 0, $previous);
         $this->code = $code;
@@ -173,6 +174,7 @@ class SdkError extends \RuntimeException implements \JsonSerializable
             'name' => substr(strrchr(static::class, '\\') ?: static::class, 1),
             'message' => $this->message,
             'code' => $this->code,
+            ...$this->param !== null ? ['param' => $this->param] : [],
             'operation' => $this->operation,
             'outcome' => $this->outcome,
             'retryAllowed' => $this->retryAllowed,
@@ -804,6 +806,12 @@ final class AmbientCredentialProvider implements CredentialProvider
     }
 }
 
+/** @internal Default marker distinguishes omitted named arguments from explicit null. */
+enum Omitted
+{
+    case Value;
+}
+
 /** Per-call overrides, passed as the final argument. See RUNTIME.md#requestoptions. */
 final class RequestOptions
 {
@@ -819,7 +827,7 @@ final class RequestOptions
         public readonly ?int $maxPages = null,
         public readonly ?int $maxItems = null,
         public readonly ?string $authMode = null,
-        public readonly ?array $credentials = null,
+        public readonly array|string|Omitted|null $credentials = Omitted::Value,
         public readonly ?int $streamIdleTimeoutMs = null,
         public readonly ?int $streamLifetimeMs = null,
     ) {
@@ -859,7 +867,7 @@ final class ClientOptions
 {
     public function __construct(
         public readonly ?string $baseUrl = null,
-        public readonly string|CredentialProvider|\Closure|null $token = null,
+        public readonly string|CredentialProvider|\Closure|Omitted|null $token = Omitted::Value,
         public readonly ?array $allowedOrigins = null,
         public readonly bool $allowInsecureHttp = false,
         public readonly int $timeoutMs = 10000,
@@ -870,7 +878,7 @@ final class ClientOptions
         public readonly ?\Closure $diagnostics = null,
         public readonly array $redactFields = [],
         public readonly ?string $authMode = null,
-        public readonly array $credentials = [],
+        public readonly array|string|Omitted|null $credentials = Omitted::Value,
         public readonly bool $ambientCredentials = true,
         public readonly ?object $credentialCache = null,
     ) {
@@ -4016,6 +4024,7 @@ class Runtime
         if (!$this->descriptors) {
             self::assertCompiledPlan($this->contract);
         }
+        $this->credentialOptionsPassed($options);
         $baseUrl = $options->baseUrl ?? ($this->contract['defaultBaseUrl'] ?? null);
         if ($baseUrl === null) {
             Codec::fail('baseUrl', 'required: pass baseUrl because this SDK has no default server');
@@ -4029,7 +4038,7 @@ class Runtime
         $this->baseUrl = $baseUrl;
         if (
             isset($this->contract['authentication']) &&
-            $options->token !== null &&
+            $options->token !== Omitted::Value &&
             !isset($this->contract['authShortcuts']['token'])
         ) {
             $shortcuts = array_keys($this->contract['authShortcuts'] ?? []);
@@ -4045,6 +4054,57 @@ class Runtime
         if ($options->timeoutMs <= 0 || $options->deadlineMs <= 0) {
             Codec::fail('options', 'timeouts must be positive');
         }
+    }
+    /** Validate presence without resolving a provider or reading the environment. */
+    private function credentialOptionsPassed(ClientOptions|RequestOptions $options): bool
+    {
+        $validate = static function (mixed $value, string $param): void {
+            if (
+                $value === null ||
+                (is_string($value) && preg_match('/^[\s\x{FEFF}]*$/uD', $value) === 1)
+            ) {
+                $state = $value === null ? 'null' : 'empty or blank';
+                $kind = $param === 'apiKey' ? 'API key' : 'credential';
+                throw new Errors\ConfigurationError(
+                    $param .
+                        ' was passed but is ' .
+                        $state .
+                        '. Pass a nonempty ' .
+                        $kind .
+                        '; default credentials are used only when no credential option is passed.',
+                    code: 'credential_missing',
+                    param: $param,
+                );
+            }
+        };
+        $passed = false;
+        foreach (
+            array_unique(['token', ...array_keys($this->contract['authShortcuts'] ?? [])])
+            as $key
+        ) {
+            if (!property_exists($options, $key) || $options->$key === Omitted::Value) {
+                continue;
+            }
+            $passed = true;
+            $validate($options->$key, $key);
+        }
+        if ($options->credentials !== Omitted::Value) {
+            $passed = true;
+            $validate($options->credentials, 'credentials');
+            foreach (
+                is_array($options->credentials) ? $options->credentials : []
+                as $key => $value
+            ) {
+                $param = 'credentials.' . $key;
+                $validate($value, $param);
+                if ($options instanceof ClientOptions && is_array($value)) {
+                    foreach ($value as $scheme => $source) {
+                        $validate($source, $param . '.' . $scheme);
+                    }
+                }
+            }
+        }
+        return $passed;
     }
     public static function assertCompiledPlan(array $contract): void
     {
@@ -4668,6 +4728,8 @@ class Runtime
         array &$context = [],
     ): Result {
         $o = $options ?? new RequestOptions();
+        $requestCredentialsPassed = $this->credentialOptionsPassed($o);
+        $clientCredentialsPassed = $this->credentialOptionsPassed($this->options);
         $op = $this->operation($id);
         foreach (['streamIdleTimeoutMs', 'streamLifetimeMs'] as $key) {
             if ($o->{$key} !== null && $o->{$key} <= 0) {
@@ -4898,7 +4960,10 @@ class Runtime
         $suppliedHeaders = $headers;
         $ambient = $this->contract['defaultCredentials'] ?? null;
         $ambientProvider =
-            $ambient && $this->options->ambientCredentials
+            $ambient &&
+            $this->options->ambientCredentials &&
+            !$requestCredentialsPassed &&
+            !$clientCredentialsPassed
                 ? new AmbientCredentialProvider($ambient, null, $this->baseUrl)
                 : null;
         $credentialContext = [
@@ -4972,7 +5037,7 @@ class Runtime
                 $shortcutAuth = function ($options) {
                     $supplied = [];
                     foreach ($this->contract['authShortcuts'] ?? [] as $key => $shortcut) {
-                        if (($options->$key ?? null) !== null) {
+                        if (property_exists($options, $key) && $options->$key !== Omitted::Value) {
                             $supplied[] = [
                                 'mode' => $shortcut['mode'],
                                 'credentials' => [$shortcut['scheme'] => $options->$key],
@@ -4983,9 +5048,7 @@ class Runtime
                         count($supplied) > 1 ||
                         ($supplied &&
                             ($options->authMode !== null ||
-                                ($options->credentials !== null &&
-                                    ($options instanceof RequestOptions ||
-                                        $options->credentials !== []))))
+                                $options->credentials !== Omitted::Value))
                     ) {
                         throw SdkError::create(
                             'authentication',
@@ -5058,10 +5121,13 @@ class Runtime
                 if ($selected !== null) {
                     $credentials =
                         $requestShortcut['credentials'] ??
-                        ($o->credentials ??
-                            (($clientShortcut['mode'] ?? null) === $modeName
+                        ($o->credentials !== Omitted::Value
+                            ? $o->credentials
+                            : (($clientShortcut['mode'] ?? null) === $modeName
                                 ? $clientShortcut['credentials']
-                                : $this->options->credentials[$modeName] ?? null));
+                                : (is_array($this->options->credentials)
+                                    ? $this->options->credentials[$modeName] ?? null
+                                    : null)));
                     foreach ($selected['schemes'] as $scheme) {
                         $source =
                             $credentials[$scheme['name']] ??
@@ -5098,10 +5164,11 @@ class Runtime
                 }
             } elseif (
                 $op['authenticated'] ||
-                (($op['optionalAuthentication'] ?? false) && $this->options->token)
+                (($op['optionalAuthentication'] ?? false) &&
+                    $this->options->token !== Omitted::Value)
             ) {
                 $auth = $this->contract['auth'] ?? null;
-                if (!$auth || !$this->options->token) {
+                if (!$auth || $this->options->token === Omitted::Value) {
                     throw SdkError::create(
                         'authentication',
                         'Explicit API credentials are required',

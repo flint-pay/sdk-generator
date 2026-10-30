@@ -1012,7 +1012,7 @@ require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
 $named=$argv[3]==='named';
 foreach(json_decode(file_get_contents($argv[2]),true) as $case){
   $seen=[];
-  $client=function($value)use($named,&$seen){return new Example\Types\Client(new Example\Types\ClientOptions(baseUrl:'https://example.invalid',token:$named?null:$value,authMode:$named?'key':null,credentials:$named?['key'=>['Key'=>$value]]:[],transport:function($r)use(&$seen){$seen[]=$r['headers']['x-key'];return ['status'=>204,'headers'=>[],'body'=>''];}));};
+  $client=function($value)use($named,&$seen){return new Example\Types\Client(new Example\Types\ClientOptions(baseUrl:'https://example.invalid',token:$named?Example\Types\Omitted::Value:$value,authMode:$named?'key':null,credentials:$named?['key'=>['Key'=>$value]]:[],transport:function($r)use(&$seen){$seen[]=$r['headers']['x-key'];return ['status'=>204,'headers'=>[],'body'=>''];}));};
   $method='read'.ucfirst($case['id']);$client($case['value'])->api->$method();
   foreach($case['invalid'] as $value){try{$client($value)->api->$method();throw new Exception('Invalid credential accepted: '.$method);}catch(Example\Types\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='InvalidInputError')throw $e;}}
   if($seen!==[$case['value']])throw new Exception('Credential wire value: '.$method);

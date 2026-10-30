@@ -99,7 +99,7 @@ test('optional authentication follows caller credentials without requiring them'
     let headers;
     const c = new Client({
       baseUrl: 'https://example.invalid',
-      token,
+      ...(token === undefined ? {} : { token }),
       transport: async (_url, init) => {
         headers = init.headers;
         return new Response(null, { status: 204 });
@@ -108,7 +108,7 @@ test('optional authentication follows caller credentials without requiring them'
     await c.api.getValue();
     assert.equal(headers.authorization, token ? 'Bearer ' + token : undefined);
   }
-  const php = `require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';$headers=[];foreach([null,'caller-token'] as $token){$c=new Example\\Auth\\Client(new Example\\Auth\\ClientOptions('https://example.invalid',token:$token,transport:function($r)use(&$headers){$headers[]=$r['headers']['authorization']??null;return ['status'=>204,'headers'=>[],'body'=>''];}));$c->api->getValue();}echo json_encode($headers);`;
+  const php = `require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';$headers=[];foreach([null,'caller-token'] as $token){$c=new Example\\Auth\\Client(new Example\\Auth\\ClientOptions('https://example.invalid',token:$token ?? Example\\Auth\\Omitted::Value,transport:function($r)use(&$headers){$headers[]=$r['headers']['authorization']??null;return ['status'=>204,'headers'=>[],'body'=>''];}));$c->api->getValue();}echo json_encode($headers);`;
   const result = spawnSync('php', ['-r', php, join(output, 'php')], { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout), [null, 'Bearer caller-token']);

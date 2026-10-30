@@ -166,7 +166,7 @@ const cases = [
     [{ token: 'one' }, { token: 'two', authMode: 'merchant' }, 'merchant', 'shortcut'],
     [{ token: 'one' }, { token: 'two', apiKey: 'three' }, 'merchant', 'shortcut'],
     [{ token: 'one' }, {}, 'customer', 'not permitted'],
-    [{ token: '' }, {}, 'merchant', 'Missing or invalid'],
+    [{ token: '' }, {}, 'merchant', 'token was passed but is empty or blank'],
     [
       { authMode: 'checkout', credentials: { checkout: { ID: 'id' } } },
       {},

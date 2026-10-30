@@ -251,7 +251,7 @@ test('Composer autoload is inert and PHP clients defer descriptors until first u
     if (file.endsWith('.php')) {
       const source = readFileSync(join(output, 'php/src/classes', file), 'utf8');
       assert.equal(
-        [...source.matchAll(/^(?:(?:final|abstract) )?(?:class|interface) /gm)].length,
+        [...source.matchAll(/^(?:(?:final|abstract) )?(?:class|interface|enum) /gm)].length,
         1,
         file,
       );

@@ -60,6 +60,7 @@ const publicErrorDetailsCertificate: TypeCertificate | undefined = undefined;
 
 export interface SdkErrorInit {
   code?: string;
+  param?: string;
   operation?: string;
   outcome?: 'unknown' | 'response' | 'not_sent';
   retryAllowed?: boolean;
@@ -77,6 +78,7 @@ export interface SdkErrorInit {
 /** SDK failure with flattened call context. */
 export class SdkError extends Error {
   code: string;
+  param?: string;
   operation?: string;
   outcome: 'unknown' | 'response' | 'not_sent';
   retryAllowed: boolean;
@@ -98,6 +100,7 @@ export class SdkError extends Error {
     this.attempts = init.attempts ?? 0;
     this.headers = init.headers ?? {};
     for (const key of [
+      'param',
       'operation',
       'status',
       'requestId',
@@ -128,6 +131,7 @@ export class SdkError extends Error {
       name: this.name,
       message: this.message,
       code: this.code,
+      ...(this.param !== undefined ? { param: this.param } : {}),
       operation: this.operation ?? null,
       outcome: this.outcome,
       retryAllowed: this.retryAllowed,
@@ -781,6 +785,67 @@ async function resolveCredential(
   if (typeof value !== 'string' || !value || (rejectNewlines && /[\r\n]/.test(value)))
     throw createSdkError('authentication', message);
   return value;
+}
+
+/** Validate explicit sources without resolving providers or reading the environment. */
+function credentialOptionsPassed(
+  options: ClientOptions | RequestOptions,
+  shortcuts: readonly string[],
+  client: boolean,
+): boolean {
+  const values = options as unknown as Record<string, unknown>;
+  const validate = (value: unknown, param: string) => {
+    if (
+      value === undefined ||
+      value === null ||
+      (typeof value === 'string' && /^[\s\u0085]*$/u.test(value))
+    ) {
+      const state = value === undefined ? 'undefined' : value === null ? 'null' : 'empty or blank';
+      const kind = param === 'apiKey' ? 'API key' : 'credential';
+      throw new errors.ConfigurationError(
+        `${param} was passed but is ${state}. Pass a nonempty ${kind}; default credentials are used only when no credential option is passed.`,
+        { code: 'credential_missing', param },
+      );
+    }
+  };
+  let passed = false;
+  for (const key of new Set(['token', ...shortcuts])) {
+    if (!Object.hasOwn(options, key)) continue;
+    passed = true;
+    validate(values[key], key);
+  }
+  if (Object.hasOwn(options, 'credentials')) {
+    passed = true;
+    validate(values.credentials, 'credentials');
+    for (const [key, value] of Object.entries(values.credentials as object)) {
+      const param = `credentials.${key}`;
+      validate(value, param);
+      if (client && typeof value === 'object' && value !== null)
+        for (const [scheme, source] of Object.entries(value))
+          validate(source, `${param}.${scheme}`);
+    }
+  }
+  return passed;
+}
+
+/** Preserve own credential keys, including non-enumerable ones, across option copies. */
+function copyCredentialOptions<T extends ClientOptions | RequestOptions>(
+  options: T,
+  shortcuts: readonly string[],
+  client: boolean,
+): T {
+  credentialOptionsPassed(options, shortcuts, client);
+  const copy = { ...options };
+  for (const key of new Set(['token', 'authMode', 'credentials', ...shortcuts])) {
+    if (Object.hasOwn(options, key))
+      Object.defineProperty(copy, key, {
+        value: Reflect.get(options, key),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+  }
+  return copy;
 }
 
 /** Per-call overrides; pass as the final method argument. See RUNTIME.md#requestoptions. */
@@ -3576,7 +3641,11 @@ class CompiledRuntime {
           `options.${key}`,
           `unknown client option${key === 'maxRetries' ? '; use maxAttempts (total attempts, including the first)' : '; see ClientOptions for supported keys'}`,
         );
-    this.options = { ...options };
+    this.options = copyCredentialOptions(
+      options,
+      Object.keys(this.compiledContract.authShortcuts ?? {}),
+      true,
+    );
     this.base = clientBaseUrl(
       options.baseUrl === undefined ? this.compiledContract.defaultBaseUrl : options.baseUrl,
     );
@@ -3716,7 +3785,14 @@ class CompiledRuntime {
         id,
         input,
         typeof key === 'string' && options && typeof options === 'object' && !Array.isArray(options)
-          ? { ...options, idempotencyKey: key }
+          ? {
+              ...copyCredentialOptions(
+                options,
+                Object.keys(this.contract.authShortcuts ?? {}),
+                false,
+              ),
+              idempotencyKey: key,
+            }
           : options,
         continuation,
         context,
@@ -3750,6 +3826,16 @@ class CompiledRuntime {
       bad('input', 'expected an object');
     if (!options || typeof options !== 'object' || Array.isArray(options))
       bad('options', 'expected an object');
+    const requestCredentialsPassed = credentialOptionsPassed(
+      options,
+      Object.keys(this.contract.authShortcuts ?? {}),
+      false,
+    );
+    const clientCredentialsPassed = credentialOptionsPassed(
+      this.options,
+      Object.keys(this.contract.authShortcuts ?? {}),
+      true,
+    );
     const { apiVersion } = this.contract;
     const op = this.operation(id);
     if (!op) return bad('operation', 'operation is not included in this SDK');
@@ -3886,7 +3972,10 @@ class CompiledRuntime {
     const suppliedHeaders = { ...headers };
     const ambient = this.contract.defaultCredentials;
     const ambientProvider =
-      ambient && this.options.ambientCredentials !== false
+      ambient &&
+      this.options.ambientCredentials !== false &&
+      !requestCredentialsPassed &&
+      !clientCredentialsPassed
         ? configuredDefaultCredentials(ambient, this.base.href)
         : undefined;
     const credentialContext: CredentialContext = {
@@ -3901,10 +3990,8 @@ class CompiledRuntime {
       if (this.contract.authentication) {
         const permitted = op.authModes ?? [];
         const shortcutAuth = (value: RequestOptions | ClientOptions) => {
-          const supplied = Object.entries(this.contract.authShortcuts ?? {}).filter(
-            ([key]) =>
-              Object.hasOwn(value, key) &&
-              (value as unknown as Record<string, unknown>)[key] !== undefined,
+          const supplied = Object.entries(this.contract.authShortcuts ?? {}).filter(([key]) =>
+            Object.hasOwn(value, key),
           );
           if (
             supplied.length > 1 ||
@@ -4624,7 +4711,10 @@ class CompiledRuntime {
           'Polling deadline exceeded; remote operation may still be running',
           'unknown',
         );
-      const result = await this.request<T>(id, input, { ...options, deadlineMs: remaining });
+      const result = await this.request<T>(id, input, {
+        ...copyCredentialOptions(options, Object.keys(this.contract.authShortcuts ?? {}), false),
+        deadlineMs: remaining,
+      });
       const state = field(result.data, p.state);
       if (p.success.includes(state)) return result;
       if (p.failure.includes(state))
