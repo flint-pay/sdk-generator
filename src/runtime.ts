@@ -3811,10 +3811,6 @@ class CompiledRuntime {
     const header = op?.idempotency?.header.toLowerCase();
     const key = header
       ? (options?.idempotencyKey ??
-        Object.entries(input ?? {}).find(([name]) => name.toLowerCase() === header)?.[1] ??
-        Object.entries(options?.headers ?? {}).find(
-          ([name]) => name.toLowerCase() === header,
-        )?.[1] ??
         (op?.idempotency?.auto
           ? (op.idempotency.autoKeyPrefix ?? '') + process.getBuiltinModule('crypto').randomUUID()
           : undefined))
@@ -3925,16 +3921,6 @@ class CompiledRuntime {
     const setHeader = (name: string, value: string) => {
       if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) || /[\r\n]/.test(value))
         bad('headers', 'invalid HTTP header');
-      const existing = headers[name.toLowerCase()];
-      if (
-        op.idempotency?.header.toLowerCase() === name.toLowerCase() &&
-        existing !== undefined &&
-        existing !== value
-      )
-        bad(
-          'idempotencyKey',
-          'conflicting keys were supplied through input headers or request options',
-        );
       headers[name.toLowerCase()] = value;
     };
     const basePath = this.base.pathname.replace(/\/$/, '');
@@ -3953,17 +3939,17 @@ class CompiledRuntime {
         continue;
       }
       let value = Object.hasOwn(input, p.name) ? input[p.name] : undefined;
-      if (
-        value === undefined &&
-        p.in === 'header' &&
-        op.idempotency?.header.toLowerCase() === p.name.toLowerCase()
-      ) {
-        value =
-          options.idempotencyKey ??
-          Object.entries(options.headers ?? {}).find(
-            ([name]) => name.toLowerCase() === p.name.toLowerCase(),
-          )?.[1];
+      if (p.in === 'header' && op.idempotency?.header.toLowerCase() === p.name.toLowerCase()) {
+        if (Object.hasOwn(input, p.name))
+          bad(p.name, 'supply this header through options.idempotencyKey');
+        value = options.idempotencyKey;
       }
+      if (
+        p.in === 'header' &&
+        apiVersion?.header.toLowerCase() === p.name.toLowerCase() &&
+        Object.hasOwn(input, p.name)
+      )
+        bad(p.name, 'API version is managed by the SDK');
       if (
         p.in === 'header' &&
         [op.conditional?.header, apiVersion?.header].some(
@@ -4010,7 +3996,11 @@ class CompiledRuntime {
           this.base.href.replace(/\/$/, '') + path + (query.length ? '?' + query.join('&') : ''),
         );
     this.checkUrl(url);
-    for (const [k, v] of Object.entries(options.headers ?? {})) setHeader(k, v);
+    for (const [k, v] of Object.entries(options.headers ?? {})) {
+      if (op.idempotency?.header.toLowerCase() === k.toLowerCase())
+        bad(k, 'supply this header through options.idempotencyKey');
+      setHeader(k, v);
+    }
     for (const p of op.parameters) {
       if (p.source !== 'request-option' || !p.requestOption) continue;
       // The descriptor is validated against the option registry before execution.
@@ -4179,9 +4169,7 @@ class CompiledRuntime {
       if (!op.conditional) bad('ifMatch', 'operation does not declare conditional requests');
       setHeader(op.conditional!.header, options.ifMatch);
     }
-    const key =
-      options.idempotencyKey ??
-      (op.idempotency ? headers[op.idempotency.header.toLowerCase()] : undefined);
+    const key = options.idempotencyKey;
     if (key !== undefined) {
       if (!op.idempotency || !key)
         bad('idempotencyKey', 'a nonempty key and declared capability are required');

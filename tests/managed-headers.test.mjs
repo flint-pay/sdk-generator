@@ -81,9 +81,9 @@ for (const style of ['object', 'positional']) {
         name: 'mixed-case request headers',
         input: {},
         options: {
+          idempotencyKey: 'header_key',
           headers: {
             'IF-MATCH': 'tag_old',
-            'IDEMPOTENCY-KEY': 'header_key',
             'X-API-VERSION': 'v1',
           },
         },
@@ -92,7 +92,7 @@ for (const style of ['object', 'positional']) {
       },
       {
         name: 'options override inputs; version pin wins',
-        input: { 'If-Match': 'tag_old', 'Idempotency-Key': 'same_key' },
+        input: { 'If-Match': 'tag_old' },
         options: {
           ifMatch: 'tag_new',
           idempotencyKey: 'same_key',

@@ -71,15 +71,21 @@ test('required idempotency headers accept request options in both targets withou
     },
   });
   await client.api.mutate({}, { idempotencyKey: 'option-key' });
-  await client.api.mutate({}, { headers: { 'IDEMPOTENCY-KEY': 'header-key' } });
-  await client.api.mutate({ 'Idempotency-Key': 'same-key' }, { idempotencyKey: 'same-key' });
+  await assert.rejects(
+    client.api.mutate({}, { headers: { 'IDEMPOTENCY-KEY': 'header-key' } }),
+    sdk.SdkError,
+  );
+  await assert.rejects(
+    client.api.mutate({ 'Idempotency-Key': 'same-key' }, { idempotencyKey: 'same-key' }),
+    sdk.SdkError,
+  );
   await assert.rejects(client.api.mutate({}), sdk.SdkError);
   await assert.rejects(client.api.mutate({}, { idempotencyKey: '' }), sdk.SdkError);
   await assert.rejects(
     client.api.mutate({ 'Idempotency-Key': 'input-key' }, { idempotencyKey: 'other-key' }),
     sdk.SdkError,
   );
-  assert.deepEqual(keys, ['option-key', 'header-key', 'same-key']);
+  assert.deepEqual(keys, ['option-key']);
   writeFileSync(
     join(output, 'node/check.ts'),
     "import {Client} from './index.js'; const c = new Client({baseUrl:'https://example.invalid'}); c.api.mutate({}, {idempotencyKey:'key'});\n",
@@ -108,12 +114,12 @@ $c = new \RequiredKey\Client(new \RequiredKey\ClientOptions(baseUrl: 'https://ex
   return ['status'=>200,'headers'=>['content-type'=>'application/json'],'body'=>'{}'];
 }));
 $c->api->mutate([], new \RequiredKey\RequestOptions(idempotencyKey: 'option-key'));
-$c->api->mutate([], new \RequiredKey\RequestOptions(headers: ['IDEMPOTENCY-KEY'=>'header-key']));
-$c->api->mutate(['Idempotency-Key'=>'same-key'], new \RequiredKey\RequestOptions(idempotencyKey: 'same-key'));
+try { $c->api->mutate([], new \RequiredKey\RequestOptions(headers: ['IDEMPOTENCY-KEY'=>'header-key'])); throw new \RuntimeException('Accepted header key'); } catch (\RequiredKey\SdkError $e) {}
+try { $c->api->mutate(['Idempotency-Key'=>'same-key'], new \RequiredKey\RequestOptions(idempotencyKey: 'same-key')); throw new \RuntimeException('Accepted input key'); } catch (\RequiredKey\SdkError $e) {}
 foreach ([fn() => $c->api->mutate([]), fn() => $c->api->mutate([], new \RequiredKey\RequestOptions(idempotencyKey: '')), fn() => $c->api->mutate(['Idempotency-Key'=>'input-key'], new \RequiredKey\RequestOptions(idempotencyKey: 'other-key'))] as $call) {
   try { $call(); throw new \RuntimeException('Expected key validation'); } catch (\RequiredKey\SdkError $e) {}
 }
-if ($keys !== ['option-key','header-key','same-key']) throw new \RuntimeException('Incorrect keys on wire');
+if ($keys !== ['option-key']) throw new \RuntimeException('Incorrect keys on wire');
 `,
     join(output, 'php'),
   ]);

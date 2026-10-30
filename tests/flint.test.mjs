@@ -195,6 +195,13 @@ test('README snippets run in both targets with per-action keys and actionable er
     delete operation.retry;
   }
   const headerReadmes = render(headerOnly);
+  const headerOutput = join(dir, 'header-only');
+  generate(headerOnly, headerOutput);
+  mkdirSync(join(headerOutput, 'php/vendor'), { recursive: true });
+  writeFileSync(
+    join(headerOutput, 'php/vendor/autoload.php'),
+    "<?php require __DIR__.'/../src/Runtime.php'; require __DIR__.'/../src/Client.php';",
+  );
   let mode = 'success';
   const server = createServer(async (request, response) => {
     let body = '';
@@ -303,7 +310,7 @@ test('README snippets run in both targets with per-action keys and actionable er
       assert.doesNotMatch(headerSnippet, /headers:/);
       assert.match(headerSnippet, /Idempotency-Key/);
       const headerFile = join(
-        output,
+        headerOutput,
         target,
         target === 'node' ? 'readme-header.mjs' : 'readme-header.php',
       );
@@ -484,7 +491,7 @@ test('risk-list current contract accepts only values and preserves all four fiel
   );
 });
 
-test('automatic idempotency respects every explicit header source and rejects conflicting keys', async () => {
+test('idempotency accepts its option and rejects the former input/header channels', async () => {
   const base = structuredClone(cases.find((c) => c.operation === 'createPaymentIntent'));
   const variants = [];
   for (const source of ['input', 'headers', 'both']) {
@@ -493,8 +500,18 @@ test('automatic idempotency respects every explicit header source and rejects co
     c.options = {};
     if (source !== 'headers') c.input['Idempotency-Key'] = 'durable-create-key';
     if (source !== 'input') c.options.headers = { 'Idempotency-Key': 'durable-create-key' };
+    delete c.expected;
+    delete c.data;
+    c.responses = [];
+    c.error = { name: 'InvalidInputError', outcome: 'not_sent' };
+    c.attempts = 0;
     variants.push(c);
   }
+  variants.push({
+    ...structuredClone(base),
+    name: 'explicit key option',
+    options: { idempotencyKey: 'durable-create-key' },
+  });
   for (const options of [
     { idempotencyKey: 'different-key' },
     { headers: { 'Idempotency-Key': 'different-key' } },
@@ -514,7 +531,7 @@ test('automatic idempotency respects every explicit header source and rejects co
   writeFileSync(fixture, JSON.stringify(variants));
   assert.deepEqual(
     (await validateFixtures(output, fixture)).map((r) => r.scenarios),
-    [5, 5],
+    [6, 6],
   );
 });
 

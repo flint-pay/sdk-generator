@@ -61,12 +61,6 @@ parameters:
 			path: "*/php/src/classes/Runtime.php"
 
 		-
-			message: '#^Using nullsafe property access "\?\-\>headers" on left side of \?\? is unnecessary\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: "*/php/src/classes/Runtime.php"
-
-		-
 			message: '#^Using nullsafe property access "\?\-\>maxItems" on left side of \?\? is unnecessary\. Use \-\> instead\.$#'
 			identifier: nullsafe.neverNull
 			count: 1

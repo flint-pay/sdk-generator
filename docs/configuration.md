@@ -203,6 +203,8 @@ Use defaults only for capabilities the provider supports. Opt out every operatio
 
 ## Request arguments
 
+Positional method signatures reference exported `{Namespace}{Method}Params` types, such as `RefundsListParams` and `CustomersUpdateParams`. PHP supplies matching params model classes and names them in method PHPDoc while continuing to accept arrays and models. Params contain body/query/ordinary-header fields. Path values remain separate, and SDK-managed headers are supplied through options or client configuration. Parameter descriptions populate property documentation, path `@param` tags and reference request-field rows; an explicit schema description takes precedence.
+
 The default is `requests.style: "positional"` for both Node/TypeScript and PHP: path values in URL placeholder order, then flat params, then request options.
 
 ```ts
@@ -314,9 +316,9 @@ Use the provider's code and set top-level `errors.codePath` (for example `error.
 `header`, `retention` and `scope` are required; `auto` defaults to `false`. Optional `autoKeyPrefix` prefixes the generated UUID v4, for example `flint-sdk-`. The prefix plus UUID must be a valid HTTP header value; generated keys also pass the declared header schema before dispatch.
 
 - Automatic keys are generated only when no explicit key was supplied, including for required headers. They pass the same header validation as explicit keys.
-- Explicit keys from operation header inputs, request headers or `idempotencyKey` are preserved across retries. See [errors and retries](using-sdks.md#errors-and-retries) for key lifetime and conflicts.
+- Explicit keys supplied through `idempotencyKey` are preserved across retries. Operation params and generic request headers cannot supply idempotency keys. See [errors and retries](using-sdks.md#errors-and-retries) for key lifetime and conflicts.
 - Empty keys and keys with leading or trailing spaces or tabs fail before dispatch, because transports can change their wire identity.
-- With `auto` off and a required header, TypeScript requires the last options argument with `idempotencyKey: string`. Save this key with the action before the first attempt and reuse it on retry. PHP accepts keys through `RequestOptions.idempotencyKey`, input headers or request headers, and rejects a missing key before dispatch with a message naming the method and `idempotencyKey`. Every error after key resolution exposes the key, including `not_sent` errors; result metadata exposes `idempotencyKey` too.
+- With `auto` off and a required header, TypeScript requires the last options argument with `idempotencyKey: string`. Save this key with the action before the first attempt and reuse it on retry. PHP accepts keys through `RequestOptions.idempotencyKey`, and rejects a missing key before dispatch with a message naming the method and `idempotencyKey`. Every error after key resolution exposes the key, including `not_sent` errors; result metadata exposes `idempotencyKey` too.
 
 ### Pagination
 
@@ -532,7 +534,7 @@ Client and request options, origins, deadlines and transports are in the [consum
 
 An optional OpenAPI header parameter can declare `"x-flint-request-option": "client_request_id"`.
 The shared compiler routes it to per-call options, `clientRequestId` in Node and
-`client_request_id` in PHP, and excludes it from object inputs and positional arguments.
+`clientRequestId` in PHP, and excludes it from object inputs and positional arguments.
 The extension value selects the behavior; the parameter name selects the wire header
 (`X-Request-Id` for Flint). Unsupported values, non-header locations and required
 parameters fail generation. Values must contain 1 to 128 visible ASCII characters

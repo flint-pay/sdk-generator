@@ -435,6 +435,7 @@ function callPlan(op: Operation, plan: CompiledSdkContract, optionsType: string)
   if (!positional(op))
     return {
       nodeArgs: 'input = {}, options',
+      nodePathDocs: [],
       nodeSignature: `input${required || keyRequired ? '' : '?'}: ${prefix}Input${!required && keyRequired ? ' | undefined' : ''}, options${keyRequired ? '' : '?'}: ${optionsType}`,
       nodeInput: 'input',
       phpSignature: `${prefix}Input|array $input${required ? '' : ' = []'}, ?RequestOptions $options = null`,
@@ -477,6 +478,7 @@ function methodDoc(
   op: Operation,
   method: string,
   definitions: Record<string, Schema> = {},
+  pathDocs: readonly { name: string; description: string }[] = [],
 ): string {
   const deprecated =
     method !== op.method
@@ -496,7 +498,11 @@ function methodDoc(
         ]
       : []),
   ];
-  return `/**\n${summary.map((line) => (line ? ` * ${line}` : ' *')).join('\n')}\n * @see ${seeTarget(c, op)}\n * @throws {SdkError} When the request fails; inspect \`kind\`, \`code\` and \`outcome\`.\n${deprecated ? ` * @deprecated ${comment(deprecated).replaceAll('\n', '\n * ')}\n` : ''} * @example\n${
+  return `/**\n${summary.map((line) => (line ? ` * ${line}` : ' *')).join('\n')}\n${pathDocs
+    .map((p) => ` * @param ${p.name} ${comment(String(p.description)).replaceAll('\n', ' ')}\n`)
+    .join(
+      '',
+    )} * @see ${seeTarget(c, op)}\n * @throws {SdkError} When the request fails; inspect \`kind\`, \`code\` and \`outcome\`.\n${deprecated ? ` * @deprecated ${comment(deprecated).replaceAll('\n', '\n * ')}\n` : ''} * @example\n${
     key.keySetup
       ? comment(key.keySetup)
           .trimEnd()
@@ -1474,6 +1480,10 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       targetPlan.node.operations[op.id]!.responseType!;
     for (const op of c.operations) {
       declarations += `export type ${pascal(op.resource)}${pascal(op.method)}Input = ${targetPlan.node.operations[op.id]!.documentedInput ?? targetPlan.node.operations[op.id]!.input};\n`;
+      if (positional(op) && hasParams(op)) {
+        const call = targetPlan.requestCalls![op.id]!;
+        declarations += `export type ${call.paramsName} = ${call.paramsType};\n`;
+      }
       if (responseType(op) !== targetPlan.node.operations[op.id]!.output)
         declarations += `export type ${responseType(op)} = ${targetPlan.node.operations[op.id]!.output};\n`;
     }
@@ -1494,7 +1504,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         for (const method of [op.method, ...(op.aliases ?? [])]) {
           const request = `this.#runtime.request(${js(op.id)}, ${call.nodeInput}, options)`;
           code += `      ${method}: ${positional(op) ? 'async ' : ''}(${call.nodeArgs}) => ${request}${payload ? `.then(result => _sdkPayload(result, ${js(payload.path)}${decodePayload}))` : ''},\n`;
-          declarations += `    ${methodDoc(c, op, method, definitions)}    ${method}(${call.nodeSignature}): Promise<${payload ? payload.node : `Result<${responseType(op)}>`}>;\n`;
+          declarations += `    ${methodDoc(c, op, method, definitions, call.nodePathDocs)}    ${method}(${call.nodeSignature}): Promise<${payload ? payload.node : `Result<${responseType(op)}>`}>;\n`;
           if (payload) {
             code += `      ${method}WithResponse: ${positional(op) ? 'async ' : ''}(${call.nodeArgs}) => ${request}.then(_sdkResponse),\n`;
             declarations += `    /** Complete decoded body and HTTP metadata, without payload unwrapping.\n     * @see ${seeTarget(c, op)}\n     */\n    ${method}WithResponse(${call.nodeSignature}): Promise<SdkResponse<${responseType(op)}>>;\n`;
@@ -2153,7 +2163,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
           `${op.method}(${target === 'php' ? plan.phpSignature : plan.nodeSignature})`,
           target,
         ) +
-        `#### Request fields\n\n${fieldTable(inputSchema(op, c.config.apiVersion, c), c.definitions ?? c.models, `${op.resource}.${op.method} input`, false, target === 'node' ? inputModelNames : phpInputNames, errorDocs.links) || 'No request fields.\n\n'}${bodyReference(op, c.definitions ?? c.models, target === 'node' ? inputModelNames : phpInputNames, sharedBodies, errorDocs.links)}` +
+        `#### Request fields\n\n${fieldTable(inputSchema(op, c.config.apiVersion, c), c.definitions ?? c.models, `${op.resource}.${op.method} input`, false, target === 'node' ? inputModelNames : phpInputNames) || 'No request fields.\n\n'}${bodyReference(op, c.definitions ?? c.models, target === 'node' ? inputModelNames : phpInputNames, sharedBodies, errorDocs.links)}` +
         `#### Response\n\n${payloadReturns[op.id] ? 'Returned payload' : 'Response body (inside Result.data)'}: ${linkedReturn}.\n\n${responseFields}` +
         operationErrors(op) +
         operationGuidance(c, op) +

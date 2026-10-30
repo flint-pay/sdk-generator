@@ -5,7 +5,7 @@ import { Diagnostic } from './diagnostic.js';
 export const REQUEST_OPTIONS = {
   client_request_id: {
     node: 'clientRequestId',
-    php: 'client_request_id',
+    php: 'clientRequestId',
     codec: {
       ...ANY_CODEC,
       value: { kind: 'string' },

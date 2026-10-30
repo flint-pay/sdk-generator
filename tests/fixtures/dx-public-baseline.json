@@ -6,7 +6,7 @@
       "name": "library",
       "api": "examples/library.openapi.json",
       "config": "examples/library.sdk.json",
-      "nodeDeclarationsSha256": "b66568d998e991944d287a05bd0af1370e79f63e8d498902d8878334b4d329ff",
+      "nodeDeclarationsSha256": "0213759f7e4fe37b54a8783201c5ba20daa4e7d263c49f2f442e41b38f9fe2aa",
       "phpDeclarationsSha256": "fe62035901e0196de3c252382a5bf6219e27f4462e421bd341a1132dcb65660e"
     },
     {
@@ -20,14 +20,14 @@
       "name": "flint",
       "api": "tests/providers/flint/openapi.json",
       "config": "tests/providers/flint/sdk.json",
-      "nodeDeclarationsSha256": "39f206dc79dbc914ccc57d65b3b07e8f5d3b70562e3e731754bdbb47834fc5eb",
-      "phpDeclarationsSha256": "27f8a89a96c1d9a0f9a38d2f0c27a33e41e46e11fc7c752bfce891e4618c1314"
+      "nodeDeclarationsSha256": "9da73123470b0f7fc6398f4d99082290ff431a7df72e1cc5803b22e701c27ca1",
+      "phpDeclarationsSha256": "6e3f19c44be2ccd61e58aaf7ecee96111f6eb9cd2c94167ffeacc83dff04b84e"
     },
     {
       "name": "risk",
       "api": "tests/providers/flint/risk-openapi.json",
       "config": "tests/providers/flint/risk-sdk.json",
-      "nodeDeclarationsSha256": "4870cc7b944620b94d1cfcc6d94b8d325097f16911337234348bac37733aa4c5",
+      "nodeDeclarationsSha256": "922ad5d4bf4012d68e857ba88831aaafef526c5fb1af52baf6d9b20ff913c414",
       "phpDeclarationsSha256": "cbaee726719a6be036ebff4eecdbf5b888393072744e322484fc4b871695d9dc"
     }
   ]

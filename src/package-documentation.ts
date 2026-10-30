@@ -513,7 +513,7 @@ export function optionsReference(c: Contract, target: 'node' | 'php'): string {
     ],
     ['streamLifetimeMs', node ? 'number' : 'int', 'unlimited', 'Optional total SSE lifetime.'],
     [
-      node ? 'clientRequestId' : 'client_request_id',
+      'clientRequestId',
       'string',
       'none',
       'Caller correlation: 1-128 visible ASCII characters, no spaces. Forwarded only when the operation declares its request-ID header.',
