@@ -5,6 +5,12 @@
 - Preview versions use a SemVer prerelease suffix and npm's `next` tag in the release plan.
 - Commands below use the installed `sdk-generator` executable. From a source checkout, run `npm ci` and `npm run build`, then use `node dist/cli.js`. See the [CLI reference](cli.md) for arguments.
 
+## Configuration errors and pagination limits
+
+Regenerate both targets together. Handle configuration failures using the [SDK-specific codes](using-sdks.md#errors-and-retries), including `credential_conflict`, `credential_provider_failed`, `invalid_option` and `invalid_destination`. Workload identity failures use `workload_identity_failed` with the specific reason in `workloadIdentity.reason`. `ConfigurationError` no longer has `param`; its message names the option. API-input validation continues to use stage-1 `INVALID_REQUEST` details.
+
+An iterator without `maxPages` now raises `PaginationLimitError` (`pagination_limit_exceeded`) after yielding 1,000 pages when another page exists. Use `pages` and `nextPageToken` to identify progress and the remaining continuation. A terminal 1,000th page succeeds. Set an explicit `maxPages` when a quiet, intentional limit is wanted; explicit `maxPages: 1000` also ends quietly.
+
 ## Local validation errors
 
 Regenerate both targets together. Handle local `InvalidInputError` using `code: "INVALID_REQUEST"` and `details[]` items with `code` (`REQUIRED`, `INVALID_VALUE`, `UNKNOWN_FIELD`, `NOT_ALLOWED`) and `param`. Replace checks for lowercase local validation codes or internal `input.` paths with these codes and [API field paths](using-sdks.md#errors-and-retries). Local failures retain `outcome: "not_sent"`; messages now name fields and suggest close matches, while sensitive values stay hidden.
@@ -711,7 +717,7 @@ PHP response models expose declared nested objects as generated entities, lists 
 
 Regenerate each package as a unit and update these consumers:
 
-- Pagination now ends at 1,000 pages by default. Pass an explicit larger `maxPages` when needed. Catch protocol errors for continuation cycles and two consecutive empty pages with continuations; fix the provider continuation rather than restarting a loop.
+- Pagination has an implicit 1,000-page safety limit. If a continuation remains, it raises `PaginationLimitError`; a terminal 1,000th page succeeds. Explicit `maxPages` limits end quietly. Catch protocol errors for continuation cycles and two consecutive empty pages with continuations; fix the provider continuation rather than restarting a loop.
 - Add `timeout` / `TimeoutError` to error handling for per-attempt timeouts. `deadline` remains non-retryable in both targets. Refused connections and DNS failures now report `not_sent`. PHP transport status and metadata status are `null` without an HTTP response; replace comparisons to `0`.
 - Error JSON serialization and native crash rendering omit raw bodies, headers, URLs and unsanitized causes. Explicit recovery access remains available; use `raw`, `meta`, Node `cause` or PHP `getPrevious()` deliberately and protect their contents when logging.
 - `Retry-After` now accepts nonnegative decimal seconds with optional surrounding spaces/tabs or canonical GMT HTTP dates in both targets. Exponents, signed numbers, relative dates and malformed dates are ignored. Send a canonical header from providers and test transports.

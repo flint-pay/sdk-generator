@@ -341,29 +341,35 @@ echo json_encode($rows);
 });
 
 test('unknown JavaScript client options and duplicated operation base paths fail helpfully', async () => {
-  assert.throws(() => new Client({ ...defaults, maxRetries: 2 }), /maxRetries.*use maxAttempts/);
-  assert.throws(
-    () => new Client({ ...defaults, deadline: 1000 }),
-    /deadline.*unknown client option/,
-  );
+  assert.throws(() => new Client({ ...defaults, maxRetries: 2 }), {
+    name: 'ConfigurationError',
+    code: 'invalid_option',
+    message: /maxRetries.*use maxAttempts/,
+  });
+  assert.throws(() => new Client({ ...defaults, deadline: 1000 }), {
+    name: 'ConfigurationError',
+    code: 'invalid_option',
+    message: /deadline.*unknown client option/,
+  });
   const client = new Client({
     ...defaults,
     baseUrl: 'https://example.invalid/v1',
     transport: async () => assert.fail('must reject before sending'),
   });
-  await assert.rejects(
-    client.payments.retrieve({ id: 'p-synthetic' }),
-    /baseUrl.*remove that path/,
-  );
+  await assert.rejects(client.payments.retrieve({ id: 'p-synthetic' }), {
+    name: 'ConfigurationError',
+    code: 'invalid_destination',
+    message: /baseUrl.*remove that path/,
+  });
   assert.deepEqual(
     php(
       phpSetup +
         String.raw`
 $c = new Example\Payments\Client(new Example\Payments\ClientOptions('https://example.invalid/v1', token:'test'));
-try { $c->payments->retrieve(['id'=>'p-synthetic']); } catch (Example\Payments\SdkError $e) { echo json_encode([substr(strrchr(get_class($e), chr(92)), 1),$e->outcome,str_contains($e->getMessage(),'remove that path')]); }
+try { $c->payments->retrieve(['id'=>'p-synthetic']); } catch (Example\Payments\SdkError $e) { echo json_encode([substr(strrchr(get_class($e), chr(92)), 1),$e->code,$e->outcome,str_contains($e->getMessage(),'remove that path')]); }
 `,
     ),
-    ['InvalidInputError', 'not_sent', true],
+    ['ConfigurationError', 'invalid_destination', 'not_sent', true],
   );
 });
 
@@ -398,21 +404,21 @@ try { Example\Payments\Webhooks::verify('{}', [], 'synthetic-signing-key',170000
   );
 });
 
-test('PHP rejects integer header values and model assignment as SDK validation errors', () => {
+test('PHP reports invalid headers as configuration errors and model assignment as input errors', () => {
   assert.deepEqual(
     php(
       phpSetup +
         String.raw`
 $rows=[];
 $c=new Example\Payments\Client(new Example\Payments\ClientOptions('https://example.invalid',token:'test'));
-try { $c->payments->retrieve(['id'=>'p-synthetic'],new Example\Payments\RequestOptions(headers:['X-Test'=>42])); } catch (Example\Payments\SdkError $e) { $rows[]=[substr(strrchr(get_class($e), chr(92)), 1),$e->outcome,str_contains($e->getMessage(),'header')]; }
+try { $c->payments->retrieve(['id'=>'p-synthetic'],new Example\Payments\RequestOptions(headers:['X-Test'=>42])); } catch (Example\Payments\SdkError $e) { $rows[]=[substr(strrchr(get_class($e), chr(92)), 1),$e->code,$e->outcome,str_contains($e->getMessage(),'header')]; }
 $m=new Example\Payments\Payment(['id'=>'p-synthetic','amount'=>1,'status'=>'pending']);
 try { $m->status='failed'; } catch (Example\Payments\SdkError $e) { $rows[]=[substr(strrchr(get_class($e), chr(92)), 1),$e->outcome,str_contains($e->getMessage(),'read-only')]; }
 echo json_encode($rows);
 `,
     ),
     [
-      ['InvalidInputError', 'not_sent', true],
+      ['ConfigurationError', 'invalid_option', 'not_sent', true],
       ['InvalidInputError', 'not_sent', true],
     ],
   );

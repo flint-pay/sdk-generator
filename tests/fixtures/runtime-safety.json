@@ -61,6 +61,6 @@
       "error": null,
       "calls": 2
     },
-    { "name": "default page cap", "empty": [], "error": null, "calls": 1000 }
+    { "name": "default page cap", "empty": [], "error": "PaginationLimitError", "calls": 1000 }
   ]
 }

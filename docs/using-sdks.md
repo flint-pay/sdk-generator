@@ -133,7 +133,7 @@ On HTTP 401, a replay-safe request using a provider with a public `invalidate():
 
 ### Default credentials
 
-When the provider declares `auth.defaultCredentials`, a client without explicit credentials tries the configured API key and access token environment variables (both set is `ambiguous_credentials`), then workload identity only when its configured ID variable is set. Discovery runs only when no credential option is passed on the client or request. Passing a shortcut or credential-map entry as `undefined` (Node), `null`, empty or blank throws `ConfigurationError` with code `credential_missing`, `outcome: "not_sent"` and `param` naming the option. Client options fail during construction; request options fail when the call starts. A request credential replaces the client credential for that call. Anonymous operations do not discover credentials. Use `ambientCredentials: false` for applications that must never use the process's identity implicitly.
+When the provider declares `auth.defaultCredentials`, a client without explicit credentials tries the configured API key and access token environment variables (both set is `credential_conflict`), then workload identity only when its configured ID variable is set. Discovery runs only when no credential option is passed on the client or request. Passing a shortcut or credential-map entry as `undefined` (Node), `null`, empty or blank throws `ConfigurationError` with code `credential_missing`, `outcome: "not_sent"` and a message naming the option. Client options fail during construction; request options fail when the call starts. A request credential replaces the client credential for that call. Anonymous operations do not discover credentials. Use `ambientCredentials: false` for applications that must never use the process's identity implicitly.
 
 ```js
 import { Client, defaultCredentials, workloadIdentityCredentials } from 'example-sdk';
@@ -177,7 +177,7 @@ The process cache separates base origin, workload identity ID, audience, scope, 
 
 PHP `ClientOptions(credentialCache: $cache)` accepts a PSR-16 compatible object implementing `get`, `set`, and `delete`. APCu-backed implementations can share tokens between requests; protect the cache as a credential store. The SDK's static cache coordinates one process; cross-process locking is the cache implementation's responsibility.
 
-Failures are `ConfigurationError` with `code` in both targets: `no_credentials`, `ambiguous_credentials`, `source_unavailable`, `subject_token_request_failed`, `audience_mismatch`, `exchange_rejected`, or `exchange_unavailable`. Safe messages and `workloadIdentity` identify the source, workload identity ID, JWT issuer/subject/audience, and server error description when available. Subject and access token values are redacted. Injected transports are a privileged boundary and necessarily receive tokens; avoid logging their headers or bodies.
+Workload identity failures are `ConfigurationError` with code `workload_identity_failed`; `workloadIdentity.reason` retains the specific failure, such as `source_unavailable`, `subject_token_request_failed`, `audience_mismatch`, `exchange_rejected` or `exchange_unavailable`. Missing ambient credentials use `credential_missing`; conflicting sources use `credential_conflict`. Safe messages and `workloadIdentity` identify the source, workload identity ID, JWT issuer/subject/audience, and server error description when available. Subject and access token values are redacted. Injected transports are a privileged boundary and necessarily receive tokens; avoid logging their headers or bodies.
 
 ## Make a call
 
@@ -328,6 +328,20 @@ All errors extend `SdkError`. Node exports subclasses through `errors` at the pa
 
 Construct errors with a message and an init object in Node, or named arguments in PHP. Request context is available directly as `operation`, `outcome`, `retryAllowed`, `status`, `requestId`, `requestIds`, `idempotencyKey`, `attempts`, `durationMs`, `retryAfterMs` and `headers`. Error `kind` and `meta` are removed. `headers` and `raw` stay out of inspection; use them explicitly with application redaction.
 
+`ConfigurationError` names the option in its message and has no `param`; `param` identifies API input. Its SDK-specific codes are separate from the stage-1 `INVALID_REQUEST` details used by `InvalidInputError`:
+
+| Code                         | Meaning                                                                        |
+| ---------------------------- | ------------------------------------------------------------------------------ |
+| `credential_missing`         | A required credential is absent or explicitly undefined, null, empty or blank. |
+| `credential_invalid`         | A credential cannot be sent as a header, or a provider returned no value.      |
+| `credential_conflict`        | Credential shortcuts, modes, headers or ambient sources conflict.              |
+| `credential_provider_failed` | A credential provider threw; its cause is omitted to protect secrets.          |
+| `auth_mode_not_permitted`    | The operation does not accept the selected authentication mode.                |
+| `workload_identity_failed`   | Workload identity failed; inspect the safe `workloadIdentity.reason`.          |
+| `invalid_option`             | An option is unknown or its value is invalid.                                  |
+| `invalid_destination`        | The base or continuation URL is invalid or outside the allowed destinations.   |
+| `operation_unavailable`      | A dynamic runtime operation or capability is unavailable.                      |
+
 Messages and codes:
 
 - Configured `errors.fields` paths are relative to `errors.objectPath`. Messages and codes must be JSON strings; numeric values never become strings or match retry codes. Public fields come from the redacted body; retry matching retains original string values.
@@ -378,7 +392,7 @@ Only declared capabilities generate these helpers. For a paginated operation nam
 
 Use `for await ... of` in Node and `foreach` in PHP. For a list payload containing `data`, read `page.data`; the response form reads `page.body.data` (PHP `$page->body->data`).
 
-- Iteration is lazy and defaults to at most 1,000 pages. Set `maxPages` to change that cap; reaching it ends iteration. `maxItems` and cancellation provide additional bounds.
+- Iteration is lazy. Without `maxPages`, yielding 1,000 pages with a continuation raises `PaginationLimitError` with code `pagination_limit_exceeded`, `pages: 1000` and `nextPageToken` containing the continuation. A terminal page at exactly 1,000 completes normally. Set an explicit `maxPages` for an intentional bound; reaching that bound ends quietly, including `maxPages: 1000`. `maxItems` and cancellation provide additional bounds.
 - Repeated continuations, including longer cursor cycles, raise a protocol error. Two consecutive empty pages with continuations also raise a protocol error; isolated and terminal empty pages remain valid.
 - Each page request gets a fresh `deadlineMs` budget for its retries and decoding. Time spent processing yielded values doesn't count, and there is no overall iterator deadline.
 - Pagination does not promise a stable snapshot.
@@ -606,7 +620,7 @@ Pass client defaults to `new Client({...})` in Node or `new Client(new ClientOpt
 | `clientRequestId`         | Request           | Node / PHP caller correlation value for a header marked `x-flint-request-option: client_request_id`. Omitted when unset.                                            |
 | `ifMatch`                 | Request           | Value for the declared conditional header, including when that header is `If-None-Match`.                                                                           |
 | `signal` / `cancellation` | Request           | Node `AbortSignal` / PHP `Cancellation` token. Stops local work, not a remote mutation.                                                                             |
-| `maxPages`, `maxItems`    | Request           | Positive iterator limits; maxPages defaults to 1000 and maxItems has no practical default cap.                                                                      |
+| `maxPages`, `maxItems`    | Request           | Positive iterator limits; implicit maxPages 1000 throws on continuation, explicit limits end quietly. maxItems has no practical cap.                                |
 
 For operations declaring the client request ID option, pass `{ clientRequestId: 'order-123' }`
 in Node or `new RequestOptions(clientRequestId: 'order-123')` in PHP. Values must

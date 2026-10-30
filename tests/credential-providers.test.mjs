@@ -164,7 +164,8 @@ for (const surface of surfaces)
           break;
         }
       }
-      assert.equal(error?.name, surface === 'token' ? (c.legacyError ?? c.error) : c.error, c.name);
+      assert.equal(error?.name, c.error, c.name);
+      if (c.code) assert.equal(error.code, c.code, c.name);
       if (c.bodyFailures && error) {
         assert.equal(error.status, 401, c.name);
         assert.equal(error.outcome, 'unknown', c.name);
@@ -172,7 +173,7 @@ for (const surface of surfaces)
       if (c.message) assert.equal(error.message, c.message, c.name);
       if (c.error) assert.equal(error.retryAllowed, false, c.name);
       if (c.kind === 'string' && c.value === '') assert.equal(error.code, 'credential_missing');
-      else if (Object.hasOwn(c, 'value') && !c.legacyError)
+      else if (Object.hasOwn(c, 'value'))
         assert.match(
           error.message,
           surface === 'token'
