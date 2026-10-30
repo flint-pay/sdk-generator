@@ -107,3 +107,5 @@ Undeclared optional capabilities produce no helper. Unsupported or incomplete ca
 `multipleOf` uses exact decimal divisibility. Work that requires more than 10,000 appended digits fails validation; power-of-ten divisors need no expansion. `const` and `uniqueItems` compare JSON values with exact numeric equality and order-independent object keys; array order remains significant. `contains` requires a matching element in schema validation and strict variant guards; `minContains` and `maxContains` remain unsupported. Constants are never inserted automatically.
 
 `dependentRequired` preserves property dependencies through equivalent conditional constraints. A present trigger requires every listed property; absent triggers impose no requirement. Dependency maps must contain arrays of unique property names.
+
+Operation naming supports tag inference (default) and opt-in path inference in both targets. Path mode checks explicit naming reasons and method verbs during diagnosis, and resolves pagination helper collisions automatically. `void`, `close`, `delete` and `list` are portable method names; `new` remains reserved.

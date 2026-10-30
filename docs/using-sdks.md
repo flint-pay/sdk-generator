@@ -851,3 +851,5 @@ Each package's `examples/` directory has a runnable script for every operation, 
 - Replace sample IDs with values from your account before running.
 - Scripts generate random idempotency keys only when the declared header schema permits that format and length. Otherwise set `API_IDEMPOTENCY_KEY` to a schema-compatible key. Use a new key for each new business action, and reuse a saved key only for the same action.
 - See [running operation examples](configuration.md#running-operation-examples) for commands.
+
+Operation names come from the SDK configuration. With `operationNames: "path"`, resources follow API paths and methods retain the operation verb, such as `invoices.void()` and `orders.close()`. Explicit exceptions require a documented naming reason in the profile.

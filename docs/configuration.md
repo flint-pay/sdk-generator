@@ -63,6 +63,7 @@ Unknown configuration keys fail with a source location. Capability declarations 
 | `license`              | Package license metadata; defaults to `Apache-2.0`. Bundled runtime license is retained.                                                                        |
 | `requests`             | Request argument style: `positional` (default) or `object`; see [request arguments](#request-arguments).                                                        |
 | `responses`            | Optional SDK-wide return mode (`payload` by default, or `result`) and payload path; see [payload returns](#payload-returns).                                    |
+| `operationNames`       | `tags` (default) or `path`. Path names follow the first literal segment after `/v1` and the operation ID.                                                       |
 | `operations`           | Public naming, aliases, examples and declared operation capabilities. Matching resource tags and operation IDs supply names; otherwise `api` and `operationId`. |
 | `include`, `audiences` | Optional operation filters; operation `hidden: true` excludes that operation.                                                                                   |
 | `models`               | Optional component-to-public-model name mapping.                                                                                                                |
@@ -121,11 +122,28 @@ Stale operation and model customization targets fail diagnosis.
 
 ### Names
 
+Set `"operationNames": "path"` in a configuration or shared profile to derive the resource from the first literal path segment after `/v1` (without its extension). For example, `/v1/payment-reviews` selects `paymentReviews`. The method removes the singular or plural resource noun from the operation ID, matching acronyms by spelling and preserving their case: `getInvoicePDF` becomes `invoices.getPDF`. If the full noun is absent, a shared leading noun immediately after the verb is removed (`listTaxRegistrations` becomes `taxConnection.listRegistrations`); otherwise the operation ID is retained. A derived method colliding with a generated pagination `Items` or `Pages` helper automatically retains the full operation ID.
+
+In path mode, every explicit `resource` or `method` requires a nonempty `namingReason`, even if it repeats the inferred name. Diagnosis fails with an error when the reason is missing. The method's first word must occur in the operation ID unless a `namingReason` explains the exception. For example:
+
+```json
+{
+  "operationNames": "path",
+  "operations": {
+    "refreshMerchantAccountSession": {
+      "resource": "merchantAccountSessions",
+      "method": "refresh",
+      "namingReason": "Use the registered handoff subject."
+    }
+  }
+}
+```
+
 - `resource` and `method` set the public call; the HTTP method and path are unchanged. Explicit names always take precedence over inferred ones.
 - Without them, a uniquely matching operation tag supplies the resource: `createPaymentIntent` tagged `payment_intents` becomes `paymentIntents.create`.
   - Tags are normalized from camelCase, snake_case or words. Singular and plural resource words are matched against the operation ID and removed from the method name.
   - Acronyms become camelCase: `createAPIKey` tagged `api_keys` becomes `apiKeys.create`.
-  - Missing, unrelated, ambiguous or reserved tag-derived names fall back to resource `api` and the unchanged operation ID. Diagnosis reports the reason and the `operations.<id>.resource` / `method` settings to edit. The portable method names `list` and `delete` are allowed; model and resource reserved-word checks still apply. Paths are never used to guess names.
+  - Missing, unrelated, ambiguous or reserved tag-derived names fall back to resource `api` and the unchanged operation ID. Diagnosis reports the reason and the `operations.<id>.resource` / `method` settings to edit. The portable method names `list`, `delete`, `void` and `close` are allowed; model and resource reserved-word checks still apply.
 - Public name collisions fail diagnosis; resolve them with explicit names.
 - `models` maps component schema names to SDK names. Resolved names apply consistently to recursive references and dependencies.
 - Upstream model names ending in `Input` default to `Request` (`PaymentInput` becomes `PaymentRequest`), keeping the generated `PaymentRequestInput` helper distinct. Existing names and explicit mappings are reserved first; inferred collisions use `RequestModel`, then numbered suffixes.
