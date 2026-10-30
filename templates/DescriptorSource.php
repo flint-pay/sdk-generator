@@ -118,22 +118,23 @@ final class DescriptorSource
     {
         \SdkNamespace\Model::assertRepresentation($plan);
         $this->modelNames ??= array_fill_keys($this->read('models'), true);
-        $visit = function (array $node) use (&$visit): void {
-            if ($node['kind'] === 'entity' && !isset($this->modelNames[$node['name']])) {
-                throw new \InvalidArgumentException('Unknown PHP entity ' . $node['name']);
+        $this->representationReferences($plan);
+    }
+    private function representationReferences(array $node): void
+    {
+        if ($node['kind'] === 'entity' && !isset($this->modelNames[$node['name']])) {
+            throw new \InvalidArgumentException('Unknown PHP entity ' . $node['name']);
+        }
+        foreach (['value', 'extra'] as $key) {
+            if (isset($node[$key])) {
+                $this->representationReferences($node[$key]);
             }
-            foreach (['value', 'extra'] as $key) {
-                if (isset($node[$key])) {
-                    $visit($node[$key]);
-                }
+        }
+        foreach (['fields', 'variants'] as $key) {
+            foreach ($node[$key] ?? [] as $child) {
+                $this->representationReferences($child);
             }
-            foreach (['fields', 'variants'] as $key) {
-                foreach ($node[$key] ?? [] as $child) {
-                    $visit($child);
-                }
-            }
-        };
-        $visit($plan);
+        }
     }
     public function validateAll(): void
     {

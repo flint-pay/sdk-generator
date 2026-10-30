@@ -48,10 +48,16 @@ test('PHP validates every model within bounded memory without retaining earlier 
       type: 'string',
       enum: Array.from({ length: 4096 }, (_, index) => String(index).padStart(128, 'x')),
     });
-    for (const name of names) put('models/' + name, { codec, dependencies: [] });
+    for (const name of names)
+      put('models/' + name, {
+        codec,
+        dependencies: [],
+        phpRepresentation: { kind: 'value', type: 'string' },
+      });
     const script = String.raw`
 require $argv[1].'/src/Client.php';
 $source = new Example\Library\Internal\DescriptorSource($argv[2], false);
+gc_disable(); // Descriptor validation must not rely on cyclic garbage collection.
 $source->validateAll();
 echo 'ok';
 `;
@@ -62,6 +68,16 @@ echo 'ok';
     const valid = check();
     assert.equal(valid.status, 0, valid.stdout + valid.stderr);
     assert.equal(valid.stdout, 'ok');
+
+    // Entity links must still be checked recursively after all valid models.
+    put('models/' + names.at(-1), {
+      codec,
+      dependencies: [],
+      phpRepresentation: { kind: 'list', value: { kind: 'entity', name: 'MissingEntity' } },
+    });
+    const missing = check();
+    assert.notEqual(missing.status, 0);
+    assert.match(missing.stderr, /Unknown PHP entity MissingEntity/);
 
     // A late malformed descriptor must still be visited after all valid models.
     put('models/' + names.at(-1), { codec: {}, dependencies: [] });
