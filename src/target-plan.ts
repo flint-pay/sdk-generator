@@ -25,6 +25,7 @@ import {
   hasProtectedDocumentation,
 } from './example-protection.js';
 import { reservePublicSymbols } from './public-symbols.js';
+import { responseComponent, responseTypeNames } from './response-type-names.js';
 import { pascalWords, isReservedTypeName } from './naming.js';
 import {
   phpRepresentations,
@@ -1054,17 +1055,6 @@ function webhookDeclarations(
   return { eventType: 'KnownWebhookEvent', eventDeclarations: declarations.join(''), eventTypes };
 }
 
-function phpResponseName(op: Operation, status: string): string {
-  const schemas = new Set(
-    Object.entries(op.responses)
-      .filter(([key, response]) => (successStatus(key) || key === 'default') && response.schema)
-      .map(([, response]) => stable(response.schema)),
-  );
-  return (
-    pascal(op.resource) + pascal(op.method) + 'Response' + (schemas.size > 1 ? pascal(status) : '')
-  );
-}
-
 /** Compile language interfaces and response class routing before any source rendering. */
 export function compileSdkContract(source: Contract): {
   source: Contract;
@@ -1082,6 +1072,10 @@ export function compileSdkContract(source: Contract): {
       }
     }
   const models = modelsUsed(c);
+  const { names: responseNames, aliases: responseAliases } = responseTypeNames(
+    c,
+    Object.keys(models),
+  );
   const inputModels = new Set<string>();
   const visitInput = (schema: Schema): void => {
     const name = schema['x-sdk-type-name'] ?? schema['x-sdk-ref'];
@@ -1132,11 +1126,13 @@ export function compileSdkContract(source: Contract): {
       if (!(successStatus(status) || status === 'default')) continue;
       const result = compiled.responses[status];
       if (!result) throw new Error('Missing compiled response ' + status);
-      const prefix = phpResponseName(op, status);
+      const prefix = responseNames.get(op.id + '/' + status);
+      if (!prefix) throw new Error('Missing response type name for ' + op.id + '/' + status);
       if (
         response.schema?.oneOf &&
         response.schema.discriminator &&
-        (response.schema.type !== 'object' || exposedUnions.has(response.schema))
+        (response.schema.type !== 'object' || exposedUnions.has(response.schema)) &&
+        !responseComponent(response.schema, Object.keys(models))
       ) {
         result.variants = {};
         for (const [index, branch] of response.schema.oneOf.entries()) {
@@ -1489,11 +1485,13 @@ export function compileSdkContract(source: Contract): {
     const source = c.operations.find((op) => op.id === id)!;
     // Response metadata keeps the declared component name even when codecs and payloads share a shape.
     const declaredResponse = resultType(source, models);
+    const alias = responseAliases.get(id);
+    if (!alias) throw new Error('Missing response alias for ' + id);
     operation.responseType = Object.hasOwn(plan.node.models, declaredResponse)
       ? declaredResponse
       : Object.hasOwn(plan.node.models, operation.output)
         ? operation.output
-        : pascal(source.resource) + pascal(source.method) + 'Response';
+        : alias;
     operation.items = replaceOutputNames(operation.items);
     if (operation.known) operation.known.type = replaceOutputNames(operation.known.type);
   }
@@ -1689,7 +1687,8 @@ export function compileSdkContract(source: Contract): {
         const result = compiled.responses[status];
         if (!result || !response.schema || !(successStatus(status) || status === 'default'))
           continue;
-        const prefix = phpResponseName(op, status);
+        const prefix = responseNames.get(op.id + '/' + status);
+        if (!prefix) throw new Error('Missing response type name for ' + op.id + '/' + status);
         const shape = phpDeclaration(response.schema, semantic.definitions);
         if (
           result.model &&

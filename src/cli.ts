@@ -529,19 +529,25 @@ try {
       });
       if (!diagnosing && command !== 'effective') warnPlaceholderNames(contract.config);
       // generate/preview already compile and render while inspecting the output.
-      if (diagnosing || command === 'effective') diagnoseContract(contract);
+      const diagnosis = diagnosing || command === 'effective' ? diagnoseContract(contract) : {};
       if (diagnosing) {
         const result = {
           valid: true,
           operations: contract.operations.length,
           contractHash: contract.hash,
           targets: contract.config.targets ?? ['node', 'php'],
+          ...diagnosis,
         };
         console.log(
           json
             ? stable(initialized ? { ...initialized, diagnose: result } : result)
             : `Valid: ${result.operations} ${result.operations === 1 ? 'operation' : 'operations'}; targets: ${result.targets.join(', ')}; contract hash: ${result.contractHash}`,
         );
+        if (!json && diagnosis.responseTypeRenames)
+          for (const rename of diagnosis.responseTypeRenames)
+            console.log(
+              `${rename.operation} response ${rename.status}: ${rename.from} → ${rename.to}`,
+            );
         if (initialized && !json)
           console.log(
             `Next: replace ${[initialized.config.npm?.name, initialized.config.composer?.name].filter(Boolean).join(' and ')}, then run\n` +
