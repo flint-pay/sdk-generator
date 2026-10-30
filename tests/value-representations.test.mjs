@@ -333,7 +333,7 @@ test('native-number codecs enforce finite values and exact validation before pro
     assertCodecPlan(plan);
     assert.equal(serialize(0.125, s), '0.125');
     for (const bad of ['0.125', NaN, Infinity, -Infinity])
-      assert.throws(() => serialize(bad, s), { kind: 'validation' });
+      assert.throws(() => serialize(bad, s), { name: 'InvalidInputError' });
     assert.equal(executeCodec(new ExactNumber('0.125'), plan, { mode: 'response' }), 0.125);
     assert.throws(
       () => executeCodec(new ExactNumber('1e999'), plan, { mode: 'response' }),
@@ -430,9 +430,9 @@ test('invalid native inputs stop dispatch; native response overflow is a protoco
     { latitude: Infinity },
     { at: new Date(NaN) },
   ])
-    await assert.rejects(client.api.save({ body }), { kind: 'validation' });
+    await assert.rejects(client.api.save({ body }), { name: 'InvalidInputError' });
   assert.equal(calls, 0);
-  await assert.rejects(client.api.save({ body: {} }), { kind: 'protocol' });
+  await assert.rejects(client.api.save({ body: {} }), { name: 'UnexpectedResponseError' });
   raw = '{"latitude":0.10000000000000001,"future":0.10000000000000001}';
   const result = await client.api.save({ body: {} });
   assert.equal(result.data.latitude, 0.1);
@@ -442,11 +442,11 @@ test('invalid native inputs stop dispatch; native response overflow is a protoco
 use Example\Values\{Client,ClientOptions,ApiSaveInput,SdkError};
 $calls=0;
 $c=new Client(new ClientOptions('https://example.invalid',transport:function()use(&$calls){$calls++;return ['status'=>200,'headers'=>[],'body'=>'{"latitude":1e999}'];}));
-foreach ([['latitude'=>'1.25'],['float_number'=>'0.5'],['change_percent'=>'-0.25'],['nullable_number'=>'0.125'],['latitude'=>INF]] as $body) {try {$c->api->save(new ApiSaveInput(['body'=>$body]));exit(2);}catch(SdkError $e){if($e->kind!=='validation')throw $e;}}
+foreach ([['latitude'=>'1.25'],['float_number'=>'0.5'],['change_percent'=>'-0.25'],['nullable_number'=>'0.125'],['latitude'=>INF]] as $body) {try {$c->api->save(new ApiSaveInput(['body'=>$body]));exit(2);}catch(SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='InvalidInputError')throw $e;}}
 if($calls!==0)exit(3);
-try {$c->api->save(new ApiSaveInput(['body'=>[]]));exit(4);}catch(SdkError $e){echo $e->kind;}
+try {$c->api->save(new ApiSaveInput(['body'=>[]]));exit(4);}catch(SdkError $e){echo substr(strrchr(get_class($e), chr(92)), 1);}
 `),
-    'protocol',
+    'UnexpectedResponseError',
   );
 });
 

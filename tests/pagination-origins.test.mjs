@@ -135,25 +135,25 @@ const cases = [
     name: 'HTTPS nondefault port rejected',
     baseUrl: 'HTTPS://example.invalid:443',
     next: 'https://example.invalid:8443/records?page=2',
-    error: 'destination',
+    error: 'ConfigurationError',
   },
   {
     name: 'HTTP nondefault port rejected',
     baseUrl: 'HTTP://example.invalid:80',
     next: 'http://example.invalid:8080/records?page=2',
-    error: 'destination',
+    error: 'ConfigurationError',
   },
   {
     name: 'HTTPS default port is not a nondefault origin',
     baseUrl: 'HTTPS://example.invalid:8443',
     next: 'https://example.invalid/records?page=2',
-    error: 'destination',
+    error: 'ConfigurationError',
   },
   {
     name: 'HTTP default port is not a nondefault origin',
     baseUrl: 'HTTP://example.invalid:8080',
     next: 'http://example.invalid/records?page=2',
-    error: 'destination',
+    error: 'ConfigurationError',
   },
 ];
 
@@ -179,7 +179,7 @@ test('Node link pagination compares canonical origins and retains nondefault por
       for await (const page of client.api.listRecordsPages()) seen.push(...page.data.items);
     };
     if (row.error)
-      await assert.rejects(consume, { kind: row.error, outcome: 'not_sent' }, row.name);
+      await assert.rejects(consume, { name: row.error, outcome: 'not_sent' }, row.name);
     else await consume();
     assert.equal(sent, row.error ? 1 : 2, row.name);
     assert.deepEqual(seen, row.error ? ['first'] : ['first', 'second'], row.name);
@@ -219,7 +219,7 @@ foreach(json_decode(file_get_contents($argv[2]),true) as $case) {
             $seen=array_merge($seen,$data['items']);
         }
     } catch(SdkError $e) {
-        $error=$e->kind;
+        $error=substr(strrchr(get_class($e), chr(92)), 1);
         if($e->outcome!=='not_sent')throw $e;
     }
     if($error!==($case['error']??null) ||

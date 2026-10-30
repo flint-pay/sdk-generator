@@ -140,21 +140,16 @@ foreach (['provider', 'closureString', 'closureCredential'] as $form) {
             }
         }
         same(
-            $error?->kind,
+            $error !== null ? substr(strrchr(get_class($error), chr(92)), 1) : null,
             $surface === 'token' ? $c['legacyError'] ?? ($c['error'] ?? null) : $c['error'] ?? null,
             $c['name'],
         );
         if (isset($c['bodyFailures']) && $error !== null) {
-            same($error->meta['status'], 401, $c['name']);
+            same($error->status, 401, $c['name']);
             same($error->outcome, 'response', $c['name']);
         }
         if (isset($c['message'])) {
-            same(
-                $error->getMessage(),
-                $c['message'] .
-                    ($c['name'] === 'invalidation failure is sanitized' ? ' [HTTP 401]' : ''),
-                $c['name'],
-            );
+            same($error->getMessage(), $c['message'], $c['name']);
         }
         if (isset($c['error'])) {
             same($error->retryAllowed, false, $c['name']);

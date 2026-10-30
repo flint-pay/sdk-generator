@@ -229,19 +229,19 @@ test('singleton numeric enum types accept exact strings and generate type-correc
   for (const entry of operations) {
     for (const body of entry.valid) await c.api[entry.id]({ body });
     for (const body of entry.invalid)
-      await assert.rejects(c.api[entry.id]({ body }), (e) => e.kind === 'validation');
+      await assert.rejects(c.api[entry.id]({ body }), (e) => e.name === 'InvalidInputError');
   }
   const expected = operations.flatMap((entry) => entry.valid);
   assert.deepEqual(bodies, expected);
   assert.deepEqual(
     php(
       f,
-      String.raw`$cases=json_decode(stream_get_contents(STDIN),true);$bodies=[];$errors=[];$c=new EdgeSdk\Client(new EdgeSdk\ClientOptions('https://example.invalid',transport:function($r)use(&$bodies){$bodies[]=$r['body'];return ['status'=>204,'headers'=>[],'body'=>''];}));foreach($cases as $case){$id=$case['id'];$class='EdgeSdk\\Api'.ucfirst($id).'Input';foreach($case['valid']as $body)$c->api->{$id}(new $class(['body'=>$body]));foreach($case['invalid']as $body){try{$c->api->{$id}(new $class(['body'=>$body]));$errors[]='sent';}catch(EdgeSdk\SdkError $e){$errors[]=$e->kind;}}}echo json_encode(['bodies'=>$bodies,'errors'=>$errors]);`,
+      String.raw`$cases=json_decode(stream_get_contents(STDIN),true);$bodies=[];$errors=[];$c=new EdgeSdk\Client(new EdgeSdk\ClientOptions('https://example.invalid',transport:function($r)use(&$bodies){$bodies[]=$r['body'];return ['status'=>204,'headers'=>[],'body'=>''];}));foreach($cases as $case){$id=$case['id'];$class='EdgeSdk\\Api'.ucfirst($id).'Input';foreach($case['valid']as $body)$c->api->{$id}(new $class(['body'=>$body]));foreach($case['invalid']as $body){try{$c->api->{$id}(new $class(['body'=>$body]));$errors[]='sent';}catch(EdgeSdk\SdkError $e){$errors[]=substr(strrchr(get_class($e), chr(92)), 1);}}}echo json_encode(['bodies'=>$bodies,'errors'=>$errors]);`,
       operations,
     ),
     {
       bodies: expected,
-      errors: operations.flatMap((entry) => entry.invalid.map(() => 'validation')),
+      errors: operations.flatMap((entry) => entry.invalid.map(() => 'InvalidInputError')),
     },
   );
   const consumer = join(f.dir, 'consumer.mts');
@@ -292,15 +292,15 @@ test('money conversion rejects trailing newlines and retains exact amounts in bo
   for (const input of cases.money.invalid)
     assert.throws(
       () => c.money('USD', input),
-      (e) => e.kind === 'validation',
+      (e) => e.name === 'InvalidInputError',
     );
   const p = php(
     f,
-    String.raw`$cases=json_decode(stream_get_contents(STDIN),true);$c=new EdgeSdk\Client(new EdgeSdk\ClientOptions('https://example.invalid'));$valid=[];$invalid=[];foreach($cases['valid']as $case)$valid[]=$c->money('USD',$case['input']);foreach($cases['invalid']as $value){try{$c->money('USD',$value);$invalid[]='accepted';}catch(EdgeSdk\SdkError $e){$invalid[]=$e->kind;}}echo json_encode(['valid'=>$valid,'invalid'=>$invalid]);`,
+    String.raw`$cases=json_decode(stream_get_contents(STDIN),true);$c=new EdgeSdk\Client(new EdgeSdk\ClientOptions('https://example.invalid'));$valid=[];$invalid=[];foreach($cases['valid']as $case)$valid[]=$c->money('USD',$case['input']);foreach($cases['invalid']as $value){try{$c->money('USD',$value);$invalid[]='accepted';}catch(EdgeSdk\SdkError $e){$invalid[]=substr(strrchr(get_class($e), chr(92)), 1);}}echo json_encode(['valid'=>$valid,'invalid'=>$invalid]);`,
     cases.money,
   );
   assert.deepEqual(p, {
     valid: cases.money.valid.map(({ amount }) => ({ currency: 'USD', amount })),
-    invalid: cases.money.invalid.map(() => 'validation'),
+    invalid: cases.money.invalid.map(() => 'InvalidInputError'),
   });
 });

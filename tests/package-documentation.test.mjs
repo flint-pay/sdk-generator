@@ -139,9 +139,9 @@ test('resource docs separate inputs from linked output fields, errors and shared
         /\| `id` \| Required \| string \| Record identifier/,
       );
       assert.doesNotMatch(response, /Execution mode/);
-      assert.match(response, /400 \| ValidationError \| validation/);
-      assert.match(response, /409 \| ConflictError \| conflict/);
-      assert.match(response, /429 \| RateLimitError \| rate_limit/);
+      assert.match(response, /400 \| InvalidRequestError/);
+      assert.match(response, /409 \| ConflictError/);
+      assert.match(response, /429 \| RateLimitError/);
       const runtime = readFileSync(join(root, 'RUNTIME.md'), 'utf8');
       assert.doesNotMatch(
         runtime,
@@ -154,16 +154,19 @@ test('resource docs separate inputs from linked output fields, errors and shared
         'ConnectionError',
         'TimeoutError',
         'AuthenticationError',
-        'ValidationError',
+        'InvalidRequestError',
+        'PermissionError',
+        'InvalidInputError',
+        'PaginationLimitError',
+        'WebhookVerificationError',
         'RateLimitError',
         'NotFoundError',
         'ConflictError',
         'ServerError',
         'ApiError',
-        'ProtocolError',
+        'UnexpectedResponseError',
         'CancelledError',
-        'DeadlineError',
-        'DestinationError',
+        'ConfigurationError',
       ])
         assert.ok(runtime.includes(name), name);
       for (const field of [

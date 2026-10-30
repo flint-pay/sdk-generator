@@ -58,7 +58,7 @@ test('webhooks is a public standalone export with no operation data, including w
     expected,
   );
   assert.throws(() => subpath.verifyWebhook(body, headers, 'wrong-secret'), {
-    kind: 'authentication',
+    name: 'WebhookVerificationError',
   });
   const bundle = buildSync({
     entryPoints: [join(node, 'webhooks.js')],

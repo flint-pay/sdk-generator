@@ -178,7 +178,7 @@ const cases = [
     options,
     request,
     operation,
-    error: 'authentication',
+    error: 'ConfigurationError',
     message,
   })),
   ...[
@@ -197,28 +197,28 @@ const cases = [
     name: 'invalid base URL',
     options: { baseUrl },
     operation: 'health',
-    error: 'validation',
+    error: 'InvalidInputError',
     message: 'baseUrl',
   })),
   {
     name: 'HTTP needs opt-in',
     options: { baseUrl: 'http://localhost' },
     operation: 'health',
-    error: 'destination',
+    error: 'ConfigurationError',
     message: 'allowInsecureHttp: true',
   },
   {
     name: 'unsupported protocol',
     options: { baseUrl: 'ftp://example.invalid' },
     operation: 'health',
-    error: 'destination',
+    error: 'ConfigurationError',
     message: 'Unsupported destination protocol',
   },
   {
     name: 'explicit origins restrict default',
     options: { allowedOrigins: ['https://other.example.invalid'] },
     operation: 'health',
-    error: 'destination',
+    error: 'ConfigurationError',
     message: 'allowedOrigins',
   },
 ];
@@ -254,7 +254,7 @@ foreach(json_decode(file_get_contents($argv[2]),true) as $case) {
     if($sent!==1)throw new Exception('missing dispatch');
     $client->close();
   } catch(SdkError $e) {
-    if(($case['error']??null)!==$e->kind || !str_contains($e->getMessage(),$case['message']) || $sent!==0 || $e->outcome!=='not_sent')throw $e;
+    if(($case['error']??null)!==substr(strrchr(get_class($e), chr(92)), 1) || !str_contains($e->getMessage(),$case['message']) || $sent!==0 || $e->outcome!=='not_sent')throw $e;
     if(str_contains($e->getMessage(),'password'))throw new Exception('leaked URL');
   }
 }
@@ -284,7 +284,7 @@ test('generated Node and PHP setup has independent destination and credential ex
       await assert.rejects(
         run,
         (error) =>
-          error.kind === row.error &&
+          error.name === row.error &&
           error.message.includes(row.message) &&
           error.outcome === 'not_sent' &&
           !error.message.includes('password'),
@@ -300,35 +300,40 @@ test('omitted defaults and unmapped tokens fail clearly in both targets', async 
   const NoDefault = (await import(pathToFileURL(join(noDefault, 'node/index.js')).href)).Client;
   assert.throws(
     () => new NoDefault(),
-    (e) => e.kind === 'validation' && /baseUrl.*no default/.test(e.message),
+    (e) => e.name === 'InvalidInputError' && /baseUrl.*no default/.test(e.message),
   );
   for (const value of [null, [], 'options'])
     assert.throws(
       () => new Client(value),
-      (e) => e.kind === 'validation' && /options/.test(e.message),
+      (e) => e.name === 'InvalidInputError' && /options/.test(e.message),
     );
   for (const value of [null, 123, {}])
     assert.throws(
       () => new Client({ baseUrl: value }),
-      (e) => e.kind === 'validation' && /baseUrl/.test(e.message),
+      (e) => e.name === 'InvalidInputError' && /baseUrl/.test(e.message),
     );
   const Unmapped = (await import(pathToFileURL(join(unmapped, 'node/index.js')).href)).Client;
   assert.throws(
     () => new Unmapped({ token: 'hidden-token' }),
     (e) =>
-      e.kind === 'authentication' &&
+      e.name === 'ConfigurationError' &&
       /token.*apiKey/.test(e.message) &&
       !e.message.includes('hidden-token'),
   );
   phpCases(noDefault, [
-    { name: 'no default', operation: 'health', error: 'validation', message: 'baseUrl: required' },
+    {
+      name: 'no default',
+      operation: 'health',
+      error: 'InvalidInputError',
+      message: 'baseUrl: required',
+    },
   ]);
   phpCases(unmapped, [
     {
       name: 'unmapped token',
       options: { token: 'hidden-token' },
       operation: 'health',
-      error: 'authentication',
+      error: 'ConfigurationError',
       message: 'token is not configured',
     },
   ]);
@@ -574,7 +579,7 @@ test('an API with no authentication supports defaults and still requires HTTP op
   assert.doesNotThrow(() => new Anonymous());
   assert.throws(
     () => new Anonymous({ baseUrl: 'http://localhost' }),
-    (e) => e.kind === 'destination' && /allowInsecureHttp/.test(e.message),
+    (e) => e.name === 'ConfigurationError' && /allowInsecureHttp/.test(e.message),
   );
   const row = cases.find((row) => row.name === 'localhost opt-in');
   phpCases(anonymous, [row, cases.find((row) => row.name === 'HTTP needs opt-in')]);
@@ -609,7 +614,7 @@ test('authentication errors name caller option keys instead of operation and sch
   for (const options of [{}, { authMode: 'merchantKey' }]) {
     const client = new Client(options);
     await assert.rejects(client.api.merchant(), (error) => {
-      assert.equal(error.kind, 'authentication');
+      assert.equal(error.name, 'ConfigurationError');
       assert.match(error.message, /apiKey.*(?:client options|request options)/);
       assert.ok(!error.message.includes('permitted modes'));
       assert.ok(!error.message.includes('credential Key'));

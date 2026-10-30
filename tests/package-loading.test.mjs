@@ -295,11 +295,7 @@ test('selective clients preserve the independent HTTP corpus across repeated cli
     if (scenario.error)
       await assert.rejects(request, (error) => {
         for (const [key, value] of Object.entries(scenario.error))
-          assert.equal(
-            ['status', 'requestId'].includes(key) ? error.meta?.[key] : error[key],
-            value,
-            scenario.name,
-          );
+          assert.equal(error[key], value, scenario.name);
         return true;
       });
     else {

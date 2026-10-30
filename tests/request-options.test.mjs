@@ -175,7 +175,7 @@ for (const style of ['object', 'positional'])
           call({ clientRequestId: value }),
           (error) =>
             error instanceof sdk.SdkError &&
-            error.kind === 'validation' &&
+            error.name === 'InvalidInputError' &&
             error.outcome === 'not_sent',
         );
       }
@@ -193,7 +193,7 @@ for (const style of ['object', 'positional'])
       status = 400;
       await assert.rejects(
         call({ clientRequestId: 'caller-value' }),
-        (error) => error.meta.requestId === errorId,
+        (error) => error.requestId === errorId,
       );
       assert.equal(sent.at(-1)['x-request-id'], 'caller-value');
 
@@ -261,7 +261,7 @@ $call(new \RequestOptionTest\RequestOptions(headers:['X-REQUEST-ID'=>'header-onl
 $call(new \RequestOptionTest\RequestOptions(headers:['X-Request-Id'=>'same'],client_request_id:'same'));
 if(isset($sent[0]['x-request-id'])||array_column(array_slice($sent,1),'x-request-id')!==[...$cases['good'],'header-only','same'])throw new \Exception('wire headers');
 $before=count($sent);
-foreach($cases['bad'] as $v){try{$call(new \RequestOptionTest\RequestOptions(client_request_id:$v));throw new \Exception('expected validation');}catch(\RequestOptionTest\SdkError $e){if($e->kind!=='validation'||$e->outcome!=='not_sent')throw $e;}}
+foreach($cases['bad'] as $v){try{$call(new \RequestOptionTest\RequestOptions(client_request_id:$v));throw new \Exception('expected validation');}catch(\RequestOptionTest\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='InvalidInputError'||$e->outcome!=='not_sent')throw $e;}}
 foreach([new \RequestOptionTest\RequestOptions(headers:['x-request-id'=>'a b']),new \RequestOptionTest\RequestOptions(headers:['x-request-id'=>'two'],client_request_id:'one')] as $o){try{$call($o);throw new \Exception('expected validation');}catch(\RequestOptionTest\SdkError $e){}}
 if($cases['style']==='object'){try{$c->api->send(['X-Request-Id'=>'input']);throw new \Exception('expected input rejection');}catch(\RequestOptionTest\SdkError $e){}}
 if(count($sent)!==$before)throw new \Exception('invalid values dispatched');
@@ -270,7 +270,7 @@ if(end($sent)['x-correlation-id']!=='alternate-name'||isset(end($sent)['x-reques
 $o=(new \RequestOptionTest\RequestOptions(client_request_id:'preserved'))->withDeadline(1000);
 if($o->client_request_id!=='preserved')throw new \Exception('option forwarding');
 $status=400;
-try{$call(new \RequestOptionTest\RequestOptions(client_request_id:'caller-value'));throw new \Exception('expected error');}catch(\RequestOptionTest\SdkError $e){if($e->meta['requestId']!==$cases['errorId'])throw $e;}
+try{$call(new \RequestOptionTest\RequestOptions(client_request_id:'caller-value'));throw new \Exception('expected error');}catch(\RequestOptionTest\SdkError $e){if($e->requestId!==$cases['errorId'])throw $e;}
 `,
           join(output, 'php'),
           JSON.stringify(cases),

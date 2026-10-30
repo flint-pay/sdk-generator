@@ -18,7 +18,7 @@ export { directionalSchema } from './codec-plan.js';
 
 const inspectCustom = Symbol.for('nodejs.util.inspect.custom');
 
-export type ErrorKind =
+type InternalErrorKind =
   | 'transport'
   | 'timeout'
   | 'authentication'
@@ -31,7 +31,8 @@ export type ErrorKind =
   | 'protocol'
   | 'cancelled'
   | 'deadline'
-  | 'destination';
+  | 'destination'
+  | 'webhook';
 export interface Metadata {
   status: number;
   headers: Record<string, string>;
@@ -40,7 +41,15 @@ export interface Metadata {
   attempts: number;
   durationMs: number;
   url?: string;
+  requestIds?: string[];
 }
+type ErrorCallContext = {
+  attempts: number;
+  requestIds: string[];
+  start: number;
+  lastResponse?: Metadata;
+  retryAfterMs?: number;
+};
 export interface Result<T> {
   data: T;
   meta: Metadata;
@@ -49,66 +58,86 @@ export interface Result<T> {
 const errorCauses = new WeakMap<SdkError, unknown>();
 const publicErrorDetailsCertificate: TypeCertificate | undefined = undefined;
 
-export type RuntimeErrorDetails =
-  | { transportCode: string | null }
-  | { eventId: string; position: number }
-  | {
-      reason: string;
-      source: string;
-      workloadIdentityId: string;
-      iss: string;
-      sub: string;
-      aud: string;
-      error_description: string;
-    };
-
-/** SDK failure with outcome and recovery metadata. See RUNTIME.md#error-reference. */
-export class SdkError extends Error {
+export interface SdkErrorInit {
+  code?: string;
+  operation?: string;
+  outcome?: 'unknown' | 'response' | 'not_sent';
+  retryAllowed?: boolean;
+  status?: number;
+  requestId?: string;
+  requestIds?: string[];
   idempotencyKey?: string;
+  attempts?: number;
+  durationMs?: number;
   retryAfterMs?: number;
-  constructor(
-    public kind: ErrorKind,
-    message: string,
-    public outcome: 'unknown' | 'response' | 'not_sent' = 'not_sent',
-    public retryAllowed = false,
-    public meta?: Metadata,
-    public code?: string,
-    public details?: unknown,
-    options?: ErrorOptions,
-    public raw?: string,
-  ) {
+  headers?: Record<string, string>;
+  raw?: string;
+  cause?: unknown;
+}
+/** SDK failure with flattened call context. */
+export class SdkError extends Error {
+  code: string;
+  operation?: string;
+  outcome: 'unknown' | 'response' | 'not_sent';
+  retryAllowed: boolean;
+  status?: number;
+  requestId?: string;
+  requestIds: string[];
+  idempotencyKey?: string;
+  attempts: number;
+  durationMs?: number;
+  retryAfterMs?: number;
+  headers: Record<string, string>;
+  raw?: string;
+  constructor(message: string, init: SdkErrorInit = {}) {
     super(message);
-    if (publicErrorDetailsCertificate && !certifies(details, publicErrorDetailsCertificate))
-      this.details = undefined;
-    // Native error formatting bypasses custom inspection. An own accessor keeps recovery
-    // access without evaluating the private cause during rendering, including Node 22.
-    if (options && 'cause' in options) errorCauses.set(this, options.cause);
+    this.code = init.code ?? '';
+    this.outcome = init.outcome ?? 'not_sent';
+    this.retryAllowed = init.retryAllowed ?? false;
+    this.requestIds = [...(init.requestIds ?? (init.requestId ? [init.requestId] : []))];
+    this.attempts = init.attempts ?? 0;
+    this.headers = init.headers ?? {};
+    for (const key of [
+      'operation',
+      'status',
+      'requestId',
+      'idempotencyKey',
+      'durationMs',
+      'retryAfterMs',
+      'raw',
+    ] as const)
+      if (init[key] !== undefined)
+        Object.defineProperty(this, key, {
+          value: init[key],
+          writable: true,
+          configurable: true,
+          enumerable: key !== 'raw',
+        });
+    if ('cause' in init) errorCauses.set(this, init.cause);
     Object.defineProperty(this, 'cause', {
       configurable: true,
       get: () => errorCauses.get(this),
       set: (value: unknown) => errorCauses.set(this, value),
     });
-    Object.defineProperty(this, 'meta', { enumerable: false });
+    Object.defineProperty(this, 'headers', { enumerable: false });
     Object.defineProperty(this, 'raw', { enumerable: false });
     this.name = errorNames.get(new.target) ?? new.target.name;
-    if (meta?.idempotencyKey !== undefined) this.idempotencyKey = meta.idempotencyKey;
-  }
-  get status(): number | undefined {
-    return this.meta?.status;
   }
   toJSON() {
     return {
       name: this.name,
-      kind: this.kind,
       message: this.message,
+      code: this.code,
+      operation: this.operation ?? null,
       outcome: this.outcome,
       retryAllowed: this.retryAllowed,
-      requestId: this.meta?.requestId,
-      status: this.status,
-      code: this.code,
-      details: this.details,
-      idempotencyKey: this.idempotencyKey,
-      retryAfterMs: this.retryAfterMs,
+      status: this.status ?? null,
+      requestId: this.requestId ?? null,
+      requestIds: this.requestIds,
+      idempotencyKey: this.idempotencyKey ?? null,
+      attempts: this.attempts,
+      retryAfterMs: this.retryAfterMs ?? null,
+      ...(this instanceof errors.ApiError ? { details: this.details ?? null } : {}),
       cause:
         this.cause instanceof Error
           ? {
@@ -118,72 +147,128 @@ export class SdkError extends Error {
                   : this.cause instanceof SyntaxError
                     ? 'SyntaxError'
                     : 'Error',
-              code: transportCode(this.cause),
+              code: transportCode(this.cause) ?? null,
             }
-          : undefined,
-      stack: this.stack,
+          : null,
+      stack: this.stack ?? null,
     };
   }
   [inspectCustom]() {
     return this.toJSON();
   }
 }
-// Preserve the root class identity while providing both namespace values and types.
 const BaseSdkError = SdkError;
 type BaseSdkError = SdkError;
 export namespace errors {
   export const SdkError = BaseSdkError;
   export type SdkError = BaseSdkError;
+  export class ApiError extends BaseSdkError {
+    details?: unknown;
+    constructor(message: string, init: SdkErrorInit & { details?: unknown } = {}) {
+      super(message, init);
+      if (!publicErrorDetailsCertificate || certifies(init.details, publicErrorDetailsCertificate))
+        this.details = init.details;
+    }
+  }
+  export class InvalidRequestError extends ApiError {}
+  export class AuthenticationError extends ApiError {}
+  export class PermissionError extends ApiError {}
+  export class NotFoundError extends ApiError {}
+  export class ConflictError extends ApiError {}
+  export class RateLimitError extends ApiError {}
+  export class ServerError extends ApiError {}
   export class ConnectionError extends BaseSdkError {}
-  export class TimeoutError extends BaseSdkError {}
-  export class AuthenticationError extends BaseSdkError {}
-  export class ValidationError extends BaseSdkError {}
-  export class RateLimitError extends BaseSdkError {}
-  export class NotFoundError extends BaseSdkError {}
-  export class ConflictError extends BaseSdkError {}
-  export class ServerError extends BaseSdkError {}
-  export class ApiError extends BaseSdkError {}
-  export class ProtocolError extends BaseSdkError {}
+  export class TimeoutError extends ConnectionError {}
+  export class InvalidInputError extends BaseSdkError {}
+  export class ConfigurationError extends BaseSdkError {
+    workloadIdentity?: unknown;
+  }
   export class CancelledError extends BaseSdkError {}
-  export class DeadlineError extends BaseSdkError {}
-  export class DestinationError extends BaseSdkError {}
+  export class UnexpectedResponseError extends BaseSdkError {
+    event?: { id: string; position: number };
+  }
+  export class WebhookVerificationError extends BaseSdkError {}
+  export class PaginationLimitError extends BaseSdkError {}
 }
-// Built-in identities survive minification; consumer subclasses retain their own names.
 const errorNames = new Map<typeof SdkError, string>([
   [SdkError, 'SdkError'],
-  [errors.ConnectionError, 'ConnectionError'],
-  [errors.TimeoutError, 'TimeoutError'],
-  [errors.AuthenticationError, 'AuthenticationError'],
-  [errors.ValidationError, 'ValidationError'],
-  [errors.RateLimitError, 'RateLimitError'],
-  [errors.NotFoundError, 'NotFoundError'],
-  [errors.ConflictError, 'ConflictError'],
-  [errors.ServerError, 'ServerError'],
-  [errors.ApiError, 'ApiError'],
-  [errors.ProtocolError, 'ProtocolError'],
-  [errors.CancelledError, 'CancelledError'],
-  [errors.DeadlineError, 'DeadlineError'],
-  [errors.DestinationError, 'DestinationError'],
+  ...Object.entries(errors).map(([name, value]): [typeof SdkError, string] => [value, name]),
 ]);
-const errorClasses = {
-  transport: errors.ConnectionError,
-  timeout: errors.TimeoutError,
-  authentication: errors.AuthenticationError,
-  validation: errors.ValidationError,
-  rate_limit: errors.RateLimitError,
-  not_found: errors.NotFoundError,
-  conflict: errors.ConflictError,
-  server: errors.ServerError,
-  api: errors.ApiError,
-  protocol: errors.ProtocolError,
-  cancelled: errors.CancelledError,
-  deadline: errors.DeadlineError,
-  destination: errors.DestinationError,
-} satisfies Record<ErrorKind, typeof SdkError>;
-
-/** Internal construction boundary; public constructors keep their existing arguments. */
-export function createSdkError(...args: ConstructorParameters<typeof SdkError>): SdkError {
-  const error = new errorClasses[args[0]](...args);
+const errorKinds = new WeakMap<SdkError, InternalErrorKind>();
+const internalKind = (error: SdkError) =>
+  errorKinds.get(error) ?? (error instanceof errors.InvalidInputError ? 'validation' : undefined);
+function apiErrorClass(status: number): typeof errors.ApiError {
+  if (status === 400 || status === 422) return errors.InvalidRequestError;
+  if (status === 401) return errors.AuthenticationError;
+  if (status === 403) return errors.PermissionError;
+  if (status === 404) return errors.NotFoundError;
+  if (status === 409 || status === 412) return errors.ConflictError;
+  if (status === 429) return errors.RateLimitError;
+  if (status >= 500 && status < 600) return errors.ServerError;
+  return errors.ApiError;
+}
+/** Internal migration adapter. Remove kind routing when the call sites migrate. */
+export function createSdkError(
+  kind: InternalErrorKind,
+  message: string,
+  outcome: SdkError['outcome'] = 'not_sent',
+  retryAllowed = false,
+  meta?: Metadata,
+  code?: string,
+  details?: unknown,
+  options?: ErrorOptions,
+  raw?: string,
+): SdkError {
+  const Class =
+    meta &&
+    meta.status >= 400 &&
+    meta.status < 600 &&
+    !['transport', 'timeout', 'deadline', 'cancelled'].includes(kind)
+      ? apiErrorClass(meta.status)
+      : kind === 'webhook'
+        ? errors.WebhookVerificationError
+        : kind === 'transport'
+          ? errors.ConnectionError
+          : kind === 'timeout' || kind === 'deadline'
+            ? errors.TimeoutError
+            : kind === 'cancelled'
+              ? errors.CancelledError
+              : kind === 'protocol' ||
+                  kind === 'api' ||
+                  (kind === 'destination' && meta !== undefined)
+                ? errors.UnexpectedResponseError
+                : kind === 'authentication' || kind === 'destination'
+                  ? errors.ConfigurationError
+                  : errors.InvalidInputError;
+  const error = new Class(message, {
+    ...meta,
+    outcome,
+    retryAllowed,
+    ...(code !== undefined ? { code } : {}),
+    ...(raw !== undefined ? { raw } : {}),
+    ...options,
+    ...(Class.prototype instanceof errors.ApiError || Class === errors.ApiError ? { details } : {}),
+  });
+  if (
+    error instanceof errors.ConfigurationError &&
+    details &&
+    typeof details === 'object' &&
+    'error_description' in details
+  ) {
+    const { error_description, ...identity } = details;
+    error.workloadIdentity = { ...identity, errorDescription: error_description };
+  }
+  if (
+    error instanceof errors.UnexpectedResponseError &&
+    details &&
+    typeof details === 'object' &&
+    'eventId' in details &&
+    typeof details.eventId === 'string' &&
+    'position' in details &&
+    typeof details.position === 'number'
+  )
+    error.event = { id: details.eventId, position: details.position };
+  errorKinds.set(error, kind);
   if (typeof Error.captureStackTrace === 'function') Error.captureStackTrace(error, createSdkError);
   return error;
 }
@@ -193,7 +278,7 @@ export interface DiagnosticEvent {
   status?: number;
   requestId?: string;
   durationMs: number;
-  errorKind?: ErrorKind;
+  errorKind?: InternalErrorKind;
 }
 /** Incoming Node/Express headers or Fetch Headers; only signing headers are inspected. */
 export type WebhookHeaders =
@@ -205,7 +290,7 @@ const webhookError = (
   code: string,
   message: string,
 ): never => {
-  throw createSdkError(kind, message, 'not_sent', false, undefined, 'webhook_' + code);
+  throw createSdkError('webhook', message, 'not_sent', false, undefined, 'webhook_' + code);
 };
 
 function webhookHeaderValues(headers: WebhookHeaders, name: string, optional = false): string[] {
@@ -1055,7 +1140,7 @@ export class EventStream implements AsyncIterable<ServerSentEvent> {
       }
       if (this.failure) throw this.failure;
     } catch (cause) {
-      if (cause instanceof SdkError && cause.kind !== 'validation') throw cause;
+      if (cause instanceof SdkError && internalKind(cause) !== 'validation') throw cause;
       throw createSdkError(
         'protocol',
         'Invalid or interrupted SSE stream',
@@ -1529,7 +1614,7 @@ function conditionalBranch(
       allowUnknownResponseFields: false,
     });
   } catch (error) {
-    if (!(error instanceof SdkError) || error.kind !== 'validation') throw error;
+    if (!(error instanceof SdkError) || internalKind(error) !== 'validation') throw error;
     matched = false;
   }
   return matched ? codec.when.then : codec.when.else;
@@ -1582,7 +1667,7 @@ function jointNumericView(
             });
         return true;
       } catch (error) {
-        if (error instanceof SdkError && error.kind === 'validation') return false;
+        if (error instanceof SdkError && internalKind(error) === 'validation') return false;
         throw error;
       }
     }),
@@ -1647,7 +1732,8 @@ function jointNumericView(
               executeNode(candidate, branch, { ...branchContext, allowUnknownResponseFields });
               return true;
             } catch (error) {
-              if (error instanceof SdkError && error.kind === 'validation') return error.message;
+              if (error instanceof SdkError && internalKind(error) === 'validation')
+                return error.message;
               throw error;
             }
           },
@@ -1659,7 +1745,7 @@ function jointNumericView(
       return { value: candidate };
     } catch (error) {
       if (context.search.exhausted) throw error;
-      if (error instanceof SdkError && error.kind === 'validation') return undefined;
+      if (error instanceof SdkError && internalKind(error) === 'validation') return undefined;
       throw error;
     }
   };
@@ -1766,7 +1852,8 @@ function assertNumericSources(
               });
               return true;
             } catch (error) {
-              if (error instanceof SdkError && error.kind === 'validation') return error.message;
+              if (error instanceof SdkError && internalKind(error) === 'validation')
+                return error.message;
               throw error;
             }
           },
@@ -1943,7 +2030,8 @@ function numericView(
               candidates.set(branch, candidate);
               return true;
             } catch (error) {
-              if (error instanceof SdkError && error.kind === 'validation') return error.message;
+              if (error instanceof SdkError && internalKind(error) === 'validation')
+                return error.message;
               throw error;
             }
           },
@@ -1991,7 +2079,7 @@ function numericView(
           );
         }
       } catch (error) {
-        if (!(error instanceof SdkError) || error.kind !== 'validation') throw error;
+        if (!(error instanceof SdkError) || internalKind(error) !== 'validation') throw error;
         failure ??= error;
         deferred.push(scope);
       }
@@ -2115,7 +2203,7 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
         matched.set(branch, results);
         return true;
       } catch (error) {
-        if (error instanceof SdkError && error.kind === 'validation') return error.message;
+        if (error instanceof SdkError && internalKind(error) === 'validation') return error.message;
         throw error;
       }
     };
@@ -2362,7 +2450,7 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
             });
             return true;
           } catch (error) {
-            if (error instanceof SdkError && error.kind === 'validation') return false;
+            if (error instanceof SdkError && internalKind(error) === 'validation') return false;
             throw error;
           }
         })
@@ -2445,7 +2533,7 @@ export function isKnownCodec(
     });
     return true;
   } catch (error) {
-    if (error instanceof SdkError && error.kind === 'validation') return false;
+    if (error instanceof SdkError && internalKind(error) === 'validation') return false;
     throw error;
   }
 }
@@ -2788,7 +2876,7 @@ const webhookRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 const webhookKeysUnavailable = (): never => {
   throw createSdkError(
-    'transport',
+    'webhook',
     'Webhook JWKS unavailable; respond with 5xx so delivery can retry',
     'not_sent',
     false,
@@ -3370,7 +3458,7 @@ function decodeWebhookFromPlan(
     );
   } catch (cause) {
     throw createSdkError(
-      'protocol',
+      'webhook',
       'Invalid webhook JSON',
       'response',
       false,
@@ -3396,9 +3484,9 @@ function decodeWebhookFromPlan(
         redactFields: redactFields,
       });
     } catch (cause) {
-      if (!(cause instanceof SdkError) || cause.kind !== 'validation') throw cause;
+      if (!(cause instanceof SdkError) || internalKind(cause) !== 'validation') throw cause;
       throw createSdkError(
-        'protocol',
+        'webhook',
         'Invalid webhook payload' +
           (validationFailures.has(cause) ? ': ' + validationFailures.get(cause) : ''),
         'response',
@@ -3421,7 +3509,7 @@ function decodeWebhookFromPlan(
       });
       known = !w.certificate || certifies(plainNumbers(structuredClone(decoded)), w.certificate);
     } catch (error) {
-      if (!(error instanceof SdkError) || error.kind !== 'validation') throw error;
+      if (!(error instanceof SdkError) || internalKind(error) !== 'validation') throw error;
     }
   }
   return known
@@ -3529,7 +3617,7 @@ class CompiledRuntime {
         });
         return plainNumbers(decoded);
       } catch (cause) {
-        if (!(cause instanceof SdkError && cause.kind === 'validation')) throw cause;
+        if (!(cause instanceof SdkError && internalKind(cause) === 'validation')) throw cause;
         failure ??= cause;
       }
     }
@@ -3550,7 +3638,7 @@ class CompiledRuntime {
         bad('response', 'payload does not fit its public type');
       return decoded;
     } catch (cause) {
-      if (!(cause instanceof SdkError && cause.kind === 'validation')) throw cause;
+      if (!(cause instanceof SdkError && internalKind(cause) === 'validation')) throw cause;
       throw createSdkError(
         'protocol',
         'Response payload does not match a declared alternative',
@@ -3581,7 +3669,7 @@ class CompiledRuntime {
         this.decode(candidate, codec, { mode: 'request', path });
         return;
       } catch (error) {
-        if (!(error instanceof SdkError) || error.kind !== 'validation') throw error;
+        if (!(error instanceof SdkError) || internalKind(error) !== 'validation') throw error;
         failure ??= error;
       }
     }
@@ -3622,6 +3710,7 @@ class CompiledRuntime {
           ? (op.idempotency.autoKeyPrefix ?? '') + process.getBuiltinModule('crypto').randomUUID()
           : undefined))
       : undefined;
+    const context: ErrorCallContext = { attempts: 0, requestIds: [], start: performance.now() };
     try {
       return await this.executeRequest<T>(
         id,
@@ -3630,9 +3719,23 @@ class CompiledRuntime {
           ? { ...options, idempotencyKey: key }
           : options,
         continuation,
+        context,
       );
     } catch (error) {
-      if (error instanceof SdkError && typeof key === 'string') error.idempotencyKey = key;
+      if (error instanceof SdkError) {
+        error.attempts = context.attempts;
+        error.requestIds = [...context.requestIds];
+        error.durationMs = performance.now() - context.start;
+        if (context.lastResponse) {
+          error.status = context.lastResponse.status;
+          error.headers = context.lastResponse.headers;
+          if (context.lastResponse.requestId !== undefined)
+            error.requestId = context.lastResponse.requestId;
+          if (context.retryAfterMs !== undefined) error.retryAfterMs = context.retryAfterMs;
+        }
+        error.operation = op ? op.resource + '.' + op.method : id;
+        if (typeof key === 'string') error.idempotencyKey = key;
+      }
       throw error;
     }
   }
@@ -3641,6 +3744,7 @@ class CompiledRuntime {
     input: Record<string, unknown> = {},
     options: RequestOptions = {},
     continuation?: string,
+    context: ErrorCallContext = { attempts: 0, requestIds: [], start: performance.now() },
   ): Promise<Result<T>> {
     if (!input || typeof input !== 'object' || Array.isArray(input))
       bad('input', 'expected an object');
@@ -3961,6 +4065,7 @@ class CompiledRuntime {
     const transport =
       this.options.transport ??
       (Object.values(op.responses).some((r) => r.bodyKind === 'sse') ? streamFetch : fetch);
+    const requestIds = context.requestIds;
     let credentialRetries = 0;
     let mayHaveBeenSent = false;
     for (let attempt = 1; attempt <= attempts; attempt++) {
@@ -3981,8 +4086,9 @@ class CompiledRuntime {
       let retryAfter: number | undefined;
       let error: SdkError | undefined;
       let diagnosticMeta: Metadata | undefined;
-      let diagnosticError: ErrorKind | undefined;
+      let diagnosticError: InternalErrorKind | undefined;
       try {
+        context.attempts = attempt;
         await abortable(authenticate(), controller.signal);
         const response = await abortable(
           transport(url, {
@@ -4011,9 +4117,14 @@ class CompiledRuntime {
               }
             : {}),
         };
+        if (meta.requestId) requestIds.push(meta.requestId);
+        meta.requestIds = [...requestIds];
         diagnosticMeta = meta;
         const instruction = response.headers.get('retry-after');
         if (instruction) retryAfter = parseRetryAfter(instruction);
+        context.lastResponse = meta;
+        delete context.retryAfterMs;
+        if (retryAfter !== undefined) context.retryAfterMs = retryAfter;
         if (response.status === 401 && safe && credentialRetries === 0 && providers.size > 0) {
           diagnosticError = 'authentication';
           try {
@@ -4237,7 +4348,7 @@ class CompiledRuntime {
           });
           return result as Result<T>;
         }
-        const kind: ErrorKind = [401, 403].includes(response.status)
+        const kind: InternalErrorKind = [401, 403].includes(response.status)
           ? 'authentication'
           : response.status === 429
             ? 'rate_limit'
@@ -4275,7 +4386,7 @@ class CompiledRuntime {
             if (certifies(decoded, this.contract.errorDetailsCertificate))
               details = structuredClone(decoded);
           } catch (cause) {
-            if (!(cause instanceof SdkError && cause.kind === 'validation')) throw cause;
+            if (!(cause instanceof SdkError && internalKind(cause) === 'validation')) throw cause;
           }
         } else details = plainNumbers(detailsValue);
         const redacted = plainNumbers(safeBody);
@@ -4314,7 +4425,7 @@ class CompiledRuntime {
         if (retryAfter !== undefined) error.retryAfterMs = retryAfter;
       } catch (cause) {
         if (cause instanceof SdkError) {
-          diagnosticError = cause.kind;
+          diagnosticError = internalKind(cause);
           throw cause;
         }
         if (diagnosticMeta?.status === 401) {

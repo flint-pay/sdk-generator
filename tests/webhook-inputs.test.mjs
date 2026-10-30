@@ -120,9 +120,9 @@ for (const format of ['hex', 'timestamped-hex', 'standard-webhooks']) {
       },
     };
     const base = { body: raw, headers, secrets: secret, now, expected: ok };
-    const failure = (code, kind = 'authentication') => ({
+    const failure = (code, kind = 'WebhookVerificationError') => ({
       error: kind,
-      code: code ? 'webhook_' + code : null,
+      code: code ? 'webhook_' + code : '',
     });
     const arrays = Object.fromEntries(
       Object.entries(headers).map(([k, v]) => [k.toLowerCase(), [v]]),
@@ -140,41 +140,50 @@ for (const format of ['hex', 'timestamped-hex', 'standard-webhooks']) {
       })),
       { ...base, body: raw + ' ', expected: failure('invalid_signature') },
       { ...base, body: JSON.stringify(JSON.parse(raw)), expected: failure('invalid_signature') },
-      { ...base, body: JSON.parse(raw), expected: failure('invalid_input', 'validation') },
+      {
+        ...base,
+        body: JSON.parse(raw),
+        expected: failure('invalid_input', 'WebhookVerificationError'),
+      },
       ...[null, 42, true].map((body) => ({
         ...base,
         body,
-        expected: failure('invalid_input', 'validation'),
+        expected: failure('invalid_input', 'WebhookVerificationError'),
       })),
       { ...base, headers: {}, expected: failure('missing_header') },
       {
         ...base,
         headers: { ...headers, 'Webhook-Signature': 42 },
-        expected: failure('invalid_input', 'validation'),
+        expected: failure('invalid_input', 'WebhookVerificationError'),
       },
       {
         ...base,
         headers: { ...headers, 'Webhook-Signature': [42] },
-        expected: failure('invalid_input', 'validation'),
+        expected: failure('invalid_input', 'WebhookVerificationError'),
       },
       ...[null, 42, true, 'headers'].map((headers) => ({
         ...base,
         headers,
-        expected: failure('invalid_input', 'validation'),
+        expected: failure('invalid_input', 'WebhookVerificationError'),
       })),
       ...[[], '', [123], null, 42, true].map((secrets) => ({
         ...base,
         secrets,
-        expected: failure('invalid_secret', 'validation'),
+        expected: failure('invalid_secret', 'WebhookVerificationError'),
       })),
-      { ...base, now: 'yesterday', expected: failure('invalid_input', 'validation') },
+      { ...base, now: 'yesterday', expected: failure('invalid_input', 'WebhookVerificationError') },
       { ...base, headers: sign(raw, 'not-a-timestamp'), expected: failure('invalid_timestamp') },
-      { ...base, body: '{', headers: sign('{'), expected: failure('invalid_json', 'protocol') },
+      {
+        ...base,
+        body: '{',
+        headers: sign('{'),
+        expected: failure('invalid_json', 'WebhookVerificationError'),
+      },
       {
         ...base,
         body: '{"event_type":"balance.changed"}',
         headers: sign('{"event_type":"balance.changed"}'),
-        expected: failure(null, 'protocol'),
+        expected: failure(null, 'WebhookVerificationError'),
       },
     ];
     for (const body of [
@@ -225,7 +234,7 @@ for (const format of ['hex', 'timestamped-hex', 'standard-webhooks']) {
       cases.push({
         ...base,
         secrets: 'whsec_YQ==',
-        expected: failure('invalid_secret', 'validation'),
+        expected: failure('invalid_secret', 'WebhookVerificationError'),
       });
     }
     const additional =
@@ -252,20 +261,11 @@ for (const format of ['hex', 'timestamped-hex', 'standard-webhooks']) {
           );
         } catch (error) {
           assert.ok(error instanceof SdkError, String(error));
-          assert.ok(
-            error instanceof
-              errors[
-                {
-                  validation: 'ValidationError',
-                  authentication: 'AuthenticationError',
-                  protocol: 'ProtocolError',
-                }[c.expected.error]
-              ],
-          );
+          assert.ok(error instanceof errors.WebhookVerificationError);
           assert.ok(!error.message.includes(secret));
           assert.ok(!error.message.includes(raw));
           assert.ok(!error.message.includes(headers['Webhook-Signature']));
-          actual = { error: error.kind, code: error.code ?? null };
+          actual = { error: error.name, code: error.code ?? null };
         }
         assert.deepEqual(actual, c.expected, `case ${index}`);
       }
@@ -294,7 +294,7 @@ for (const format of ['hex', 'timestamped-hex', 'standard-webhooks']) {
       ok,
     );
     assert.throws(() => client.verifyWebhook(raw, headers, secret, now), {
-      kind: 'validation',
+      name: 'WebhookVerificationError',
       code: 'webhook_invalid_input',
     });
     const caseFile = join(dir, format + '-cases.json');
@@ -310,11 +310,11 @@ foreach(['standalone','client'] as $mode) {
   foreach($cases as $case) {
     try{$out[]=$verifier($case['body'],$case['headers'],$case['secrets'],$case['now']);}
     catch(SdkError $e) {
-      $class='Example\\Webhooks\\Errors\\'.(['authentication'=>'AuthenticationError','validation'=>'ValidationError','protocol'=>'ProtocolError'][$case['expected']['error']]);
+      $class='Example\\Webhooks\\Errors\\'.(['WebhookVerificationError'=>'WebhookVerificationError','WebhookVerificationError'=>'WebhookVerificationError','WebhookVerificationError'=>'WebhookVerificationError'][$case['expected']['error']]);
       if(!$e instanceof $class)throw new \RuntimeException('Wrong webhook error class');
       $sensitive=array_merge((array)$case['secrets'],(array)($case['headers']['Webhook-Signature']??[]),is_string($case['body'])?[$case['body']]:[]);
       foreach($sensitive as $value){if(is_string($value)&&strlen($value)>8&&str_contains($e->getMessage(),$value))throw new \RuntimeException('Webhook error exposed a sensitive fixture value');}
-      $out[]=['error'=>$e->kind,'code'=>$e->errorCode];
+      $out[]=['error'=>substr(strrchr(get_class($e), chr(92)), 1),'code'=>$e->code];
     }
   }
   $results[$mode]=$out;

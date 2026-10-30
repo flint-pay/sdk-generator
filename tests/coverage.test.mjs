@@ -75,26 +75,28 @@ test('both clients reject malformed Unicode in HTTP JSON and authenticated webho
     await assert.rejects(
       http.payments.retrieve({ id: 'p' }),
       (e) =>
-        e.kind === 'protocol' && e.outcome === 'response' && e.meta.requestId === 'unicode-fixture',
+        e.name === 'UnexpectedResponseError' &&
+        e.outcome === 'response' &&
+        e.requestId === 'unicode-fixture',
     );
     assert.throws(
       () =>
         client.verifyWebhook(body, { 'X-Timestamp': timestamp, 'X-Signature': f.signature }, [
           'fixture-secret',
         ]),
-      (e) => e.kind === 'protocol',
+      (e) => e.name === 'WebhookVerificationError',
     );
   }
   const path = join(directory, 'malformed-unicode.json');
   writeFileSync(path, JSON.stringify(fixtures));
-  const php = String.raw`require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';$rows=[];foreach(json_decode(file_get_contents($argv[2]),true) as $f){$body=base64_decode($f['body']);$c=new Example\Payments\Client(new Example\Payments\ClientOptions('https://example.invalid',token:'key',transport:fn($r)=>['status'=>200,'headers'=>['Trace-Id'=>'unicode-fixture'],'body'=>$body]));try{$c->payments->retrieve(new Example\Payments\PaymentsRetrieveInput(['id'=>'p']));$rows[]='accepted';}catch(Example\Payments\SdkError $e){$rows[]=['kind'=>$e->kind,'outcome'=>$e->outcome,'requestId'=>$e->meta['requestId']??null];}try{$c->verifyWebhook($body,['X-Timestamp'=>$f['timestamp'],'X-Signature'=>$f['signature']],['fixture-secret']);$rows[]='accepted';}catch(Example\Payments\SdkError $e){$rows[]=$e->kind;}$c->close();}echo json_encode($rows);`;
+  const php = String.raw`require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';$rows=[];foreach(json_decode(file_get_contents($argv[2]),true) as $f){$body=base64_decode($f['body']);$c=new Example\Payments\Client(new Example\Payments\ClientOptions('https://example.invalid',token:'key',transport:fn($r)=>['status'=>200,'headers'=>['Trace-Id'=>'unicode-fixture'],'body'=>$body]));try{$c->payments->retrieve(new Example\Payments\PaymentsRetrieveInput(['id'=>'p']));$rows[]='accepted';}catch(Example\Payments\SdkError $e){$rows[]=['kind'=>substr(strrchr(get_class($e), chr(92)), 1),'outcome'=>$e->outcome,'requestId'=>$e->requestId??null];}try{$c->verifyWebhook($body,['X-Timestamp'=>$f['timestamp'],'X-Signature'=>$f['signature']],['fixture-secret']);$rows[]='accepted';}catch(Example\Payments\SdkError $e){$rows[]=substr(strrchr(get_class($e), chr(92)), 1);}$c->close();}echo json_encode($rows);`;
   const result = spawnSync('php', ['-r', php, join(output, 'php'), path], { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(
     JSON.parse(result.stdout),
     fixtures.flatMap(() => [
-      { kind: 'protocol', outcome: 'response', requestId: 'unicode-fixture' },
-      'protocol',
+      { kind: 'UnexpectedResponseError', outcome: 'response', requestId: 'unicode-fixture' },
+      'WebhookVerificationError',
     ]),
   );
   const valid = Buffer.from('{"id":"p","amount":1,"status":"pending","note":"😀 café"}');
@@ -237,7 +239,7 @@ test('configured error metadata and diagnostics include failed attempts without 
   });
   await assert.rejects(client.payments.retrieve({ id: 'p' }), (error) => {
     assert.equal(error.code, 'bad_input');
-    assert.equal(error.meta.requestId, 'trace-123');
+    assert.equal(error.requestId, 'trace-123');
     assert.deepEqual(error.details, { title: 'required' });
     assert.match(error.raw, /bad_input/);
     return true;
@@ -350,12 +352,12 @@ test(
     });
     await assert.rejects(
       client.payments.retrieve({ id: 'p' }, { signal: AbortSignal.abort() }),
-      (e) => e.kind === 'cancelled' && e.outcome === 'not_sent',
+      (e) => e.name === 'CancelledError' && e.outcome === 'not_sent',
     );
     assert.equal(calls, 0);
     await assert.rejects(
       client.payments.retrieve({ id: 'p' }, { timeoutMs: 20, deadlineMs: 30, maxAttempts: 1 }),
-      (e) => ['timeout', 'deadline'].includes(e.kind),
+      (e) => ['TimeoutError', 'TimeoutError'].includes(e.name),
     );
   },
 );
@@ -379,12 +381,12 @@ test('body transport failures preserve received request IDs in both native clien
     await assert.rejects(
       client.payments.retrieve({ id: 'p' }, { maxAttempts: 1 }),
       (e) =>
-        e.kind === 'transport' &&
+        e.name === 'ConnectionError' &&
         e.outcome === 'unknown' &&
-        e.meta?.requestId === 'partial-response-id',
+        e.requestId === 'partial-response-id',
     );
     assert.equal(events[0].requestId, 'partial-response-id');
-    const script = `require $argv[1].'/src/Runtime.php'; require $argv[1].'/src/Client.php'; $events=[]; $client=new Example\\Payments\\Client(new Example\\Payments\\ClientOptions($argv[2],token:'key',allowInsecureHttp:true,diagnostics:function($e)use(&$events){$events[]=$e;})); try{$client->payments->retrieve(new Example\\Payments\\PaymentsRetrieveInput(['id'=>'p']),new Example\\Payments\\RequestOptions(maxAttempts:1));exit(1);}catch(Example\\Payments\\SdkError $e){echo json_encode([$e->kind,$e->outcome,$e->meta['requestId']??null,$events[0]['requestId']??null]);}`;
+    const script = `require $argv[1].'/src/Runtime.php'; require $argv[1].'/src/Client.php'; $events=[]; $client=new Example\\Payments\\Client(new Example\\Payments\\ClientOptions($argv[2],token:'key',allowInsecureHttp:true,diagnostics:function($e)use(&$events){$events[]=$e;})); try{$client->payments->retrieve(new Example\\Payments\\PaymentsRetrieveInput(['id'=>'p']),new Example\\Payments\\RequestOptions(maxAttempts:1));exit(1);}catch(Example\\Payments\\SdkError $e){echo json_encode([substr(strrchr(get_class($e), chr(92)), 1),$e->outcome,$e->requestId??null,$events[0]['requestId']??null]);}`;
     const child = spawn('php', ['-r', script, join(output, 'php'), base]);
     let stdout = '',
       stderr = '';
@@ -392,7 +394,7 @@ test('body transport failures preserve received request IDs in both native clien
     child.stderr.on('data', (b) => (stderr += b));
     assert.equal(await new Promise((resolve) => child.on('close', resolve)), 0, stderr);
     assert.deepEqual(JSON.parse(stdout), [
-      'transport',
+      'ConnectionError',
       'unknown',
       'partial-response-id',
       'partial-response-id',
@@ -802,7 +804,7 @@ test('generated webhook verifiers match the local Flint Go signing implementatio
         secrets: ['whsec_YQ=='],
         now: vector.timestamp,
         valid: false,
-        kind: format === 'standard-webhooks' ? 'validation' : 'authentication',
+        kind: format === 'standard-webhooks' ? 'InvalidInputError' : 'ConfigurationError',
       },
       {
         headers: {},
@@ -828,9 +830,9 @@ test('generated webhook verifiers match the local Flint Go signing implementatio
           known: false,
           reason: 'unknown_event',
         });
-      else assert.throws(verify, (e) => e.kind === (c.kind ?? 'authentication'));
+      else assert.throws(verify, (e) => e.name === 'WebhookVerificationError');
     }
-    const php = `require $argv[1].'/src/Runtime.php'; require $argv[1].'/src/Client.php'; $client=new Example\\Payments\\Client(new Example\\Payments\\ClientOptions('https://example.invalid')); $results=[]; foreach(json_decode($argv[2],true) as $c){try{$r=$client->verifyWebhook($c['body'],$c['headers'],$c['secrets'],$c['now']);$results[]=$r['known']===false;}catch(Example\\Payments\\SdkError $e){if($e->kind!==($c['kind']??'authentication'))throw $e;$results[]=false;}}echo json_encode($results);`;
+    const php = `require $argv[1].'/src/Runtime.php'; require $argv[1].'/src/Client.php'; $client=new Example\\Payments\\Client(new Example\\Payments\\ClientOptions('https://example.invalid')); $results=[]; foreach(json_decode($argv[2],true) as $c){try{$r=$client->verifyWebhook($c['body'],$c['headers'],$c['secrets'],$c['now']);$results[]=$r['known']===false;}catch(Example\\Payments\\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='WebhookVerificationError')throw $e;$results[]=false;}}echo json_encode($results);`;
     const result = spawnSync('php', ['-r', php, join(path, 'php'), JSON.stringify(cases)], {
       encoding: 'utf8',
     });
@@ -869,7 +871,7 @@ test('code-specific idempotency retries preserve the key and never retry other c
         ...baseline,
         name: code,
         responses: [{ status: 409, body: JSON.stringify({ error: { code } }) }],
-        error: { kind: 'conflict', code, retryAllowed: false },
+        error: { name: 'ConflictError', code, retryAllowed: false },
         attempts: 1,
       };
       delete c.data;

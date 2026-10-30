@@ -916,7 +916,7 @@ test('--json preserves every command failure object and serialization', (t) => {
 test('human preview and generation summarize first generation and unchanged files', (t) => {
   const f = fixture(t, ['node', 'php']);
   const fresh = join(f.dir, 'new output');
-  const expected = `Files: 105 created (node 48, php 57); no previous generation\nCompatibility: not compared; no previous generation\n`;
+  const expected = `Files: 108 created (node 48, php 60); no previous generation\nCompatibility: not compared; no previous generation\n`;
   for (const flags of [[], ['--diff']]) {
     const result = run(['preview', f.api, f.sdk, fresh, ...flags]);
     assert.equal(result.status, 0, result.stderr);
@@ -934,7 +934,7 @@ test('human preview and generation summarize first generation and unchanged file
     assert.equal(result.status, 0, result.stderr);
     assert.equal(
       result.stdout,
-      `${command === 'preview' ? `Preview of ${fresh} (no files written)` : `Generated ${fresh}`}\nFiles: no changes (105 unchanged)\nCompatibility: no findings\n`,
+      `${command === 'preview' ? `Preview of ${fresh} (no files written)` : `Generated ${fresh}`}\nFiles: no changes (108 unchanged)\nCompatibility: no findings\n`,
     );
     assert.ok(Buffer.byteLength(result.stdout) < 1024);
   }
@@ -962,7 +962,7 @@ test('human regeneration lists sorted paths and every finding; --diff prints onl
   const plan = preview(contract, f.output);
   const plain = run(['preview', f.api, f.sdk, f.output]);
   assert.equal(plain.status, 0, plain.stderr);
-  assert.match(plain.stdout, /Files: 3 created, 14 modified, 60 removed, 31 unchanged\n/);
+  assert.match(plain.stdout, /Files: 3 created, 14 modified, 63 removed, 31 unchanged\n/);
   assert.match(plain.stdout, /Modified \(14\):\n  node\/README.md\n/);
   assert.match(plain.stdout, /\n  php\/README.md\n/);
   assert.match(plain.stdout, /Compatibility: 6 breaking, 2 review, 0 additive\n/);
@@ -1035,7 +1035,7 @@ test('human validation prints one line per finished check group and fixtures, hi
         '  passed  node  npm package contents',
         '  passed  node  module and descriptor loading',
         '  passed  node  Type-checked JavaScript examples (1 file)',
-        '  passed  php   PHP syntax (42 files)',
+        '  passed  php   PHP syntax (45 files)',
         '  passed  php   Composer metadata',
         '  passed  php   descriptor validation',
         '  passed  node  HTTP fixtures (1 scenario)',

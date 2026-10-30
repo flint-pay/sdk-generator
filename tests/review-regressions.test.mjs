@@ -110,14 +110,7 @@ test('diagnosis rejects SDK export collisions and accepts configured model names
   doc.components = { schemas: { Metadata: response.schema } };
   response.schema = { $ref: '#/components/schemas/Metadata' };
   const i = inputs('metadata', doc, config);
-  for (const name of [
-    'Metadata',
-    'ErrorKind',
-    'DiagnosticEvent',
-    'serialize',
-    'parseExact',
-    'redact',
-  ]) {
+  for (const name of ['Metadata', 'DiagnosticEvent', 'serialize', 'parseExact', 'redact']) {
     doc.components.schemas = {
       [name]: doc.components.schemas[Object.keys(doc.components.schemas)[0]],
     };
@@ -185,7 +178,7 @@ test('native Node and PHP clients decode integral decimal/exponent responses wit
     `<?php
 require $argv[1].'/php/src/Runtime.php';require $argv[1].'/php/src/Client.php';
 $client=new Example\\Library\\Client(new Example\\Library\\ClientOptions(baseUrl:$argv[2],allowInsecureHttp:true));
-$out=[];foreach(json_decode(file_get_contents($argv[3]),true) as $token){try{$out[$token]=['data'=>$client->books->retrieve(new Example\\Library\\BooksRetrieveInput(['id'=>$token]))->data];}catch(Example\\Library\\SdkError $e){$out[$token]=['kind'=>$e->kind];}} echo json_encode($out);
+$out=[];foreach(json_decode(file_get_contents($argv[3]),true) as $token){try{$out[$token]=['data'=>$client->books->retrieve(new Example\\Library\\BooksRetrieveInput(['id'=>$token]))->data];}catch(Example\\Library\\SdkError $e){$out[$token]=['kind'=>substr(strrchr(get_class($e), chr(92)), 1)];}} echo json_encode($out);
 `,
   );
   await withServer(async (baseUrl, received) => {
@@ -199,12 +192,12 @@ $out=[];foreach(json_decode(file_get_contents($argv[3]),true) as $token){try{$ou
       '1200e-2': { data: 12 },
       '-12.00': { data: -12 },
       '9007199254740991.0': { data: 9007199254740991 },
-      1.5: { kind: 'protocol' },
-      '1.0000000000000001': { kind: 'protocol' },
-      '9007199254740992.0': { kind: 'protocol' },
-      '1e9999999999': { kind: 'protocol' },
-      '1e-9999999999': { kind: 'protocol' },
-      '"1.0"': { kind: 'protocol' },
+      1.5: { kind: 'UnexpectedResponseError' },
+      '1.0000000000000001': { kind: 'UnexpectedResponseError' },
+      '9007199254740992.0': { kind: 'UnexpectedResponseError' },
+      '1e9999999999': { kind: 'UnexpectedResponseError' },
+      '1e-9999999999': { kind: 'UnexpectedResponseError' },
+      '"1.0"': { kind: 'UnexpectedResponseError' },
     };
     const tokens = Object.keys(expected),
       tokensFile = join(i.dir, 'tokens.json');
@@ -213,7 +206,7 @@ $out=[];foreach(json_decode(file_get_contents($argv[3]),true) as $token){try{$ou
       try {
         node[id] = { data: (await client.books.retrieve({ id })).data };
       } catch (e) {
-        node[id] = { kind: e.kind };
+        node[id] = { kind: e.name };
       }
     }
     const php = JSON.parse(ok(await phpAsync(phpFile, [i.output, baseUrl, tokensFile])).stdout);
@@ -257,26 +250,32 @@ test('sparse arrays fail through the public Node client before HTTP dispatch', a
   await withServer(async (baseUrl, received) => {
     const client = new Client({ baseUrl, allowInsecureHttp: true });
     await client.batches.submit({ body: ['item'] });
-    await assert.rejects(client.batches.submit({ body: [] }), (e) => e.kind === 'validation');
+    await assert.rejects(
+      client.batches.submit({ body: [] }),
+      (e) => e.name === 'InvalidInputError',
+    );
     await assert.rejects(
       client.batches.submit({ body: [undefined] }),
-      (e) => e.kind === 'validation',
+      (e) => e.name === 'InvalidInputError',
     );
     assert.equal(received.length, 1);
     await assert.rejects(
       client.batches.submit({ body: new Array(1) }),
-      (e) => e.kind === 'validation',
+      (e) => e.name === 'InvalidInputError',
     );
     const sparse = new Array(2);
     sparse[1] = 'item';
-    await assert.rejects(client.batches.submit({ body: sparse }), (e) => e.kind === 'validation');
+    await assert.rejects(
+      client.batches.submit({ body: sparse }),
+      (e) => e.name === 'InvalidInputError',
+    );
     const inherited = Object.create(Array.prototype);
     inherited[0] = 'inherited';
     const hiddenHole = new Array(1);
     Object.setPrototypeOf(hiddenHole, inherited);
     await assert.rejects(
       client.batches.submit({ body: hiddenHole }),
-      (e) => e.kind === 'validation',
+      (e) => e.name === 'InvalidInputError',
     );
     assert.deepEqual(
       received.map((r) => r.body),
@@ -285,7 +284,7 @@ test('sparse arrays fail through the public Node client before HTTP dispatch', a
     const { serialize } = await import(pathToFileURL(join(i.output, 'node/index.js')).href);
     assert.throws(
       () => serialize({ extra: sparse }, { type: 'object' }),
-      (e) => e.kind === 'validation',
+      (e) => e.name === 'InvalidInputError',
     );
   });
 });
@@ -329,7 +328,7 @@ test('integer normalization preserves wide integers, decimals, alternatives and 
       data: { choice: '1.0', nullable: 0, decimal: '1.0000000000000000001' },
     },
     { raw: '{"choice":1.5}', data: { choice: '1.5' } },
-    { raw: '{"wide":12.5}', error: { kind: 'protocol' } },
+    { raw: '{"wide":12.5}', error: { name: 'UnexpectedResponseError' } },
   ].map((v, n) => ({
     name: 'numeric shape ' + n,
     operation: 'findBook',

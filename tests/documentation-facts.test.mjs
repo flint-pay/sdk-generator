@@ -441,7 +441,7 @@ test('nullable named response positions and inline item enums match both clients
     const before = sent;
     await assert.rejects(
       client.api.inlineBranches({ body: ['blue', 'red'] }),
-      (e) => e.kind === 'validation',
+      (e) => e.name === 'InvalidInputError',
     );
     assert.equal(sent, before);
     const script = join(directory, 'runtime.php');
@@ -452,7 +452,7 @@ require ${JSON.stringify(join(output, 'php/src/Client.php'))};
 $sent=0;
 $client=new \\Example\\Facts\\Client(new \\Example\\Facts\\ClientOptions(baseUrl:'http://localhost:9876', allowInsecureHttp:true, transport:function($request)use(&$sent){$sent++;return ['status'=>200,'headers'=>['content-type'=>'application/json'],'body'=>${JSON.stringify(JSON.stringify(payload))}];}));
 foreach([['red','green'],['red','green','blue']] as $body){$response=$client->api->inlineBranches(['body'=>$body]);if($response->getSingle()!==null||$response->getItems()!==[null]||$response->getMap()!==['placeholder'=>null])throw new \\RuntimeException('valid nullable response');}
-$before=$sent;try{$client->api->inlineBranches(['body'=>['blue','red']]);throw new \\RuntimeException('invalid body accepted');}catch(\\Example\\Facts\\SdkError $e){if($e->kind!=='validation')throw $e;}if($sent!==$before)throw new \\RuntimeException('dispatched invalid body');
+$before=$sent;try{$client->api->inlineBranches(['body'=>['blue','red']]);throw new \\RuntimeException('invalid body accepted');}catch(\\Example\\Facts\\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='InvalidInputError')throw $e;}if($sent!==$before)throw new \\RuntimeException('dispatched invalid body');
 `,
     );
     const result = spawnSync('php', [script], { encoding: 'utf8' });

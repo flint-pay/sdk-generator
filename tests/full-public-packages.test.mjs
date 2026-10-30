@@ -360,7 +360,7 @@ assert.throws(()=>c.verifyWebhook(Buffer.from(${JSON.stringify(raw)}+' '),${JSON
 assert.equal(new ExactNumber('1.0000').value,'1.0000');
 for(const scenario of ${JSON.stringify(modelCases)}) {
  const factory=()=>sdk['make'+scenario.model](scenario.value);
- if(scenario.valid) factory(); else assert.throws(factory,{kind:'validation'},scenario.name);
+ if(scenario.valid) factory(); else assert.throws(factory,{name:'InvalidInputError'},scenario.name);
 }
 const payment = {
   amount_money: {amount: '9007199254740993', currency: 'USD'},

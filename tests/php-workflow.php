@@ -42,7 +42,7 @@ try {
     $client->payments->retrieve(new PaymentsRetrieveInput(['id' => 'p']));
     throw new RuntimeException('Expected API error');
 } catch (SdkError $error) {
-    check($error->errorCode === 'bad_input' && $error->meta['requestId'] === 'trace-123');
+    check($error->code === 'bad_input' && $error->requestId === 'trace-123');
     check(($error->details->title ?? null) === 'required');
     check(str_contains($error->raw, 'bad_input'));
 }

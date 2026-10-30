@@ -9,7 +9,6 @@ import {
   errorReference,
   operationErrors,
 } from './package-documentation.js';
-import { RUNTIME_ERROR_DETAILS } from './public-type-plan.js';
 import { substituteTemplate } from './template.js';
 import {
   withGenerationRecovery,
@@ -1037,8 +1036,8 @@ function readmeExamples(
       const setup = exampleImports(c, target, [...symbols, 'SdkError'], false) + parts.setup;
       const catchBody =
         target === 'node'
-          ? `} catch (error) {\n  if (!(error instanceof SdkError)) throw error;\n  console.error(error.message, error.status, error.kind, error.code, error.meta?.requestId);\n  if (error.outcome === "unknown") {\n    // Reconcile with the API before resubmitting this action.\n    console.error("The request may have succeeded; check its current state.");\n  }\n  throw error;\n}\n`
-          : `} catch (SdkError $error) {\n  error_log($error->getMessage() . ' status=' . ($error->status ?? 'none') . ' code=' . ($error->errorCode ?? '') . ' request=' . ($error->meta['requestId'] ?? 'unknown'));\n  if ($error->outcome === 'unknown') {\n    // Reconcile with the API before resubmitting this action.\n    error_log('The request may have succeeded; check its current state.');\n  }\n  throw $error;\n}\n`;
+          ? `} catch (error) {\n  if (!(error instanceof SdkError)) throw error;\n  console.error(error.message, error.status, error.code, error.requestId);\n  if (error.outcome === "unknown") {\n    // Reconcile with the API before resubmitting this action.\n    console.error("The request may have succeeded; check its current state.");\n  }\n  throw error;\n}\n`
+          : `} catch (SdkError $error) {\n  error_log($error->getMessage() . ' status=' . ($error->status ?? 'none') . ' code=' . $error->code . ' request=' . ($error->requestId ?? 'unknown'));\n  if ($error->outcome === 'unknown') {\n    // Reconcile with the API before resubmitting this action.\n    error_log('The request may have succeeded; check its current state.');\n  }\n  throw $error;\n}\n`;
       call =
         setup +
         '\n' +
@@ -1159,7 +1158,7 @@ function packageReadme(
     (returnMode || close ? [returnMode, close].filter(Boolean).join(' ') + '\n\n' : '') +
     recipes +
     (recipes ? '\n' : '') +
-    `## Errors and retries\n\nFailed calls throw \`SdkError\` with \`${node ? 'message' : 'getMessage()'}\`, \`kind\`, \`status\`, \`${node ? 'code' : 'errorCode'}\` and the request ID in \`meta\`. An \`outcome\` of \`unknown\` means the request may have succeeded, so check the current state before resubmitting. ${retries} See [errors](RUNTIME.md#responses-and-errors) and [retries](RUNTIME.md#retries-and-idempotency).\n\nCheck an error's class to handle a specific failure; every class extends \`SdkError\`:\n\n\`\`\`${node ? 'js' : 'php'}\n${errorSnippet}\n\`\`\`\n\n` +
+    `## Errors and retries\n\nFailed calls throw \`SdkError\` with \`${node ? 'message' : 'getMessage()'}\`, \`status\`, \`code\` and \`requestId\`. An \`outcome\` of \`unknown\` means the request may have succeeded, so check the current state before resubmitting. ${retries} See [errors](RUNTIME.md#responses-and-errors) and [retries](RUNTIME.md#retries-and-idempotency).\n\nCheck an error's class to handle a specific failure; every class extends \`SdkError\`:\n\n\`\`\`${node ? 'js' : 'php'}\n${errorSnippet}\n\`\`\`\n\n` +
     pagination +
     webhooks +
     `## Documentation\n\nSet API_BASE_URL to your sandbox or local mock URL and supply the credential environment variables shown in the quickstart. Example IDs are placeholders: replace them with IDs from that environment.\n\n${c.operations.some(positional) ? 'Selected methods use positional path arguments; check their signatures.' : 'Methods accept one object with path/query/header fields and a body member for JSON requests.'} Request options are the last argument.\n\n- [API reference](REFERENCE.md): resource index linking to operation files under reference/\n- [Models](MODELS.md): model index, fields and descriptions\n- [Runtime guide](RUNTIME.md): request options, errors, retries${c.config.webhook ? ', pagination and webhooks' : ' and pagination'}\n${guides.join('')}- [Agent index](llms.txt): a small documentation entry point\n- \`examples/\`: a runnable script per operation. ${node ? 'Run `node examples/RESOURCE-METHOD.mjs`; examples are checked with TypeScript checkJs.' : 'Run `composer install`, then `php examples/RESOURCE-METHOD.php`.'}\n\nPackage ${c.config.version}, generated for API ${c.apiVersion}.\n`
@@ -1369,10 +1368,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
           `const publicErrorDetailsCertificate = ${js(targetPlan.runtime.errorDetailsCertificate)};`,
         ),
     );
-    let runtimeDeclarations = readFileSync(join(here, 'runtime.d.ts'), 'utf8').replace(
-      /export type RuntimeErrorDetails = [\s\S]*?;\n(?:\/\*\*[\s\S]*?\*\/\n)?export declare class SdkError/,
-      `export type RuntimeErrorDetails = ${RUNTIME_ERROR_DETAILS};\n/** SDK failure with outcome and recovery metadata. See RUNTIME.md#error-reference. */\nexport declare class SdkError`,
-    );
+    let runtimeDeclarations = readFileSync(join(here, 'runtime.d.ts'), 'utf8');
     if (targetPlan.node.errorTypes) {
       const { code, details } = targetPlan.node.errorTypes;
       const qualify = (type: string) =>
@@ -1381,18 +1377,10 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
           (token) =>
             Object.hasOwn(models, token) ? `import('./declarations/${token}.js').${token}` : token,
         );
-      // Specialize only the SDK error class; transport cause codes keep their own declaration.
-      const start = runtimeDeclarations.indexOf('export declare class SdkError ');
-      const end = runtimeDeclarations.indexOf('\ndeclare const BaseSdkError', start);
       runtimeDeclarations =
-        runtimeDeclarations.slice(0, start) +
         runtimeDeclarations
-          .slice(start, end)
-          .replaceAll('code?: string', 'code?: SdkErrorCode')
-          .replaceAll('details?: unknown', 'details?: SdkErrorDetails')
-          .replaceAll('\n        code: string', '\n        code: SdkErrorCode')
-          .replaceAll('        details: unknown', '        details: SdkErrorDetails | undefined') +
-        runtimeDeclarations.slice(end) +
+          .replaceAll('code: string;', 'code: SdkErrorCode;')
+          .replaceAll('details?: unknown', 'details?: SdkErrorDetails') +
         `\nexport type SdkErrorCode = (${qualify(code)}) & string;\nexport type SdkErrorDetails = ${qualify(details)};\n`;
     }
     put('runtime.d.ts', runtimeDeclarations);
@@ -1442,7 +1430,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       put('request.js', readFileSync(join(here, '../templates/request.mjs'), 'utf8'));
       code = "import { requestInput as _sdkRequestInput } from './request.js';\n" + code;
     }
-    let declarations = `import type { ${c.authentication ? 'ClientOptions as RuntimeClientOptions, RequestOptions as RuntimeRequestOptions' : 'ClientOptions as RuntimeClientOptions, RequestOptions'}, Result, InputValue, CredentialProvider${defaultCredentials ? ', WorkloadIdentityOptions' : ''}${c.config.webhook ? ', WebhookHeaders as _SdkWebhookHeaders, WebhookVerificationOptions as _SdkWebhookVerificationOptions' : ''} } from './runtime.js';\nimport { Model${extraValues} } from './runtime.js';\nexport { SdkError, errors, Model${extraValues}, serialize, parseExact, redact } from './runtime.js';\nexport type { ${c.authentication ? '' : 'RequestOptions, '}Result, Metadata, ErrorKind, DiagnosticEvent, InputValue, CredentialProvider${streamTypes ? ', ServerSentEvent' : ''} } from './runtime.js';\n`;
+    let declarations = `import type { ${c.authentication ? 'ClientOptions as RuntimeClientOptions, RequestOptions as RuntimeRequestOptions' : 'ClientOptions as RuntimeClientOptions, RequestOptions'}, Result, InputValue, CredentialProvider${defaultCredentials ? ', WorkloadIdentityOptions' : ''}${c.config.webhook ? ', WebhookHeaders as _SdkWebhookHeaders, WebhookVerificationOptions as _SdkWebhookVerificationOptions' : ''} } from './runtime.js';\nimport { Model${extraValues} } from './runtime.js';\nexport { SdkError, errors, Model${extraValues}, serialize, parseExact, redact } from './runtime.js';\nexport type { ${c.authentication ? '' : 'RequestOptions, '}Result, Metadata, DiagnosticEvent, InputValue, CredentialProvider${streamTypes ? ', ServerSentEvent' : ''} } from './runtime.js';\n`;
     if (targetPlan.node.errorTypes)
       declarations += "export type { SdkErrorCode, SdkErrorDetails } from './runtime.js';\n";
     if (defaultCredentials)
@@ -1980,24 +1968,29 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       );
       classmap[ns + '\\' + name] = 'classes/' + name + '.php';
     }
-    for (const name of [
-      'ConnectionError',
-      'TimeoutError',
-      'AuthenticationError',
-      'ValidationError',
-      'RateLimitError',
-      'NotFoundError',
-      'ConflictError',
-      'ServerError',
-      'ApiError',
-      'ProtocolError',
-      'CancelledError',
-      'DeadlineError',
-      'DestinationError',
-    ]) {
+    for (const [name, parent] of Object.entries({
+      ApiError: 'SdkError',
+      InvalidRequestError: 'ApiError',
+      AuthenticationError: 'ApiError',
+      PermissionError: 'ApiError',
+      NotFoundError: 'ApiError',
+      ConflictError: 'ApiError',
+      RateLimitError: 'ApiError',
+      ServerError: 'ApiError',
+      ConnectionError: 'SdkError',
+      TimeoutError: 'ConnectionError',
+      InvalidInputError: 'SdkError',
+      ConfigurationError: 'SdkError',
+      CancelledError: 'SdkError',
+      UnexpectedResponseError: 'SdkError',
+      WebhookVerificationError: 'SdkError',
+      PaginationLimitError: 'SdkError',
+    })) {
+      const base = parent === 'SdkError' ? `\\${ns}\\SdkError` : parent;
+      const modifier = name === 'ApiError' || name === 'ConnectionError' ? '' : 'final ';
       put(
         `src/classes/Errors/${name}.php`,
-        `<?php\ndeclare(strict_types=1);\nnamespace ${ns}\\Errors;\nfinal class ${name} extends \\${ns}\\SdkError {}\n`,
+        `<?php\ndeclare(strict_types=1);\nnamespace ${ns}\\Errors;\n${modifier}class ${name} extends ${base} {${name === 'ApiError' ? '\n    public mixed $details = null;\n' : name === 'ConfigurationError' ? '\n    public mixed $workloadIdentity = null;\n' : name === 'UnexpectedResponseError' ? '\n    public ?array $event = null;\n' : ''}}\n`,
       );
       classmap[ns + '\\Errors\\' + name] = 'classes/Errors/' + name + '.php';
     }
@@ -3642,7 +3635,7 @@ try {
   const verified = ${jwt ? 'await client.verifyWebhookAsync(rawBody, headers, { endpointIds })' : 'client.verifyWebhook(rawBody, headers, webhookSecret)'};
 } catch (error) {
   if (!(error instanceof SdkError)) throw error;
-  // Record only error.kind and error.code; avoid logging request bodies or secrets.
+  // Record only error.name and error.code; avoid logging request bodies or secrets.
   // webhook_timestamp_out_of_tolerance: check the clock and delivery age.
   // webhook_invalid_signature: check the secret and original request bytes.
   throw error; // Let your HTTP adapter choose the failure response.
@@ -3652,7 +3645,7 @@ try {
 try {
     $verified = ${jwt ? "$client->verifyWebhookDelivery($rawBody, $headers, ['endpoint_ids' => $endpointIds])" : '$client->verifyWebhook($rawBody, $headers, $webhookSecret)'};
 } catch (\\${c.config.composer.namespace}\\SdkError $error) {
-    // Record only $error->kind and $error->errorCode; omit bodies and secrets.
+    // Record only get_class($error) and $error->code; omit bodies and secrets.
     // webhook_timestamp_out_of_tolerance: check the clock and delivery age.
     // webhook_invalid_signature: check the secret and original request bytes.
     throw $error;
@@ -3661,7 +3654,7 @@ try {
   return (
     webhookJwtGuide(c, target, standaloneWebhook) +
     (w.algorithm || jwt ? examples : '') +
-    `### Failures and recovery\n\n${target === 'node' ? 'Import SdkError from this package. ' : ''}SdkError uses ${target === 'node' ? 'code' : 'errorCode'} for these stable reasons:\n\n| Kind | Code | Action |\n| --- | --- | --- |\n| validation | webhook_invalid_input | Supply original bytes and supported header/time values. |\n| validation | webhook_invalid_secret | Supply at least one correctly formatted nonempty secret. |\n| authentication | webhook_missing_header | Forward all configured signing headers. |\n| authentication | webhook_invalid_timestamp | Supply one integer timestamp in seconds. |\n| authentication | webhook_timestamp_out_of_tolerance | Check the clock and delivery age. |\n| authentication | webhook_invalid_signature | Check the secret and original bytes. |\n| authentication | webhook_invalid_token | Reject malformed JWTs, wrong algorithm/type/issuer, signatures, or a kid naming an unusable key. |\n| authentication | webhook_invalid_audience | Check receiving endpoint IDs. |\n| authentication | webhook_token_expired | Check token timestamps, lifetime, leeway and the server clock. |\n| authentication | webhook_body_mismatch | Preserve the exact original bytes. |\n| authentication | webhook_unknown_key | The trusted set has no matching key. |\n| transport | webhook_jwks_unavailable | Keys could not be fetched, or the fetched set is malformed or repeats the token's kid. Answer 5xx so ${apiName(c)} retries. |\n| protocol | webhook_invalid_json | The authenticated body is not valid UTF-8 JSON. |\n\n` +
+    `### Failures and recovery\n\n${target === 'node' ? 'Import SdkError from this package. ' : ''}SdkError uses code for these stable reasons:\n\n| Class | Code | Action |\n| --- | --- | --- |\n| WebhookVerificationError | webhook_invalid_input | Supply original bytes and supported header/time values. |\n| WebhookVerificationError | webhook_invalid_secret | Supply at least one correctly formatted nonempty secret. |\n| WebhookVerificationError | webhook_missing_header | Forward all configured signing headers. |\n| WebhookVerificationError | webhook_invalid_timestamp | Supply one integer timestamp in seconds. |\n| WebhookVerificationError | webhook_timestamp_out_of_tolerance | Check the clock and delivery age. |\n| WebhookVerificationError | webhook_invalid_signature | Check the secret and original bytes. |\n| WebhookVerificationError | webhook_invalid_token | Reject malformed JWTs, wrong algorithm/type/issuer, signatures, or a kid naming an unusable key. |\n| WebhookVerificationError | webhook_invalid_audience | Check receiving endpoint IDs. |\n| WebhookVerificationError | webhook_token_expired | Check token timestamps, lifetime, leeway and the server clock. |\n| WebhookVerificationError | webhook_body_mismatch | Preserve the exact original bytes. |\n| WebhookVerificationError | webhook_unknown_key | The trusted set has no matching key. |\n| WebhookVerificationError | webhook_jwks_unavailable | Keys could not be fetched, or the fetched set is malformed or repeats the token's kid. Answer 5xx so ${apiName(c)} retries. |\n| WebhookVerificationError | webhook_invalid_json | The authenticated body is not valid UTF-8 JSON. |\n\n` +
     (w.algorithm || jwt ? errors : '') +
     `\n\nNever verify ${target === 'node' ? 'JSON.stringify(parsedBody)' : 'json_encode($parsedBody)'}: verification authenticates the original bytes, including whitespace and numeric spelling. Preserve raw request bytes before parsing. For HMAC, repeated signature values are supported; timestamp and ID headers must each contain a single value.\n\nknown is true only for a registered event name whose payload matches a declared envelope. Authenticated unknown names return known: false with reason: unknown_event; declared names with unmatched envelopes use reason: unmatched_envelope. Known deliveries have no reason; nested response types retain their documented uncertainty. Malformed declared payloads produce a protocol error.\n\nVerification does not deduplicate deliveries. The optional examples/webhook-inbox files demonstrate durable inbox/outbox processing: commit the event ID and work record before acknowledging, reconcile out-of-order deliveries, and apply side effects idempotently. Unknown names and unmatched envelopes remain pending for review.`
   );
@@ -3738,7 +3731,7 @@ function runtimeGuide(
     `Only operations declaring idempotency accept idempotencyKey. Persist a key with the original input before the first attempt and reuse it for the same action. When automatic keys are enabled, the SDK creates one per call and reuses it across attempts; automatic keys do not span separate calls. Resolved keys are exposed on errors and response metadata, including not_sent failures after key resolution.\n\nAn outcome of unknown means remote completion is uncertain. Reconcile the action with ${apiName(c)} using the saved key before resubmitting. Cancellation and timeouts cannot undo remote work.\n\n` +
     recoveryReference(c, target) +
     `\n## Pagination and polling\n\n${pagination}Pagination is lazy and defaults to at most 1000 pages. maxPages and maxItems cap work. Repeated continuations (including cursor cycles) and two consecutive empty pages still advertising a continuation raise protocol errors. An isolated or terminal empty page is valid. Iteration does not guarantee a stable snapshot or durable continuation. Each page gets a fresh deadline; processing yielded values does not consume it. Polling shares an overall deadline. Per-operation references list helper names and terminal states.\n\n` +
-    `## Timeouts, streaming and cancellation\n\nTimeout is per attempt, including buffered body consumption. Deadline covers attempts and retry waits for one call. Overall deadlines use DeadlineError with retryAllowed false. For SSE these limits bound setup; streamIdleTimeoutMs controls idle reads and streamLifetimeMs optionally caps lifetime. Malformed known events raise ProtocolError with code sse_invalid_event and details containing eventId and one-based position. Close streams or the client to release resources; breaking iteration also closes a stream. Resume cursors and reconnection belong to the application.\n\n` +
+    `## Timeouts, streaming and cancellation\n\nTimeout is per attempt, including buffered body consumption. Deadline covers attempts and retry waits for one call. Overall deadlines use TimeoutError with retryAllowed false. For SSE these limits bound setup; streamIdleTimeoutMs controls idle reads and streamLifetimeMs optionally caps lifetime. Malformed known events raise UnexpectedResponseError with code sse_invalid_event and event containing id and one-based position. Close streams or the client to release resources; breaking iteration also closes a stream. Resume cursors and reconnection belong to the application.\n\n` +
     (node
       ? 'Use AbortSignal for cancellation. Unconsumed default SSE sockets and timers do not keep Node alive; iteration retains the connection until close.\n\n'
       : 'Use Cancellation for cooperative cancellation. Synchronous transports must honor cancellation while blocked. cURL checks it during progress and between waits.\n\n') +
@@ -3761,17 +3754,17 @@ function runtimeGuide(
     `## Input and response values\n\n### Numbers and dates\n\nint64/uint64 responses are integer strings. ${node ? 'Their TypeScript type is `${bigint}`; inputs also accept bigint.' : 'Integer inputs use decimal digits with an optional minus sign, never fractional or exponent spellings.'} Decimal fields retain exact numeric strings; ambiguous numeric inputs use ExactNumber. Plain numbers use finite native floating-point precision. Integer responses accept integral decimal/exponent tokens without rounding. Exact numeric enum membership compares mathematical values. Mutually dependent numeric alternatives are matched jointly with a limit of 256 combinations per value path; exceeding the limit fails validation. Date-time inputs accept ${node ? 'strings or Date' : 'strings or DateTimeInterface'}; native dates serialize to UTC without mutation and responses remain strings.\n\n` +
     (node
       ? '### Objects and models\n\nRequest enums are closed; response enums retain unknown strings. Shaped TypeScript objects have no implicit index signature. Response values preserve unknown fields and tagged variants; malformed known values fail decoding. Narrow unknown branches before access. Model.toJSON() returns a defensive copy; retain original ExactNumber inputs when editing ambiguous numeric values. Resource subpaths export scoped clients with the same methods.\n\n'
-      : '### Inputs and models\n\nMethods accept associative arrays or generated input classes. Omit a key to omit a field; explicit null is permitted only where declared. Response getters hydrate nested entities and lists. Omitted optional response fields return null; has() distinguishes omission from present-null. Missing required fields fail decoding with ProtocolError; omitted input fields throw on access. Properties are read-only. toArray()/jsonSerialize() preserve normalized wire shapes; toInputArray()/toInputValue() support rebuilding inputs. Accessors memoize hydrated children; untyped objects remain defensive copies. Getters normalize wire names, such as request_id → getRequestId(). Known verified webhook events use generated event classes.\n\n') +
+      : '### Inputs and models\n\nMethods accept associative arrays or generated input classes. Omit a key to omit a field; explicit null is permitted only where declared. Response getters hydrate nested entities and lists. Omitted optional response fields return null; has() distinguishes omission from present-null. Missing required fields fail decoding with UnexpectedResponseError; omitted input fields throw on access. Properties are read-only. toArray()/jsonSerialize() preserve normalized wire shapes; toInputArray()/toInputValue() support rebuilding inputs. Accessors memoize hydrated children; untyped objects remain defensive copies. Getters normalize wire names, such as request_id → getRequestId(). Known verified webhook events use generated event classes.\n\n') +
     `## Custom helpers\n\nKeep application helpers in custom/; regeneration preserves them. Multi-call helpers must expose partial completion.\n`
   );
 }
 
 function responseRecoveryGuide(c: Contract, target: 'node' | 'php'): string {
   const explanation =
-    "Exact HTTP status declarations take precedence, followed by a declared `default`. If neither exists for an actual 2xx response, the SDK reuses the sole declared JSON 2xx response, including its response decoder. Metadata retains the actual status. Multiple JSON success declarations remain ambiguous, even when their schemas match; binary, streaming, empty and redirect responses are never inferred.\n\nRequired fields and value types remain enforced. Schema failures are non-retryable `protocol` errors with `outcome: response`; the top-level message includes codec diagnostics such as `response.entity.id: required field is missing`, and the original cause remains available. The server may already have completed the action. Buffered JSON response failures and payload-extraction errors retain `raw` for explicit recovery; raw bodies are omitted from ordinary error inspection and diagnostics.\n\nInside a catch block, a synthetic create response with a top-level string `id` can be recovered as below. Use the actual endpoint's ID path and reconcile its state before continuing. This parses an unvalidated body only to recover the ID; it does not restore the SDK's typed guarantees or justify resubmitting the mutation.";
+    "Exact HTTP status declarations take precedence, followed by a declared `default`. If neither exists for an actual 2xx response, the SDK reuses the sole declared JSON 2xx response, including its response decoder. Metadata retains the actual status. Multiple JSON success declarations remain ambiguous, even when their schemas match; binary, streaming, empty and redirect responses are never inferred.\n\nRequired fields and value types remain enforced. Schema failures are non-retryable `UnexpectedResponseError` errors with `outcome: response`; the top-level message includes codec diagnostics such as `response.entity.id: required field is missing`, and the original cause remains available. The server may already have completed the action. Buffered JSON response failures and payload-extraction errors retain `raw` for explicit recovery; raw bodies are omitted from ordinary error inspection and diagnostics.\n\nInside a catch block, a synthetic create response with a top-level string `id` can be recovered as below. Use the actual endpoint's ID path and reconcile its state before continuing. This parses an unvalidated body only to recover the ID; it does not restore the SDK's typed guarantees or justify resubmitting the mutation.";
   const example =
     target === 'node'
-      ? `if (error instanceof SdkError && error.kind === "protocol" &&\n    error.status >= 200 && error.status < 300 && error.raw) {\n  let body;\n  try { body = JSON.parse(error.raw); } catch { throw error; }\n  const entityId = typeof body?.id === "string" ? body.id : undefined;\n  if (!entityId) throw error;\n  // Reconcile this entity ID with ${apiName(c)}; do not submit another create.\n} else {\n  throw error;\n}`
-      : `if ($error instanceof SdkError && $error->kind === 'protocol' &&\n    $error->status >= 200 && $error->status < 300 && $error->raw !== null) {\n    try {\n        $body = json_decode($error->raw, true, 512, JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING);\n    } catch (\\JsonException) {\n        throw $error;\n    }\n    $entityId = is_array($body) && is_string($body['id'] ?? null) ? $body['id'] : null;\n    if ($entityId === null) throw $error;\n    // Reconcile this entity ID with ${apiName(c)}; do not submit another create.\n} else {\n    throw $error;\n}`;
+      ? `if (error instanceof SdkError && error instanceof errors.UnexpectedResponseError &&\n    error.status >= 200 && error.status < 300 && error.raw) {\n  let body;\n  try { body = JSON.parse(error.raw); } catch { throw error; }\n  const entityId = typeof body?.id === "string" ? body.id : undefined;\n  if (!entityId) throw error;\n  // Reconcile this entity ID with ${apiName(c)}; do not submit another create.\n} else {\n  throw error;\n}`
+      : `if ($error instanceof SdkError && $error instanceof Errors\\UnexpectedResponseError &&\n    $error->status >= 200 && $error->status < 300 && $error->raw !== null) {\n    try {\n        $body = json_decode($error->raw, true, 512, JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING);\n    } catch (\\JsonException) {\n        throw $error;\n    }\n    $entityId = is_array($body) && is_string($body['id'] ?? null) ? $body['id'] : null;\n    if ($entityId === null) throw $error;\n    // Reconcile this entity ID with ${apiName(c)}; do not submit another create.\n} else {\n    throw $error;\n}`;
   return explanation + '\n\n```' + (target === 'node' ? 'js' : 'php') + '\n' + example + '\n```';
 }

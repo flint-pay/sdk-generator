@@ -47,7 +47,6 @@ export function reservePublicSymbols(
       'InputValue',
       ...(c.authentication ? ['Credentials', 'AuthMode', 'RuntimeRequestOptions'] : []),
       'Metadata',
-      'ErrorKind',
       'DiagnosticEvent',
       'serialize',
       'parseExact',

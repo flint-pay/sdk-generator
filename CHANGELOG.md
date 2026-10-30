@@ -4,6 +4,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ## Unreleased (generator 0.1.0)
 
+- Breaking: Node and PHP errors use a status-based ApiError hierarchy, flattened call context and message-plus-init constructors. Removed kind, error meta and the old validation/protocol/deadline/destination classes. PHP code and getCode() now return the string error code; status carries the HTTP status. Compiled error surface version 2 reports this upgrade as breaking.
+
 - Add opt-in `operationNames: "path"` naming for Node and PHP, with automatic pagination helper collision fallback and diagnosis errors for unexplained explicit names. Tag inference remains the default.
 - Allow `void` and `close` operation methods in both targets; `new` remains reserved.
 

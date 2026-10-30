@@ -35,7 +35,7 @@ $error = static function ($call, $code): bool {
     try {
         $call();
     } catch (SdkError $e) {
-        return $e->errorCode === $code;
+        return $e->code === $code;
     }
     return false;
 };

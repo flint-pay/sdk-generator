@@ -105,7 +105,7 @@ if($p->next!==null || $p->getNext()!==null || $p->get('next')!==null || $p->has(
 if($p->data[0]->label!==null || $p->data[0]->has('label') || !$p->data[1]->has('label'))throw new Exception('presence');
 foreach([fn()=>$p->nexxt,fn()=>$p->get('nexxt')] as $read){try{$read();throw new Exception('accepted typo');}catch(SdkError $e){if(!str_contains($e->getMessage(),'Unknown model property nexxt'))throw $e;}}
 $c=new Client(new ClientOptions('https://example.invalid',transport:fn($r)=>['status'=>200,'headers'=>['x-request-id'=>'req_test'],'body'=>'{"data":[{}]}']));
-try{$c->catalog->retrieve('list');throw new Exception('required field accepted');}catch(SdkError $e){if($e->kind!=='protocol' || $e->outcome!=='response' || !str_contains($e->getMessage(),'response.data[0].id') || !str_contains($e->getMessage(),'HTTP 200'))throw $e;}
+try{$c->catalog->retrieve('list');throw new Exception('required field accepted');}catch(SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='UnexpectedResponseError' || $e->outcome!=='response' || !str_contains($e->getMessage(),'response.data[0].id') || !$e->status===200)throw $e;}
 echo 'ok';`),
     'ok',
   );
@@ -129,7 +129,7 @@ echo 'ok';`),
   });
   await assert.rejects(
     malformed.catalog.retrieve('list'),
-    (e) => e.kind === 'protocol' && e.outcome === 'response',
+    (e) => e.name === 'UnexpectedResponseError' && e.outcome === 'response',
   );
 });
 
@@ -228,7 +228,7 @@ test('integer inputs reject decimal/exponent strings and ExactNumber tokens; res
     php(String.raw`
 use ModelDx\{Client,ClientOptions,ExactNumber,SdkError};
 $requests=[];$c=new Client(new ClientOptions('https://example.invalid',maxAttempts:1,transport:function($r)use(&$requests){$requests[]=$r['body'];return ['status'=>200,'headers'=>[],'body'=>'{"count":5e3,"amount":1.2300}'];}));
-foreach(['50.00','5e3',"50\n",new ExactNumber('50.00'),new ExactNumber('5e3')] as $value){try{$c->numbers->save(['count'=>$value,'amount'=>'1.2300']);throw new Exception('accepted non-integer spelling');}catch(SdkError $e){if($e->kind!=='validation' || $e->outcome!=='not_sent' || !str_contains($e->getMessage(),'integer string'))throw $e;}}
+foreach(['50.00','5e3',"50\n",new ExactNumber('50.00'),new ExactNumber('5e3')] as $value){try{$c->numbers->save(['count'=>$value,'amount'=>'1.2300']);throw new Exception('accepted non-integer spelling');}catch(SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='InvalidInputError' || $e->outcome!=='not_sent' || !str_contains($e->getMessage(),'integer string'))throw $e;}}
 $r=$c->numbers->save(['count'=>new ExactNumber('50'),'amount'=>new ExactNumber('1.2300')]);
 echo json_encode([$requests,$r->data->count,$r->data->amount]);`),
   );
@@ -240,16 +240,9 @@ test('HTTP errors carry useful context and constants without changing their kind
     php(String.raw`
 use ModelDx\{Client,ClientOptions,SdkError};
 $c=new Client(new ClientOptions('https://example.invalid',maxAttempts:1,transport:fn($r)=>['status'=>422,'headers'=>['x-request-id'=>'req_test'],'body'=>'{"message":"Invalid item","code":"invalid_item"}']));
-try{$c->catalog->retrieve('list');}catch(SdkError $e){echo json_encode([$e instanceof ModelDx\Errors\ValidationError,$e->kind===SdkError::KIND_VALIDATION,$e->outcome===SdkError::OUTCOME_RESPONSE,$e->getCode(),$e->errorCode,$e->getMessage()]);}`),
+try{$c->catalog->retrieve('list');}catch(SdkError $e){echo json_encode([$e instanceof ModelDx\Errors\InvalidRequestError,substr(strrchr(get_class($e), chr(92)), 1)==='InvalidRequestError',$e->outcome===SdkError::OUTCOME_RESPONSE,$e->getCode(),$e->code,$e->getMessage()]);}`),
   );
-  assert.deepEqual(rows, [
-    true,
-    true,
-    true,
-    422,
-    'invalid_item',
-    'Invalid item [HTTP 422, code invalid_item, requestId req_test]',
-  ]);
+  assert.deepEqual(rows, [true, true, true, 'invalid_item', 'invalid_item', 'Invalid item']);
 });
 
 test('resources initialize on first read, retain identity and remain readonly; path models fail precisely', () => {

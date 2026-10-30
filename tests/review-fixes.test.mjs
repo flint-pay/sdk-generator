@@ -135,17 +135,17 @@ test('closed response alternatives match their own fields and retain unknown fut
     baseUrl: 'https://example.invalid',
     transport: async () => Response.json({}),
   });
-  await assert.rejects(client.api.read(), (e) => e.kind === 'protocol');
+  await assert.rejects(client.api.read(), (e) => e.name === 'UnexpectedResponseError');
   assert.equal(
     await php(
       f,
       String.raw`
     $c = new Review\Client(new Review\ClientOptions('https://example.invalid',
       transport: fn($r) => ['status'=>200, 'headers'=>[], 'body'=>'{}']));
-    try {$c->api->read();} catch (Review\SdkError $e) {echo json_encode($e->kind);}
+    try {$c->api->read();} catch (Review\SdkError $e) {echo json_encode(substr(strrchr(get_class($e), chr(92)), 1));}
   `,
     ),
-    'protocol',
+    'UnexpectedResponseError',
   );
 });
 
@@ -239,10 +239,10 @@ test('response alternatives retain exact fields and known guards when new fields
         f,
         String.raw`
       try {new Review\DetailInput(['amount'=>'7', 'future'=>true]);}
-      catch (Review\SdkError $e) {echo json_encode($e->kind);}
+      catch (Review\SdkError $e) {echo json_encode(substr(strrchr(get_class($e), chr(92)), 1));}
     `,
       ),
-      'validation',
+      'InvalidInputError',
     );
     if (keyword === 'oneOf') {
       const known = generated.isApiReadResponseKnown;
@@ -904,9 +904,9 @@ test('PHP distinguishes array and object alternatives in requests and native HTT
   const object = fixture('object-response', { type: 'object' });
   const rejection = await php(
     object,
-    String.raw`$c=new Review\Client(new Review\ClientOptions('https://example.invalid',transport:fn($r)=>['status'=>200,'headers'=>[],'body'=>'[]']));try{$c->api->read();echo json_encode('accepted');}catch(Review\SdkError $e){echo json_encode($e->kind);}`,
+    String.raw`$c=new Review\Client(new Review\ClientOptions('https://example.invalid',transport:fn($r)=>['status'=>200,'headers'=>[],'body'=>'[]']));try{$c->api->read();echo json_encode('accepted');}catch(Review\SdkError $e){echo json_encode(substr(strrchr(get_class($e), chr(92)), 1));}`,
   );
-  assert.equal(rejection, 'protocol');
+  assert.equal(rejection, 'UnexpectedResponseError');
 });
 
 test('PHP nested model getters retain plain values, exact numbers, lists, objects and null presence', async () => {
@@ -969,14 +969,14 @@ test('exact numeric enums accept equal spellings but reject unequal values in bo
   });
   for (const body of valid) await client.api.read({ body });
   for (const body of invalid)
-    await assert.rejects(client.api.read({ body }), (e) => e.kind === 'validation');
+    await assert.rejects(client.api.read({ body }), (e) => e.name === 'InvalidInputError');
   assert.deepEqual(bodies, valid);
   const result = await php(
     f,
-    String.raw`$values=json_decode($argv[2],true);$out=[];$c=new Review\Client(new Review\ClientOptions('https://example.invalid',transport:function($r)use(&$out){$out[]=$r['body'];return ['status'=>200,'headers'=>[],'body'=>'1'];}));foreach($values[0] as $v)$c->api->read(new Review\ApiReadInput(['body'=>$v]));$errors=[];foreach($values[1] as $v){try{$c->api->read(new Review\ApiReadInput(['body'=>$v]));$errors[]='accepted';}catch(Review\SdkError $e){$errors[]=$e->kind;}}echo json_encode(['bodies'=>$out,'errors'=>$errors]);`,
+    String.raw`$values=json_decode($argv[2],true);$out=[];$c=new Review\Client(new Review\ClientOptions('https://example.invalid',transport:function($r)use(&$out){$out[]=$r['body'];return ['status'=>200,'headers'=>[],'body'=>'1'];}));foreach($values[0] as $v)$c->api->read(new Review\ApiReadInput(['body'=>$v]));$errors=[];foreach($values[1] as $v){try{$c->api->read(new Review\ApiReadInput(['body'=>$v]));$errors[]='accepted';}catch(Review\SdkError $e){$errors[]=substr(strrchr(get_class($e), chr(92)), 1);}}echo json_encode(['bodies'=>$out,'errors'=>$errors]);`,
     [JSON.stringify([valid, invalid])],
   );
-  assert.deepEqual(result, { bodies: valid, errors: invalid.map(() => 'validation') });
+  assert.deepEqual(result, { bodies: valid, errors: invalid.map(() => 'InvalidInputError') });
   const compilation = compile(
     f,
     "import {Client} from './sdk/node/index.js'; const c=new Client({baseUrl:'https://example.invalid'}); c.api.read({body:'1.0'}); c.api.read({body:'1e0'});",
@@ -1045,9 +1045,12 @@ test('relative and absolute pagination self-links stop before duplicate dispatch
   );
   const { Client } = await sdk(f);
   const scenarios = [
-    { links: ['?page=2', '?page=2'], error: 'protocol' },
-    { links: ['?page=2', 'https://example.invalid/values?page=2'], error: 'protocol' },
-    { links: ['/values'], error: 'protocol' },
+    { links: ['?page=2', '?page=2'], error: 'UnexpectedResponseError' },
+    {
+      links: ['?page=2', 'https://example.invalid/values?page=2'],
+      error: 'UnexpectedResponseError',
+    },
+    { links: ['/values'], error: 'UnexpectedResponseError' },
     { links: ['?page=2', '?page=3', null], error: null },
   ];
   for (const scenario of scenarios) {
@@ -1064,14 +1067,14 @@ test('relative and absolute pagination self-links stop before duplicate dispatch
     try {
       for await (const item of c.api.readItems({}, { maxPages: 5 })) items.push(item);
     } catch (e) {
-      error = e.kind;
+      error = e.name;
     }
     assert.equal(error, scenario.error);
     assert.equal(urls.length, scenario.links.length);
     assert.equal(new Set(urls).size, urls.length);
     const result = await php(
       f,
-      String.raw`$links=json_decode($argv[2],true);$urls=[];$items=[];$error=null;$c=new Review\Client(new Review\ClientOptions('https://example.invalid',transport:function($r)use(&$urls,$links){$urls[]=$r['url'];return ['status'=>200,'headers'=>[],'body'=>json_encode(['items'=>[$r['url']],'next'=>$links[count($urls)-1]])];}));try{foreach($c->api->readItems(new Review\ApiReadInput(),new Review\RequestOptions(maxPages:5)) as $item)$items[]=$item;}catch(Review\SdkError $e){$error=$e->kind;}echo json_encode(['urls'=>$urls,'items'=>$items,'error'=>$error]);`,
+      String.raw`$links=json_decode($argv[2],true);$urls=[];$items=[];$error=null;$c=new Review\Client(new Review\ClientOptions('https://example.invalid',transport:function($r)use(&$urls,$links){$urls[]=$r['url'];return ['status'=>200,'headers'=>[],'body'=>json_encode(['items'=>[$r['url']],'next'=>$links[count($urls)-1]])];}));try{foreach($c->api->readItems(new Review\ApiReadInput(),new Review\RequestOptions(maxPages:5)) as $item)$items[]=$item;}catch(Review\SdkError $e){$error=substr(strrchr(get_class($e), chr(92)), 1);}echo json_encode(['urls'=>$urls,'items'=>$items,'error'=>$error]);`,
       [JSON.stringify(scenario.links)],
     );
     assert.deepEqual(result, { urls, items, error });
@@ -1111,13 +1114,16 @@ test('negated value constraints allow valid TypeScript inputs while retaining ru
   });
   await c.api.read({ body: { mode: 'allowed' } });
   await c.api.read({ body: {} });
-  await assert.rejects(c.api.read({ body: { mode: 'forbidden' } }), (e) => e.kind === 'validation');
+  await assert.rejects(
+    c.api.read({ body: { mode: 'forbidden' } }),
+    (e) => e.name === 'InvalidInputError',
+  );
   assert.equal(calls, 2);
   const result = await php(
     f,
-    String.raw`$calls=0;$c=new Review\Client(new Review\ClientOptions('https://example.invalid',transport:function($r)use(&$calls){$calls++;return ['status'=>200,'headers'=>[],'body'=>'"ok"'];}));$c->api->read(new Review\ApiReadInput(['body'=>['mode'=>'allowed']]));$c->api->read(new Review\ApiReadInput(['body'=>new stdClass()]));try{$c->api->read(new Review\ApiReadInput(['body'=>['mode'=>'forbidden']]));}catch(Review\SdkError $e){echo json_encode(['calls'=>$calls,'error'=>$e->kind]);}`,
+    String.raw`$calls=0;$c=new Review\Client(new Review\ClientOptions('https://example.invalid',transport:function($r)use(&$calls){$calls++;return ['status'=>200,'headers'=>[],'body'=>'"ok"'];}));$c->api->read(new Review\ApiReadInput(['body'=>['mode'=>'allowed']]));$c->api->read(new Review\ApiReadInput(['body'=>new stdClass()]));try{$c->api->read(new Review\ApiReadInput(['body'=>['mode'=>'forbidden']]));}catch(Review\SdkError $e){echo json_encode(['calls'=>$calls,'error'=>substr(strrchr(get_class($e), chr(92)), 1)]);}`,
   );
-  assert.deepEqual(result, { calls: 2, error: 'validation' });
+  assert.deepEqual(result, { calls: 2, error: 'InvalidInputError' });
 });
 
 test('removing either target preserves custom files and validates/releases only the selected package', () => {
@@ -1177,7 +1183,7 @@ test('GET/HEAD bodies are diagnosed for Node targets and fail before runtime dis
     );
     await assert.rejects(
       runtime.request('read', { body: {} }),
-      (e) => e.kind === 'validation' && e.outcome === 'not_sent',
+      (e) => e.name === 'InvalidInputError' && e.outcome === 'not_sent',
     );
     assert.equal(calls, 0);
     delete f.doc.paths['/values'][verb].requestBody;

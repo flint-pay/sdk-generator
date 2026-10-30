@@ -201,13 +201,15 @@ namespace {
             }
         }
         check(
-            ($error?->errorCode ?? null) === ($c['reason'] ?? null),
+            ($error?->code ?? null) === ($c['reason'] ?? ($error !== null ? '' : null)),
             $c['name'] . ' reason: ' . ($error?->getMessage() ?? 'none'),
         );
         check(
-            ($error?->kind ?? null) ===
+            (($error !== null ? substr(strrchr(get_class($error), chr(92)), 1) : null) ?? null) ===
                 (isset($c['reason']) || ($c['authenticationError'] ?? false)
-                    ? 'authentication'
+                    ? (in_array(401, $c['apiStatuses'] ?? [], true)
+                        ? 'AuthenticationError'
+                        : 'ConfigurationError')
                     : null),
             $c['name'] . ' error kind',
         );
@@ -218,12 +220,12 @@ namespace {
         }
         if ($c['echoToken'] ?? false) {
             check(
-                $error->details['iss'] === 'synthetic-issuer' &&
-                    $error->details['sub'] === 'synthetic-subject',
+                $error->workloadIdentity['iss'] === 'synthetic-issuer' &&
+                    $error->workloadIdentity['sub'] === 'synthetic-subject',
                 'claims missing',
             );
             check(
-                $error->details['error_description'] === 'Rejected [REDACTED]',
+                $error->workloadIdentity['errorDescription'] === 'Rejected [REDACTED]',
                 'description not redacted',
             );
         }
@@ -235,7 +237,7 @@ namespace {
                 foreach (
                     [
                         $error->getMessage(),
-                        json_encode($error->details),
+                        json_encode($error->workloadIdentity),
                         json_encode($error->__debugInfo()),
                         $debug,
                     ]
@@ -245,7 +247,7 @@ namespace {
                 }
             }
             check(
-                str_contains($error->details['error_description'], '[REDACTED]'),
+                str_contains($error->workloadIdentity['errorDescription'], '[REDACTED]'),
                 'redaction missing',
             );
         }
@@ -461,7 +463,7 @@ namespace {
             // A scheduler can resume a waiter before the owner finishes, without completing it.
             $waiter->resume();
             check($waiter->isSuspended(), $c['name'] . ' waiter finished early');
-            if ($c['stop'] === 'cancelled') {
+            if ($c['stop'] === 'CancelledError') {
                 $cancellation->cancel();
             } else {
                 // Sleep until this waiter's advertised deadline, independently of its owner.
@@ -474,7 +476,8 @@ namespace {
             check($waiter->isTerminated(), $c['name'] . ' waiter did not stop');
             $error = $waiter->getReturn();
             check(
-                $error instanceof \Example\Discovery\SdkError && $error->kind === $c['stop'],
+                $error instanceof \Example\Discovery\SdkError &&
+                    substr(strrchr(get_class($error), chr(92)), 1) === $c['stop'],
                 $c['name'] . ' wrong error',
             );
             if (!$c['ownerFirst']) {

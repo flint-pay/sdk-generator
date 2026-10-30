@@ -20,7 +20,7 @@
       "name": "three cursor cycle",
       "next": ["A", "B", "C", "A"],
       "empty": [],
-      "error": "protocol",
+      "error": "UnexpectedResponseError",
       "calls": 4
     },
     {
@@ -28,21 +28,21 @@
       "initial": "A",
       "next": ["B", "A"],
       "empty": [],
-      "error": "protocol",
+      "error": "UnexpectedResponseError",
       "calls": 2
     },
     {
       "name": "immediate cursor repeat",
       "next": ["A", "A"],
       "empty": [],
-      "error": "protocol",
+      "error": "UnexpectedResponseError",
       "calls": 2
     },
     {
       "name": "consecutive empty pages",
       "next": ["A", "B", "C"],
       "empty": [1, 2],
-      "error": "protocol",
+      "error": "UnexpectedResponseError",
       "calls": 2
     },
     {

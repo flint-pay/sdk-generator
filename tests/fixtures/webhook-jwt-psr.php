@@ -113,7 +113,7 @@ try {
     Webhooks::verifyDelivery($input['body'], $headers, $options);
     $rows[] = false;
 } catch (SdkError $e) {
-    $rows[] = $e->errorCode === 'webhook_unknown_key' && $http->requests === 1;
+    $rows[] = $e->code === 'webhook_unknown_key' && $http->requests === 1;
 }
 $withoutFactory = $options;
 unset($withoutFactory['request_factory']);
@@ -121,7 +121,7 @@ try {
     Webhooks::verifyDelivery($input['body'], $headers, $withoutFactory);
     $rows[] = false;
 } catch (SdkError $e) {
-    $rows[] = $e->errorCode === 'webhook_invalid_input';
+    $rows[] = $e->code === 'webhook_invalid_input';
 }
 // Non-array cache values are ignored, and an Error from the cache clears the in-flight fetch.
 $runtime = new ReflectionClass(Example\Jwt\Runtime::class);
@@ -131,7 +131,7 @@ $verify = static function () use ($input, $headers, $options): string {
     try {
         return Webhooks::verifyDelivery($input['body'], $headers, $options)['signing_method'];
     } catch (SdkError $e) {
-        return $e->errorCode;
+        return $e->code;
     }
 };
 $fetches = function (callable $call) use ($http): array {

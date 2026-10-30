@@ -240,7 +240,7 @@ test('representation normalization stays local to composed reference uses in bot
         name: 'numeric constraint rejects a value below the bound',
         operation: 'sendExact',
         input: { body: { amount: '1' } },
-        error: { kind: 'validation' },
+        error: { name: 'InvalidInputError' },
         responses: [],
         attempts: 0,
       },

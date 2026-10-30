@@ -494,7 +494,7 @@ for (const mode of ['result', 'whole', 'projected']) {
     const canceled = c.api.getItemPages(undefined, { signal: controller.signal });
     assert.deepEqual(ids((await canceled.next()).value), ['p_1']);
     controller.abort();
-    await assert.rejects(canceled.next(), { kind: 'cancelled' });
+    await assert.rejects(canceled.next(), { name: 'CancelledError' });
     assert.equal(calls, 1);
     for (const method of [
       'getItemWait',
@@ -514,12 +514,13 @@ for (const mode of ['result', 'whole', 'projected']) {
       await assert.rejects(
         c.api[method](),
         (error) =>
-          error.kind === 'api' && error.meta.requestId === 'req_003NEZWWW0H0Z8VJPZ0T3E1AYE',
+          error.name === 'UnexpectedResponseError' &&
+          error.requestId === 'req_003NEZWWW0H0Z8VJPZ0T3E1AYE',
       );
       assert.equal(calls, 1);
       calls = 0;
       await assert.rejects(c.api[method](undefined, { signal: controller.signal }), {
-        kind: 'cancelled',
+        name: 'CancelledError',
       });
       assert.equal(calls, 0);
     }
@@ -553,7 +554,7 @@ $c=new Client(new ClientOptions('https://example.invalid',transport:function($r)
 function ids($p,$mode){$values=$mode==='result'?$p->data->data:($mode==='whole'?$p->data:$p);return array_map(fn($v)=>$v->id,$values);}
 $iterator=$c->api->getItemPages();if($calls!==0)exit(2);$seen=[];foreach($iterator as $p)$seen=array_merge($seen,ids($p,$mode));if($calls!==2||$seen!==['p_1','p_2'])exit(3);
 $calls=0;foreach($c->api->getItemPages() as $p){if(ids($p,$mode)!==['p_1'])exit(4);break;}if($calls!==1)exit(5);
-$calls=0;$cancel=new Cancellation();try{foreach($c->api->getItemPages(options:new RequestOptions(cancellation:$cancel)) as $p)$cancel->cancel();exit(6);}catch(SdkError $e){if($e->kind!=='cancelled'||$calls!==1)exit(7);}
+$calls=0;$cancel=new Cancellation();try{foreach($c->api->getItemPages(options:new RequestOptions(cancellation:$cancel)) as $p)$cancel->cancel();exit(6);}catch(SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='CancelledError'||$calls!==1)exit(7);}
 if($mode!=='result'){
  $calls=0;$pages=$c->api->getItemPagesWithResponse(options:new RequestOptions(maxPages:1));if($calls!==0)exit(8);
  foreach($pages as $r)if($r->body->data[0]->id!=='p_1'||$r->meta['requestId']!=='req_003NEZWWW0H0Z8VJPZ0T3E1AYE'||strpos($r->raw,'"next":"two"')===false)exit(9);
@@ -562,8 +563,8 @@ if($mode!=='result'){
 foreach(array_merge(['getItemWait'],$mode!=='result'?['getItemWaitWithResponse']:[]) as $method){
  $phase='wait';$calls=0;$p=$c->api->$method();if($calls!==2)exit(12);
  if(str_ends_with($method,'WithResponse')){if($p->body->state!=='done'||$p->meta['requestId']!=='req_003NEZWWW0H0Z8VJPZ0T3E1AYE'||strpos($p->raw,'"state":"done"')===false)exit(13);}elseif(ids($p,$mode)!==['p_1'])exit(14);
- $phase='failed';$calls=0;try{$c->api->$method();exit(15);}catch(SdkError $e){if($e->kind!=='api'||$e->meta['requestId']!=='req_003NEZWWW0H0Z8VJPZ0T3E1AYE'||$calls!==1)exit(16);}
- $calls=0;try{$c->api->$method(options:new RequestOptions(cancellation:$cancel));exit(17);}catch(SdkError $e){if($e->kind!=='cancelled'||$calls!==0)exit(18);}
+ $phase='failed';$calls=0;try{$c->api->$method();exit(15);}catch(SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='UnexpectedResponseError'||$e->requestId!=='req_003NEZWWW0H0Z8VJPZ0T3E1AYE'||$calls!==1)exit(16);}
+ $calls=0;try{$c->api->$method(options:new RequestOptions(cancellation:$cancel));exit(17);}catch(SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='CancelledError'||$calls!==0)exit(18);}
 }
 echo 'ok';`;
     assert.equal(

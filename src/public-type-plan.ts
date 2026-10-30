@@ -180,11 +180,6 @@ export function publicTypePlanner(declarations: Readonly<Record<string, string>>
   };
 }
 
-// This expression also emits the runtime declaration. Runtime-generated details
-// are checked against the complete provider + runtime union at construction.
-export const RUNTIME_ERROR_DETAILS =
-  '{ "transportCode": string | null } | { "eventId": string; "position": number } | { "reason": string; "source": string; "workloadIdentityId": string; "iss": string; "sub": string; "aud": string; "error_description": string }';
-
 export function publicTypeDeclarations(text: string): Record<string, string> {
   const source = ts.createSourceFile('declarations.ts', text, ts.ScriptTarget.Latest, true);
   return Object.fromEntries(

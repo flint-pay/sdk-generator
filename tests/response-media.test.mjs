@@ -61,7 +61,7 @@ test('binary bytes and declared redirects are returned unchanged by both clients
     ...expected,
   });
   const failure = (name, operation, path, response, kind) =>
-    success(name, operation, path, response, { error: { kind } });
+    success(name, operation, path, response, { error: { name: kind } });
   const cases = [
     success(
       'binary exact bytes',
@@ -82,14 +82,14 @@ test('binary bytes and declared redirects are returned unchanged by both clients
       'download',
       '/v1/pdf',
       { status: 200, headers: { 'Content-Type': 'text/plain' }, body: 'x' },
-      'protocol',
+      'UnexpectedResponseError',
     ),
     failure(
       'PDF JSON error',
       'download',
       '/v1/pdf',
       { status: 400, body: '{"error":"invalid"}' },
-      'validation',
+      'InvalidRequestError',
     ),
     success(
       '307 location returned',
@@ -114,14 +114,14 @@ test('binary bytes and declared redirects are returned unchanged by both clients
       'redirectDownload',
       '/v1/redirect',
       { status: 307 },
-      'protocol',
+      'UnexpectedResponseError',
     ),
     failure(
       'undeclared redirect',
       'download',
       '/v1/pdf',
       { status: 302, headers: { Location: 'https://untrusted.example.invalid' } },
-      'destination',
+      'UnexpectedResponseError',
     ),
   ];
   writeFileSync(join(dir, 'cases.json'), JSON.stringify(cases));
@@ -149,7 +149,10 @@ test('default transports preserve PDF bytes and return cross-origin redirects wi
   const server = createServer((request, response) => {
     requests++;
     if (request.url === '/pdf') {
-      response.writeHead(200, { 'Content-Type': 'application/pdf', 'x-request-id': 'req_00QGW9CABGRYRC2NJFYVT65W86' });
+      response.writeHead(200, {
+        'Content-Type': 'application/pdf',
+        'x-request-id': 'req_00QGW9CABGRYRC2NJFYVT65W86',
+      });
       response.end(bytes);
     } else {
       response.writeHead(307, { Location: location });
@@ -213,11 +216,11 @@ test('buffered PDF reads honor cancellation and deadlines in both default transp
   try {
     const { Client } = await import(join(out, 'node/index.js'));
     const c = new Client({ baseUrl, allowInsecureHttp: true, maxAttempts: 1 });
-    await assert.rejects(c.api.download({}, { deadlineMs: 50 }), { kind: 'deadline' });
+    await assert.rejects(c.api.download({}, { deadlineMs: 50 }), { name: 'TimeoutError' });
     const controller = new AbortController();
     const pending = c.api.download({}, { signal: controller.signal });
     setTimeout(() => controller.abort(), 50);
-    await assert.rejects(pending, { kind: 'cancelled' });
+    await assert.rejects(pending, { name: 'CancelledError' });
     writeFileSync(
       join(dir, 'deadlines.php'),
       `<?php
@@ -226,10 +229,10 @@ require ${JSON.stringify(join(out, 'php/src/Client.php'))};
 use Example\\Media\\{Client,ClientOptions,RequestOptions,Cancellation,SdkError};
 $c=new Client(new ClientOptions(baseUrl:$argv[1],allowInsecureHttp:true,maxAttempts:1));
 try{$c->api->download(options:new RequestOptions(deadlineMs:50));throw new Exception('missing deadline');}
-catch(SdkError $e){if($e->kind!=='deadline')throw $e;}
+catch(SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='TimeoutError')throw $e;}
 $cancel=new Cancellation();pcntl_async_signals(true);pcntl_signal(SIGALRM,fn()=>$cancel->cancel());pcntl_alarm(1);
 try{$c->api->download(options:new RequestOptions(cancellation:$cancel));throw new Exception('missing cancellation');}
-catch(SdkError $e){if($e->kind!=='cancelled')throw $e;}
+catch(SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='CancelledError')throw $e;}
 finally{pcntl_alarm(0);$c->close();}
 echo 'ok';
 `,

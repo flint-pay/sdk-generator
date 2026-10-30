@@ -160,8 +160,8 @@
       }
     ],
     "error": {
-      "kind": "validation",
-      "code": "SDK_TEST"
+      "code": "SDK_TEST",
+      "name": "InvalidRequestError"
     }
   },
   {
@@ -746,8 +746,8 @@
       }
     ],
     "error": {
-      "kind": "validation",
-      "code": "SDK_TEST"
+      "code": "SDK_TEST",
+      "name": "InvalidRequestError"
     },
     "attempts": 1
   },
@@ -783,8 +783,8 @@
       }
     ],
     "error": {
-      "kind": "validation",
-      "code": "SDK_TEST"
+      "code": "SDK_TEST",
+      "name": "InvalidRequestError"
     },
     "attempts": 1
   },
@@ -820,8 +820,8 @@
       }
     ],
     "error": {
-      "kind": "validation",
-      "code": "SDK_TEST"
+      "code": "SDK_TEST",
+      "name": "InvalidRequestError"
     },
     "attempts": 1
   },
@@ -857,8 +857,8 @@
       }
     ],
     "error": {
-      "kind": "validation",
-      "code": "SDK_TEST"
+      "code": "SDK_TEST",
+      "name": "InvalidRequestError"
     },
     "attempts": 1
   },
@@ -895,8 +895,8 @@
       }
     ],
     "error": {
-      "kind": "validation",
-      "code": "SDK_TEST"
+      "code": "SDK_TEST",
+      "name": "InvalidRequestError"
     },
     "attempts": 1
   },
@@ -933,8 +933,8 @@
       }
     ],
     "error": {
-      "kind": "validation",
-      "code": "SDK_TEST"
+      "code": "SDK_TEST",
+      "name": "InvalidRequestError"
     },
     "attempts": 1
   },
@@ -971,8 +971,8 @@
       }
     ],
     "error": {
-      "kind": "validation",
-      "code": "SDK_TEST"
+      "code": "SDK_TEST",
+      "name": "InvalidRequestError"
     },
     "attempts": 1
   },
@@ -1008,8 +1008,8 @@
       }
     ],
     "error": {
-      "kind": "validation",
-      "code": "SDK_TEST"
+      "code": "SDK_TEST",
+      "name": "InvalidRequestError"
     },
     "attempts": 1
   },
@@ -1045,8 +1045,8 @@
       }
     ],
     "error": {
-      "kind": "validation",
-      "code": "SDK_TEST"
+      "code": "SDK_TEST",
+      "name": "InvalidRequestError"
     },
     "attempts": 1
   },
@@ -1082,8 +1082,8 @@
       }
     ],
     "error": {
-      "kind": "validation",
-      "code": "SDK_TEST"
+      "code": "SDK_TEST",
+      "name": "InvalidRequestError"
     },
     "attempts": 1
   },
@@ -1119,8 +1119,8 @@
       }
     ],
     "error": {
-      "kind": "validation",
-      "code": "SDK_TEST"
+      "code": "SDK_TEST",
+      "name": "InvalidRequestError"
     },
     "attempts": 1
   },
@@ -1158,8 +1158,8 @@
       }
     ],
     "error": {
-      "kind": "validation",
-      "code": "SDK_TEST"
+      "code": "SDK_TEST",
+      "name": "InvalidRequestError"
     },
     "attempts": 1
   },
@@ -1195,8 +1195,8 @@
       }
     ],
     "error": {
-      "kind": "validation",
-      "code": "SDK_TEST"
+      "code": "SDK_TEST",
+      "name": "InvalidRequestError"
     },
     "attempts": 1
   },
@@ -1218,7 +1218,7 @@
     },
     "responses": [],
     "error": {
-      "kind": "validation"
+      "name": "InvalidInputError"
     },
     "attempts": 0
   },
@@ -1254,8 +1254,8 @@
       }
     ],
     "error": {
-      "kind": "validation",
-      "code": "SDK_TEST"
+      "code": "SDK_TEST",
+      "name": "InvalidRequestError"
     },
     "attempts": 1
   },
@@ -1291,8 +1291,8 @@
       }
     ],
     "error": {
-      "kind": "validation",
-      "code": "SDK_TEST"
+      "code": "SDK_TEST",
+      "name": "InvalidRequestError"
     },
     "attempts": 1
   },
@@ -1328,8 +1328,8 @@
       }
     ],
     "error": {
-      "kind": "validation",
-      "code": "SDK_TEST"
+      "code": "SDK_TEST",
+      "name": "InvalidRequestError"
     },
     "attempts": 1
   },
@@ -1365,8 +1365,8 @@
       }
     ],
     "error": {
-      "kind": "validation",
-      "code": "SDK_TEST"
+      "code": "SDK_TEST",
+      "name": "InvalidRequestError"
     },
     "attempts": 1
   },
@@ -1402,8 +1402,8 @@
       }
     ],
     "error": {
-      "kind": "validation",
-      "code": "SDK_TEST"
+      "code": "SDK_TEST",
+      "name": "InvalidRequestError"
     },
     "attempts": 1
   },
@@ -1439,8 +1439,8 @@
       }
     ],
     "error": {
-      "kind": "validation",
-      "code": "SDK_TEST"
+      "code": "SDK_TEST",
+      "name": "InvalidRequestError"
     },
     "attempts": 1
   },
@@ -1476,8 +1476,8 @@
       }
     ],
     "error": {
-      "kind": "validation",
-      "code": "SDK_TEST"
+      "code": "SDK_TEST",
+      "name": "InvalidRequestError"
     },
     "attempts": 1
   },
@@ -1513,8 +1513,8 @@
       }
     ],
     "error": {
-      "kind": "validation",
-      "code": "SDK_TEST"
+      "code": "SDK_TEST",
+      "name": "InvalidRequestError"
     },
     "attempts": 1
   },
@@ -1536,7 +1536,7 @@
     },
     "responses": [],
     "error": {
-      "kind": "validation"
+      "name": "InvalidInputError"
     },
     "attempts": 0
   },
@@ -1577,8 +1577,8 @@
       }
     ],
     "error": {
-      "kind": "validation",
-      "code": "SDK_TEST"
+      "code": "SDK_TEST",
+      "name": "InvalidRequestError"
     },
     "attempts": 1
   },
@@ -1614,8 +1614,8 @@
       }
     ],
     "error": {
-      "kind": "validation",
-      "code": "SDK_TEST"
+      "code": "SDK_TEST",
+      "name": "InvalidRequestError"
     },
     "attempts": 1
   },
@@ -1652,8 +1652,8 @@
       }
     ],
     "error": {
-      "kind": "validation",
-      "code": "SDK_TEST"
+      "code": "SDK_TEST",
+      "name": "InvalidRequestError"
     },
     "attempts": 1
   },
@@ -1692,8 +1692,8 @@
       }
     ],
     "error": {
-      "kind": "validation",
-      "code": "SDK_TEST"
+      "code": "SDK_TEST",
+      "name": "InvalidRequestError"
     },
     "attempts": 1
   },
@@ -1715,7 +1715,7 @@
     },
     "responses": [],
     "error": {
-      "kind": "validation"
+      "name": "InvalidInputError"
     },
     "attempts": 0
   },
@@ -1732,7 +1732,7 @@
     },
     "responses": [],
     "error": {
-      "kind": "authentication"
+      "name": "ConfigurationError"
     },
     "attempts": 0
   },
@@ -1751,7 +1751,7 @@
     },
     "responses": [],
     "error": {
-      "kind": "authentication"
+      "name": "ConfigurationError"
     },
     "attempts": 0
   },
@@ -1777,7 +1777,7 @@
     },
     "responses": [],
     "error": {
-      "kind": "validation"
+      "name": "InvalidInputError"
     },
     "attempts": 0
   },
@@ -1818,8 +1818,8 @@
       }
     ],
     "error": {
-      "kind": "validation",
-      "code": "SDK_TEST"
+      "code": "SDK_TEST",
+      "name": "InvalidRequestError"
     },
     "attempts": 1
   },
@@ -1845,7 +1845,7 @@
     },
     "responses": [],
     "error": {
-      "kind": "validation"
+      "name": "InvalidInputError"
     },
     "attempts": 0
   },
@@ -1886,8 +1886,8 @@
       }
     ],
     "error": {
-      "kind": "validation",
-      "code": "SDK_TEST"
+      "code": "SDK_TEST",
+      "name": "InvalidRequestError"
     },
     "attempts": 1
   },
@@ -1927,8 +1927,8 @@
       }
     ],
     "error": {
-      "kind": "validation",
-      "code": "SDK_TEST"
+      "code": "SDK_TEST",
+      "name": "InvalidRequestError"
     },
     "attempts": 1
   },
@@ -1955,7 +1955,7 @@
     },
     "responses": [],
     "error": {
-      "kind": "validation"
+      "name": "InvalidInputError"
     },
     "attempts": 0
   }

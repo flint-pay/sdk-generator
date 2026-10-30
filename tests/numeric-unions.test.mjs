@@ -71,9 +71,9 @@ test('automatic numeric unions preserve JSON strings and explicit numeric tokens
   assert.deepEqual(calls, ['{"values":["1.2500",1.2500,true,9007199254740993]}']);
   await assert.rejects(
     client[op.resource][op.method]({ body: { values: [new ExactNumber('0.12345')] } }),
-    { kind: 'validation' },
+    { name: 'InvalidInputError' },
   );
-  assert.throws(() => new ExactNumber('1\n'), { kind: 'validation' });
+  assert.throws(() => new ExactNumber('1\n'), { name: 'InvalidInputError' });
   assert.match(readFileSync(join(dir, 'out/node/index.d.ts'), 'utf8'), /ExactNumber/);
   assert.equal(
     serialize({ values: ['1', new ExactNumber('1.0')] }, contract.operations[0].body),

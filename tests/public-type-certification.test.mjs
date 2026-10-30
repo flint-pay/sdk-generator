@@ -439,7 +439,7 @@ for (const provider of ['library', 'flint']) {
         try {
           result = await runtime.request(operation.id);
         } catch (error) {
-          assert.equal(error.kind, 'protocol', `${root.name}: ${error.stack}`);
+          assert.equal(error.name, 'UnexpectedResponseError', `${root.name}: ${error.stack}`);
           assert.equal(error.raw, JSON.stringify(body));
         }
         if (result) {

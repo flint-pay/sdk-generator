@@ -128,7 +128,7 @@ test('generated JavaScript retains prototype-named JSON fields and their validat
         operation: 'save',
         input: { body: JSON.parse('{"__proto__":"invalid"}') },
         responses: [],
-        error: { kind: 'validation' },
+        error: { name: 'InvalidInputError' },
         attempts: 0,
       },
     ]),
@@ -180,7 +180,7 @@ test('inherited properties do not supply optional parameters or request bodies',
   for (const input of [null, [], false])
     await assert.rejects(
       client.api.save(input),
-      (e) => e.kind === 'validation' && e.outcome === 'not_sent',
+      (e) => e.name === 'InvalidInputError' && e.outcome === 'not_sent',
     );
   assert.equal(calls, 1);
 });
@@ -254,7 +254,7 @@ test('optional Object member names permit omitted and explicit wire values in Ty
   await client.api.save({ body: makeEntry({ id: 'x' }) });
   await assert.rejects(
     client.api.save({ toString: () => 'own function' }),
-    (e) => e.kind === 'validation',
+    (e) => e.name === 'InvalidInputError',
   );
   assert.equal(calls, 1);
 });

@@ -17,34 +17,43 @@ import { reservePublicSymbols } from '../dist/public-symbols.js';
 const root = mkdtempSync(join(tmpdir(), 'sdk-error-classes-'));
 after(() => rmSync(root, { recursive: true, force: true }));
 let sequence = 0;
-const classes = {
-  transport: 'ConnectionError',
-  authentication: 'AuthenticationError',
-  validation: 'ValidationError',
-  rate_limit: 'RateLimitError',
-  not_found: 'NotFoundError',
-  conflict: 'ConflictError',
-  server: 'ServerError',
-  api: 'ApiError',
-  protocol: 'ProtocolError',
-  cancelled: 'CancelledError',
-  deadline: 'DeadlineError',
-  destination: 'DestinationError',
-};
+const classes = [
+  'ApiError',
+  'InvalidRequestError',
+  'AuthenticationError',
+  'PermissionError',
+  'NotFoundError',
+  'ConflictError',
+  'RateLimitError',
+  'ServerError',
+  'ConnectionError',
+  'TimeoutError',
+  'InvalidInputError',
+  'ConfigurationError',
+  'CancelledError',
+  'UnexpectedResponseError',
+  'WebhookVerificationError',
+  'PaginationLimitError',
+];
 const statuses = [
-  [401, 'authentication'],
-  [403, 'authentication'],
-  [404, 'not_found'],
-  [409, 'conflict'],
-  [412, 'conflict'],
-  [400, 'validation'],
-  [422, 'validation'],
-  [429, 'rate_limit'],
-  [500, 'server'],
-  [503, 'server'],
-  [599, 'server'],
-  [418, 'api'],
-  [408, 'api'],
+  [400, 'InvalidRequestError'],
+  [401, 'AuthenticationError'],
+  [403, 'PermissionError'],
+  [404, 'NotFoundError'],
+  [405, 'ApiError'],
+  [409, 'ConflictError'],
+  [410, 'ApiError'],
+  [412, 'ConflictError'],
+  [413, 'ApiError'],
+  [415, 'ApiError'],
+  [418, 'ApiError'],
+  [422, 'InvalidRequestError'],
+  [429, 'RateLimitError'],
+  [500, 'ServerError'],
+  [502, 'ServerError'],
+  [503, 'ServerError'],
+  [504, 'ServerError'],
+  [599, 'ServerError'],
 ];
 function fixture(schemas = {}, webhook = false) {
   const dir = join(root, String(sequence++));
@@ -125,15 +134,159 @@ function run(command, args) {
   );
   return result.stdout;
 }
-function php(f, code) {
+function php(f, code, argument = '') {
   return run('php', [
     '-r',
     String.raw`require $argv[1].'/src/Client.php'; ` + code,
     join(f.output, 'php'),
+    argument,
   ]);
 }
 
-test('minified generated SDK bundles preserve built-in error names', async () => {
+test('status alone selects API classes with flattened context in both targets', async () => {
+  const f = fixture();
+  const { Client, SdkError, errors } = await import(pathToFileURL(join(f.output, 'node/index.js')));
+  assert.equal(errors.SdkError, SdkError);
+  for (const [status, name] of statuses) {
+    for (const code of ['RESOURCE_NOT_FOUND', 'future_code']) {
+      const c = new Client({
+        baseUrl: 'https://example.invalid',
+        maxAttempts: 1,
+        transport: async () =>
+          new Response(JSON.stringify({ message: 'synthetic failure', code }), {
+            status,
+            headers: { 'x-request-id': 'req_fixture' },
+          }),
+      });
+      await assert.rejects(c.values.retrieve('value_fixture'), (e) => {
+        assert.ok(
+          e instanceof errors[name] && e instanceof errors.ApiError && e instanceof SdkError,
+        );
+        assert.equal(e.name, name);
+        assert.equal(e.status, status);
+        assert.equal(e.code, code);
+        assert.equal(e.message, 'synthetic failure');
+        assert.equal(e.requestId, 'req_fixture');
+        assert.deepEqual(e.requestIds, ['req_fixture']);
+        assert.equal(e.attempts, 1);
+        assert.equal(e.operation, 'values.retrieve');
+        assert.equal(e.outcome, 'response');
+        assert.equal('kind' in e, false);
+        assert.equal('meta' in e, false);
+        assert.match(e.stack.split('\n')[1], /at CompiledRuntime\.executeRequest/);
+        return true;
+      });
+    }
+  }
+  const rows = JSON.parse(
+    php(
+      f,
+      String.raw`
+use Example\ErrorClasses\{Client,ClientOptions,SdkError};
+$rows=[];
+foreach(json_decode($argv[2],true) as [$status,$name]) {
+ foreach(['RESOURCE_NOT_FOUND','future_code'] as $code) {
+  $c=new Client(new ClientOptions('https://example.invalid',maxAttempts:1,transport:fn($r)=>['status'=>$status,'headers'=>['x-request-id'=>'req_fixture'],'body'=>json_encode(['message'=>'synthetic failure','code'=>$code])]));
+  try {$c->values->retrieve('value_fixture');throw new Exception('accepted');}
+  catch(SdkError $e){
+   if(!$e instanceof Example\ErrorClasses\Errors\ApiError || $e->code!==$e->getCode() || property_exists($e,'kind') || property_exists($e,'meta'))throw new Exception('surface');
+   $rows[]=[substr(strrchr(get_class($e),chr(92)),1),$e->status,$e->code,$e->getMessage(),$e->requestId,$e->requestIds,$e->attempts,$e->operation,$e->outcome];
+  }
+ }
+}
+echo json_encode($rows);`,
+      JSON.stringify(statuses),
+    ),
+  );
+  assert.deepEqual(
+    rows,
+    statuses.flatMap(([status, name]) =>
+      ['RESOURCE_NOT_FOUND', 'future_code'].map((code) => [
+        name,
+        status,
+        code,
+        'synthetic failure',
+        'req_fixture',
+        ['req_fixture'],
+        1,
+        'values.retrieve',
+        'response',
+      ]),
+    ),
+  );
+});
+
+test('request IDs accumulate over retries in both targets', async () => {
+  const f = fixture();
+  const { Client } = await import(pathToFileURL(join(f.output, 'node/index.js')));
+  let calls = 0;
+  const c = new Client({
+    baseUrl: 'https://example.invalid',
+    transport: async () =>
+      new Response('{}', {
+        status: ++calls === 1 ? 503 : 404,
+        headers: { 'x-request-id': 'req_' + calls },
+      }),
+  });
+  await assert.rejects(c.values.retrieve('value_fixture'), (e) => {
+    assert.deepEqual(e.requestIds, ['req_1', 'req_2']);
+    assert.equal(e.attempts, 2);
+    assert.equal(e.requestId, 'req_2');
+    return true;
+  });
+  assert.deepEqual(
+    JSON.parse(
+      php(
+        f,
+        String.raw`
+use Example\ErrorClasses\{Client,ClientOptions,SdkError};
+$calls=0;$c=new Client(new ClientOptions('https://example.invalid',transport:function($r)use(&$calls){$calls++;return ['status'=>$calls===1?503:404,'headers'=>['x-request-id'=>'req_'.$calls],'body'=>'{}'];}));
+try{$c->values->retrieve('value_fixture');throw new Exception('accepted');}catch(SdkError $e){echo json_encode([$e->requestIds,$e->attempts,$e->requestId]);}`,
+      ),
+    ),
+    [['req_1', 'req_2'], 2, 'req_2'],
+  );
+});
+
+test('a connection failure retains the last response context without becoming an API error', async () => {
+  const f = fixture();
+  const { Client, errors } = await import(pathToFileURL(join(f.output, 'node/index.js')));
+  let calls = 0;
+  const c = new Client({
+    baseUrl: 'https://example.invalid',
+    maxAttempts: 2,
+    transport: async () => {
+      if (++calls === 2) throw new Error('synthetic reset');
+      return new Response('{}', {
+        status: 503,
+        headers: { 'x-request-id': 'req_first', 'retry-after': '0' },
+      });
+    },
+  });
+  await assert.rejects(c.values.retrieve('value_fixture'), (e) => {
+    assert.ok(e instanceof errors.ConnectionError);
+    assert.equal(e instanceof errors.ApiError, false);
+    assert.deepEqual(
+      [e.status, e.requestId, e.requestIds, e.attempts, e.retryAfterMs, e.headers['x-request-id']],
+      [503, 'req_first', ['req_first'], 2, 0, 'req_first'],
+    );
+    return true;
+  });
+  assert.deepEqual(
+    JSON.parse(
+      php(
+        f,
+        String.raw`
+use Example\ErrorClasses\{Client,ClientOptions,SdkError};
+$calls=0;$c=new Client(new ClientOptions('https://example.invalid',maxAttempts:2,transport:function($r)use(&$calls){if(++$calls===2)throw new Exception('synthetic reset');return ['status'=>503,'headers'=>['x-request-id'=>'req_first','retry-after'=>'0'],'body'=>'{}'];}));
+try{$c->values->retrieve('value_fixture');throw new Exception('accepted');}catch(SdkError $e){echo json_encode([$e instanceof Example\ErrorClasses\Errors\ConnectionError,$e instanceof Example\ErrorClasses\Errors\ApiError,$e->status,$e->requestId,$e->requestIds,$e->attempts,$e->retryAfterMs,$e->headers['x-request-id']]);}`,
+      ),
+    ),
+    [true, false, 503, 'req_first', ['req_first'], 2, 0, 'req_first'],
+  );
+});
+
+test('init constructors, parents, minified identities and inspection agree', async () => {
   const f = fixture();
   const bundle = join(f.dir, 'bundle.mjs');
   await build({
@@ -144,354 +297,67 @@ test('minified generated SDK bundles preserve built-in error names', async () =>
     platform: 'node',
     format: 'esm',
   });
-  const { Client, SdkError, errors } = await import(pathToFileURL(bundle));
-  assert.deepEqual(
-    [
-      new SdkError('api', 'synthetic').name,
-      ...Object.entries(classes).map(([kind, name]) => new errors[name](kind, 'synthetic').name),
-    ],
-    ['SdkError', ...Object.values(classes)],
-  );
-  class ConsumerError extends errors.AuthenticationError {}
-  assert.equal(new ConsumerError('authentication', 'synthetic').name, 'ConsumerError');
-  const client = new Client({
-    baseUrl: 'https://example.invalid',
-    maxAttempts: 1,
-    transport: async () => new Response('{"message":"synthetic"}', { status: 401 }),
-  });
-  await assert.rejects(client.values.retrieve('value_fixture'), (error) => {
-    assert.ok(error instanceof errors.AuthenticationError && error instanceof SdkError);
-    assert.equal(error.name, 'AuthenticationError');
-    assert.match(inspect(error), /AuthenticationError/);
-    return true;
-  });
-});
-
-test('Node error factory reports its caller as the origin', async () => {
-  const f = fixture();
-  const { createSdkError } = await import(pathToFileURL(join(f.output, 'node/runtime.js')));
-  function throwingSite() {
-    throw createSdkError('authentication', 'synthetic');
-  }
-  assert.throws(throwingSite, (error) => {
-    assert.match(error.stack.split('\n')[1], /at throwingSite \(/);
-    assert.doesNotMatch(error.stack, /at createSdkError/);
-    return true;
-  });
-});
-
-test('PHP error factory reports its caller file and line as the origin', () => {
-  const f = fixture();
-  const caller = join(f.dir, 'caller.php');
-  writeFileSync(
-    caller,
-    String.raw`<?php
-require $argv[1].'/src/Client.php';
-use Example\ErrorClasses\SdkError;
-function throwingSite(): void {
-    $expectedLine = __LINE__ + 2;
-    try {
-        throw SdkError::create('authentication', 'synthetic');
-    } catch (SdkError $error) {
-        echo json_encode([$error->getFile(), $error->getLine(), __FILE__, $expectedLine]);
-    }
-}
-throwingSite();
-`,
-  );
-  const [file, line, expectedFile, expectedLine] = JSON.parse(
-    run('php', [caller, join(f.output, 'php')]),
-  );
-  assert.equal(file, expectedFile);
-  assert.equal(line, expectedLine);
-});
-
-test('HTTP errors use the independently expected class and preserve SdkError fields in both targets', async () => {
-  const f = fixture();
-  const { Client, SdkError, errors } = await import(pathToFileURL(join(f.output, 'node/index.js')));
-  assert.equal(errors.SdkError, SdkError);
-  const subpath = await import(pathToFileURL(join(f.output, 'node/resources/values.js')));
-  assert.equal(subpath.errors, errors);
-  assert.equal(subpath.SdkError, SdkError);
-  for (const [status, kind] of statuses) {
-    const client = new Client({
-      baseUrl: 'https://example.invalid',
-      maxAttempts: 1,
-      transport: async () =>
-        new Response('{"message":"synthetic failure"}', {
-          status,
-          headers: { 'x-request-id': 'req_00P5GR7C25QNQYKSNCJF346W0E' },
-        }),
-    });
-    await assert.rejects(client.values.retrieve('value_fixture'), (error) => {
-      assert.ok(error instanceof SdkError);
-      assert.ok(error instanceof errors[classes[kind]]);
-      assert.equal(error.name, classes[kind]);
-      assert.equal(error.kind, kind);
-      assert.equal(error.status, status);
-      assert.equal(error.message, 'synthetic failure');
-      assert.equal(error.meta.requestId, 'req_00P5GR7C25QNQYKSNCJF346W0E');
-      assert.equal(error.outcome, 'response');
-      assert.match(error.stack.split('\n')[1], /at CompiledRuntime\.executeRequest \(/);
-      assert.doesNotMatch(error.stack, /at createSdkError/);
-      assert.match(inspect(error), new RegExp(classes[kind]));
-      return true;
-    });
-  }
-  const rows = JSON.parse(
-    php(
-      f,
-      String.raw`
-use Example\ErrorClasses\{Client,ClientOptions,SdkError};
-$rows=[];
-foreach([401,403,404,409,412,400,422,429,500,503,599,418,408] as $status) {
-  $client=new Client(new ClientOptions('https://example.invalid',maxAttempts:1,transport:fn($r)=>['status'=>$status,'headers'=>['x-request-id'=>'req_00P5GR7C25QNQYKSNCJF346W0E'],'body'=>'{"message":"synthetic failure"}']));
-  try {$client->values->retrieve('value_fixture'); throw new Exception('accepted');}
-  catch(SdkError $e) {
-    $source=file($e->getFile());
-    if(basename($e->getFile())!=='Runtime.php' || !str_contains($source[$e->getLine()-1],'SdkError::create('))throw new Exception('factory obscured throwing site');
-    $rows[]=[get_class($e),$e instanceof SdkError,$e->kind,$e->status,$e->getMessage(),$e->meta['requestId'],$e->outcome];
-  }
-}
-echo json_encode($rows);`,
-    ),
-  );
-  assert.deepEqual(
-    rows,
-    statuses.map(([status, kind]) => [
-      'Example\\ErrorClasses\\Errors\\' + classes[kind],
-      true,
-      kind,
-      status,
-      `synthetic failure [HTTP ${status}, requestId req_00P5GR7C25QNQYKSNCJF346W0E]`,
-      'req_00P5GR7C25QNQYKSNCJF346W0E',
-      'response',
-    ]),
-  );
-});
-
-test('local validation, cancellation, deadlines, transport, protocol and destination failures use classes', async () => {
-  const f = fixture();
-  const { Client, SdkError, errors } = await import(pathToFileURL(join(f.output, 'node/index.js')));
-  const base = {
-    baseUrl: 'https://example.invalid',
-    maxAttempts: 1,
-    transport: async () => new Response('{"id":"value_fixture"}', { status: 200 }),
+  const { SdkError, errors } = await import(pathToFileURL(bundle));
+  const init = {
+    code: 'fixture_code',
+    operation: 'values.retrieve',
+    outcome: 'unknown',
+    retryAllowed: true,
+    status: 404,
+    requestId: 'req_fixture',
+    requestIds: ['req_first', 'req_fixture'],
+    idempotencyKey: 'key_fixture',
+    attempts: 2,
+    retryAfterMs: 100,
+    durationMs: 4,
+    headers: { 'set-cookie': 'private-cookie' },
+    raw: 'private-raw',
   };
-  const witnesses = [
-    ['validation', () => new Client(base).values.retrieve('value_fixture', [])],
-    [
-      'cancelled',
-      () =>
-        new Client(base).values.retrieve('value_fixture', undefined, {
-          signal: AbortSignal.abort(),
-        }),
-    ],
-    [
-      'protocol',
-      () =>
-        new Client({
-          ...base,
-          transport: async () => new Response('{', { status: 200 }),
-        }).values.retrieve('value_fixture'),
-    ],
-    [
-      'transport',
-      () =>
-        new Client({
-          ...base,
-          transport: async () => {
-            throw new Error('synthetic connection failure');
-          },
-        }).values.retrieve('value_fixture'),
-    ],
-    [
-      'deadline',
-      () =>
-        new Client({
-          ...base,
-          deadlineMs: 10,
-          transport: async (url, options) => {
-            await new Promise((resolve, reject) =>
-              options.signal.addEventListener('abort', () => reject(new Error('synthetic abort')), {
-                once: true,
-              }),
-            );
-          },
-        }).values.retrieve('value_fixture'),
-    ],
-  ];
-  for (const [kind, call] of witnesses)
-    await assert.rejects(
-      async () => await call(),
-      (e) => e instanceof SdkError && e instanceof errors[classes[kind]] && e.kind === kind,
-      kind,
-    );
-  assert.throws(
-    () => new Client({ ...base, baseUrl: 'http://example.invalid' }),
-    (e) => e instanceof errors.DestinationError && e instanceof SdkError,
-  );
-  const rows = JSON.parse(
+  let keys;
+  for (const name of classes) {
+    const e = new errors[name]('synthetic', init);
+    assert.equal(e.name, name);
+    assert.ok(e instanceof SdkError);
+    assert.equal(e.code, 'fixture_code');
+    assert.equal(e.attempts, 2);
+    assert.equal(e.raw, 'private-raw');
+    assert.equal(Object.prototype.propertyIsEnumerable.call(e, 'headers'), false);
+    for (const text of [JSON.stringify(e), inspect(e)])
+      assert.doesNotMatch(text, /private-cookie|private-raw/);
+    assert.equal('kind' in e, false);
+    assert.equal('meta' in e, false);
+    if (!(e instanceof errors.ApiError)) assert.equal('details' in e, false);
+    if (name === 'PermissionError') assert.ok(e instanceof errors.ApiError);
+    if (name === 'TimeoutError') assert.ok(e instanceof errors.ConnectionError);
+    if (name === 'SdkError') assert.fail();
+    if (name === 'NotFoundError') keys = Object.keys(JSON.parse(JSON.stringify(e))).sort();
+  }
+  for (const old of ['ValidationError', 'ProtocolError', 'DeadlineError', 'DestinationError'])
+    assert.equal(old in errors, false);
+  class ConsumerError extends errors.ApiError {}
+  assert.equal(new ConsumerError('synthetic').name, 'ConsumerError');
+  const result = JSON.parse(
     php(
       f,
       String.raw`
-use Example\ErrorClasses\{Client,ClientOptions,RequestOptions,Cancellation,SdkError};
-$rows=[];$cancel=new Cancellation();$cancel->cancel();
-foreach(['validation','cancelled','protocol','transport','deadline','destination'] as $kind) {
-  try {
-    $transport=static function($r)use($kind){if($kind==='transport')throw new Exception('synthetic connection failure');if($kind==='deadline'){usleep(25000);throw new Exception('synthetic timeout');}return ['status'=>200,'headers'=>[],'body'=>$kind==='protocol'?'{':'{"id":"value_fixture"}'];};
-    $c=new Client(new ClientOptions($kind==='destination'?'http://example.invalid':'https://example.invalid',maxAttempts:1,deadlineMs:$kind==='deadline'?10:30000,transport:$transport));
-    $c->values->retrieve('value_fixture',$kind==='validation'?['unexpected'=>true]:null,new RequestOptions(cancellation:$kind==='cancelled'?$cancel:null));
-    throw new Exception('accepted '.$kind);
-  }catch(SdkError $e){$rows[]=[$e->kind,get_class($e),$e instanceof SdkError];}
-}
-echo json_encode($rows);`,
-    ),
-  );
-  assert.deepEqual(
-    rows,
-    ['validation', 'cancelled', 'protocol', 'transport', 'deadline', 'destination'].map((kind) => [
-      kind,
-      'Example\\ErrorClasses\\Errors\\' + classes[kind],
-      true,
-    ]),
-  );
-});
-
-test('strict consumers use namespace types, class narrowing, and independent generated models', async () => {
-  const f = fixture(
-    {
-      ValidationError: { type: 'object', properties: { message: { type: 'string' } } },
-      ApiError: { type: 'object', properties: { code: { type: 'string' } } },
-      Errors: { type: 'object', properties: { count: { type: 'integer' } } },
-    },
-    true,
-  );
-  const source = join(f.output, 'node/consumer.ts');
-  writeFileSync(
-    source,
-    `import {errors,SdkError,verifyWebhook} from './index.js';
-import type {ValidationError,ApiError,Errors as ErrorModel} from './index.js';
-import {errors as resourceErrors} from './resources/values.js';
-let caught:unknown;
-if(caught instanceof errors.NotFoundError){const narrowed:errors.NotFoundError=caught;const parent:SdkError=narrowed;const status:number|undefined=parent.status;}
-const alias:typeof SdkError=errors.SdkError;
-const base:errors.SdkError=new SdkError('api','synthetic');
-const local:errors.NotFoundError=new resourceErrors.NotFoundError('not_found','synthetic');
-const model:ValidationError={message:'synthetic'};const api:ApiError={code:'synthetic'};const rootModel:ErrorModel={count:1};
-const verified=verifyWebhook(new Uint8Array(),new Headers(),'synthetic',1700000000);
-if(!verified.known){const reason:'unknown_event'|'unmatched_envelope'=verified.reason;}
-`,
-  );
-  run(process.execPath, [
-    resolve('node_modules/typescript/bin/tsc'),
-    '--noEmit',
-    '--strict',
-    '--target',
-    'es2022',
-    '--module',
-    'nodenext',
-    '--typeRoots',
-    resolve('node_modules/@types'),
-    source,
-  ]);
-  for (const [kind, name] of Object.entries(classes)) {
-    const { errors, SdkError } = await import(pathToFileURL(join(f.output, 'node/index.js')));
-    const cause = new Error('synthetic cause');
-    const meta = { status: 404, headers: {}, attempts: 1, durationMs: 1 };
-    const e = new errors[name](
-      kind,
-      'synthetic',
-      'unknown',
-      true,
-      meta,
-      'fixture_code',
-      { field: 'synthetic' },
-      { cause },
-      'fixture raw',
-    );
-    assert.ok(e instanceof SdkError);
-    assert.equal(e.cause, cause);
-    assert.equal(e.raw, 'fixture raw');
-    assert.equal(e.code, 'fixture_code');
-    assert.equal(e.retryAllowed, true);
-    assert.equal(e.details.field, 'synthetic');
-  }
-  const constructorRows = JSON.parse(
-    php(
-      f,
-      `$classes = [${Object.entries(classes)
-        .map(([kind, name]) => "'" + kind + "'=>'" + name + "'")
-        .join(',')}];` +
-        String.raw`
+use Example\ErrorClasses\{SdkError};
 $rows=[];
-foreach($classes as $kind=>$name) {
-  $class='Example\\ErrorClasses\\Errors\\'.$name;$cause=new Exception('synthetic cause');
-  $e=new $class($kind,'synthetic','unknown',true,['status'=>404],'fixture_code',['field'=>'synthetic'],$cause,'fixture raw');
-  $rows[]=[$e instanceof Example\ErrorClasses\SdkError,$e->kind,$e->outcome,$e->retryAllowed,$e->status,$e->errorCode,$e->details['field'],$e->getPrevious()===$cause,$e->raw];
+foreach(json_decode($argv[2],true) as $name){
+ $class='Example'.chr(92).'ErrorClasses'.chr(92).'Errors'.chr(92).$name;
+ $e=new $class('synthetic',code:'fixture_code',operation:'values.retrieve',outcome:'unknown',retryAllowed:true,status:404,requestId:'req_fixture',requestIds:['req_first','req_fixture'],idempotencyKey:'key_fixture',attempts:2,retryAfterMs:100,headers:['set-cookie'=>'private-cookie'],raw:'private-raw');
+ if(!$e instanceof SdkError || $e->code!==$e->getCode() || $e->getMessage()!=='synthetic')throw new Exception('constructor');
+ if($name==='PermissionError' && !$e instanceof Example\ErrorClasses\Errors\ApiError)throw new Exception('api parent');
+ if($name==='TimeoutError' && !$e instanceof Example\ErrorClasses\Errors\ConnectionError)throw new Exception('transport parent');
+ ob_start();var_dump($e);$debug=ob_get_clean();
+ if(str_contains(json_encode($e).$debug.(string)$e,'private-'))throw new Exception('private state leaked');
+ if($name==='NotFoundError'){$keys=array_keys($e->jsonSerialize());sort($keys);}
+ $rows[]=$e->code;
 }
-$rootModel=new Example\ErrorClasses\Errors(['count'=>1]);
-if($rootModel instanceof Example\ErrorClasses\SdkError)throw new Exception('model collided');
-echo json_encode($rows);`,
+echo json_encode([$rows,$keys]);`,
+      JSON.stringify(classes),
     ),
   );
-  assert.deepEqual(
-    constructorRows,
-    Object.keys(classes).map((kind) => [
-      true,
-      kind,
-      'unknown',
-      true,
-      404,
-      'fixture_code',
-      'synthetic',
-      true,
-      'fixture raw',
-    ]),
-  );
-  const consumer = join(f.dir, 'consumer.php');
-  writeFileSync(
-    consumer,
-    String.raw`<?php
-use Example\ErrorClasses\SdkError;
-use Example\ErrorClasses\Client;
-use Example\ErrorClasses\Webhooks;
-use Example\ErrorClasses\Errors\NotFoundError;
-use Example\ErrorClasses\Errors\AuthenticationError;
-use Example\ErrorClasses\ValidationError;
-use Example\ErrorClasses\ApiError;
-use Example\ErrorClasses\Errors as ErrorModel;
-function eventReason(Client $client, string $body, string $secret): ?string {
-    $verified = $client->verifyWebhook($body, [], ['current' => $secret], 1700000000);
-    return $verified['known'] ? null : $verified['reason'];
-}
-/** @param array<string, string|list<string>> $headers */
-function standaloneReason(string $body, array $headers, string $secret): ?string {
-    $verified = Webhooks::verify($body, $headers, $secret, 1700000000);
-    return $verified['known'] ? null : $verified['reason'];
-}
-function consume(SdkError $error, ValidationError $model, ApiError $api, ErrorModel $errors): ?int {
-    if ($error instanceof NotFoundError) return $error->status;
-    if ($error instanceof AuthenticationError) return $error->status;
-    return null;
-}
-`,
-  );
-  const config = join(f.dir, 'phpstan.neon');
-  writeFileSync(
-    config,
-    `parameters:\n    level: max\n    phpVersion: 80200\n    tmpDir: ${JSON.stringify(join(f.dir, 'cache'))}\n    scanDirectories:\n        - ${JSON.stringify(join(f.output, 'php/src'))}\n`,
-  );
-  run('php', [
-    resolve('.generated/phpstan-vendor/bin/phpstan'),
-    'analyse',
-    '--debug',
-    '--no-progress',
-    '--error-format=raw',
-    '-c',
-    config,
-    consumer,
-  ]);
+  assert.deepEqual(result, [classes.map(() => 'fixture_code'), keys]);
 });
 
 test('ValidationError, ApiError and Errors models coexist with error namespaces in both targets', async () => {
@@ -526,7 +392,7 @@ test('ValidationError, ApiError and Errors models coexist with error namespaces 
   assert.ok(!existsSync(join(f.output, 'node/declarations/errors.d.ts')));
   assert.ok(!existsSync(join(f.output, 'node/errors.js')));
   assert.match(readFileSync(join(f.output, 'node/runtime.d.ts'), 'utf8'), /namespace errors/);
-  await assert.rejects(client.values.retrieve('value_fixture', []), sdk.errors.ValidationError);
+  await assert.rejects(client.values.retrieve('value_fixture', []), sdk.errors.InvalidInputError);
   const reserve = reservePublicSymbols(f.contract, [], new Set());
   reserve('Errors', 'models.Errors');
   assert.throws(() => reserve('errors', 'models.errors'), /runtime\.errors/);
@@ -544,13 +410,13 @@ $body='{"id":"value_fixture","ValidationError":{"message":"synthetic model"},"Ap
 $client=new Client(new ClientOptions('https://example.invalid',transport:fn($r)=>['status'=>200,'headers'=>[],'body'=>$body]));
 $result=$client->values->retrieve('value_fixture')->data;
 if(!$result->getValidationError() instanceof ValidationError || !$result->getApiError() instanceof ApiError || !$result->getErrors() instanceof Errors)throw new Exception('response model renamed');
-foreach(['ValidationError'=>'validation','ApiError'=>'api'] as $name=>$kind) {
+foreach(['InvalidInputError'=>'validation','ConfigurationError'=>'authentication'] as $name=>$kind) {
   $class='Example\\ErrorClasses\\Errors\\'.$name;
   $error=SdkError::create($kind,'synthetic failure');
   if(!$error instanceof $class || !$error instanceof SdkError)throw new Exception('error collision');
 }
 try{$client->values->retrieve('value_fixture',['unexpected'=>true]);throw new Exception('accepted');}
-catch(Example\ErrorClasses\Errors\ValidationError $e){if(!$e instanceof SdkError)throw $e;}
+catch(Example\ErrorClasses\Errors\InvalidInputError $e){if(!$e instanceof SdkError)throw $e;}
 echo 'ok';`,
     ),
     'ok',
@@ -574,7 +440,7 @@ $explicitNull=Webhooks::verify($body,$headers,$secret,null);
 if(json_encode($explicitNull)!==json_encode($standalone))throw new Exception('null default');
 // A non-integer override must reach the SDK guard even in a weak PHP caller.
 try{Webhooks::verify($body,$headers,$secret,(float)$now);throw new Exception('accepted invalid time');}
-catch(Example\ErrorClasses\Errors\ValidationError $error){if(!$error instanceof SdkError || $error->errorCode!=='webhook_invalid_input')throw $error;}
+catch(Example\ErrorClasses\Errors\WebhookVerificationError $error){if(!$error instanceof SdkError || $error->code!=='webhook_invalid_input')throw $error;}
 $client=new Client(new ClientOptions('https://example.invalid',redactFields:['privateNote']));
 $verified=$client->verifyWebhook($body,$headers,[$secret]);
 if(json_encode($verified)!==json_encode($standalone))throw new Exception('client parity');
@@ -681,12 +547,13 @@ echo 'ok';`,
   }
 });
 
-test('historical compiled records classify error classes, reasons and both standalone verifiers as additive', () => {
+test('historical compiled records report the new error surface as breaking', () => {
   const f = fixture({}, true);
   const next = compileSdkContract(f.contract).plan;
   const previous = structuredClone(next);
   for (const target of ['node', 'php']) {
-    delete previous[target].errorClasses;
+    delete previous[target].errorSurfaceVersion;
+    previous[target].errorClasses = true;
     delete previous[target].webhookReasons;
     delete previous[target].standaloneWebhook;
   }
@@ -703,14 +570,26 @@ test('historical compiled records classify error classes, reasons and both stand
   assert.deepEqual(
     findings.map((f) => [f.subject, f.severity]),
     [
-      ['node.errorClasses', 'additive'],
+      ['node.errorSurfaceVersion', 'breaking'],
       ['node.webhookReasons', 'additive'],
       ['node.standaloneWebhook', 'additive'],
-      ['php.errorClasses', 'additive'],
+      ['php.errorSurfaceVersion', 'breaking'],
       ['php.webhookReasons', 'additive'],
       ['php.standaloneWebhook', 'additive'],
     ],
   );
+  for (const version of [0, 1.5, '2']) {
+    const invalid = structuredClone(next);
+    invalid.node.errorSurfaceVersion = version;
+    assert.throws(
+      () =>
+        restoreCompiledSnapshot({
+          plan: invalid,
+          runtimeIdentity: { node: '0'.repeat(64), php: '0'.repeat(64) },
+        }),
+      /error surface version/,
+    );
+  }
   const malformed = structuredClone(next);
   malformed.node.errorClasses = false;
   assert.throws(

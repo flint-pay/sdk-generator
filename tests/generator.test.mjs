@@ -76,8 +76,7 @@ for (const scenario of cases)
       await assert.rejects(
         runtime.request(scenario.operation, scenario.input, scenario.options),
         (error) => {
-          for (const [k, v] of Object.entries(scenario.error))
-            assert.equal(['status', 'requestId'].includes(k) ? error.meta?.[k] : error[k], v, k);
+          for (const [k, v] of Object.entries(scenario.error)) assert.equal(error[k], v, k);
           return true;
         },
       );
@@ -348,7 +347,7 @@ test('pagination is lazy, bounded, cancellable and refuses foreign credential de
       for await (const page of runtime.pages('listPayments', {}, { signal: abort.signal })) {
       }
     },
-    (e) => e.kind === 'cancelled',
+    (e) => e.name === 'CancelledError',
   );
   let foreignCalls = 0;
   const unsafe = new Runtime(runtimeContract, {
@@ -364,7 +363,7 @@ test('pagination is lazy, bounded, cancellable and refuses foreign credential de
       for await (const page of unsafe.pages('listLinks')) {
       }
     },
-    (e) => e.kind === 'destination',
+    (e) => e.name === 'ConfigurationError',
   );
   assert.equal(foreignCalls, 1);
 });
@@ -659,14 +658,14 @@ test(
           { id: 'p' },
           { timeoutMs: 20, deadlineMs: 1000, maxAttempts: 1 },
         ),
-        (e) => ['timeout', 'deadline'].includes(e.kind) && e.outcome === 'unknown',
+        (e) => ['TimeoutError', 'TimeoutError'].includes(e.name) && e.outcome === 'unknown',
       );
       const controller = new AbortController();
       const pending = runtime.request('getPayment', { id: 'p' }, { signal: controller.signal });
       setTimeout(() => controller.abort(), 20);
-      await assert.rejects(pending, (e) => e.kind === 'cancelled');
+      await assert.rejects(pending, (e) => e.name === 'CancelledError');
       const { spawn } = await import('node:child_process');
-      const script = `require $argv[1].'/src/Runtime.php'; $r = new Example\\Payments\\Runtime(json_decode(file_get_contents($argv[2]),true),new Example\\Payments\\ClientOptions($argv[3],token:'test',allowInsecureHttp:true)); try {$r->request('getPayment',['id'=>'p'],new Example\\Payments\\RequestOptions(timeoutMs:20,deadlineMs:50,maxAttempts:1));exit(1);}catch(Example\\Payments\\SdkError $e){echo $e->kind;}$r->close();`;
+      const script = `require $argv[1].'/src/Runtime.php'; $r = new Example\\Payments\\Runtime(json_decode(file_get_contents($argv[2]),true),new Example\\Payments\\ClientOptions($argv[3],token:'test',allowInsecureHttp:true)); try {$r->request('getPayment',['id'=>'p'],new Example\\Payments\\RequestOptions(timeoutMs:20,deadlineMs:50,maxAttempts:1));exit(1);}catch(Example\\Payments\\SdkError $e){echo substr(strrchr(get_class($e), chr(92)), 1);}$r->close();`;
       const child = spawn('php', ['-r', script, join(output, 'php'), runtimeFile, base]);
       let stdout = '';
       let stderr = '';
@@ -674,7 +673,7 @@ test(
       child.stderr.on('data', (b) => (stderr += b));
       const code = await new Promise((r) => child.on('close', r));
       assert.equal(code, 0, stderr);
-      assert.ok(['timeout', 'deadline'].includes(stdout));
+      assert.ok(['TimeoutError', 'TimeoutError'].includes(stdout));
     } finally {
       server.closeAllConnections();
       await new Promise((r) => server.close(r));
@@ -826,7 +825,7 @@ test('shared serialization corpus preserves requiredness, null, exact values and
     if (scenario.error)
       assert.throws(
         () => serialize(scenario.value, scenario.schema),
-        (e) => e.kind === 'validation',
+        (e) => e.name === 'InvalidInputError',
         scenario.name,
       );
     else assert.equal(serialize(scenario.value, scenario.schema), scenario.wire, scenario.name);

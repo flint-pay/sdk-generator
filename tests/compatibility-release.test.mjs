@@ -172,7 +172,7 @@ test('nested request model narrowing stays breaking when grouped with response m
       'php',
       [
         '-r',
-        String.raw`require $argv[1].'/src/Runtime.php'; require $argv[1].'/src/Client.php'; $sent=0; $client=new CompatibilityExample\Client(new CompatibilityExample\ClientOptions('https://example.invalid',transport:function($request)use(&$sent){$sent++;if(json_decode($request['body'],true)!==['value'=>['id'=>'v','label'=>123]])throw new Exception('request changed');return ['status'=>204,'headers'=>[],'body'=>''];})); try{$client->api->submit(['body'=>['value'=>['id'=>'v','label'=>123]]]);echo json_encode(['sent'=>$sent]);}catch(CompatibilityExample\SdkError $e){echo json_encode(['sent'=>$sent,'kind'=>$e->kind]);}`,
+        String.raw`require $argv[1].'/src/Runtime.php'; require $argv[1].'/src/Client.php'; $sent=0; $client=new CompatibilityExample\Client(new CompatibilityExample\ClientOptions('https://example.invalid',transport:function($request)use(&$sent){$sent++;if(json_decode($request['body'],true)!==['value'=>['id'=>'v','label'=>123]])throw new Exception('request changed');return ['status'=>204,'headers'=>[],'body'=>''];})); try{$client->api->submit(['body'=>['value'=>['id'=>'v','label'=>123]]]);echo json_encode(['sent'=>$sent]);}catch(CompatibilityExample\SdkError $e){echo json_encode(['sent'=>$sent,'kind'=>substr(strrchr(get_class($e), chr(92)), 1)]);}`,
         join(f.output, 'php'),
       ],
       { encoding: 'utf8' },
@@ -200,10 +200,10 @@ test('nested request model narrowing stays breaking when grouped with response m
   const newSdk = await import(new URL('file://' + join(f.output, 'node/index.js') + '?after'));
   await assert.rejects(
     new newSdk.Client(options).api.submit({ body: { value: { id: 'v', label: 123 } } }),
-    { kind: 'validation' },
+    { name: 'InvalidInputError' },
   );
   assert.equal(sent, 1);
-  assert.deepEqual(phpRequest(), { sent: 0, kind: 'validation' });
+  assert.deepEqual(phpRequest(), { sent: 0, kind: 'InvalidInputError' });
   assert.throws(() => prepareRelease(f.output, join(f.dir, 'minor')), /major/);
 });
 
@@ -229,7 +229,7 @@ test('nested named response models retain required keys without property declara
           'php',
           [
             '-r',
-            String.raw`require $argv[1].'/src/Runtime.php'; require $argv[1].'/src/Client.php'; $client=new CompatibilityExample\Client(new CompatibilityExample\ClientOptions('https://example.invalid',transport:fn($request)=>['status'=>200,'headers'=>[],'body'=>'{"value":{}}'])); try{$client->api->one();echo 'accepted';}catch(CompatibilityExample\SdkError $e){echo $e->kind;}`,
+            String.raw`require $argv[1].'/src/Runtime.php'; require $argv[1].'/src/Client.php'; $client=new CompatibilityExample\Client(new CompatibilityExample\ClientOptions('https://example.invalid',transport:fn($request)=>['status'=>200,'headers'=>[],'body'=>'{"value":{}}'])); try{$client->api->one();echo 'accepted';}catch(CompatibilityExample\SdkError $e){echo substr(strrchr(get_class($e), chr(92)), 1);}`,
             join(f.output, 'php'),
           ],
           { encoding: 'utf8' },
@@ -243,8 +243,10 @@ test('nested named response models retain required keys without property declara
       };
       if (target === 'node') {
         const oldSdk = await import(new URL('file://' + join(f.output, 'node/index.js')));
-        await assert.rejects(new oldSdk.Client(options).api.one(), { kind: 'protocol' });
-      } else assert.equal(phpResponse(), 'protocol');
+        await assert.rejects(new oldSdk.Client(options).api.one(), {
+          name: 'UnexpectedResponseError',
+        });
+      } else assert.equal(phpResponse(), 'UnexpectedResponseError');
 
       f.doc.components.schemas.Value = { type: 'object', properties: { id: { type: 'string' } } };
       f.cfg.version = '1.1.0';
