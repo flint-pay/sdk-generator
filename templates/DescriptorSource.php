@@ -137,8 +137,8 @@ final class DescriptorSource
     }
     public function validateAll(): void
     {
-        // Each resource group and the models load into a fresh source, so peak
-        // memory follows the largest group rather than the whole contract.
+        // Validate independent groups without retaining earlier models/codecs.
+        // Peak memory follows the largest resource, model or webhook group.
         $groups = [];
         foreach ($this->routes as $id => $resource) {
             if (!is_string($resource)) {
@@ -151,11 +151,14 @@ final class DescriptorSource
             foreach ($ids as $id) {
                 $source->operation($id);
             }
+            unset($source);
+        }
+        foreach ($this->read('models') as $name) {
+            $source = new self($this->directory, $this->hasWebhook);
+            $source->model($name);
+            unset($source);
         }
         $source = new self($this->directory, $this->hasWebhook);
-        foreach ($source->read('models') as $name) {
-            $source->model($name);
-        }
         $source->webhook();
     }
     public function settings(): array
