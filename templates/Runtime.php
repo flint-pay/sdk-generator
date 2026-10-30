@@ -4765,7 +4765,6 @@ class Runtime
             }
             return $this->executeRequest($id, $input, $effective, $continuation, $context);
         } catch (SdkError $error) {
-            self::settleCallError($error, $context);
             $error->attempts = $context['attempts'];
             $error->requestIds = $context['requestIds'];
             $error->durationMs = self::now() - $callStart;
@@ -4775,6 +4774,7 @@ class Runtime
                 $error->requestId = $context['lastResponse']['requestId'] ?? null;
                 $error->retryAfterMs = $context['retryAfterMs'] ?? null;
             }
+            self::settleCallError($error, $context);
             $error->operation = isset($op['resource'], $op['method'])
                 ? $op['resource'] . '.' . $op['method']
                 : $id;
@@ -5415,22 +5415,13 @@ class Runtime
                     $context['lastResponse'] = $meta;
                     $context['retryAfterMs'] = $retryAfter;
                 }
-                if ($status === 401) {
-                    $context['observations'][$attempt - 1] = [
-                        'state' => 'answered',
-                        'status' => 401,
-                        'inProgress' => false,
-                        'uncertainWrite' => false,
-                        'retryAllowed' => false,
-                    ];
-                }
                 if ($status === 401 && $safe && $credentialRetries === 0 && $providers) {
                     $diagnosticError = 'authentication';
                     if (($response['stream'] ?? null) instanceof ByteStream) {
                         try {
                             $response['stream']->close();
                         } catch (\Throwable) {
-                            // The observed 401 remains authoritative if response cleanup fails.
+                            // Refresh can proceed, but a discarded body leaves this attempt unanswered.
                         }
                     }
                     try {
@@ -5456,28 +5447,17 @@ class Runtime
                         $response['failureCode'],
                     );
                 }
-                if (
+                $sse =
                     $status >= 200 &&
                     $status < 300 &&
-                    ($declaredResponse['bodyKind'] ?? null) === 'sse'
+                    ($declaredResponse['bodyKind'] ?? null) === 'sse';
+                $source = $response['stream'] ?? null;
+                if (
+                    $sse &&
+                    $source instanceof ByteStream &&
+                    strtolower(trim(explode(';', $rh['content-type'] ?? '')[0])) ===
+                        'text/event-stream'
                 ) {
-                    $source = $response['stream'] ?? null;
-                    if (
-                        !($source instanceof ByteStream) ||
-                        strtolower(trim(explode(';', $rh['content-type'] ?? '')[0])) !==
-                            'text/event-stream'
-                    ) {
-                        if ($source instanceof ByteStream) {
-                            $source->close();
-                        }
-                        throw SdkError::create(
-                            'protocol',
-                            'Expected an SSE response stream',
-                            'response',
-                            false,
-                            $meta,
-                        );
-                    }
                     if ($source instanceof CurlByteStream) {
                         $source->startStream();
                     }
@@ -5508,6 +5488,7 @@ class Runtime
                     $this->streams[$key] = $stream;
                     return new Result($stream, $meta, '');
                 }
+                // Invalid stream handshakes also need a complete body before they settle the call.
                 if (($response['stream'] ?? null) instanceof ByteStream) {
                     try {
                         while (($chunk = $response['stream']->read()) !== null) {
@@ -5524,6 +5505,15 @@ class Runtime
                     'uncertainWrite' => false,
                     'retryAllowed' => false,
                 ];
+                if ($sse) {
+                    throw SdkError::create(
+                        'protocol',
+                        'Expected an SSE response stream',
+                        'response',
+                        false,
+                        $meta,
+                    );
+                }
                 $data = null;
                 try {
                     if ($raw !== '' && !$binary && !$redirect) {

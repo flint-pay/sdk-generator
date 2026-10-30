@@ -30,11 +30,25 @@ require $argv[1] . '/src/Client.php';
 final class OutcomeBody implements ByteStream
 {
     private bool $done = false;
-    public function __construct(private string $body, private array $step) {}
+    public function __construct(
+        private string $body,
+        private array $step,
+        private int $timeoutMs,
+    ) {}
     public function read(): ?string
     {
         if ($this->step['bodyFailure'] ?? false) {
             throw new \RuntimeException('Synthetic incomplete body');
+        }
+        if ($this->step['bodyTimeout'] ?? false) {
+            $GLOBALS['clock'] += $this->timeoutMs;
+            throw new \RuntimeException('Synthetic stalled body', CURLE_OPERATION_TIMEDOUT);
+        }
+        if ($this->step['cancelBody'] ?? false) {
+            $GLOBALS['clock'] += 10;
+            $GLOBALS['token']->cancel();
+            // Match a stream checking cancellation before it has response metadata.
+            throw SdkError::create('cancelled', 'Synthetic body cancellation');
         }
         if (!$this->done) {
             $this->done = true;
@@ -117,7 +131,7 @@ foreach ($rows as $row) {
             'status' => $step['status'],
             'headers' => $headers,
             'body' => '',
-            'stream' => new OutcomeBody($raw, $step),
+            'stream' => new OutcomeBody($raw, $step, $request['timeoutMs']),
         ];
     };
     $credentialCalls = 0;
@@ -153,6 +167,7 @@ foreach ($rows as $row) {
     } catch (SdkError $error) {
         $actual = [
             'error' => substr(strrchr(get_class($error), chr(92)), 1),
+            'status' => $error->status,
             'code' => $error->code,
             'outcome' => $error->outcome,
             'retryAllowed' => $error->retryAllowed,

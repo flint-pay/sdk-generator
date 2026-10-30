@@ -35,8 +35,9 @@ const definitions = Object.fromEntries([
   ['read', 'get'],
   ['head', 'head'],
   ['binary', 'get'],
+  ['events', 'get'],
 ]);
-const keyed = (id) => !['plain', 'read', 'head', 'binary'].includes(id);
+const keyed = (id) => !['plain', 'read', 'head', 'binary', 'events'].includes(id);
 const api = {
   openapi: '3.1.0',
   info: { title: 'Outcome fixture', version: '1' },
@@ -58,15 +59,21 @@ const api = {
             200: {
               description: 'Success',
               content: {
-                [id === 'binary' ? 'application/pdf' : 'application/json']: {
+                [id === 'binary'
+                  ? 'application/pdf'
+                  : id === 'events'
+                    ? 'text/event-stream'
+                    : 'application/json']: {
                   schema:
                     id === 'binary'
                       ? { type: 'string', format: 'binary' }
-                      : {
-                          type: 'object',
-                          required: ['value'],
-                          properties: { value: { type: 'string' } },
-                        },
+                      : id === 'events'
+                        ? { type: 'string' }
+                        : {
+                            type: 'object',
+                            required: ['value'],
+                            properties: { value: { type: 'string' } },
+                          },
                 },
               },
             },
@@ -349,6 +356,59 @@ const rows = [
     outcome: 'unknown',
     retryAllowed: true,
   },
+  ...['bodyFailure', 'bodyTimeout'].flatMap((failure) =>
+    [false, true].map((earlierTimeout) => ({
+      name: (earlierTimeout ? 'timeout then ' : '') + 'incomplete 401: ' + failure,
+      chain: [
+        ...(earlierTimeout ? [timeout] : []),
+        answer(401, undefined, undefined, { [failure]: true }),
+      ],
+      options: { maxAttempts: earlierTimeout ? 2 : 1 },
+      error: 'AuthenticationError',
+      status: 401,
+      outcome: 'unknown',
+      retryAllowed: false,
+      elapsed: failure === 'bodyTimeout' ? (earlierTimeout ? 250 : 100) : undefined,
+    })),
+  ),
+  ...[403, 412, 429, 503].map((status) => ({
+    name: 'timeout then incomplete ' + status,
+    chain: [timeout, answer(status, undefined, undefined, { bodyFailure: true })],
+    options: { maxAttempts: 2 },
+    error: 'ConnectionError',
+    status,
+    outcome: 'unknown',
+    retryAllowed: status !== 412,
+  })),
+  {
+    name: 'timeout then 412 cancellation during body read vetoes retry',
+    chain: [timeout, answer(412, undefined, undefined, { cancelBody: true })],
+    options: { maxAttempts: 2 },
+    error: 'CancelledError',
+    status: 412,
+    outcome: 'unknown',
+    retryAllowed: false,
+    elapsed: 160,
+  },
+  ...[false, true].map((earlierTimeout) => ({
+    name: (earlierTimeout ? 'timeout then ' : '') + 'complete invalid SSE handshake',
+    op: 'events',
+    chain: [...(earlierTimeout ? [timeout] : []), answer(200)],
+    error: 'UnexpectedResponseError',
+    status: 200,
+    outcome: 'response',
+    retryAllowed: false,
+  })),
+  {
+    name: 'timeout then incomplete invalid SSE handshake preserves uncertainty',
+    op: 'events',
+    chain: [timeout, answer(200, undefined, undefined, { bodyFailure: true })],
+    options: { maxAttempts: 2 },
+    error: 'ConnectionError',
+    status: 200,
+    outcome: 'unknown',
+    retryAllowed: true,
+  },
   {
     name: 'invalid success after timeout',
     chain: [timeout, answer(200, undefined, undefined, { raw: '{' })],
@@ -554,6 +614,8 @@ async function nodeCase(row, t) {
     const read = response.arrayBuffer.bind(response);
     response.arrayBuffer = async () => {
       if (step.bodyFailure) throw new Error('Synthetic incomplete body');
+      if (step.cancelBody) schedule(() => controller.abort(), 10);
+      if (step.bodyTimeout || step.cancelBody) return new Promise(() => {});
       const bytes = await read();
       if (step.lateRead) now += 2000;
       if (step.lateDecode) lateDecode = true;
@@ -606,6 +668,7 @@ async function nodeCase(row, t) {
       (error) => {
         actual = {
           error: error.name,
+          status: error.status,
           code: error.code,
           outcome: error.outcome,
           retryAllowed: error.retryAllowed,
@@ -651,11 +714,13 @@ function verify(row, actual) {
     assert.equal(actual.error, row.error, row.name);
     assert.equal(actual.outcome, row.outcome, row.name);
     assert.equal(actual.retryAllowed, row.retryAllowed, row.name);
+    if (row.status !== undefined) assert.equal(actual.status, row.status, row.name);
     if (row.retryAfterMs) {
       assert.equal(actual.retryAfterMs, row.retryAfterMs, row.name);
       assert.equal(actual.message, 'Synthetic answer', row.name);
     }
   }
+  if (row.elapsed !== undefined) assert.equal(actual.elapsed, row.elapsed, row.name);
   assert.equal(actual.attempts, row.attempts ?? row.chain.length, row.name);
   const ids = row.chain.flatMap((step, index) => (step.status ? ['req_' + (index + 1)] : []));
   assert.deepEqual(actual.requestIds ?? [], ids, row.name);

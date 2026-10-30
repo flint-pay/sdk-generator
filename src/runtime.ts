@@ -3844,7 +3844,6 @@ class CompiledRuntime {
       );
     } catch (error) {
       if (error instanceof SdkError) {
-        settleCallError(error, context);
         error.attempts = context.attempts;
         error.requestIds = [...context.requestIds];
         error.durationMs = performance.now() - context.start;
@@ -3855,6 +3854,7 @@ class CompiledRuntime {
             error.requestId = context.lastResponse.requestId;
           if (context.retryAfterMs !== undefined) error.retryAfterMs = context.retryAfterMs;
         }
+        settleCallError(error, context);
         error.operation = op ? op.resource + '.' + op.method : id;
         if (typeof key === 'string') error.idempotencyKey = key;
       }
@@ -4274,20 +4274,12 @@ class CompiledRuntime {
         context.lastResponse = meta;
         delete context.retryAfterMs;
         if (retryAfter !== undefined) context.retryAfterMs = retryAfter;
-        if (response.status === 401)
-          context.observations[attempt - 1] = {
-            state: 'answered',
-            status: 401,
-            inProgress: false,
-            uncertainWrite: false,
-            retryAllowed: false,
-          };
         if (response.status === 401 && safe && credentialRetries === 0 && providers.size > 0) {
           diagnosticError = 'authentication';
           try {
             await response.body?.cancel();
           } catch {
-            // The observed 401 remains authoritative if response cleanup fails.
+            // Refresh can proceed, but a discarded body leaves this attempt unanswered.
           }
           try {
             for (const invalidate of providers.values()) invalidate();
@@ -4310,21 +4302,13 @@ class CompiledRuntime {
           (response.ok && op.successJsonFallback
             ? op.responses[op.successJsonFallback]
             : undefined);
-        if (response.ok && declaredResponse?.bodyKind === 'sse') {
-          if (
-            response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() !==
-              'text/event-stream' ||
-            !response.body
-          ) {
-            await response.body?.cancel();
-            throw createSdkError(
-              'protocol',
-              'Expected an SSE response stream',
-              'response',
-              false,
-              meta,
-            );
-          }
+        const sse = response.ok && declaredResponse?.bodyKind === 'sse';
+        if (
+          sse &&
+          response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() ===
+            'text/event-stream' &&
+          response.body
+        ) {
           const idleTimeoutMs = options.streamIdleTimeoutMs ?? op.stream?.idleTimeoutMs ?? 30000;
           positive(idleTimeoutMs, 'streamIdleTimeoutMs');
           if (options.streamLifetimeMs !== undefined)
@@ -4366,6 +4350,7 @@ class CompiledRuntime {
           });
           return result as Result<T>;
         }
+        // Invalid stream handshakes also need a complete body before they settle the call.
         const bytes = await abortable(response.arrayBuffer(), controller.signal);
         context.observations[attempt - 1] = {
           state: 'answered',
@@ -4374,6 +4359,14 @@ class CompiledRuntime {
           uncertainWrite: false,
           retryAllowed: false,
         };
+        if (sse)
+          throw createSdkError(
+            'protocol',
+            'Expected an SSE response stream',
+            'response',
+            false,
+            meta,
+          );
         const redirect = op.responses[String(response.status)]?.classification === 'redirect';
         if (response.ok && declaredResponse?.bodyKind === 'binary') {
           const contentType = response.headers
