@@ -6,14 +6,14 @@
       "name": "library",
       "api": "examples/library.openapi.json",
       "config": "examples/library.sdk.json",
-      "nodeDeclarationsSha256": "b32d25a7b1221d029b1f1b9e27f70d99df0c8a67e7e07e1884487040242b59fd",
+      "nodeDeclarationsSha256": "a42240f95c76ef4d3d571b5be76e350790653d8710aea1443ac3803a0202e2b6",
       "phpDeclarationsSha256": "1a93b9bdd6d028092ee2417f36a8577751940d6ef6901dadf7a5ac4c7e0137b2"
     },
     {
       "name": "payment",
       "api": "tests/fixtures/payment-api.json",
       "config": "tests/fixtures/payment-sdk.json",
-      "nodeDeclarationsSha256": "a53d03705a840b2809243dcb32ac275c02d986e013a5364de31a41f2101fe4f5",
+      "nodeDeclarationsSha256": "2ff000d92ae4a0b5a8ff912ad01715a1d92776b309006f7e60c11dfb823cf726",
       "phpDeclarationsSha256": "77ff8ec4821900798a1d3356b3266801db8acc54c29bf636eda535bddf1e3cf7"
     },
     {

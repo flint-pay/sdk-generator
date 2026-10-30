@@ -33,7 +33,7 @@ $client = new Client(
             return [
                 'status' => 422,
                 'headers' => ['Trace-Id' => 'trace-123'],
-                'body' => '{"error":{"reason":"bad_input","fields":{"title":"required"}}}',
+                'body' => '{"error":{"reason":"bad_input","fields":[{"title":"required"}]}}',
             ];
         },
     ),
@@ -43,7 +43,7 @@ try {
     throw new RuntimeException('Expected API error');
 } catch (SdkError $error) {
     check($error->code === 'bad_input' && $error->requestId === 'trace-123');
-    check(($error->details->title ?? null) === 'required');
+    check(($error->details[0]['title'] ?? null) === 'required');
     check(str_contains($error->raw, 'bad_input'));
 }
 check(array_column($events, 'errorKind') === ['transport', 'validation']);

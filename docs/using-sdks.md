@@ -295,7 +295,9 @@ try {
 | Request ID    | `requestId`             | `$error->requestId` |
 | HTTP status   | `status` or `undefined` | `status` or `null`  |
 
-Node `SdkError.code` uses the schema’s known string codes plus an open string alternative. `errors.ApiError.details` uses the configured error schema plus runtime failure details; narrow the shape before reading a field. Projected details are validated against their declared shapes even when the envelope is a future alternative. Narrowed integer-string fields require canonical decimal spelling: `+1`, `01`, `-01` and trailing whitespace are rejected. Invalid success payloads raise a protocol error with `raw` retained. Malformed API details, or redacted details that no longer fit the schema, are `undefined`; explicit `raw` access remains available for recovery.
+`ApiError` exposes `code`, `type`, `param`, `details`, `remediation`, `errorSource`, `docUrl`, `requestLogUrl` and decoded, redacted `body` in both targets. `details` is always an array, empty when absent. Node uses readonly generated detail types and drops details incompatible with its schema certificate; PHP uses arrays. API objects retain wire keys, such as `details[0].param` and `remediation.next_steps`. SDK-owned names are camelCase in both targets.
+
+Node code, type and source enums accept future strings. Known `errorSource` values are `caller`, `merchant`, `merchant_endpoint` and `flint`. `remediation.retry` is the closed union `"same_request" | "after_refresh" | "none"`; PHP exposes matching constants. Narrow it before choosing recovery. `param` passes through unchanged, including `status`, `X-Request-Id` and `metadata["a.b"]`.
 
 All errors extend `SdkError`. Node exports subclasses through `errors` at the package root and resource subpaths; PHP subclasses live in `Example\\Library\\Errors`. API subclasses extend `ApiError` and follow HTTP status alone, never the code. `TimeoutError` extends `ConnectionError`. Other local classes extend `SdkError` directly. Node names survive minification.
 
@@ -322,12 +324,10 @@ Construct errors with a message and an init object in Node, or named arguments i
 
 Messages and codes:
 
-- The message is the nonempty JSON string at the configured `errors.messagePath` (default `message`), after redaction. Absent, blank or non-string values fall back to `API returned HTTP <status>`.
-- Error paths traverse JSON objects and array indices; scalar values have no child fields.
-- Messages and provider codes must be JSON strings. Numeric tokens, including decimal, exponent and large-integer values, never become messages or codes and never match string retry codes. Parsed details keep their exact numeric representation.
-- Public codes are redacted; code-based retry matching uses the original string at `errors.codePath`.
-- Malformed or non-JSON error bodies keep status, metadata and explicit `raw` access.
-- Provider `details` use the declared schema type when available, otherwise `unknown` in TypeScript. Details are optional: incompatible fields, including collisions with other declared error or runtime-detail shapes, produce `undefined`; `raw` retains the body. Narrow details before reading their fields.
+- Configured `errors.fields` paths are relative to `errors.objectPath`. Messages and codes must be JSON strings; numeric values never become strings or match retry codes. Public fields come from the redacted body; retry matching retains original string values.
+- The configured request-ID response header wins over the envelope request ID. Missing or blank messages fall back to `API returned HTTP <status>`.
+- With no configured envelope object, a top-level string `error` is an RFC 6749 OAuth code, with `error_description` as its message. Other envelope-less responses use `http_error`, the HTTP fallback message and `details: []`, retaining explicit `raw` access.
+- Invalid details do not discard other envelope fields. `body` retains the redacted decoded response; `raw` retains exact response text. Neither appears in inspection or JSON error exports, and Node makes both non-enumerable. Treat explicit access as sensitive.
 
 | `outcome`  | Meaning for recovery                                                                                                                                      |
 | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |

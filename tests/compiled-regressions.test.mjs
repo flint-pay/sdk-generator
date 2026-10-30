@@ -87,22 +87,25 @@ test('generated error details redact shared definitions for explicit and default
         `redaction-${status}-${detailsPath}`,
         {
           200: { description: 'Empty' },
-          [status]: response(detailsPath ? { type: 'object', properties: { payload: ref } } : ref),
+          [status]: response({
+            type: 'object',
+            properties: { [detailsPath ? 'payload' : 'details']: { type: 'array', items: ref } },
+          }),
         },
         {
           schemas: { Detail: detail },
-          ...(detailsPath ? { errors: { detailsPath: 'payload' } } : {}),
+          errors: { objectPath: '', fields: { details: detailsPath ? 'payload' : 'details' } },
         },
       );
       generate(f.contract, f.output);
-      const body = JSON.stringify(detailsPath ? { payload } : payload);
+      const body = JSON.stringify({ [detailsPath ? 'payload' : 'details']: [payload] });
       const { Client } = await import(pathToFileURL(join(f.output, 'node/index.js')));
       const client = new Client({
         baseUrl: 'https://example.invalid',
         transport: async () => new Response(body, { status: 400 }),
       });
       await assert.rejects(client.api.readValue(), (error) => {
-        assert.deepEqual(error.details, expected);
+        assert.deepEqual(error.details, [expected]);
         assert.equal(error.raw, body);
         return error.name === 'InvalidRequestError';
       });
@@ -119,7 +122,7 @@ test('generated error details redact shared definitions for explicit and default
         body,
       );
       assert.equal(result.kind, 'InvalidRequestError');
-      assert.deepEqual(result.details, expected);
+      assert.deepEqual(result.details, [expected]);
       assert.equal(result.raw, body);
     }
 });

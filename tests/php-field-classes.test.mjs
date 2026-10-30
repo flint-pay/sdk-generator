@@ -307,7 +307,7 @@ test('response field pins leave readOnly fields out of inputs and retain sensiti
   const f = fixture(
     { location: ref('Location', { readOnly: true, 'x-sensitive': true }) },
     { Venue: { location: 'Location' } },
-    { config: { errors: { detailsPath: 'details' } } },
+    { config: { errors: { objectPath: '', fields: { details: 'details' } } } },
   );
   f.api.paths['/venues'].post.responses[400] = {
     description: 'Error',
@@ -338,9 +338,9 @@ test('response field pins leave readOnly fields out of inputs and retain sensiti
   });
   await assert.rejects(client.api.sendValue({ body: { data: {} } }), (error) => {
     assert.ok(!JSON.stringify(error.details ?? null).includes('synthetic-private-marker'));
-    assert.equal(
+    assert.deepEqual(
       error.details,
-      undefined,
+      [],
       'redacted object fields cannot claim their original object type',
     );
     return true;

@@ -58,6 +58,7 @@ import {
   type CodecPlan,
 } from './codec-plan.js';
 import {
+  errorMapping,
   compileRuntimePlan,
   compileRequestOption,
   requiresIdempotencyKey,
@@ -67,7 +68,12 @@ import {
 } from './runtime-plan.js';
 import { compileResultPlan, type ResponsePlan } from './response-plan.js';
 import { compileSchemaPolicy, type SchemaPolicy } from './schema-policy.js';
-export { successStatus, RETRY_DEFAULTS, AUTH_SHORTCUT_RESERVED } from './runtime-plan.js';
+export {
+  successStatus,
+  RETRY_DEFAULTS,
+  ERROR_FIELDS,
+  AUTH_SHORTCUT_RESERVED,
+} from './runtime-plan.js';
 const pascal = (s: string) => s[0]!.toUpperCase() + s.slice(1);
 
 export function inputSchema(
@@ -856,7 +862,13 @@ export interface CompiledSdkContract {
     authentication?: NodeAuthenticationPlan;
     clientOptions?: { declaration: string; optional: boolean };
     responseReturnDeclarations?: string;
-    errorTypes?: { code: string; details: string };
+    errorTypes?: {
+      code: string;
+      details: string;
+      type?: string;
+      errorSource?: string;
+      remediation?: string;
+    };
     models: Record<
       string,
       {
@@ -1184,7 +1196,7 @@ export function compileSdkContract(source: Contract): {
       ]),
     ),
     node: {
-      errorSurfaceVersion: 2,
+      errorSurfaceVersion: 3,
       ...(c.config.webhook ? { webhookReasons: true, standaloneWebhook: true } : {}),
       clientOptions: {
         declaration: compileClientOptions(c),
@@ -1278,7 +1290,7 @@ export function compileSdkContract(source: Contract): {
       ...webhookDeclarations(c, models),
     },
     php: {
-      errorSurfaceVersion: 2,
+      errorSurfaceVersion: 3,
       ...(c.config.webhook ? { webhookReasons: true } : {}),
       // PHP class names are case-insensitive. Preserve a public Webhooks model
       // instead of emitting the optional standalone verifier over its class file.
@@ -1478,11 +1490,13 @@ export function compileSdkContract(source: Contract): {
     operation.items = replaceOutputNames(operation.items);
     if (operation.known) operation.known.type = replaceOutputNames(operation.known.type);
   }
-  if (c.config.errors) {
+  {
     const project = (schema: Schema, path: string[]): Schema[] => {
       if (!path.length) return [schema];
       return valueScopes(schema, c.definitions).flatMap((shape) => {
-        const child = shape.properties?.[path[0]!];
+        const child =
+          shape.properties?.[path[0]!] ??
+          (/^(?:0|[1-9][0-9]*)$/.test(path[0]!) ? shape.items : undefined);
         return child ? project(child, path.slice(1)) : [];
       });
     };
@@ -1491,32 +1505,72 @@ export function compileSdkContract(source: Contract): {
         (Number(status) >= 400 || status === 'default') && response.schema ? [response.schema] : [],
       ),
     );
-    const type = (path: string | undefined): string => {
-      const shapes = errors.flatMap((schema) => project(schema, path?.split('.') ?? []));
-      return (
-        [
-          ...new Set(shapes.map((schema) => replaceOutputNames(namedType(schema, models, true)))),
-        ].join(' | ') || 'unknown'
+    const mapping = errorMapping(c.config.errors);
+    const shapes = (path: string) =>
+      errors.flatMap((schema) =>
+        project(schema, [mapping.objectPath, path].filter(Boolean).join('.').split('.')),
       );
-    };
-    plan.node.errorTypes = {
-      code: [
+    for (const [key, path] of Object.entries(c.config.errors?.fields ?? {}))
+      if (!shapes(path).length)
+        throw new Diagnostic(
+          `config/errors/fields/${key}`,
+          'configured field is absent from every declared error response schema',
+        );
+    const type = (path: string, fallback: string): string =>
+      [
         ...new Set(
-          errors
-            .flatMap((schema) => project(schema, (c.config.errors!.codePath ?? 'code').split('.')))
+          shapes(path).map((schema) => replaceOutputNames(namedType(schema, models, true))),
+        ),
+      ].join(' | ') || fallback;
+    const open = (path: string, known: string[] = []) =>
+      [
+        ...new Set([
+          ...known,
+          ...shapes(path)
             .flatMap((schema) => valueScopes(schema, c.definitions))
             .flatMap(
               (schema) => schema.enum ?? (typeof schema.const === 'string' ? [schema.const] : []),
             )
             .filter((value): value is string => typeof value === 'string'),
-        ),
+        ]),
       ]
         .map((value) => JSON.stringify(value))
         .concat('(string & {})')
-        .join(' | '),
-      details: type(c.config.errors.detailsPath),
+        .join(' | ');
+    plan.node.errorTypes = {
+      code: open(mapping.fields.code),
+      type: open(mapping.fields.type),
+      errorSource: open(mapping.fields.errorSource, [
+        'caller',
+        'merchant',
+        'merchant_endpoint',
+        'flint',
+      ]),
+      details:
+        [
+          ...new Set(
+            shapes(mapping.fields.details)
+              .flatMap((schema) => valueScopes(schema, c.definitions))
+              .filter(
+                (schema) =>
+                  schema.type === 'array' ||
+                  (Array.isArray(schema.type) && schema.type.includes('array')),
+              )
+              .map((schema) =>
+                replaceOutputNames(
+                  namedType(
+                    { type: 'array', ...(schema.items ? { items: schema.items } : {}) },
+                    models,
+                    true,
+                  ).replace(/^Array</, 'ReadonlyArray<'),
+                ),
+              ),
+          ),
+        ].join(' | ') || 'readonly Record<string, unknown>[]',
+      remediation: type(mapping.fields.remediation, 'ErrorRemediation'),
     };
   }
+
   if (plan.node.eventDeclarations)
     plan.node.eventDeclarations = replaceOutputNames(plan.node.eventDeclarations);
   const responseReturns = Object.fromEntries(

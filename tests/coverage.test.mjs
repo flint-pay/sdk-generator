@@ -26,10 +26,25 @@ const directory = mkdtempSync(join(tmpdir(), 'sdk-coverage-'));
 after(() => rmSync(directory, { recursive: true, force: true }));
 const contract = loadContract('tests/fixtures/payment-api.json', 'tests/fixtures/payment-sdk.json');
 contract.config.errors = {
-  codePath: 'error.reason',
-  detailsPath: 'error.fields',
+  fields: { code: 'reason', details: 'fields' },
   requestIdHeader: 'Trace-Id',
 };
+// The configured envelope fields are declared on error responses, independently of
+// the flat legacy fixture bodies used by other coverage scenarios.
+for (const operation of contract.operations)
+  for (const response of Object.values(operation.responses))
+    if (response.classification === 'error' && response.schema)
+      response.schema.properties = {
+        ...response.schema.properties,
+        error: {
+          type: 'object',
+          properties: {
+            reason: { type: 'string' },
+            code: { type: 'string' },
+            fields: { type: 'array', items: { type: 'object', additionalProperties: true } },
+          },
+        },
+      };
 contract.config.documentation = {
   overview: 'Use authoritative resource state for recovery.',
   guides: {
@@ -231,7 +246,7 @@ test('configured error metadata and diagnostics include failed attempts without 
     diagnostics: (e) => events.push(e),
     transport: async () => {
       if (!attempt++) throw new Error('lost response secret');
-      return new Response('{"error":{"reason":"bad_input","fields":{"title":"required"}}}', {
+      return new Response('{"error":{"reason":"bad_input","fields":[{"title":"required"}]}}', {
         status: 422,
         headers: { 'Trace-Id': 'trace-123' },
       });
@@ -240,7 +255,7 @@ test('configured error metadata and diagnostics include failed attempts without 
   await assert.rejects(client.payments.retrieve({ id: 'p' }), (error) => {
     assert.equal(error.code, 'bad_input');
     assert.equal(error.requestId, 'trace-123');
-    assert.deepEqual(error.details, { title: 'required' });
+    assert.deepEqual(error.details, [{ title: 'required' }]);
     assert.match(error.raw, /bad_input/);
     return true;
   });
@@ -737,6 +752,7 @@ test('generated webhook verifiers match the local Flint Go signing implementatio
   const vector = JSON.parse(readFileSync('tests/providers/flint/signing-vector.json')).webhook;
   for (const format of ['standard-webhooks', 'timestamped-hex']) {
     const config = structuredClone(contract.config);
+    delete config.errors;
     config.webhook = {
       algorithm: 'hmac-sha256',
       format,
@@ -846,7 +862,7 @@ test('generated webhook verifiers match the local Flint Go signing implementatio
 
 test('code-specific idempotency retries preserve the key and never retry other conflicts', async () => {
   const config = structuredClone(contract.config);
-  config.errors = { codePath: 'error.code' };
+  config.errors = {};
   config.operations.createPayment.retry.errors = [
     { status: 409, codes: ['IDEMPOTENCY_KEY_IN_PROGRESS'] },
   ];

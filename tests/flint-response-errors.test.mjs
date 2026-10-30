@@ -107,7 +107,7 @@ for (const [style, verb] of ['object', 'positional'].flatMap((style) =>
           npm: { name: '@example/error-audit-control' },
           composer: { name: 'example/error-audit-control', namespace: 'Example\\FlintFull' },
           operations: { getItem: { resource: 'entries', method: 'get' } },
-          errors: { codePath: 'error.code', messagePath: 'error.message', detailsPath: 'error' },
+          errors: { fields: { code: 'code', message: 'message' } },
         }),
       );
       const output = join(dir, 'output');

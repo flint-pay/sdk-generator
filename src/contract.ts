@@ -231,6 +231,18 @@ export type CapabilityOverride = Omit<Capability, DefaultCapability | 'request'>
     | { [P in keyof NonNullable<Capability[K]>]?: NonNullable<Capability[K]>[P] | null }
     | false;
 };
+export type ErrorField =
+  | 'code'
+  | 'message'
+  | 'type'
+  | 'param'
+  | 'details'
+  | 'remediation'
+  | 'errorSource'
+  | 'docUrl'
+  | 'requestId'
+  | 'requestLogUrl';
+
 export interface Config {
   integers?: 'exact' | 'number' | { mode: 'exact' | 'number'; exactComponents?: string[] };
   operationNames?: 'tags' | 'path';
@@ -273,11 +285,10 @@ export interface Config {
   apiVersion?: { value: string; header: string };
   license?: string;
   errors?: {
-    codePath?: string;
+    objectPath?: string;
+    fields?: Partial<Record<ErrorField, string>>;
     inProgressCodes?: string[];
     retry?: { path: string; retryValues: string[] };
-    messagePath?: string;
-    detailsPath?: string;
     requestIdHeader?: string;
   };
   documentation?: {
@@ -2077,20 +2088,42 @@ function loadContractInput(
       diagnostics.check(() =>
         keys(
           config.errors!,
-          ['codePath', 'messagePath', 'detailsPath', 'requestIdHeader', 'retry', 'inProgressCodes'],
+          ['objectPath', 'fields', 'requestIdHeader', 'retry', 'inProgressCodes'],
           'config/errors',
         ),
       );
       diagnostics.check(() => {
-        for (const key of ['codePath', 'messagePath', 'detailsPath'] as const)
-          diagnostics.check(() => {
-            if (
-              config.errors![key] !== undefined &&
-              (typeof config.errors![key] !== 'string' ||
-                !/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/.test(config.errors![key]!))
-            )
-              fail(`config/errors/${key}`, 'expected a dot-separated field path');
-          });
+        const errors = config.errors!;
+        if (
+          errors.objectPath !== undefined &&
+          (typeof errors.objectPath !== 'string' ||
+            (errors.objectPath !== '' &&
+              !/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/.test(errors.objectPath)))
+        )
+          fail('config/errors/objectPath', 'expected a dot-separated field path or empty string');
+        if (errors.fields !== undefined) {
+          keys(
+            errors.fields,
+            [
+              'code',
+              'message',
+              'type',
+              'param',
+              'details',
+              'remediation',
+              'errorSource',
+              'docUrl',
+              'requestId',
+              'requestLogUrl',
+            ],
+            'config/errors/fields',
+          );
+          for (const [key, path] of Object.entries(errors.fields))
+            diagnostics.check(() => {
+              if (typeof path !== 'string' || !/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/.test(path))
+                fail(`config/errors/fields/${key}`, 'expected a dot-separated field path');
+            });
+        }
       });
       diagnostics.check(() => {
         const codes = config.errors!.inProgressCodes;
@@ -2102,7 +2135,6 @@ function loadContractInput(
         const retry = config.errors!.retry;
         if (retry !== undefined) {
           keys(retry, ['path', 'retryValues'], 'config/errors/retry');
-          if (!config.errors!.codePath) fail('config/errors/retry', 'requires errors.codePath');
           if (
             typeof retry.path !== 'string' ||
             !/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/.test(retry.path)

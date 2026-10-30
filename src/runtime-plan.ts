@@ -166,6 +166,26 @@ export function parameterSource(
   return 'input';
 }
 
+/** Envelope defaults shared by compilation, documentation and both executors. */
+export const ERROR_FIELDS = {
+  code: 'code',
+  message: 'message',
+  type: 'type',
+  param: 'param',
+  details: 'details',
+  remediation: 'remediation',
+  errorSource: 'error_source',
+  docUrl: 'doc_url',
+  requestId: 'request_id',
+  requestLogUrl: 'request_log_url',
+} as const;
+export function errorMapping(errors?: Config['errors']) {
+  return {
+    objectPath: errors?.objectPath ?? 'error',
+    fields: { ...ERROR_FIELDS, ...errors?.fields },
+  };
+}
+
 /** Shared defaults also rendered into the PHP dynamic-contract adapter. */
 export const RETRY_DEFAULTS = {
   safeMethods: ['GET', 'HEAD', 'OPTIONS'],
@@ -463,6 +483,22 @@ export function assertRuntimePlan(
   if (plan.errors !== undefined) {
     const errors = record(plan.errors, 'errors');
     if (
+      errors.objectPath !== undefined &&
+      (typeof errors.objectPath !== 'string' ||
+        (errors.objectPath !== '' &&
+          !/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/.test(errors.objectPath)))
+    )
+      throw new Error('Invalid compiled error objectPath');
+    if (errors.fields !== undefined)
+      for (const [key, path] of Object.entries(record(errors.fields, 'errors.fields')))
+        if (
+          !Object.hasOwn(ERROR_FIELDS, key) ||
+          typeof path !== 'string' ||
+          !/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/.test(path)
+        )
+          throw new Error('Invalid compiled error field mapping');
+
+    if (
       errors.inProgressCodes !== undefined &&
       (!Array.isArray(errors.inProgressCodes) ||
         errors.inProgressCodes.some((code) => typeof code !== 'string' || !code.trim()))
@@ -471,8 +507,6 @@ export function assertRuntimePlan(
     if (errors.retry !== undefined) {
       const retry = record(errors.retry, 'errors.retry');
       if (
-        typeof errors.codePath !== 'string' ||
-        !errors.codePath ||
         typeof retry.path !== 'string' ||
         !/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/.test(retry.path) ||
         !Array.isArray(retry.retryValues) ||

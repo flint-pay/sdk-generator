@@ -88,11 +88,8 @@ const api = {
 };
 const profile = {
   errors: {
-    codePath: 'error.code',
-    messagePath: 'error.message',
-    detailsPath: 'error',
     inProgressCodes: ['IDEMPOTENCY_KEY_IN_PROGRESS', 'SYNTHETIC_IN_PROGRESS'],
-    retry: { path: 'error.remediation.retry', retryValues: ['same_request'] },
+    retry: { path: 'remediation.retry', retryValues: ['same_request'] },
   },
   operations: Object.fromEntries(
     money.map((id) => [id, { defaults: { timeoutMs: 150000, deadlineMs: 300000 } }]),

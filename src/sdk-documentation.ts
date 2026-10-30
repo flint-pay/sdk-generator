@@ -1,3 +1,4 @@
+import { errorMapping } from './runtime-plan.js';
 import { integerDocumentation } from './integer-policy.js';
 import {
   compileDocumentation,
@@ -1187,34 +1188,44 @@ export function errorCodeDocumentation(c: Contract): {
 } {
   const links = new Map<string, string>();
   const values = new Set<string>();
-  if (c.config.errors?.codePath)
-    for (const op of c.operations)
-      for (const response of Object.values(op.responses)) {
-        if (response.classification !== 'error' || !response.schema) continue;
-        let shapes = [response.schema];
-        for (const field of c.config.errors.codePath.split('.'))
-          shapes = shapes.flatMap((shape) =>
-            [shape, ...(shape.oneOf ?? shape.anyOf ?? [])].flatMap((part) => {
-              const child = schemaFields(part, c.definitions ?? c.models).fields[field];
-              return child ? [child] : [];
-            }),
-          );
-        for (const shape of shapes)
-          for (const entry of schemaEnumValues(shape, c.definitions ?? c.models)) {
-            if (entry.path) continue;
-            links.set(enumIdentity(entry.values), errorCodesLink(c));
-            for (const value of entry.values) values.add(value);
-          }
-      }
+  for (const op of c.operations)
+    for (const response of Object.values(op.responses)) {
+      if (response.classification !== 'error' || !response.schema) continue;
+      let shapes = [response.schema];
+      for (const field of [
+        errorMapping(c.config.errors).objectPath,
+        errorMapping(c.config.errors).fields.code,
+      ]
+        .filter(Boolean)
+        .join('.')
+        .split('.'))
+        shapes = shapes.flatMap((shape) =>
+          [shape, ...(shape.oneOf ?? shape.anyOf ?? [])].flatMap((part) => {
+            const child = schemaFields(part, c.definitions ?? c.models).fields[field];
+            return child ? [child] : [];
+          }),
+        );
+      for (const shape of shapes)
+        for (const entry of schemaEnumValues(shape, c.definitions ?? c.models)) {
+          if (entry.path) continue;
+          links.set(enumIdentity(entry.values), errorCodesLink(c));
+          for (const value of entry.values) values.add(value);
+        }
+    }
   return {
     links,
-    reference: values.size
-      ? `# ${errorCodesTitle(c)}\n\n[Runtime error reference](RUNTIME.md#error-reference)\n\nInspect the error code together with status and class; retry only when the operation permits it. Declared values:\n\n` +
-        [...values]
-          .sort()
-          .map((value) => '- ' + literal(value))
-          .join('\n') +
-        '\n\n'
-      : '',
+    reference:
+      `# ${errorCodesTitle(c)}\n\n[Runtime error reference](RUNTIME.md#error-reference)\n\nApiError exposes code, type, param, details (always an array), remediation, errorSource, docUrl, requestId, requestLogUrl and the redacted decoded body. Object values keep wire names. remediation.retry is one of same_request, after_refresh or none. Unknown codes, types, sources and detail reasons remain extensible. Envelope paths follow errors.objectPath and errors.fields. OAuth errors use error/error_description; missing envelopes use http_error. body, raw and headers are omitted from inspection.\n\nObject path: ${JSON.stringify(errorMapping(c.config.errors).objectPath)}.\n\n| Property | Object-relative path |\n| --- | --- |\n${Object.entries(
+        errorMapping(c.config.errors).fields,
+      )
+        .map(([name, path]) => `| ${name} | ${path} |`)
+        .join(
+          '\n',
+        )}\n\nInspect the error code together with status and class; retry only when the operation permits it. Declared values:\n\n` +
+      [...values]
+        .sort()
+        .map((value) => '- ' + literal(value))
+        .join('\n') +
+      '\n\n',
   };
 }

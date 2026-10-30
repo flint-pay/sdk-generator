@@ -74,9 +74,7 @@ const config = {
   requests: { style: 'object' },
   responses: { return: 'result' },
   errors: {
-    codePath: 'error.code',
-    detailsPath: 'error',
-    retry: { path: 'error.remediation.retry', retryValues: ['same_request'] },
+    retry: { path: 'remediation.retry', retryValues: ['same_request'] },
   },
   operations: policies,
 };
@@ -319,9 +317,10 @@ async function nodeCase(row) {
     if (row.error === 'ServerError') {
       assert.equal(error.code, 'old_rule');
       assert.equal(
-        error.details.remediation.retry,
-        'same_request' === row.signal ? 'same_request' : row.signal,
+        error.remediation.retry,
+        ['same_request', 'after_refresh', 'none'].includes(row.signal) ? row.signal : undefined,
       );
+      assert.equal(error.body.error.remediation.retry, row.signal);
       assert.equal(
         error.outcome,
         ['auto', 'required', 'plain'].includes(row.op) ? 'unknown' : 'response',
@@ -464,7 +463,6 @@ c.api.read();
 
 test('configuration and serialized runtime boundaries reject malformed retry declarations', () => {
   const bad = [
-    { errors: { retry: config.errors.retry } },
     ...[
       null,
       {},
@@ -508,7 +506,6 @@ test('configuration and serialized runtime boundaries reject malformed retry dec
   );
   const plan = compileSdkContract(contract).plan.runtime;
   const invalid = [
-    { ...plan, errors: { retry: config.errors.retry } },
     { ...plan, errors: { ...config.errors, retry: null } },
     { ...plan, errors: { ...config.errors, retry: { path: '', retryValues: [] } } },
     { ...plan, operations: [{ ...plan.operations[0], retry: { ...retry, maxDelayMs: -1 } }] },

@@ -188,9 +188,8 @@
     "InventoryAllocationPolicyConfiguration": "InventoryAllocationConfigurationValue"
   },
   "errors": {
-    "codePath": "error.code",
-    "messagePath": "error.message",
-    "detailsPath": "error",
+    "objectPath": "error",
+    "fields": { "code": "code", "message": "message" },
     "requestIdHeader": "X-Request-Id"
   },
   "webhook": {

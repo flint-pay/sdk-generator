@@ -73,7 +73,7 @@ Unknown configuration keys fail with a source location. Capability declarations 
 | `overrides`            | Explicit root-document JSON Pointer replacements before reference resolution; see [overrides](#overrides).                                                      |
 | `validation`           | `encoding` by default; `schema` adds supported request bounds, lengths and patterns; see [validation](#validation).                                             |
 | `auth`                 | Optional security scheme selection or named modes. Required when multiple declared schemes need disambiguation; see [authentication](#authentication).          |
-| `errors`               | Optional provider error code/message/details paths and request-ID header; see [errors](#errors).                                                                |
+| `errors`               | Optional error envelope and field paths, retry signals and request-ID header; see [errors](#errors).                                                            |
 | `apiVersion`           | Optional pinned request header and value; see [API version pin](#api-version-pin).                                                                              |
 | `webhook`              | Optional signing format and event schemas; see [webhooks](#webhooks).                                                                                           |
 | `money`                | Optional explicit currency precision table; see [money](#money).                                                                                                |
@@ -285,14 +285,14 @@ All four fields (`maxAttempts`, `statuses`, `transport`, `baseDelayMs`) are requ
 - 409 and 412 cannot appear in `statuses`. 412 is never retried.
 - Transport replay applies only to fully encoded JSON bodies.
 
-For a body-driven retry decision, configure top-level `errors.retry` together with `errors.codePath`:
+For a body-driven retry decision, configure top-level `errors.retry` relative to `errors.objectPath`:
 
 ```json
 {
   "errors": {
-    "codePath": "error.code",
+    "objectPath": "error",
     "retry": {
-      "path": "error.remediation.retry",
+      "path": "remediation.retry",
       "retryValues": ["same_request"]
     }
   }
@@ -315,7 +315,7 @@ Without `errors.retry`, retry specific 409 error codes by adding `errors` to the
 }
 ```
 
-Use the provider's code and set top-level `errors.codePath` (for example `error.code`). These matches obey the same attempt, deadline and idempotency limits. Other 409 codes stay conflicts. A 409 rule requires declared idempotency and cannot be used for conditional updates.
+Use the API code at `errors.fields.code`, relative to `errors.objectPath`. These matches obey the same attempt, deadline and idempotency limits. Other 409 codes stay conflicts. A 409 rule requires declared idempotency and cannot be used for conditional updates.
 
 ### Idempotency
 
@@ -606,17 +606,34 @@ Money-operation profiles can list pay, confirm, capture and all refund-creating 
 
 ## Errors
 
-`errors` maps provider error conventions:
+`errors` maps the API envelope without fixing its wire layout in either runtime:
 
-| Field             | Default                       | Meaning                                                        |
-| ----------------- | ----------------------------- | -------------------------------------------------------------- |
-| `codePath`        | `code`                        | Dot path to the provider error code.                           |
-| `messagePath`     | `message`                     | Dot path to the server message.                                |
-| `detailsPath`     | The whole redacted error body | Dot path to error details.                                     |
-| `requestIdHeader` | `x-request-id`                | Response header with the request ID.                           |
-| `inProgressCodes` | `[]`                          | Error codes whose answer means the operation is still running. |
+```json
+{
+  "errors": {
+    "objectPath": "error",
+    "fields": {
+      "code": "code",
+      "message": "message",
+      "type": "type",
+      "param": "param",
+      "details": "details",
+      "remediation": "remediation",
+      "errorSource": "error_source",
+      "docUrl": "doc_url",
+      "requestId": "request_id",
+      "requestLogUrl": "request_log_url"
+    },
+    "requestIdHeader": "X-Request-Id",
+    "retry": { "path": "remediation.retry", "retryValues": ["same_request"] },
+    "inProgressCodes": ["IDEMPOTENCY_KEY_IN_PROGRESS"]
+  }
+}
+```
 
-For nested errors: `{"codePath":"error.code","messagePath":"error.message","detailsPath":"error","inProgressCodes":["IDEMPOTENCY_KEY_IN_PROGRESS"]}`. Paths traverse JSON objects and array indices. See [errors and retries](using-sdks.md#errors-and-retries) for how messages, codes and details are read and redacted.
+`objectPath` defaults to `error`; use `""` for a top-level envelope. The `fields` entries above are defaults and all paths, including `retry.path`, are relative to that object. Paths traverse JSON objects and array indices. `requestIdHeader` defaults to `x-request-id` and takes precedence over the envelope request ID. `inProgressCodes` defaults to `[]`.
+
+Field types and generated `ERRORS.md` come from declared error response schemas. Explicitly configured fields missing from every error schema produce a diagnostic. `remediation.retry` is closed to `same_request`, `after_refresh` and `none`; other enum values remain extensible. See [errors and retries](using-sdks.md#errors-and-retries) for mapping, fallback and redaction behavior.
 
 ## Documentation and examples
 
