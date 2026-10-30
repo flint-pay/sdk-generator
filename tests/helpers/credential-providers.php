@@ -135,7 +135,7 @@ foreach (['provider', 'closureString', 'closureCredential'] as $form) {
             try {
                 $result = $client->api->$op(options: $requestSettings->withDeadline(30000));
                 same(
-                    $result->meta['attempts'],
+                    $result->lastResponse()->attempts,
                     isset($c['requests']) ? 1 : count($c['headers']),
                     $c['name'],
                 );

@@ -216,7 +216,7 @@ const rows = [
     op: 'auto',
     options: { maxAttempts: 0 },
     calls: 0,
-    error: 'InvalidInputError',
+    error: 'ConfigurationError',
     outcome: 'not_sent',
   },
   {
@@ -224,7 +224,7 @@ const rows = [
     op: 'required',
     options: { idempotencyKey: 'saved-key', maxAttempts: 0 },
     calls: 0,
-    error: 'InvalidInputError',
+    error: 'ConfigurationError',
     outcome: 'not_sent',
   },
   {
@@ -311,7 +311,11 @@ async function nodeCase(row) {
   });
   try {
     const result = await client.api[row.op ?? 'read']({}, row.options);
-    return { calls, key: result.meta.idempotencyKey ?? null, elapsed: performance.now() - start };
+    return {
+      calls,
+      key: result.lastResponse.idempotencyKey ?? null,
+      elapsed: performance.now() - start,
+    };
   } catch (error) {
     if (row.message) assert.match(error.message, row.message);
     if (row.error === 'ServerError') {
@@ -382,7 +386,7 @@ foreach(json_decode(file_get_contents($argv[2]),true) as $row){
     }
     return ['status'=>204,'headers'=>[],'body'=>''];
   }));
-  try{$result=$client->api->{$row['op']??'read'}([],new \RetrySignals\RequestOptions(...($row['options']??[])));$results[]=['calls'=>$calls,'key'=>$result->meta['idempotencyKey']??null,'elapsed'=>(hrtime(true)-$start)/1000000];}
+  try{$result=$client->api->{$row['op']??'read'}([],new \RetrySignals\RequestOptions(...($row['options']??[])));$results[]=['calls'=>$calls,'key'=>$result->lastResponse()->idempotencyKey??null,'elapsed'=>(hrtime(true)-$start)/1000000];}
   catch(\RetrySignals\SdkError $error){
     if(($row['name']??'')==='required missing key' && !str_contains($error->getMessage(),'api.required requires idempotencyKey'))throw new \Exception('Missing method/key guidance');
     if(($row['error']??null)==='ServerError' && ($error->code!=='old_rule'||$error->outcome!==(in_array($row['op']??'read',['auto','required','plain'],true)?'unknown':'response')))throw new \Exception('Lost last error');
@@ -399,9 +403,9 @@ echo json_encode($results,JSON_THROW_ON_ERROR);`,
   rows.forEach((row, index) => verify(row, actual[index]));
 });
 
-test('required keys are required across Node styles, aliases and WithResponse calls', async () => {
+test('required keys are required across Node styles, aliases and response info', async () => {
   for (const style of ['object', 'positional']) {
-    const localConfig = { ...config, requests: { style }, responses: { return: 'payload' } };
+    const localConfig = { ...config, requests: { style }, responses: { return: 'result' } };
     writeFileSync(join(root, 'typed-config.json'), JSON.stringify(localConfig));
     const out = join(root, style);
     generate(loadContract(join(root, 'api.json'), join(root, 'typed-config.json')), out);
@@ -410,19 +414,19 @@ test('required keys are required across Node styles, aliases and WithResponse ca
       baseUrl: 'https://example.invalid',
       transport: async () => new Response(null, { status: 204 }),
     });
-    const response = await client.api.autoWithResponse({}, {});
-    assert.match(response.meta.idempotencyKey, /^flint-sdk-/);
+    const response = await client.api.auto({}, {});
+    assert.match(response.lastResponse.idempotencyKey, /^flint-sdk-/);
     execFileSync('php', [
       '-r',
       String.raw`
 require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
 $c=new \RetrySignals\Client(new \RetrySignals\ClientOptions(baseUrl:'https://example.invalid',transport:fn()=>['status'=>204,'headers'=>[],'body'=>'']));
-$r=$c->api->autoWithResponse();if(!str_starts_with($r->meta['idempotencyKey']??'','flint-sdk-'))throw new \Exception('Missing WithResponse key');`,
+$r=$c->api->auto();if(!str_starts_with($r->lastResponse()->idempotencyKey??'','flint-sdk-'))throw new \Exception('Missing response key');`,
       join(out, 'php'),
     ]);
     const source = `import {Client} from './index.js';
 const c = new Client({baseUrl:'https://example.invalid'});
-${['required', 'saved', 'requiredWithResponse', 'savedWithResponse']
+${['required', 'saved']
   .map(
     (method) => `
 c.api.${method}({}, {idempotencyKey:'saved-key'});
@@ -575,8 +579,8 @@ test('default transports retry a timeout after send with the same key and preser
   try {
     const client = new sdk.Client({ baseUrl, allowInsecureHttp: true });
     const result = await client.api.auto({}, { timeoutMs: 100, deadlineMs: 3000 });
-    assert.equal(result.meta.attempts, 2);
-    assert.equal(calls.get(result.meta.idempotencyKey), 2);
+    assert.equal(result.lastResponse.attempts, 2);
+    assert.equal(calls.get(result.lastResponse.idempotencyKey), 2);
     await assert.rejects(
       client.api.auto({}, { idempotencyKey: 'node-deadline', timeoutMs: 1000, deadlineMs: 100 }),
       (error) => error.name === 'TimeoutError' && error.idempotencyKey === 'node-deadline',
@@ -588,8 +592,8 @@ test('default transports retry a timeout after send with the same key and preser
 require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
 $c=new \RetrySignals\Client(new \RetrySignals\ClientOptions(baseUrl:$argv[2],allowInsecureHttp:true));
 $r=$c->api->auto([],new \RetrySignals\RequestOptions(timeoutMs:100,deadlineMs:3000));
-if($r->meta['attempts']!==2)throw new \Exception('Did not retry timeout');
-echo $r->meta['idempotencyKey'];
+if($r->lastResponse()->attempts!==2)throw new \Exception('Did not retry timeout');
+echo $r->lastResponse()->idempotencyKey;
 try{$c->api->auto([],new \RetrySignals\RequestOptions(idempotencyKey:'php-deadline',timeoutMs:1000,deadlineMs:100));throw new \Exception('No deadline');}
 catch(\RetrySignals\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='TimeoutError'||$e->idempotencyKey!=='php-deadline')throw $e;}
 $c->close();`,
@@ -660,7 +664,7 @@ test('truncated responses retain Retry-After and the HTTP 412 veto in generated 
           return true;
         });
       } else {
-        assert.equal((await request).meta.attempts, 2);
+        assert.equal((await request).lastResponse.attempts, 2);
       }
       assert.equal(calls.get(key), row.calls, row.name);
     }
@@ -674,7 +678,7 @@ foreach(json_decode($argv[3],true) as $row){
   $key='php-'.$row['name'];
   try{
     $result=$c->api->auto([],new \RetrySignals\RequestOptions(idempotencyKey:$key,deadlineMs:1000));
-    $results[]=['attempts'=>$result->meta['attempts']];
+    $results[]=['attempts'=>$result->lastResponse()->attempts];
   }catch(\RetrySignals\SdkError $e){
     $results[]=['name'=>substr(strrchr(get_class($e), chr(92)), 1),'outcome'=>$e->outcome,'status'=>$e->status,'retryAfterMs'=>$e->retryAfterMs,'retryAllowed'=>$e->retryAllowed,'idempotencyKey'=>$e->idempotencyKey];
   }

@@ -354,11 +354,11 @@ const methods=${JSON.stringify(summary.methods)};
 assert.equal(methods.length,ids.length);
 for(const {resource,method,payload,pagination,polling} of methods) {
  assert.equal(typeof c[resource][method],'function');
- if(payload)assert.equal(typeof c[resource][method+'WithResponse'],'function');
+ assert.equal(c[resource][method+'WithResponse'],undefined);
  if(pagination)for(const suffix of ['Pages','Items'])assert.equal(typeof c[resource][method+suffix],'function');
  if(polling)assert.equal(typeof c[resource][method+'Wait'],'function');
- if(payload && pagination)assert.equal(typeof c[resource][method+'PagesWithResponse'],'function');
- if(payload && polling)assert.equal(typeof c[resource][method+'WaitWithResponse'],'function');
+ assert.equal(c[resource][method+'PagesWithResponse'],undefined);
+ assert.equal(c[resource][method+'WaitWithResponse'],undefined);
 }
 assert.ok(Object.keys(c).length > 1);
 assert.equal(typeof c.paymentIntents.create,'function');
@@ -409,10 +409,10 @@ const audit = new Client({token:'synthetic', transport:async (url, init) => {
   return new Response(wire,{status,headers:{'content-type':'application/json','x-request-id':'req_00EBMKRW6DJV5N1V6ZRYF9EGQ9'}});
 }});
 assert.deepEqual(JSON.parse(JSON.stringify(await audit.paymentIntents.get('pi_fixture'))),payment);
-const fullResponse = await audit.paymentIntents.getWithResponse('pi_fixture');
-assert.equal(fullResponse.body.request_id,'req_00RZ0FQ2N30SJR0PYX7Y97MY7N');
-assert.equal(fullResponse.body.meta.trace_id,'provider');
-assert.equal(fullResponse.meta.requestId,'req_00EBMKRW6DJV5N1V6ZRYF9EGQ9');
+const fullResponse = await audit.paymentIntents.get('pi_fixture');
+assert.equal(fullResponse.lastResponse.body.request_id,'req_00RZ0FQ2N30SJR0PYX7Y97MY7N');
+assert.equal(fullResponse.lastResponse.body.meta.trace_id,'provider');
+assert.equal(fullResponse.lastResponse.requestId,'req_00EBMKRW6DJV5N1V6ZRYF9EGQ9');
 const createdPayment = await audit.paymentIntents.create({amount_money:{amount:'100',currency:'USD'},payment_options:['card'],capture_method:'manual'});
 assert.equal(createdPayment.status,'requires_payment_method');
 const firstPage = await audit.paymentIntents.list({page_size:1});
@@ -424,12 +424,12 @@ assert.equal(auditPages.length,2);
 assert.equal(auditPages[0].next_page_token,'page_two');
 assert.equal(auditPages[0].data[0].payment_intent_id,'pi_fixture');
 assert.equal(auditPages[1].data[0].payment_intent_id,'pi_second');
-const fullPages = await Array.fromAsync(audit.paymentIntents.listPagesWithResponse({page_size:1}));
+const fullPages = await Array.fromAsync(audit.paymentIntents.listPages({page_size:1}));
 assert.equal(fullPages.length,2);
-assert.equal(fullPages[0].body.next_page_token,'page_two');
-assert.equal(fullPages[1].body.data[0].payment_intent_id,'pi_second');
-assert.equal(fullPages[1].meta.requestId,'req_00EBMKRW6DJV5N1V6ZRYF9EGQ9');
-assert.equal(JSON.parse(fullPages[0].raw).next_page_token,'page_two');
+assert.equal(fullPages[0].lastResponse.body.next_page_token,'page_two');
+assert.equal(fullPages[1].lastResponse.body.data[0].payment_intent_id,'pi_second');
+assert.equal(fullPages[1].lastResponse.requestId,'req_00EBMKRW6DJV5N1V6ZRYF9EGQ9');
+assert.deepEqual(fullPages[0].lastResponse.body,fullPages[0]);
 assert.deepEqual((await audit.balances.list()).data,[]);
 assert.equal(audit.balances.listItems,undefined);
 const createdReport = await audit.reports.create({currency:'USD',interval_start_at:report.interval_start_at,interval_end_at:report.interval_end_at,report_type:report.report_type});
@@ -441,10 +441,10 @@ const waited = await audit.reports.getWait('rep_fixture',{deadlineMs:5000});
 assert.equal(waited.status,'succeeded');
 assert.equal(reportReads,2);
 reportReads = 0;
-const waitedResponse = await audit.reports.getWaitWithResponse('rep_fixture',{deadlineMs:5000});
-assert.equal(waitedResponse.body.data.status,'succeeded');
-assert.equal(waitedResponse.meta.requestId,'req_00EBMKRW6DJV5N1V6ZRYF9EGQ9');
-assert.equal(JSON.parse(waitedResponse.raw).data.status,'succeeded');
+const waitedResponse = await audit.reports.getWait('rep_fixture',{deadlineMs:5000});
+assert.equal(waitedResponse.lastResponse.body.data.status,'succeeded');
+assert.equal(waitedResponse.lastResponse.requestId,'req_00EBMKRW6DJV5N1V6ZRYF9EGQ9');
+assert.deepEqual(waitedResponse.lastResponse.body.data,waitedResponse);
 assert.equal(reportReads,2);
 await audit.close();
 
@@ -471,11 +471,9 @@ $c=new Client(new ClientOptions(token:'synthetic'));
 $ids=json_decode('${JSON.stringify(summary.operations)}',true,512,JSON_THROW_ON_ERROR);
 foreach(json_decode('${JSON.stringify(summary.methods)}',true) as $method) {
  $names=[$method['method']];
- if($method['payload'])$names[]=$method['method'].'WithResponse';
  if($method['pagination'])foreach(['Pages','Items'] as $suffix)$names[]=$method['method'].$suffix;
  if($method['polling'])$names[]=$method['method'].'Wait';
- if($method['payload'] && $method['pagination'])$names[]=$method['method'].'PagesWithResponse';
- if($method['payload'] && $method['polling'])$names[]=$method['method'].'WaitWithResponse';
+ foreach(['WithResponse','PagesWithResponse','WaitWithResponse'] as $suffix)if(method_exists($c->{$method['resource']},$method['method'].$suffix))throw new Exception('Removed companion remains');
  foreach($names as $name)if(!method_exists($c->{$method['resource']},$name))throw new Exception('Missing method '.$name);
 }
 foreach(json_decode('${JSON.stringify(summary.incoming)}',true,512,JSON_THROW_ON_ERROR) as $incoming) if(!class_exists('Example'.chr(92).'FlintFull'.chr(92).$incoming['model'].'Input'))throw new Exception('Missing incoming model '.$incoming['name']);
@@ -515,8 +513,8 @@ $audit = new Client(new ClientOptions(token:'synthetic', transport:function($req
 }));
 $got=$audit->paymentIntents->get('pi_fixture');
 if($got->getStatus()!=='requires_payment_method' || $got->getAmountMoney()->getAmount()!=='9007199254740993')throw new Exception('unwrapped payment');
-$full=$audit->paymentIntents->getWithResponse('pi_fixture');
-if($full->body->getRequestId()!=='req_00RZ0FQ2N30SJR0PYX7Y97MY7N' || $full->body->getMeta()->getTraceId()!=='provider' || $full->meta['requestId']!=='req_00EBMKRW6DJV5N1V6ZRYF9EGQ9')throw new Exception('full response metadata');
+$full=$audit->paymentIntents->get('pi_fixture');
+if($full->lastResponse()->body->getRequestId()!=='req_00RZ0FQ2N30SJR0PYX7Y97MY7N' || $full->lastResponse()->body->getMeta()->getTraceId()!=='provider' || $full->lastResponse()->requestId!=='req_00EBMKRW6DJV5N1V6ZRYF9EGQ9')throw new Exception('full response metadata');
 $created=$audit->paymentIntents->create(['amount_money'=>['amount'=>'100','currency'=>'USD'],'payment_options'=>['card'],'capture_method'=>'manual']);
 if($created->getStatus()!=='requires_payment_method')throw new Exception('create shape');
 $first=$audit->paymentIntents->list(['page_size'=>1]);
@@ -525,16 +523,16 @@ $ids=[];foreach($audit->paymentIntents->listItems(['page_size'=>1]) as $item)$id
 if($ids!==['pi_fixture','pi_second'])throw new Exception('pagination items');
 $pages=iterator_to_array($audit->paymentIntents->listPages(['page_size'=>1]));
 if(count($pages)!==2 || $pages[0]->getNextPageToken()!=='page_two' || $pages[0]->getData()[0]->getPaymentIntentId()!=='pi_fixture' || $pages[1]->getData()[0]->getPaymentIntentId()!=='pi_second')throw new Exception('pagination pages');
-$fullPages=iterator_to_array($audit->paymentIntents->listPagesWithResponse(['page_size'=>1]));
-if(count($fullPages)!==2 || $fullPages[0]->body->getNextPageToken()!=='page_two' || $fullPages[1]->body->getData()[0]->getPaymentIntentId()!=='pi_second' || $fullPages[1]->meta['requestId']!=='req_00EBMKRW6DJV5N1V6ZRYF9EGQ9' || json_decode($fullPages[0]->raw,true)['next_page_token']!=='page_two')throw new Exception('pagination full pages');
+$fullPages=iterator_to_array($audit->paymentIntents->listPages(['page_size'=>1]));
+if(count($fullPages)!==2 || $fullPages[0]->lastResponse()->body->getNextPageToken()!=='page_two' || $fullPages[1]->lastResponse()->body->getData()[0]->getPaymentIntentId()!=='pi_second' || $fullPages[1]->lastResponse()->requestId!=='req_00EBMKRW6DJV5N1V6ZRYF9EGQ9' || $fullPages[0]->lastResponse()->attempts!==1)throw new Exception('pagination full pages');
 if($audit->balances->list()->getData()!==[] || method_exists($audit->balances,'listItems'))throw new Exception('nonpaginated balances');
 $created=$audit->reports->create(['currency'=>'USD','interval_start_at'=>$report['interval_start_at'],'interval_end_at'=>$report['interval_end_at'],'report_type'=>$report['report_type']]);
 if($created->status!=='pending' || count($requestKeys)!==2 || !is_string($requestKeys[0]) || $requestKeys[0]==='' || $requestKeys[0]!==$requestKeys[1])throw new Exception('stable retry key');
 $waited=$audit->reports->getWait('rep_fixture',new Example\\FlintFull\\RequestOptions(deadlineMs:5000));
 if($waited->status!=='succeeded' || $reportReads!==2)throw new Exception('report polling');
 $reportReads=0;
-$waitedResponse=$audit->reports->getWaitWithResponse('rep_fixture',new Example\\FlintFull\\RequestOptions(deadlineMs:5000));
-if($waitedResponse->body->getData()->status!=='succeeded' || $waitedResponse->meta['requestId']!=='req_00EBMKRW6DJV5N1V6ZRYF9EGQ9' || json_decode($waitedResponse->raw,true)['data']['status']!=='succeeded' || $reportReads!==2)throw new Exception('report full polling');
+$waitedResponse=$audit->reports->getWait('rep_fixture',new Example\\FlintFull\\RequestOptions(deadlineMs:5000));
+if($waitedResponse->lastResponse()->body->getData()->status!=='succeeded' || $waitedResponse->lastResponse()->requestId!=='req_00EBMKRW6DJV5N1V6ZRYF9EGQ9' || $waitedResponse->lastResponse()->attempts!==1 || $reportReads!==2)throw new Exception('report full polling');
 $audit->close();
 
 $streaming=new Client(new ClientOptions(token:'synthetic',transport:function($request){

@@ -722,7 +722,7 @@ test('example credential locals avoid keywords and globals the examples use', as
   }
 });
 
-test('examples send optional named-mode credentials only when set and skip unused results', async () => {
+test('examples send optional named-mode credentials only when set and print response info', async () => {
   const { execFile } = await import('node:child_process');
   const { promisify } = await import('node:util');
   const { createServer } = await import('node:http');
@@ -766,7 +766,7 @@ test('examples send optional named-mode credentials only when set and skip unuse
     join(local, 'sdk.json'),
     JSON.stringify({
       ...config,
-      responses: { return: 'payload' },
+      responses: { return: 'result' },
       auth: {
         modes: { merchant: { schemes: ['Bearer'] }, pair: { schemes: ['Id', 'Secret'] } },
         shortcuts: { token: { mode: 'merchant', scheme: 'Bearer' } },
@@ -801,8 +801,15 @@ test('examples send optional named-mode credentials only when set and skip unuse
         join(output, target, `examples/${name}.${ext}`),
       );
       for (const file of files) {
-        // A 204 success with a default error body has no result to print.
-        assert.doesNotMatch(readFileSync(file, 'utf8'), /result/);
+        // Empty successes still expose request metadata without printing nonexistent data.
+        const source = readFileSync(file, 'utf8');
+        assert.match(
+          source,
+          target === 'node'
+            ? /console\.log\(result\.lastResponse\.requestId\)/
+            : /\$result->lastResponse\(\)->requestId/,
+        );
+        assert.doesNotMatch(source, /result(?:\.|->)data/);
       }
       const run = async (env) => {
         const before = seen.length;

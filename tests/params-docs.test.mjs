@@ -80,6 +80,7 @@ function fixture(t) {
   const config = {
     operationNames: 'path',
     version: '1.0.0',
+    responses: { return: 'result' },
     validation: 'schema',
     apiVersion: { header: 'Flint-Version', value: '2026-10-01' },
     npm: { name: '@example/params' },

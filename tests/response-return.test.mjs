@@ -1,4 +1,3 @@
-import { readReference } from './helpers/package-docs.mjs';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
@@ -17,7 +16,6 @@ import {
 import { compileSdkContract } from '../dist/target-plan.js';
 import { compareCompiledContracts } from '../dist/compiled-compatibility.js';
 import { checkVersionPolicy } from '../dist/version.js';
-import { assertCompiledSnapshot } from '../dist/compiled-record.js';
 
 const root = mkdtempSync(join(tmpdir(), 'sdk-response-return-'));
 after(() => rmSync(root, { recursive: true, force: true }));
@@ -41,6 +39,7 @@ function fixture({
   parameters,
   components,
   configExtra = {},
+  media = 'application/json',
 } = {}) {
   const dir = join(root, String(count++));
   mkdirSync(dir);
@@ -54,7 +53,7 @@ function fixture({
           operationId: 'getItem',
           ...(parameters ? { parameters } : {}),
           responses: {
-            200: { description: 'OK', content: { 'application/json': { schema } } },
+            200: { description: 'OK', content: { [media]: { schema } } },
             ...extraResponses,
           },
         },
@@ -96,17 +95,23 @@ async function client(
       }),
   });
 }
-function php(f, program, body = '{"data":{"id":"p_1","amount":9007199254740993},"next":null}') {
+function php(
+  f,
+  program,
+  body = '{"data":{"id":"p_1","amount":9007199254740993},"next":null}',
+  redactFields = [],
+) {
   return execFileSync(
     'php',
     [
       '-r',
       `require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
 use Example\\ResponseReturn\\{Client,ClientOptions};
-$c=new Client(new ClientOptions('https://example.invalid',transport:fn($r)=>['status'=>200,'headers'=>['content-type'=>'application/json','x-request-id'=>'req_00VZKVWV7E7ECWMRV2HQKH1E8M'],'body'=>$argv[2]]));
+$c=new Client(new ClientOptions('https://example.invalid',redactFields:json_decode($argv[3],true,flags:JSON_THROW_ON_ERROR),transport:fn($r)=>['status'=>200,'headers'=>['content-type'=>'application/json','x-request-id'=>'req_00VZKVWV7E7ECWMRV2HQKH1E8M'],'body'=>$argv[2]]));
 ${program}`,
       join(f.output, 'php'),
       body,
+      JSON.stringify(redactFields),
     ],
     { encoding: 'utf8' },
   );
@@ -136,7 +141,7 @@ function typecheck(f, source) {
   }
 }
 
-test('explicit result configs retain Result, and a per-operation opt-out overrides SDK defaults', async () => {
+test('result modes expose ResponseInfo and remove response companions', async () => {
   for (const options of [
     { responses: { return: 'result' } },
     {
@@ -145,167 +150,337 @@ test('explicit result configs retain Result, and a per-operation opt-out overrid
     },
   ]) {
     const f = fixture(options),
-      c = await client(f);
-    assert.equal((await c.api.getItem()).data.data.id, 'p_1');
+      c = await client(f),
+      result = await c.api.getItem();
+    assert.equal(result.data.data.id, 'p_1');
+    assert.equal(result.lastResponse.status, 200);
+    assert.equal(result.lastResponse.body, result.data);
+    assert.match(result.raw, /9007199254740993/);
+    assert.equal('meta' in result, false);
     assert.equal(c.api.getItemWithResponse, undefined);
-    assert.equal(php(f, 'echo $c->api->getItem()->data->data->id;'), 'p_1');
-  }
-});
-for (const sharing of [false, true])
-  test(`payload paths and WithResponse preserve exact values in both targets (sharing=${sharing})`, async () => {
-    const f = fixture({
-      responses: { return: 'payload' },
-      operations: { getItem: { aliases: ['retrieve'], response: { payloadPath: 'data' } } },
-      sharing,
-    });
-    const c = await client(f);
-    assert.equal((await c.api.getItem()).id, 'p_1');
-    assert.equal((await c.api.retrieve()).amount, '9007199254740993');
-    const full = await c.api.getItemWithResponse();
-    assert.equal(full.body.data.id, 'p_1');
-    assert.equal(full.meta.status, 200);
-    assert.match(full.raw, /9007199254740993/);
-    assert.equal(full.data, undefined);
-    assert.equal((await c.api.retrieveWithResponse()).body.data.id, 'p_1');
     assert.equal(
       php(
         f,
-        "$p=$c->api->getItem();$r=$c->api->retrieveWithResponse();if($p->amount!=='9007199254740993'||$r->meta['status']!==200)throw new Exception('wrong value');echo $p->id.' '.$r->body->data->id;",
+        "$r=$c->api->getItem();if($r->lastResponse()->body!==$r->data||$r->lastResponse()->status!==200||property_exists($r,'meta'))throw new Exception('metadata');echo $r->data->data->id;",
       ),
-      'p_1 p_1',
+      'p_1',
+    );
+    for (const file of ['node/index.d.ts', 'php/src/Client.php'])
+      assert.doesNotMatch(f.read(file), /SdkResponse|getItemWithResponse/);
+  }
+});
+
+for (const sharing of [false, true])
+  test(`payload lastResponse retains the declared component (sharing=${sharing})`, async () => {
+    const f = fixture({
+      responses: { return: 'payload', payloadPath: 'data' },
+      sharing,
+      operations: { getItem: { aliases: ['retrieve'] } },
+      schema: { $ref: '#/components/schemas/GetCustomerResponse' },
+      components: {
+        schemas: {
+          Customer: {
+            ...item,
+            properties: { ...item.properties, child: { $ref: '#/components/schemas/Customer' } },
+          },
+          GetCustomerResponse: {
+            type: 'object',
+            required: ['data', 'request_id', 'meta'],
+            properties: {
+              data: { $ref: '#/components/schemas/Customer' },
+              request_id: { type: 'string' },
+              meta: {
+                type: 'object',
+                required: ['idempotency_replayed'],
+                properties: { idempotency_replayed: { type: 'boolean' } },
+              },
+            },
+          },
+        },
+      },
+    });
+    const raw =
+      '{"data":{"id":"p_1","amount":9007199254740993,"child":{"id":"child"}},"request_id":"body-id","meta":{"idempotency_replayed":true}}';
+    const c = await client(f, raw),
+      payload = await c.api.getItem(),
+      info = payload.lastResponse;
+    const value = { id: 'p_1', amount: '9007199254740993', child: { id: 'child' } };
+    assert.equal(info.status, 200);
+    assert.equal(info.requestId, 'req_00VZKVWV7E7ECWMRV2HQKH1E8M');
+    assert.deepEqual(info.requestIds, [info.requestId]);
+    assert.equal(info.attempts, 1);
+    assert.equal(info.idempotencyKey, undefined);
+    assert.ok(info.durationMs >= 0);
+    assert.equal(info.headers['content-type'], 'application/json');
+    assert.deepEqual(JSON.parse(JSON.stringify(info.body.data)), value);
+    assert.equal(info.body.meta.idempotency_replayed, true);
+    assert.equal(info.body.request_id, 'body-id');
+    assert.deepEqual(Object.getOwnPropertyDescriptor(payload, 'lastResponse'), {
+      value: info,
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    });
+    const reference = Object.assign(Object.create(Object.getPrototypeOf(payload)), {
+      ...value,
+      child: Object.assign(Object.create(Object.getPrototypeOf(payload.child)), value.child),
+    });
+    assert.deepEqual(payload, reference);
+    assert.deepEqual({ ...payload }, { ...reference });
+    assert.deepEqual(structuredClone(payload), value);
+    assert.deepEqual(Object.keys(payload).sort(), Object.keys(value).sort());
+    assert.equal(JSON.stringify(payload), JSON.stringify(value));
+    assert.doesNotMatch(inspect(payload), /lastResponse|requestIds|body-id/);
+    assert.equal('lastResponse' in payload.child, false);
+    assert.equal((await c.api.retrieve()).lastResponse.body.request_id, 'body-id');
+    assert.equal(c.api.getItemWithResponse, undefined);
+    assert.equal(c.api.retrieveWithResponse, undefined);
+    assert.equal(
+      php(
+        f,
+        String.raw`$p=$c->api->getItem();$r=$p->lastResponse();
+if($r->status!==200||$r->requestId!=='req_00VZKVWV7E7ECWMRV2HQKH1E8M'||$r->requestIds!==[$r->requestId]||$r->attempts!==1||$r->durationMs<0||$r->body->meta->idempotency_replayed!==true)throw new Exception('response info');
+if($p->child->lastResponse()!==null)throw new Exception('nested metadata');
+$made=new Example\ResponseReturn\Customer(['id'=>'made']);if($made->lastResponse()!==null)throw new Exception('user model metadata');
+if(method_exists($c->api,'getItemWithResponse')||method_exists($c->api,'retrieveWithResponse')||class_exists('Example\\ResponseReturn\\SdkResponse'))throw new Exception('removed companion');
+echo $p->id;`,
+        raw,
+      ),
+      'p_1',
     );
     typecheck(
       f,
-      `import {Client} from './index.js';const c=new Client({baseUrl:'https://example.invalid'});const p=await c.api.getItem();const id:string=p.id;const amount:string|undefined=p.amount;const r=await c.api.getItemWithResponse();const other:string=r.body.data.id;
-// @ts-expect-error No SDK envelope on a payload
-const wrong:string=p.data;
-// @ts-expect-error Metadata is only on WithResponse
-const metadata:string=p.meta;`,
+      `import {Client, type Customer, type GetCustomerResponse, type ResponseInfo, type WithResponseInfo} from './index.js';
+const c=new Client({baseUrl:'https://example.invalid'});const pending:Promise<WithResponseInfo<Customer,GetCustomerResponse>>=c.api.getItem();
+const p=await pending;const model:Customer=p;const full:GetCustomerResponse=p.lastResponse.body;const info:ResponseInfo<GetCustomerResponse>=p.lastResponse;
+const replayed:boolean=full.meta.idempotency_replayed;
+// @ts-expect-error request metadata is readonly
+p.lastResponse=info;
+// @ts-expect-error no SDK envelope on a payload
+p.data;
+// @ts-expect-error companions are removed
+c.api.getItemWithResponse();
+// @ts-expect-error SdkResponse is removed
+import type {SdkResponse} from './index.js';`,
     );
-    assert.doesNotMatch(f.read('node/examples/api-getItem.mjs'), /result\.data|result\.meta/);
-    assert.match(f.read('node/examples/api-getItem.mjs'), /result.id/);
-    assert.doesNotMatch(f.read('php/examples/api-getItem.php'), /result->data|result->meta/);
   });
-test('WithResponse inspection preserves redaction while retaining explicit raw access', async () => {
+
+test('response info falls back to the decoded body request ID when the header is absent', async () => {
   const f = fixture({
-    responses: { return: 'payload' },
+    responses: { return: 'payload', payloadPath: 'data' },
+    operations: { getItem: { resource: 'customers', method: 'get' } },
     schema: {
-      type: 'object',
-      required: ['secret', 'personal'],
-      properties: {
-        secret: { type: 'string', 'x-sensitive': true },
-        personal: { type: 'string' },
-      },
+      ...envelope,
+      required: ['data', 'request_id'],
+      properties: { ...envelope.properties, request_id: { type: 'string' } },
     },
   });
   const { Client } = await import(pathToFileURL(join(f.output, 'node/index.js')));
-  const raw = '{"secret":"sensitive-body","personal":"private-value"}';
   const c = new Client({
     baseUrl: 'https://example.invalid',
-    redactFields: ['personal'],
-    transport: async () =>
-      new Response(raw, {
-        headers: {
-          'content-type': 'application/json',
-          'set-cookie': 'private-cookie',
-          'x-request-id': 'req_00CMVKYVWSTB31XHTN7P81RAQC',
-        },
-      }),
+    transport: async () => Response.json({ data: { id: 'p_1' }, request_id: 'req_body_fallback' }),
   });
-  const full = await c.api.getItemWithResponse();
-  const debug = inspect(full);
-  assert.doesNotMatch(debug, /sensitive-body|private-value|private-cookie|https:|raw:|headers:/);
-  assert.match(debug, /REDACTED/);
-  assert.match(debug, /req_00CMVKYVWSTB31XHTN7P81RAQC/);
-  assert.equal(full.body.secret, 'sensitive-body');
-  assert.equal(full.body.personal, 'private-value');
-  assert.equal(full.meta.headers['set-cookie'], 'private-cookie');
-  assert.equal(full.raw, raw);
+  const value = await c.customers.get();
+  assert.equal(value.lastResponse.status, 200);
+  assert.equal(value.lastResponse.headers['content-type'], 'application/json');
+  assert.equal(JSON.stringify(value), '{"id":"p_1"}');
+  assert.equal(value.lastResponse.requestId, 'req_body_fallback');
+  assert.deepEqual(value.lastResponse.requestIds, ['req_body_fallback']);
+  const program = String.raw`require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
+$c=new Example\ResponseReturn\Client(new Example\ResponseReturn\ClientOptions(baseUrl:'https://example.invalid',transport:fn($r)=>['status'=>200,'headers'=>['content-type'=>'application/json'],'body'=>'{"data":{"id":"p_1"},"request_id":"req_body_fallback"}']));
+$r=$c->customers->get()->lastResponse();echo json_encode([$r->requestId,$r->requestIds]);`;
+  assert.deepEqual(
+    JSON.parse(execFileSync('php', ['-r', program, join(f.output, 'php')], { encoding: 'utf8' })),
+    ['req_body_fallback', ['req_body_fallback']],
+  );
 });
 
-test('whole-body payload returns support bare objects, scalars, null and empty responses', async () => {
-  for (const [schema, body, expected] of [
-    [item, '{"id":"bare"}', { id: 'bare' }],
-    [{ type: 'string' }, '"value"', 'value'],
-    [{ type: 'null' }, 'null', null],
-  ]) {
-    const f = fixture({ responses: { return: 'payload' }, schema });
-    const c = await client(f, body);
-    assert.equal(JSON.stringify(await c.api.getItem()), JSON.stringify(expected));
-    assert.equal(php(f, 'echo json_encode($c->api->getItem());', body), body);
-  }
-  const f = fixture({
-    responses: { return: 'payload' },
-    extraResponses: { 204: { description: 'empty' } },
-  });
-  const c = await client(f, '', 204);
-  assert.equal(await c.api.getItem(), undefined);
-  assert.equal((await c.api.getItemWithResponse()).body, undefined);
-});
-test('payload path configuration rejects missing, optional, nullable and mixed success paths', () => {
-  const bad = [
-    { type: 'object', properties: { data: item } },
-    { type: 'object', required: ['other'], properties: { other: item } },
-    { type: ['object', 'null'], required: ['data'], properties: { data: item } },
-    { oneOf: [envelope, item] },
-  ];
-  for (const schema of bad)
-    assert.throws(
-      () => fixture({ responses: { return: 'payload', payloadPath: 'data' }, schema }),
-      /payloadPath/,
-    );
-  assert.throws(
-    () =>
-      fixture({
-        responses: { return: 'payload', payloadPath: 'data' },
-        extraResponses: { 204: { description: 'empty' } },
-      }),
-    /payloadPath/,
-  );
-  for (const responses of [
-    { return: 'auto' },
-    { return: 'payload', payloadPath: '' },
-    { return: 'payload', payloadPath: 'data..id' },
-    { return: 'payload', payloadPath: '__proto__' },
-    { other: true },
+test('payload return diagnostics require objects without a lastResponse field', () => {
+  for (const schema of [
+    { type: 'string' },
+    { type: 'null' },
+    { type: ['object', 'null'] },
+    { type: 'array', items: item },
+    { type: 'object', properties: { lastResponse: { type: 'string' } } },
   ])
-    assert.throws(() => fixture({ responses }), /response/);
-  assert.throws(
-    () =>
-      fixture({
-        responses: { return: 'result' },
-        operations: { getItem: { response: { payloadPath: 'data' } } },
-      }),
-    /requires return/,
-  );
+    assert.throws(
+      () => fixture({ responses: { return: 'payload' }, schema }),
+      /lastResponse|object|result/,
+    );
   assert.throws(
     () =>
       fixture({
         responses: { return: 'payload' },
-        operations: { getItem: { aliases: ['getItemWithResponse'] } },
+        extraResponses: { 204: { description: 'empty' } },
       }),
-    /collision/,
+    /object|result/,
   );
 });
-test('nested and composed payload paths are validated and decoded', async () => {
+
+test('pages and waits carry their final response while items carry none', async () => {
   const schema = {
-    allOf: [
-      { type: 'object', required: ['wrapper'] },
-      {
-        properties: {
-          wrapper: { anyOf: [envelope, { ...envelope, properties: { data: { type: 'null' } } }] },
-        },
+    type: 'object',
+    required: ['data', 'next', 'state'],
+    properties: {
+      data: {
+        type: 'object',
+        required: ['items'],
+        properties: { items: { type: 'array', items: item } },
       },
-    ],
+      next: { type: ['string', 'null'] },
+      state: { type: 'string' },
+    },
   };
-  const f = fixture({ responses: { return: 'payload', payloadPath: 'wrapper.data' }, schema });
-  const c = await client(f, '{"wrapper":{"data":null}}');
-  assert.equal(await c.api.getItem(), null);
+  const f = fixture({
+    responses: { return: 'payload', payloadPath: 'data' },
+    schema,
+    parameters: [{ in: 'query', name: 'cursor', schema: { type: 'string' } }],
+    operations: {
+      getItem: {
+        pagination: { kind: 'cursor', items: 'data.items', next: 'next', parameter: 'cursor' },
+        polling: { state: 'state', success: ['done'], failure: ['failed'], intervalMs: 1 },
+      },
+    },
+  });
+  const { Client } = await import(pathToFileURL(join(f.output, 'node/index.js')));
+  let calls = 0;
+  const c = new Client({
+    baseUrl: 'https://example.invalid',
+    transport: async (url) => {
+      calls++;
+      const second = url.searchParams.has('cursor');
+      return Response.json(
+        {
+          data: { items: [{ id: second ? 'p_2' : 'p_1' }] },
+          next: second ? null : 'two',
+          state: 'done',
+        },
+        { headers: { 'x-request-id': `request-${calls}` } },
+      );
+    },
+  });
+  const iterator = c.api.getItemPages();
+  assert.equal(calls, 0);
+  const pages = [];
+  for await (const page of iterator) pages.push(page);
+  assert.equal(pages[0].lastResponse.requestId, 'request-1');
+  assert.equal(pages[1].lastResponse.requestId, 'request-2');
+  assert.equal(pages[0].lastResponse.body.next, 'two');
+  assert.equal(pages[1].lastResponse.body.next, null);
+  const items = [];
+  for await (const value of c.api.getItemItems()) {
+    assert.equal('lastResponse' in value, false);
+    items.push(value.id);
+  }
+  assert.deepEqual(items, ['p_1', 'p_2']);
+  const waited = await c.api.getItemWait();
+  assert.equal(waited.lastResponse.body.state, 'done');
+  for (const name of ['getItemWithResponse', 'getItemPagesWithResponse', 'getItemWaitWithResponse'])
+    assert.equal(c.api[name], undefined);
   assert.equal(
-    php(f, 'echo json_encode($c->api->getItem());', '{"wrapper":{"data":null}}'),
-    'null',
+    php(
+      f,
+      String.raw`foreach($c->api->getItemPages() as $p){if($p->lastResponse()->body->state!=='done'||$p->items[0]->lastResponse()!==null)throw new Exception('page metadata');}
+foreach($c->api->getItemItems() as $v)if($v->lastResponse()!==null)throw new Exception('item metadata');
+$p=$c->api->getItemWait();if($p->lastResponse()->body->state!=='done')throw new Exception('poll metadata');
+foreach(['getItemWithResponse','getItemPagesWithResponse','getItemWaitWithResponse'] as $name)if(method_exists($c->api,$name))throw new Exception('companion');echo 'ok';`,
+      '{"data":{"items":[{"id":"p_1"}]},"next":null,"state":"done"}',
+    ),
+    'ok',
   );
 });
+
+test('result-mode binary and event streams expose lastResponse', async () => {
+  for (const [media, schema, body] of [
+    ['application/pdf', { type: 'string', format: 'binary' }, new Uint8Array([0, 1, 255])],
+    ['text/event-stream', {}, 'data: synthetic\n\n'],
+  ]) {
+    const f = fixture({ responses: { return: 'result' }, schema, media });
+    const { Client } = await import(pathToFileURL(join(f.output, 'node/index.js')));
+    const c = new Client({
+      baseUrl: 'https://example.invalid',
+      transport: async () => new Response(body, { headers: { 'content-type': media } }),
+    });
+    const result = await c.api.getItem();
+    assert.equal(result.lastResponse.status, 200);
+    assert.equal('meta' in result, false);
+    if (media === 'application/pdf') {
+      assert.deepEqual(result.data, body);
+      assert.deepEqual(result.raw, body);
+    } else {
+      assert.equal(result.data.lastResponse.status, 200);
+      assert.equal('meta' in result.data, false);
+      await result.data.close();
+    }
+    const program = String.raw`require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
+$media=$argv[2];$c=new Example\ResponseReturn\Client(new Example\ResponseReturn\ClientOptions(baseUrl:'https://example.invalid',transport:function($r)use($media){
+if($media==='application/pdf')return ['status'=>200,'headers'=>['content-type'=>$media],'body'=>hex2bin('0001ff')];
+return ['status'=>200,'headers'=>['content-type'=>$media],'stream'=>new class implements Example\ResponseReturn\ByteStream {public function read():?string{return null;}public function close():void{}}];}));
+$r=$c->api->getItem();if($r->lastResponse()->status!==200||property_exists($r,'meta'))throw new Exception('result metadata');
+if($media==='application/pdf'){if(bin2hex($r->data)!=='0001ff'||$r->raw!==$r->data)throw new Exception('binary');}
+else{if($r->data->lastResponse()->status!==200||property_exists($r->data,'meta'))throw new Exception('stream metadata');$r->data->close();}echo 'ok';`;
+    assert.equal(
+      execFileSync('php', ['-r', program, join(f.output, 'php'), media], { encoding: 'utf8' }),
+      'ok',
+    );
+  }
+});
+
+test('User-Agent identifies the SDK runtime and validates client appInfo', async () => {
+  const f = fixture({
+    responses: { return: 'payload', payloadPath: 'data' },
+    configExtra: {
+      version: '8.0.0',
+      npm: { name: 'flintpay-node' },
+      composer: { name: 'flintpay/flint', namespace: 'Example\\ResponseReturn' },
+    },
+  });
+  const { Client } = await import(pathToFileURL(join(f.output, 'node/index.js')));
+  const suffix = ' storefront/1.2.3 (+https://example.invalid/plugin)';
+  for (const appInfo of [
+    undefined,
+    { name: 'storefront' },
+    { name: 'storefront', version: '1.2.3', url: 'https://example.invalid/plugin' },
+  ]) {
+    let agent;
+    const c = new Client({
+      baseUrl: 'https://example.invalid',
+      ...(appInfo ? { appInfo } : {}),
+      transport: async (_url, init) => {
+        agent = init.headers['user-agent'];
+        return Response.json({ data: { id: 'p_1' } });
+      },
+    });
+    await c.api.getItem();
+    assert.equal(
+      agent,
+      `flintpay-node/8.0.0 (Node.js ${process.versions.node}; ${process.platform} ${process.arch})${appInfo ? (appInfo.version ? suffix : ' storefront') : ''}`,
+    );
+  }
+  for (const appInfo of [
+    null,
+    {},
+    { name: 'bad name', version: '1' },
+    { name: 'x', version: '' },
+    { name: 'x'.repeat(65), version: '1' },
+    { name: 'x', version: '1', url: 'http://example.invalid' },
+    { name: 'x', version: '1', url: 'https:example.invalid' },
+    { name: 'x', version: '1', url: 'https://example.invalid/' + 'a'.repeat(256) },
+    { name: 'x', version: '1', extra: true },
+  ])
+    assert.throws(() => new Client({ baseUrl: 'https://example.invalid', appInfo }), {
+      name: 'ConfigurationError',
+      code: 'invalid_option',
+    });
+  const program = String.raw`require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
+foreach([null,['name'=>'storefront'],['name'=>'storefront','version'=>'1.2.3','url'=>'https://example.invalid/plugin']] as $app){$agent=null;$c=new Example\ResponseReturn\Client(new Example\ResponseReturn\ClientOptions(...($app===null?[]:['appInfo'=>$app]),baseUrl:'https://example.invalid',transport:function($r)use(&$agent){$agent=$r['headers']['user-agent'];return ['status'=>200,'headers'=>[],'body'=>'{"data":{"id":"p_1"}}'];}));$c->api->getItem();$expected='flintpay-flint/8.0.0 (PHP '.PHP_VERSION.'; '.PHP_OS_FAMILY.')'.($app?(isset($app['version'])?' storefront/1.2.3 (+https://example.invalid/plugin)':' storefront'):'');if($agent!==$expected)throw new Exception($agent);}
+foreach([null,[],['name'=>'bad name','version'=>'1'],['name'=>'x','version'=>''],['name'=>str_repeat('x',65),'version'=>'1'],['name'=>'x','version'=>'1','url'=>'http://example.invalid'],['name'=>'x','version'=>'1','url'=>'https:example.invalid'],['name'=>'x','version'=>'1','extra'=>true]] as $app){try{new Example\ResponseReturn\Client(new Example\ResponseReturn\ClientOptions(baseUrl:'https://example.invalid',appInfo:$app));throw new Exception('accepted invalid appInfo');}catch(Example\ResponseReturn\Errors\ConfigurationError $e){if($e->code!=='invalid_option')throw $e;}}echo 'ok';`;
+  assert.equal(
+    execFileSync('php', ['-r', program, join(f.output, 'php')], { encoding: 'utf8' }),
+    'ok',
+  );
+});
+
 test('return mode and path migrations are breaking in preview and semver policy', () => {
   const legacy = fixture({ responses: { return: 'result' } });
   setCompatibilityBaseline(legacy.output, 'released');
@@ -339,350 +514,7 @@ test('an operation can clear an inherited payload path and return the whole body
   assert.equal((await c.api.getItem()).data.id, 'p_1');
   assert.equal(php(f, 'echo $c->api->getItem()->data->id;'), 'p_1');
 });
-test('pagination and polling continue reading full response envelopes', async () => {
-  const schema = {
-    type: 'object',
-    required: ['data', 'next', 'state'],
-    properties: {
-      data: { type: 'array', items: item },
-      next: { type: ['string', 'null'] },
-      state: { type: 'string' },
-    },
-  };
-  const f = fixture({
-    responses: { return: 'payload', payloadPath: 'data' },
-    schema,
-    parameters: [{ in: 'query', name: 'cursor', schema: { type: 'string' } }],
-    operations: {
-      getItem: {
-        pagination: { kind: 'cursor', items: 'data', next: 'next', parameter: 'cursor' },
-        polling: { state: 'state', success: ['done'], failure: ['failed'], intervalMs: 1 },
-      },
-    },
-  });
-  const sdk = await import(pathToFileURL(join(f.output, 'node/index.js')));
-  let calls = 0;
-  const c = new sdk.Client({
-    baseUrl: 'https://example.invalid',
-    transport: async (url) => {
-      calls++;
-      return new Response(
-        JSON.stringify({
-          data: [{ id: url.searchParams.has('cursor') ? 'p_2' : 'p_1' }],
-          next: url.searchParams.has('cursor') ? null : 'two',
-          state: 'done',
-        }),
-        { status: 200 },
-      );
-    },
-  });
-  const values = [];
-  for await (const value of c.api.getItemItems()) values.push(value.id);
-  assert.deepEqual(values, ['p_1', 'p_2']);
-  assert.equal(calls, 2);
-  const pages = [];
-  for await (const page of c.api.getItemPages()) pages.push(page);
-  assert.equal(pages[0][0].id, 'p_1');
-  assert.equal(pages[1][0].id, 'p_2');
-  const fullPages = [];
-  for await (const page of c.api.getItemPagesWithResponse()) fullPages.push(page);
-  assert.equal(fullPages[0].body.next, 'two');
-  assert.equal(fullPages[1].meta.status, 200);
-  assert.equal((await c.api.getItemWait({}))[0].id, 'p_1');
-  assert.equal((await c.api.getItemWaitWithResponse({})).body.state, 'done');
-  assert.equal((await c.api.getItem())[0].id, 'p_1');
-  assert.equal(
-    php(
-      f,
-      "$ids=[];foreach($c->api->getItemItems() as $v)$ids[]=$v->id;foreach($c->api->getItemPages() as $p){if($p[0]->id!=='p_1')throw new Exception('payload');}foreach($c->api->getItemPagesWithResponse() as $p){if($p->meta['status']!==200)throw new Exception('metadata');}if($c->api->getItemWait([])[0]->id!=='p_1'||$c->api->getItemWaitWithResponse([])->body->state!=='done')throw new Exception('polling');echo implode(',', $ids);",
-      '{"data":[{"id":"p_1"}],"next":null,"state":"done"}',
-    ),
-    'p_1',
-  );
-});
 
-const helperSchema = {
-  type: 'object',
-  required: ['data', 'next', 'state'],
-  properties: {
-    data: { type: 'array', items: item },
-    next: { type: ['string', 'null'] },
-    state: { type: 'string' },
-  },
-};
-const helpers = {
-  pagination: { kind: 'cursor', items: 'data', next: 'next', parameter: 'cursor' },
-  polling: { state: 'state', success: ['done'], failure: ['failed'], intervalMs: 1 },
-};
-function helperFixture(responses, style = 'object', extra = {}) {
-  return fixture({
-    responses,
-    schema: helperSchema,
-    parameters: [{ in: 'query', name: 'cursor', schema: { type: 'string' } }],
-    operations: { getItem: { ...helpers, ...extra } },
-    configExtra: { requests: { style } },
-  });
-}
-
-for (const mode of ['result', 'whole', 'projected']) {
-  test(`${mode} helpers preserve lazy cursors, raw metadata, polling and consumer types`, async () => {
-    const f = helperFixture(
-      mode === 'result'
-        ? { return: 'result' }
-        : mode === 'whole'
-          ? { return: 'payload' }
-          : { return: 'payload', payloadPath: 'data' },
-      mode === 'whole' ? 'positional' : 'object',
-    );
-    const sdk = await import(pathToFileURL(join(f.output, 'node/index.js')));
-    let calls = 0,
-      phase = 'pages';
-    const c = new sdk.Client({
-      baseUrl: 'https://example.invalid',
-      transport: async (url) => {
-        const second = url.searchParams.get('cursor') === 'two';
-        assert.equal(url.searchParams.get('cursor'), second ? 'two' : null);
-        calls++;
-        return Response.json(
-          {
-            data: [{ id: second ? 'p_2' : 'p_1' }],
-            next: second ? null : 'two',
-            state:
-              phase === 'failed' ? 'failed' : phase === 'wait' && calls === 1 ? 'queued' : 'done',
-          },
-          { headers: { 'x-request-id': 'req_003NEZWWW0H0Z8VJPZ0T3E1AYE' } },
-        );
-      },
-    });
-    const ids = (page) =>
-      (mode === 'result' ? page.data.data : mode === 'whole' ? page.data : page).map((v) => v.id);
-    const iterator = c.api.getItemPages();
-    assert.equal(calls, 0);
-    const seen = [];
-    for await (const page of iterator) seen.push(...ids(page));
-    assert.deepEqual(seen, ['p_1', 'p_2']);
-    assert.equal(calls, 2);
-    calls = 0;
-    for await (const page of c.api.getItemPages()) {
-      assert.deepEqual(ids(page), ['p_1']);
-      break;
-    }
-    assert.equal(calls, 1, 'breaking the projected iterator must not fetch another page');
-    calls = 0;
-    const items = [];
-    for await (const v of c.api.getItemItems(undefined, { maxItems: 1 })) items.push(v.id);
-    assert.deepEqual(items, ['p_1']);
-    assert.equal(calls, 1);
-    if (mode !== 'result') {
-      calls = 0;
-      const complete = c.api.getItemPagesWithResponse(undefined, { maxPages: 1 });
-      assert.equal(calls, 0);
-      for await (const page of complete) {
-        assert.equal(page.body.data[0].id, 'p_1');
-        assert.equal(page.body.next, 'two');
-        assert.equal(page.meta.requestId, 'req_003NEZWWW0H0Z8VJPZ0T3E1AYE');
-        assert.equal(page.raw, '{"data":[{"id":"p_1"}],"next":"two","state":"done"}');
-        assert.equal(page.data, undefined);
-      }
-      assert.equal(calls, 1);
-    } else {
-      assert.equal(c.api.getItemPagesWithResponse, undefined);
-      assert.equal(c.api.getItemWaitWithResponse, undefined);
-    }
-    calls = 0;
-    const controller = new AbortController();
-    const canceled = c.api.getItemPages(undefined, { signal: controller.signal });
-    assert.deepEqual(ids((await canceled.next()).value), ['p_1']);
-    controller.abort();
-    await assert.rejects(canceled.next(), { name: 'CancelledError' });
-    assert.equal(calls, 1);
-    for (const method of [
-      'getItemWait',
-      ...(mode !== 'result' ? ['getItemWaitWithResponse'] : []),
-    ]) {
-      phase = 'wait';
-      calls = 0;
-      const result = await c.api[method]();
-      assert.equal(calls, 2, 'polling state outside the projected payload remains visible');
-      if (method.endsWith('WithResponse')) {
-        assert.equal(result.body.state, 'done');
-        assert.equal(result.meta.requestId, 'req_003NEZWWW0H0Z8VJPZ0T3E1AYE');
-        assert.match(result.raw, /"state":"done"/);
-      } else assert.deepEqual(ids(result), ['p_1']);
-      phase = 'failed';
-      calls = 0;
-      await assert.rejects(
-        c.api[method](),
-        (error) =>
-          error.name === 'UnexpectedResponseError' &&
-          error.requestId === 'req_003NEZWWW0H0Z8VJPZ0T3E1AYE',
-      );
-      assert.equal(calls, 1);
-      calls = 0;
-      await assert.rejects(c.api[method](undefined, { signal: controller.signal }), {
-        name: 'CancelledError',
-      });
-      assert.equal(calls, 0);
-    }
-    const expression =
-      mode === 'result'
-        ? 'page.data.data[0].id'
-        : mode === 'whole'
-          ? 'page.data[0].id'
-          : 'page[0].id';
-    typecheck(
-      f,
-      `import {Client} from './index.js';const c=new Client({baseUrl:'https://example.invalid'});
-for await (const page of c.api.getItemPages()) { const id:string=${expression}; }
-const page=await c.api.getItemWait(${mode === 'result' ? '{}' : ''});const id:string=${expression};
-${
-  mode !== 'result'
-    ? `for await(const r of c.api.getItemPagesWithResponse()) { const id:string=r.body.data[0].id; const status:number=r.meta.status; }
-const full=await c.api.getItemWaitWithResponse();const state:string=full.body.state;
-// @ts-expect-error payloads have no metadata envelope
-page.meta;`
-    : ''
-}`,
-    );
-    const code = String.raw`require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
-use Example\ResponseReturn\{Client,ClientOptions,RequestOptions,Cancellation,SdkError};
-$mode=$argv[2];$phase='pages';$calls=0;
-$c=new Client(new ClientOptions('https://example.invalid',transport:function($r)use(&$calls,&$phase){
- parse_str(parse_url($r['url'],PHP_URL_QUERY)??'', $q);$second=($q['cursor']??null)==='two';$calls++;
- return ['status'=>200,'headers'=>['x-request-id'=>'req_003NEZWWW0H0Z8VJPZ0T3E1AYE'],'body'=>json_encode(['data'=>[['id'=>$second?'p_2':'p_1']],'next'=>$second?null:'two','state'=>$phase==='failed'?'failed':($phase==='wait'&&$calls===1?'queued':'done')])];
-}));
-function ids($p,$mode){$values=$mode==='result'?$p->data->data:($mode==='whole'?$p->data:$p);return array_map(fn($v)=>$v->id,$values);}
-$iterator=$c->api->getItemPages();if($calls!==0)exit(2);$seen=[];foreach($iterator as $p)$seen=array_merge($seen,ids($p,$mode));if($calls!==2||$seen!==['p_1','p_2'])exit(3);
-$calls=0;foreach($c->api->getItemPages() as $p){if(ids($p,$mode)!==['p_1'])exit(4);break;}if($calls!==1)exit(5);
-$calls=0;$cancel=new Cancellation();try{foreach($c->api->getItemPages(options:new RequestOptions(cancellation:$cancel)) as $p)$cancel->cancel();exit(6);}catch(SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='CancelledError'||$calls!==1)exit(7);}
-if($mode!=='result'){
- $calls=0;$pages=$c->api->getItemPagesWithResponse(options:new RequestOptions(maxPages:1));if($calls!==0)exit(8);
- foreach($pages as $r)if($r->body->data[0]->id!=='p_1'||$r->meta['requestId']!=='req_003NEZWWW0H0Z8VJPZ0T3E1AYE'||strpos($r->raw,'"next":"two"')===false)exit(9);
- if($calls!==1)exit(10);
-}elseif(method_exists($c->api,'getItemPagesWithResponse')||method_exists($c->api,'getItemWaitWithResponse'))exit(11);
-foreach(array_merge(['getItemWait'],$mode!=='result'?['getItemWaitWithResponse']:[]) as $method){
- $phase='wait';$calls=0;$p=$c->api->$method();if($calls!==2)exit(12);
- if(str_ends_with($method,'WithResponse')){if($p->body->state!=='done'||$p->meta['requestId']!=='req_003NEZWWW0H0Z8VJPZ0T3E1AYE'||strpos($p->raw,'"state":"done"')===false)exit(13);}elseif(ids($p,$mode)!==['p_1'])exit(14);
- $phase='failed';$calls=0;try{$c->api->$method();exit(15);}catch(SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='UnexpectedResponseError'||$e->requestId!=='req_003NEZWWW0H0Z8VJPZ0T3E1AYE'||$calls!==1)exit(16);}
- $calls=0;try{$c->api->$method(options:new RequestOptions(cancellation:$cancel));exit(17);}catch(SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='CancelledError'||$calls!==0)exit(18);}
-}
-echo 'ok';`;
-    assert.equal(
-      execFileSync('php', ['-r', code, join(f.output, 'php'), mode], { encoding: 'utf8' }),
-      'ok',
-    );
-    const phpExpression =
-      mode === 'result'
-        ? '$page->data->getData()[0]->getId()'
-        : mode === 'whole'
-          ? '$page->getData()[0]->getId()'
-          : '$page[0]->getId()';
-    const consumer = join(f.dir, 'helpers.php');
-    writeFileSync(
-      consumer,
-      `<?php
-use Example\\ResponseReturn\\Client;
-function pageId(Client $client): string {
- foreach ($client->api->getItemPages() as $page) return ${phpExpression};
- return '';
-}
-function completedId(Client $client): string {
- $page=$client->api->getItemWait();return ${phpExpression};
-}
-${
-  mode !== 'result'
-    ? `function responseId(Client $client): string {
- foreach($client->api->getItemPagesWithResponse() as $response) return $response->body->getData()[0]->getId();
- return $client->api->getItemWaitWithResponse()->body->getState();
-}`
-    : ''
-}
-`,
-    );
-    const phpstanConfig = join(f.dir, 'phpstan.neon');
-    writeFileSync(
-      phpstanConfig,
-      `parameters:\n    level: max\n    phpVersion: 80200\n    tmpDir: ${JSON.stringify(join(f.dir, 'phpstan-cache'))}\n    scanDirectories:\n        - ${JSON.stringify(join(f.output, 'php/src'))}\n`,
-    );
-    try {
-      execFileSync(
-        'php',
-        [
-          resolve('.generated/phpstan-vendor/bin/phpstan'),
-          'analyse',
-          '--no-progress',
-          '--error-format=raw',
-          '-c',
-          phpstanConfig,
-          consumer,
-        ],
-        { stdio: 'pipe' },
-      );
-    } catch (error) {
-      throw new Error(error.stdout.toString() + error.stderr.toString());
-    }
-    for (const target of ['node', 'php']) {
-      const docs = readReference(f.output, target);
-      assert.match(docs, /getItemPages/);
-      if (mode !== 'result') {
-        assert.match(docs, /getItemPagesWithResponse/);
-        assert.match(docs, /getItemWaitWithResponse/);
-        assert.match(
-          f.read(`${target}/RUNTIME.md`),
-          /Pagination Pages and polling Wait follow the base return mode/,
-        );
-        assert.match(docs, /Polling:/);
-      }
-    }
-    const first = preview(f.contract, f.output);
-    assert.deepEqual(first.changes, []);
-    assert.deepEqual(
-      compareCompiledContracts(
-        compileSdkContract(f.contract).plan,
-        compileSdkContract(f.contract).plan,
-      ),
-      [],
-    );
-  });
-}
-
-test('historical payload helper migration is breaking without treating new helpers as a return migration', () => {
-  const f = helperFixture({ return: 'payload', payloadPath: 'data' });
-  const current = compileSdkContract(f.contract).plan;
-  const historical = structuredClone(current);
-  delete historical.responseReturns.getItem.helperReturn;
-  const runtimeIdentity = { node: '0'.repeat(64), php: '0'.repeat(64) };
-  assertCompiledSnapshot({ plan: historical, runtimeIdentity });
-  const findings = compareCompiledContracts(historical, current);
-  assert.ok(
-    findings.some((f) => f.subject === 'getItem.helperReturn' && f.severity === 'breaking'),
-  );
-  assert.throws(() => checkVersionPolicy('1.0.0', '1.0.1', findings), /major/);
-  for (const runtime of [historical.runtime, historical.php.runtime]) {
-    delete runtime.operations[0].pagination;
-    delete runtime.operations[0].polling;
-  }
-  assert.ok(
-    !compareCompiledContracts(historical, current).some(
-      (f) => f.subject === 'getItem.helperReturn',
-    ),
-  );
-  const invalid = structuredClone(current);
-  invalid.responseReturns.getItem.helperReturn = 'result';
-  assert.throws(
-    () => assertCompiledSnapshot({ plan: invalid, runtimeIdentity }),
-    /helper return mode/,
-  );
-  for (const name of [
-    'getItemPagesWithResponse',
-    'getItemWaitWithResponse',
-    'getItemPagesWITHResponse',
-  ])
-    assert.throws(
-      () => helperFixture({ return: 'payload' }, 'object', { aliases: [name] }),
-      /collision/,
-    );
-});
 test('HTTP fixture validation uses the complete body for payload-mode SDKs', async () => {
   const f = fixture({ responses: { return: 'payload', payloadPath: 'data' } });
   const file = join(f.dir, 'cases.json');
@@ -754,57 +586,130 @@ test('named and recursive response schemas support configured payload paths', as
     `import {Client} from './index.js';const c=new Client({baseUrl:'https://example.invalid'});const p=await c.api.getItem();const id:string=p.id;const child:string|undefined=p.child?.id;`,
   );
 });
-test('binary whole-body returns retain bytes and full-response metadata', async () => {
-  const f = fixture({
-    responses: { return: 'payload' },
-    extraResponses: {
-      206: {
-        description: 'binary',
-        content: { 'application/pdf': { schema: { type: 'string', format: 'binary' } } },
+
+test('map payloads and unknown tagged variants preserve JSON and carry response info', async () => {
+  for (const [schema, body] of [
+    [{ type: 'object', additionalProperties: { type: 'string' } }, { label: 'map-value' }],
+    [
+      {
+        discriminator: { propertyName: 'kind' },
+        oneOf: ['card', 'bank'].map((kind) => ({
+          type: 'object',
+          required: ['kind'],
+          properties: { kind: { type: 'string', const: kind } },
+        })),
       },
-    },
-  });
-  const sdk = await import(pathToFileURL(join(f.output, 'node/index.js')));
-  const bytes = new Uint8Array([0, 1, 255]);
-  const c = new sdk.Client({
-    baseUrl: 'https://example.invalid',
-    transport: async () =>
-      new Response(bytes, { status: 206, headers: { 'content-type': 'application/pdf' } }),
-  });
-  assert.deepEqual(await c.api.getItem(), bytes);
-  const full = await c.api.getItemWithResponse();
-  assert.deepEqual(full.body, bytes);
-  assert.equal(full.body, full.raw);
-  assert.equal(full.meta.status, 206);
-  assert.match(inspect(full), /Binary response/);
-  assert.doesNotMatch(inspect(full), /Uint8Array|raw:|headers:|https:/);
-  const program = `require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';$c=new Example\\ResponseReturn\\Client(new Example\\ResponseReturn\\ClientOptions('https://example.invalid',transport:fn($r)=>['status'=>206,'headers'=>['content-type'=>'application/pdf'],'body'=>hex2bin('0001ff')]));$r=$c->api->getItemWithResponse();if($r->body!==$r->raw||$r->meta['status']!==206)throw new Exception('full response');echo bin2hex($c->api->getItem());`;
-  assert.equal(
-    execFileSync('php', ['-r', program, join(f.output, 'php')], { encoding: 'utf8' }),
-    '0001ff',
-  );
-});
-test('payload-mode generated examples and README use the selected return shape', async () => {
-  const f = fixture({ responses: { return: 'payload', payloadPath: 'data' } });
-  for (const name of ['node/examples/api-getItem.mjs', 'node/README.md']) {
-    let source = f.read(name);
-    if (name.endsWith('.md')) source = source.match(/```typescript\n([\s\S]*?)```/)[1];
-    source = source
-      .replace(/from ['"](?:\.\.\/)?index\.js['"]/, "from './index.js'")
-      .replace(
-        'new Client({',
-        `new Client({transport:async()=>new Response('{"data":{"id":"p_1"}}',{status:200}),`,
-      );
-    const file = join(f.output, 'node/run-example.mjs');
-    writeFileSync(file, source);
-    assert.match(
-      execFileSync(process.execPath, [file], {
-        encoding: 'utf8',
-        env: { ...process.env, FLINT_BASE_URL: 'https://example.invalid' },
-      }),
-      /p_1/,
+      { kind: 'future', retained: 'unknown-value' },
+    ],
+  ]) {
+    const f = fixture({ responses: { return: 'payload' }, schema });
+    const c = await client(f, JSON.stringify(body)),
+      payload = await c.api.getItem();
+    assert.equal(payload.lastResponse.status, 200);
+    assert.equal(Object.getOwnPropertyDescriptor(payload, 'lastResponse').enumerable, false);
+    assert.deepEqual(JSON.parse(JSON.stringify(payload)), body);
+    assert.deepEqual(JSON.parse(JSON.stringify(payload.lastResponse.body)), body);
+    assert.equal(
+      php(
+        f,
+        "$p=$c->api->getItem();if(!$p instanceof Example\\ResponseReturn\\Model||$p->lastResponse()->status!==200)throw new Exception('payload metadata');echo json_encode($p);",
+        JSON.stringify(body),
+      ),
+      JSON.stringify(body),
     );
   }
-  assert.match(readReference(f.output, 'php'), /getItemWithResponse/);
-  assert.doesNotMatch(f.read('node/README.md'), /result\.data\.data/);
+});
+
+test('legacy SdkResponse declarations and response surface versions require a major upgrade', () => {
+  const current = compileSdkContract(
+    fixture({ responses: { return: 'payload', payloadPath: 'data' } }).contract,
+  ).plan;
+  const legacy = structuredClone(current);
+  legacy.node.errorSurfaceVersion = 1;
+  legacy.php.errorSurfaceVersion = 1;
+  legacy.node.responseReturnDeclarations =
+    'export interface SdkResponse<T> { body:T; meta:unknown; raw:string }';
+  const findings = compareCompiledContracts(legacy, current);
+  for (const subject of [
+    'node.errorSurfaceVersion',
+    'php.errorSurfaceVersion',
+    'response return declarations',
+  ])
+    assert.ok(
+      findings.some((finding) => finding.subject === subject && finding.severity === 'breaking'),
+      JSON.stringify(findings),
+    );
+  assert.throws(() => checkVersionPolicy('7.0.0', '7.1.0', findings), /major/);
+});
+
+test('generic payload models retain configured and schema redaction during inspection', async () => {
+  for (const [schema, body, fields, forbidden] of [
+    [
+      { type: 'object', additionalProperties: { type: 'string' } },
+      { label: 'configured-private', token: 'default-private', visible: 'public' },
+      ['label'],
+      ['configured-private', 'default-private'],
+    ],
+    [
+      { type: 'object', additionalProperties: { type: 'string', 'x-sensitive': true } },
+      { arbitrary: 'schema-private' },
+      [],
+      ['schema-private'],
+    ],
+  ]) {
+    const f = fixture({
+      responses: { return: 'payload', payloadPath: 'data' },
+      schema: { type: 'object', properties: { data: schema }, required: ['data'] },
+    });
+    const wire = JSON.stringify({ data: body });
+    const { Client } = await import(pathToFileURL(join(f.output, 'node/index.js')));
+    const c = new Client({
+      baseUrl: 'https://example.invalid',
+      redactFields: fields,
+      transport: async () => new Response(wire),
+    });
+    const payload = await c.api.getItem();
+    assert.deepEqual(JSON.parse(JSON.stringify(payload)), body);
+    for (const value of forbidden) assert.ok(!inspect(payload).includes(value));
+    const output = php(
+      f,
+      '$p=$c->api->getItem();ob_start();var_dump($p);$dump=ob_get_clean();echo json_encode([$p,$dump,$p->lastResponse()->status]);',
+      wire,
+      fields,
+    );
+    const [raw, dump, status] = JSON.parse(output);
+    assert.deepEqual(raw, body);
+    assert.equal(status, 200);
+    for (const value of forbidden) assert.ok(!dump.includes(value), dump);
+  }
+});
+
+test('appInfo URLs preserve Unicode characters through safe ASCII User-Agent encoding', async () => {
+  const f = fixture({ responses: { return: 'payload', payloadPath: 'data' } });
+  const { Client } = await import(pathToFileURL(join(f.output, 'node/index.js')));
+  const urls = ['https://example.invalid/café', 'https://example.invalid/' + 'é'.repeat(230)];
+  for (const url of urls) {
+    let agent;
+    const c = new Client({
+      baseUrl: 'https://example.invalid',
+      appInfo: { name: 'storefront', url },
+      transport: async (_url, request) => {
+        agent = request.headers['user-agent'];
+        return Response.json({ data: { id: 'p_1' } });
+      },
+    });
+    await c.api.getItem();
+    assert.ok(
+      agent.endsWith(' storefront (+' + url.replace(/[^\x00-\x7f]/gu, encodeURIComponent) + ')'),
+    );
+  }
+  const program = String.raw`require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
+foreach(json_decode($argv[2],true,flags:JSON_THROW_ON_ERROR) as $url){$agent=null;$c=new Example\ResponseReturn\Client(new Example\ResponseReturn\ClientOptions(baseUrl:'https://example.invalid',appInfo:['name'=>'storefront','url'=>$url],transport:function($r)use(&$agent){$agent=$r['headers']['user-agent'];return ['status'=>200,'headers'=>[],'body'=>'{"data":{"id":"p_1"}}'];}));$c->api->getItem();$encoded=preg_replace_callback('/[^\x00-\x7f]/u',fn($m)=>rawurlencode($m[0]),$url);if(!str_ends_with($agent,' storefront (+'.$encoded.')'))throw new Exception('Unicode UA');}
+try {new Example\ResponseReturn\Client(new Example\ResponseReturn\ClientOptions(baseUrl:'https://example.invalid',appInfo:['name'=>'storefront','url'=>"https://example.invalid/\xff"]));throw new Exception('accepted invalid UTF-8');}catch(Example\ResponseReturn\Errors\ConfigurationError $e){if($e->code!=='invalid_option')throw $e;}echo 'ok';`;
+  assert.equal(
+    execFileSync('php', ['-r', program, join(f.output, 'php'), JSON.stringify(urls)], {
+      encoding: 'utf8',
+    }),
+    'ok',
+  );
 });

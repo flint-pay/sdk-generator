@@ -78,6 +78,7 @@ function fixture(t, { empty = false, named = false, profile = false } = {}) {
       refreshCustomerSession: {
         resource: 'customerSessions',
         method: 'refresh',
+        response: { return: 'result' },
         idempotency: { header: 'Idempotency-Key', retention: '24h', scope: 'session' },
         exampleIdempotencyKey: {
           prefix: 'refresh-',

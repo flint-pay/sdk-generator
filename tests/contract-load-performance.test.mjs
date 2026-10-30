@@ -24,6 +24,7 @@ import { join } from 'node:path';
 import { loadContract } from ${JSON.stringify(new URL('../dist/contract.js', import.meta.url).href)};
 const directory = ${JSON.stringify(directory)};
 const config = JSON.parse(readFileSync('examples/library.sdk.json', 'utf8'));
+config.responses = { return: 'result' };
 config.requests = { style: 'object' };
 config.models = {};
 config.operations = {};
@@ -95,6 +96,7 @@ test('representation summaries tolerate primitive leaves in legacy resolved refe
     configuration,
     JSON.stringify({
       version: '1.0.0',
+      responses: { return: 'result' },
       requests: { style: 'object' },
       npm: { name: '@example/references' },
       composer: { name: 'example/references', namespace: 'Example\\References' },

@@ -182,7 +182,7 @@ namespace {
     try {
         $result=$client->api->watch();$events=[];
         foreach($result->data as $event)$events[]=$event->data;
-        echo json_encode(['status'=>$result->meta['status'],'events'=>$events]);
+        echo json_encode(['status'=>$result->lastResponse()->status,'events'=>$events]);
     } finally {$client->close();}
 }`;
   try {

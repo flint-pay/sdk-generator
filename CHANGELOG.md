@@ -6,6 +6,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 - Generated Node and PHP examples optionally read `FLINT_BASE_URL`, use real-format path placeholders and media request examples, reject empty PATCH examples, and support profile-configured derived idempotency keys. The runtime does not read `FLINT_BASE_URL`. (generator 0.1.0)
 
+- Breaking: payload results, pages and final polls carry `lastResponse` (PHP `lastResponse()`), with typed `ResponseInfo.body`; result-mode `meta` moves there too. Remove `*WithResponse` companions, `SdkResponse` and Node `Metadata`. Payloads must be objects; items carry no response information. Diagnostics expose `errorName`/`errorCode`. User-Agent includes runtime/OS details and optional client `appInfo`. See [migration](docs/releases.md#response-information-and-application-identity).
+
 - Breaking: Node and PHP configuration failures use SDK-specific codes and messages naming options, without `param`; workload identity failures retain their reason separately. Implicit pagination truncation now raises `PaginationLimitError` (`pagination_limit_exceeded`) with `pages` and `nextPageToken` after 1,000 pages when a continuation remains. Explicit `maxPages` limits end quietly; a terminal 1,000th page succeeds. See [migration](docs/releases.md#configuration-errors-and-pagination-limits).
 
 - Breaking: local request validation in Node and PHP now reports `InvalidInputError` with `INVALID_REQUEST`, stage-1 `details[]` codes and API field paths. Messages match across targets, name allowed values, suggest close matches and suppress sensitive received values. See [migration](docs/releases.md#local-validation-errors).

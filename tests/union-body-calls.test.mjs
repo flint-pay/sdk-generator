@@ -76,6 +76,7 @@ function fixture(t, edit = () => {}) {
     operationNames: 'path',
     validation: 'schema',
     version: '1.0.0',
+    responses: { return: 'result' },
     npm: { name: '@example/union-calls' },
     composer: { name: 'example/union-calls', namespace: 'Example\\UnionCalls' },
   };

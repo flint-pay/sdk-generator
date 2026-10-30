@@ -35,7 +35,18 @@ type InternalErrorKind =
   | 'deadline'
   | 'destination'
   | 'webhook';
-export interface Metadata {
+export interface ResponseInfo<Body = unknown> {
+  status: number;
+  headers: Record<string, string>;
+  requestId?: string;
+  requestIds: string[];
+  idempotencyKey?: string;
+  attempts: number;
+  durationMs: number;
+  body: Body;
+}
+export type WithResponseInfo<T, Body> = T & { readonly lastResponse: ResponseInfo<Body> };
+interface Metadata {
   status: number;
   headers: Record<string, string>;
   requestId?: string;
@@ -65,8 +76,21 @@ type ErrorCallContext = {
 };
 export interface Result<T> {
   data: T;
-  meta: Metadata;
+  readonly lastResponse: ResponseInfo<T>;
   raw: T extends Uint8Array ? Uint8Array : string;
+}
+const resultMetadata = new WeakMap<object, Metadata>();
+function metadata(result: Result<unknown>): Metadata {
+  return resultMetadata.get(result) ?? result.lastResponse;
+}
+function responseResult<T>(data: T, meta: Metadata, raw: Result<T>['raw']): Result<T> {
+  const result = { data, raw } as Result<T>;
+  const { url: _, ...info } = meta;
+  Object.defineProperty(result, 'lastResponse', {
+    value: { ...info, requestIds: meta.requestIds ?? [], body: data },
+  });
+  resultMetadata.set(result, meta);
+  return result;
 }
 function isErrorObject(value: unknown): value is Record<string, unknown> {
   return (
@@ -394,7 +418,8 @@ export interface DiagnosticEvent {
   status?: number;
   requestId?: string;
   durationMs: number;
-  errorKind?: InternalErrorKind;
+  errorName?: string;
+  errorCode?: string;
 }
 /** Incoming Node/Express headers or Fetch Headers; only signing headers are inspected. */
 export type WebhookHeaders =
@@ -986,6 +1011,7 @@ export interface RequestOptions extends RequestOptionValues {
 }
 /** Client environment, credentials and transport defaults. See RUNTIME.md#clientoptions. */
 export interface ClientOptions {
+  appInfo?: { name: string; version?: string; url?: string };
   ambientCredentials?: boolean;
   baseUrl?: string;
   token?: string | CredentialProvider;
@@ -1117,18 +1143,19 @@ async function streamFetch(
 
 /** A single-consumer stream. Breaking iteration releases the response connection. */
 export class EventStream implements AsyncIterable<ServerSentEvent> {
+  readonly #meta: Metadata;
   private closed = false;
   private started = false;
   private failure: SdkError | undefined;
   private lifetime: ScheduledTimer | undefined;
   private unconsumed: ScheduledTimer | undefined;
   private readonly abort = () => {
-    this.failure = createSdkError('cancelled', 'Stream cancelled', 'response', false, this.meta);
+    this.failure = createSdkError('cancelled', 'Stream cancelled', 'response', false, this.#meta);
     void this.close();
   };
   constructor(
     private readonly reader: ReadableStreamDefaultReader<Uint8Array>,
-    readonly meta: Metadata,
+    meta: Metadata,
     private readonly settings: {
       idleTimeoutMs: number;
       maxEventBytes: number;
@@ -1139,6 +1166,7 @@ export class EventStream implements AsyncIterable<ServerSentEvent> {
     private readonly decodeEvent: (event: string, data: string) => unknown = (_event, data) => data,
     private readonly released: () => void = () => {},
   ) {
+    this.#meta = meta;
     this.unconsumed = schedule(
       () => {
         this.failure = createSdkError(
@@ -1146,7 +1174,7 @@ export class EventStream implements AsyncIterable<ServerSentEvent> {
           'Unconsumed stream idle timeout exceeded',
           'response',
           false,
-          this.meta,
+          this.#meta,
         );
         void this.close();
       },
@@ -1163,7 +1191,7 @@ export class EventStream implements AsyncIterable<ServerSentEvent> {
             'Stream lifetime exceeded',
             'response',
             false,
-            this.meta,
+            this.#meta,
           );
           void this.close();
         },
@@ -1180,8 +1208,12 @@ export class EventStream implements AsyncIterable<ServerSentEvent> {
     this.released();
     await this.reader.cancel().catch(() => {});
   }
+  get lastResponse(): ResponseInfo<EventStream> {
+    const { url: _, ...info } = this.#meta;
+    return { ...info, requestIds: this.#meta.requestIds ?? [], body: this };
+  }
   [inspectCustom]() {
-    return { meta: inspectedMetadata(this.meta), closed: this.closed };
+    return { lastResponse: inspectedMetadata(this.#meta), closed: this.closed };
   }
   async *[Symbol.asyncIterator](): AsyncGenerator<ServerSentEvent> {
     if (this.started) throw createSdkError('validation', 'A stream can only be consumed once');
@@ -1211,7 +1243,7 @@ export class EventStream implements AsyncIterable<ServerSentEvent> {
               `Invalid SSE event payload at event ${position}; inspect details.eventId and details.position`,
               'response',
               false,
-              this.meta,
+              this.#meta,
               'sse_invalid_event',
               { eventId: id, position },
               { cause },
@@ -1265,7 +1297,7 @@ export class EventStream implements AsyncIterable<ServerSentEvent> {
                     'Stream idle timeout exceeded',
                     'response',
                     false,
-                    this.meta,
+                    this.#meta,
                   ),
                 ),
               this.settings.idleTimeoutMs,
@@ -1304,7 +1336,7 @@ export class EventStream implements AsyncIterable<ServerSentEvent> {
                 'SSE event exceeds configured size limit',
                 'response',
                 false,
-                this.meta,
+                this.#meta,
               );
             skipLF = character === '\r';
             const frame = consumeLine();
@@ -1317,7 +1349,7 @@ export class EventStream implements AsyncIterable<ServerSentEvent> {
                 'SSE event exceeds configured size limit',
                 'response',
                 false,
-                this.meta,
+                this.#meta,
               );
             line += character;
           }
@@ -1331,7 +1363,7 @@ export class EventStream implements AsyncIterable<ServerSentEvent> {
         'Invalid or interrupted SSE stream',
         'response',
         false,
-        this.meta,
+        this.#meta,
         undefined,
         undefined,
         { cause },
@@ -3057,6 +3089,41 @@ const encoded = (s: string): string =>
 function scalar(v: unknown): string {
   return v instanceof RawNumber ? v.value : String(v);
 }
+function userAgent(base: string, app: ClientOptions['appInfo']): string {
+  let suffix = '';
+  if (app !== undefined) {
+    if (
+      !isErrorObject(app) ||
+      Object.keys(app).some((key) => !['name', 'version', 'url'].includes(key)) ||
+      typeof app.name !== 'string' ||
+      !/^[A-Za-z0-9._-]{1,64}$/.test(app.name) ||
+      (app.version !== undefined &&
+        (typeof app.version !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(app.version)))
+    )
+      invalidOption(
+        'appInfo',
+        'expected name and optional version containing 1 to 64 letters, digits, dots, underscores or hyphens',
+      );
+    if (app.url !== undefined) {
+      try {
+        if (
+          typeof app.url !== 'string' ||
+          Array.from(app.url).length > 256 ||
+          /[\s\x00-\x20\x7f\\]/u.test(app.url) ||
+          !/^https:\/\//i.test(app.url) ||
+          new URL(app.url).protocol !== 'https:' ||
+          !new URL(app.url).hostname
+        )
+          throw new Error();
+        encodeURI(app.url); // Reject malformed Unicode before building an HTTP header.
+      } catch {
+        invalidOption('appInfo.url', 'expected an absolute HTTPS URL of at most 256 characters');
+      }
+    }
+    suffix = ` ${app.name}${app.version ? '/' + app.version : ''}${app.url ? ' (+' + app.url.replace(/[^\x00-\x7f]/gu, encodeURIComponent) + ')' : ''}`;
+  }
+  return `${base} (Node.js ${process.versions.node}; ${process.platform} ${process.arch})${suffix}`;
+}
 function configuration(code: string, message: string): errors.ConfigurationError {
   return new errors.ConfigurationError(message, { code });
 }
@@ -3923,6 +3990,7 @@ class CompiledRuntime {
     if (!options || typeof options !== 'object' || Array.isArray(options))
       invalidOption('options', 'expected a client options object');
     const allowedOptions = new Set([
+      'appInfo',
       'ambientCredentials',
       'baseUrl',
       'token',
@@ -3944,6 +4012,7 @@ class CompiledRuntime {
           `options.${key}`,
           `unknown client option${key === 'maxRetries' ? '; use maxAttempts (total attempts, including the first)' : '; see ClientOptions for supported keys'}`,
         );
+    userAgent('', options.appInfo);
     this.options = copyCredentialOptions(
       options,
       Object.keys(this.compiledContract.authShortcuts ?? {}),
@@ -4032,7 +4101,7 @@ class CompiledRuntime {
         'Response payload does not match a declared alternative',
         'response',
         false,
-        result.meta,
+        metadata(result),
         undefined,
         undefined,
         { cause },
@@ -4214,7 +4283,7 @@ class CompiledRuntime {
               .filter(Boolean),
           ),
         ].join(', ') || 'application/json',
-      'user-agent': this.contract.userAgent ?? 'PublicSDK (Node.js)',
+      'user-agent': userAgent(this.contract.userAgent ?? 'PublicSDK', this.options.appInfo),
     });
     const setHeader = (name: string, value: string) => {
       if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) || /[\r\n]/.test(value))
@@ -4667,9 +4736,9 @@ class CompiledRuntime {
             () => this.streams.delete(stream),
           );
           this.streams.add(stream);
-          const result = { data: stream, meta, raw: '' };
+          const result = responseResult(stream, meta, '');
           Object.defineProperty(result, inspectCustom, {
-            value: () => ({ data: '[Event stream]', meta: inspectedMetadata(meta) }),
+            value: () => ({ data: '[Event stream]', lastResponse: inspectedMetadata(meta) }),
           });
           return result as Result<T>;
         }
@@ -4707,9 +4776,9 @@ class CompiledRuntime {
             );
           meta.durationMs = performance.now() - start;
           const data = new Uint8Array(bytes);
-          const result = { data, meta, raw: data };
+          const result = responseResult(data, meta, data);
           Object.defineProperty(result, inspectCustom, {
-            value: () => ({ data: '[Binary response]', meta: inspectedMetadata(meta) }),
+            value: () => ({ data: '[Binary response]', lastResponse: inspectedMetadata(meta) }),
           });
           return result as Result<T>;
         }
@@ -4792,7 +4861,13 @@ class CompiledRuntime {
             );
           }
           meta.durationMs = performance.now() - start;
-          const result = { data: data as T, meta, raw };
+          const bodyRequestId = field(data, errorMapping(this.contract.errors).fields.requestId);
+          if (!meta.requestId && typeof bodyRequestId === 'string') {
+            meta.requestId = bodyRequestId;
+            requestIds.push(bodyRequestId);
+            meta.requestIds = [...requestIds];
+          }
+          const result = responseResult(data as T, meta, raw as Result<T>['raw']);
           Object.defineProperty(result, inspectCustom, {
             value: () => ({
               data: redactCodec(
@@ -4801,7 +4876,7 @@ class CompiledRuntime {
                 this.options.redactFields,
                 this.definitions(),
               ),
-              meta: inspectedMetadata(meta),
+              lastResponse: inspectedMetadata(meta),
             }),
           });
           return result as Result<T>;
@@ -4936,20 +5011,29 @@ class CompiledRuntime {
       } catch (cause) {
         if (cause instanceof SdkError) {
           diagnosticError = internalKind(cause);
+          error = cause;
           throw cause;
         }
         if (diagnosticMeta?.status === 401) {
           diagnosticError = 'authentication';
-          throw createSdkError(
+          error = createSdkError(
             'authentication',
             'API returned HTTP 401',
             'response',
             false,
             diagnosticMeta,
           );
+          throw error;
         }
-        if (options.signal?.aborted) diagnosticError = 'cancelled';
-        stopped(options.signal);
+        if (options.signal?.aborted) {
+          diagnosticError = 'cancelled';
+          error = createSdkError(
+            'cancelled',
+            'Local request cancelled; this does not cancel the remote operation',
+            'unknown',
+          );
+          throw error;
+        }
         const code = transportCode(cause);
         const expired = performance.now() >= deadline;
         const timedOut =
@@ -5003,7 +5087,11 @@ class CompiledRuntime {
                   ...(diagnosticMeta.requestId ? { requestId: diagnosticMeta.requestId } : {}),
                 }
               : {}),
-            ...(diagnosticError ? { errorKind: diagnosticError } : {}),
+            ...(error
+              ? { errorName: error.name, errorCode: error.code }
+              : diagnosticError === 'authentication'
+                ? { errorName: 'AuthenticationError', errorCode: 'http_error' }
+                : {}),
           });
         } catch {
           /* Diagnostics cannot change an operation's outcome. */
@@ -5047,7 +5135,7 @@ class CompiledRuntime {
       );
       yield result;
       if (options.maxPages !== undefined && page + 1 >= limit) return;
-      const sent = p.kind === 'link' ? (next ?? result.meta.url) : request[p.parameter!];
+      const sent = p.kind === 'link' ? (next ?? metadata(result).url) : request[p.parameter!];
       const previous = sent instanceof CompiledModel ? sent.toJSON() : sent;
       next = field(result.data, p.next);
       if (next === undefined || next === null || next === '') return;
@@ -5055,7 +5143,7 @@ class CompiledRuntime {
         throw new errors.PaginationLimitError(
           'Pagination exceeded the implicit limit of 1000 pages',
           {
-            ...result.meta,
+            ...metadata(result),
             operation: op.resource + '.' + op.method,
             outcome: 'response',
             nextPageToken: next,
@@ -5070,18 +5158,18 @@ class CompiledRuntime {
           'Pagination returned consecutive empty pages with continuations',
           'response',
           false,
-          result.meta,
+          metadata(result),
           'pagination_empty_pages',
         );
       if (p.kind === 'link' && typeof next !== 'string')
         throw createSdkError('protocol', 'Expected a pagination URL', 'response');
       if (p.kind === 'link')
-        next = destinationUrl(next as string, result.meta.url ?? this.base).href;
+        next = destinationUrl(next as string, metadata(result).url ?? this.base).href;
       if (
         seen.has(String(next)) ||
         next === previous ||
         (p.kind === 'offset' && previous !== undefined && String(next) === String(previous)) ||
-        (p.kind === 'link' && next === result.meta.url)
+        (p.kind === 'link' && next === metadata(result).url)
       )
         throw createSdkError(
           'protocol',
@@ -5117,7 +5205,7 @@ class CompiledRuntime {
             'Pagination item does not fit its public type',
             'response',
             false,
-            page.meta,
+            metadata(page),
             undefined,
             undefined,
             undefined,
@@ -5163,7 +5251,7 @@ class CompiledRuntime {
           'Operation reached a declared failure state',
           'response',
           false,
-          result.meta,
+          metadata(result),
         );
       await delay(Math.min(interval, Math.max(0, deadline - performance.now())), options.signal);
       interval = Math.min(interval * 1.5, 10000);

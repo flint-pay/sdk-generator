@@ -46,7 +46,8 @@ try {
     check(($error->details[0]['title'] ?? null) === 'required');
     check(str_contains($error->raw, 'bad_input'));
 }
-check(array_column($events, 'errorKind') === ['transport', 'validation']);
+check(array_column($events, 'errorName') === ['ConnectionError', 'InvalidRequestError']);
+check(array_column($events, 'errorCode') === ['transport_failure', 'bad_input']);
 check(!str_contains(json_encode($events), 'secret'));
 $db = openInbox($argv[2]);
 $receive = function (string $id, string $status, string $type = 'payment.updated') use (

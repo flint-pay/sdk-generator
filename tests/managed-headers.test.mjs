@@ -49,6 +49,7 @@ for (const style of ['object', 'positional']) {
     };
     const config = {
       version: '1.0.0',
+      responses: { return: 'result' },
       npm: { name: 'managed-header-sdk' },
       composer: { name: 'example/managed-headers', namespace: 'ManagedHeaders' },
       validation: 'schema',

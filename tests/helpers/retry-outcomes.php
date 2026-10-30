@@ -188,7 +188,11 @@ foreach ($rows as $row) {
                     $clientOptions,
                 ))->request($row['op'] ?? 'write', [], $options)
                 : $client->api->{$row['op'] ?? 'write'}([], $options);
-        $actual = ['result' => true, 'raw' => $result->raw, ...$result->meta];
+        $actual = [
+            'result' => true,
+            'raw' => $result->raw,
+            ...get_object_vars($result->lastResponse()),
+        ];
     } catch (SdkError $error) {
         $actual = [
             'error' => substr(strrchr(get_class($error), chr(92)), 1),

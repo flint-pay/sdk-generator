@@ -20,6 +20,7 @@ const dir = mkdtempSync(join(tmpdir(), 'sdk-schema-keys-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
 const config = {
   version: '1.0.0',
+  responses: { return: 'result' },
   validation: 'schema',
   requests: { style: 'object' },
   npm: { name: '@example/schema-keys' },
@@ -393,14 +394,20 @@ test('key constraint failures identify and escape the offending key in both gene
   });
   const { executeCodec } = await import(pathToFileURL(join(output, 'node/runtime.js')).href);
   const cases = [
-    [{ ab: 'x' }, 'input["ab"]: string violates minLength'],
-    [{ 'a"\\\n]': 'x' }, String.raw`input["a\"\\\n]"]: string violates pattern`],
+    [
+      { ab: 'x' },
+      '["ab"] must be a string with at least 3 characters; received a string of length 2',
+    ],
+    [
+      { 'a"\\\n]': 'x' },
+      String.raw`["a\"\\\n]"] must be a string matching the required pattern; received a string`,
+    ],
   ];
   for (const mode of ['request', 'response']) {
     const path = mode === 'request' ? 'input' : 'response';
     for (const [value, expected] of cases) {
       assert.throws(() => executeCodec(value, codec, { mode, path }), {
-        message: expected.replace(/^input/, path),
+        message: (mode === 'response' ? 'response' : '') + expected,
       });
     }
   }
@@ -410,9 +417,9 @@ test('key constraint failures identify and escape the offending key in both gene
 require $argv[1].'/src/Client.php';
 $codec=json_decode(file_get_contents($argv[2]),true,512,JSON_THROW_ON_ERROR);
 $cases=[
- [(object)['ab'=>'x'], 'input["ab"]: string violates minLength'],
+ [(object)['ab'=>'x'], '["ab"] must be a string with at least 3 characters; received a string of length 2'],
  [(object)["a\"\\\n]"=>'x'], <<<'ERROR'
-input["a\"\\\n]"]: string violates pattern
+["a\"\\\n]"] must be a string matching the required pattern; received a string
 ERROR],
 ];
 foreach(['request','response'] as $mode){
@@ -420,7 +427,7 @@ foreach(['request','response'] as $mode){
  foreach($cases as [$value,$expected]){
   try{Example\SchemaKeys\Codec::execute($value,$codec,['mode'=>$mode,'path'=>$path]);throw new RuntimeException('accepted invalid key');}
   catch(Example\SchemaKeys\SdkError $error){
-   if($error->getMessage()!==str_replace('input[',$path.'[',$expected))throw new RuntimeException($error->getMessage());
+   if($error->getMessage()!==($mode==='response'?'response':'').$expected)throw new RuntimeException($error->getMessage());
   }
  }
 }

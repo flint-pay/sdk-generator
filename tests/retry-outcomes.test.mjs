@@ -173,7 +173,7 @@ const rows = [
         attempts: failure === 'invalidation' ? 1 : 2,
         error:
           failure === 'invalidation'
-            ? 'AuthenticationError'
+            ? 'ConfigurationError'
             : failure === 'resolution'
               ? 'ConfigurationError'
               : 'ConnectionError',
@@ -710,7 +710,7 @@ async function nodeCase(row, t) {
         actual = {
           result: true,
           raw: typeof result.raw === 'string' ? result.raw : Buffer.from(result.raw).toString(),
-          ...result.meta,
+          ...result.lastResponse,
         };
       },
       (error) => {

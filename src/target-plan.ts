@@ -937,6 +937,8 @@ export interface CompiledSdkContract {
   };
 }
 
+/** Shared boundary codec for PHP payload objects that have no generated entity. */
+export const RESPONSE_OBJECT_CODEC = compileCodec({ type: 'object', additionalProperties: true });
 /** Close alternatives only at the envelope value. Nested payloads keep response
  * tolerance and references. Only unchanged allOf conjuncts use public models. */
 function webhookDeclarations(
@@ -1197,7 +1199,7 @@ export function compileSdkContract(source: Contract): {
       ]),
     ),
     node: {
-      errorSurfaceVersion: 5,
+      errorSurfaceVersion: 6,
       ...(c.config.webhook ? { webhookReasons: true, standaloneWebhook: true } : {}),
       clientOptions: {
         declaration: compileClientOptions(c),
@@ -1291,7 +1293,7 @@ export function compileSdkContract(source: Contract): {
       ...webhookDeclarations(c, models),
     },
     php: {
-      errorSurfaceVersion: 5,
+      errorSurfaceVersion: 6,
       ...(c.config.webhook ? { webhookReasons: true } : {}),
       // PHP class names are case-insensitive. Preserve a public Webhooks model
       // instead of emitting the optional standalone verifier over its class file.
@@ -1485,9 +1487,13 @@ export function compileSdkContract(source: Contract): {
   for (const [id, operation] of Object.entries(plan.node.operations)) {
     operation.output = replaceOutputNames(operation.output);
     const source = c.operations.find((op) => op.id === id)!;
-    operation.responseType = Object.hasOwn(plan.node.models, operation.output)
-      ? operation.output
-      : pascal(source.resource) + pascal(source.method) + 'Response';
+    // Response metadata keeps the declared component name even when codecs and payloads share a shape.
+    const declaredResponse = resultType(source, models);
+    operation.responseType = Object.hasOwn(plan.node.models, declaredResponse)
+      ? declaredResponse
+      : Object.hasOwn(plan.node.models, operation.output)
+        ? operation.output
+        : pascal(source.resource) + pascal(source.method) + 'Response';
     operation.items = replaceOutputNames(operation.items);
     if (operation.known) operation.known.type = replaceOutputNames(operation.known.type);
   }
@@ -1621,7 +1627,7 @@ export function compileSdkContract(source: Contract): {
   );
   if (Object.keys(responseReturns).length) {
     plan.responseReturns = responseReturns;
-    plan.node.responseReturnDeclarations = `export interface SdkResponse<T> { body: T; meta: Result<T>['meta']; raw: Result<T>['raw']; }\n`;
+    plan.node.responseReturnDeclarations = '';
   }
   for (const name of Object.values(plan.node.eventTypes ?? {}))
     if (plan.node.models[name]) plan.node.models[name]!.outputAlias = name;
@@ -1751,7 +1757,15 @@ export function compileSdkContract(source: Contract): {
             project(result.phpRepresentation ?? { kind: 'value', type: 'mixed' }, returns.path),
           );
         const join = (native: boolean) => {
-          const types = [...new Set(values.map((value) => phpRepresentationType(value, native)))];
+          const payloadType = (value: PhpRepresentation): string =>
+            value.kind === 'entity'
+              ? value.name
+              : value.kind === 'tagged'
+                ? [...new Set([...Object.values(value.variants).map(payloadType), 'Model'])].join(
+                    '|',
+                  )
+                : 'Model';
+          const types = [...new Set(values.map(payloadType))];
           return native ? phpUnion(types) : types.includes('mixed') ? 'mixed' : types.join('|');
         };
         returns.php = join(false);

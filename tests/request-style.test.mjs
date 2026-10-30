@@ -109,7 +109,7 @@ function php(f, source) {
     { encoding: 'utf8' },
   );
 }
-test('positional Node calls preserve URL, JSON body, headers, options, aliases and WithResponse', async () => {
+test('positional Node calls preserve URL, JSON body, headers, options, aliases and response info', async () => {
   const f = fixture();
   const { c, requests } = await client(f);
   await c.api.getOrder('ord/1', { headers: { 'x-test': 'yes' } });
@@ -123,7 +123,7 @@ test('positional Node calls preserve URL, JSON body, headers, options, aliases a
   assert.equal(requests.at(-1).body, '{"metadata":{"source":"store"}}');
   assert.equal(requests.at(-1).path, '/orders/ord1?limit=5');
   assert.equal(requests.at(-1).headers['x-context'], 'ctx');
-  assert.equal((await c.api.updateOrderWithResponse('ord1', {})).body.id, 'ok');
+  assert.equal((await c.api.updateOrder('ord1', {})).lastResponse.body.id, 'ok');
   await c.api.getChild('parent', 'child');
   assert.equal(requests.at(-1).path, '/parents/parent/children/child');
   await c.api.listCustomers({ limit: 100 });
@@ -149,7 +149,7 @@ test('PHP positional methods dispatch the same wire request', () => {
   const f = fixture();
   const result = php(
     f,
-    `$c->api->getOrder('ord/1', new RequestOptions(headers:['x-test'=>'yes'])); $c->api->update('ord1', ['metadata'=>['source'=>'store'],'limit'=>5,'X-Context'=>'ctx']); $c->api->getChild('parent','child'); $c->api->optional(); $c->api->optional([]); $r=$c->api->updateOrderWithResponse('ord1', []); if($r->body->id!=='ok') throw new Exception('response'); echo json_encode($requests);`,
+    `$c->api->getOrder('ord/1', new RequestOptions(headers:['x-test'=>'yes'])); $c->api->update('ord1', ['metadata'=>['source'=>'store'],'limit'=>5,'X-Context'=>'ctx']); $c->api->getChild('parent','child'); $c->api->optional(); $c->api->optional([]); $r=$c->api->updateOrder('ord1', []); if($r->lastResponse()->body->id!=='ok') throw new Exception('response'); echo json_encode($requests);`,
   );
   const requests = JSON.parse(result);
   assert.match(requests[0].url, /orders\/ord%2F1$/);
@@ -504,7 +504,7 @@ test('path arguments cannot shadow generated request and response helpers', asyn
   });
   const { c, requests } = await client(f);
   assert.equal((await c.api.getOrder('one', 'two', 'three')).id, 'ok');
-  assert.equal((await c.api.getOrderWithResponse('one', 'two', 'three')).body.id, 'ok');
+  assert.equal((await c.api.getOrder('one', 'two', 'three')).lastResponse.body.id, 'ok');
   assert.equal(requests.at(-1).path, '/helpers/one/two/three');
   assert.equal(php(f, "echo $c->api->getOrder('one','two','three')->id;"), 'ok');
 });

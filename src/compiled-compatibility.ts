@@ -239,7 +239,7 @@ export function compareCompiledContracts(
         severity: 'breaking',
         subject: id + '.helperReturn',
         message:
-          'Pagination/polling helper return mode changed; use PagesWithResponse or WaitWithResponse for the complete body and metadata.',
+          'Pagination/polling helper return mode changed; use lastResponse for the complete body and response information.',
       });
     if (
       stable(old?.path) !== stable(current?.path) ||

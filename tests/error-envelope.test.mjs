@@ -73,6 +73,7 @@ test('configured error envelopes preserve fields in Node and PHP and close retry
   );
   const settings = {
     version: '1.0.0',
+    responses: { return: 'result' },
     npm: { name: '@example/envelope' },
     composer: { name: 'example/envelope', namespace: 'Example' },
     errors: { objectPath: 'failure', fields: { message: 'message', details: 'issues' } },

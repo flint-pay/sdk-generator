@@ -82,6 +82,7 @@ function fixture(t) {
   };
   const config = {
     version: '1.0.0',
+    responses: { return: 'result' },
     requests: { style: 'object' },
     npm: { name: '@synthetic/widgets' },
     composer: { name: 'synthetic/widgets', namespace: 'Synthetic\\Widgets' },

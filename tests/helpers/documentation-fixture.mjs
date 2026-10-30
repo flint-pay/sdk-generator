@@ -175,7 +175,8 @@ export function documentationFixture(directory) {
     JSON.stringify({
       version: '1.0.0',
       requests: { style: 'object' },
-      responses: { return: 'payload' },
+      responses: { return: 'result' },
+      operations: { inlineBranches: { response: { return: 'payload' } } },
       npm: { name: '@example/facts' },
       composer: { name: 'example/facts', namespace: 'Example\\Facts' },
     }),

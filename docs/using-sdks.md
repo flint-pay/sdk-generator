@@ -210,17 +210,11 @@ With `requests.style: "object"`, methods take one input object with path/query/h
 
 ### Results
 
-| Method                       | Returns                                                                |
-| ---------------------------- | ---------------------------------------------------------------------- |
-| `create(...)` (payload mode) | The decoded body, or the configured payload inside it. No SDK wrapper. |
-| `createWithResponse(...)`    | `SdkResponse` with the full decoded `body`, HTTP `meta` and `raw`.     |
-| Any method in result mode    | `Result` with `data` (full decoded body), `meta` and `raw`.            |
+Payload methods return the decoded object, or the configured object payload inside it. Node attaches a readonly, non-enumerable `lastResponse`; PHP exposes `lastResponse(): ?ResponseInfo` on the returned model. Nested models and models built by callers return null in PHP. Node's `WithResponseInfo<Payload, Body>` remains assignable to the payload type, and response information stays out of enumeration, inspection, cloning and JSON serialization.
 
-- Each invocation sends its own request. Choose one form per action.
-- The provider selects payload paths and result mode, per SDK or per operation. Check the generated reference for each operation's mode, and follow the provider's migration notes when it changes.
-- In result mode, a provider `data` envelope stays inside `data`: use `result.data.data` (PHP `$result->data->data`). Nesting is endpoint-specific; follow the operation example.
-- `meta` holds the HTTP status, response headers, attempt count, duration and an optional provider request ID. Node reads it with properties, PHP with array keys.
-- Check unknown response enums and variants before treating a result as a known successful business state.
+`ResponseInfo` contains `status`, lowercase `headers`, optional `requestId`, ordered `requestIds`, optional `idempotencyKey`, `attempts`, `durationMs` and `body`. `body` is the complete decoded body with the operation's declared response type. Read `order.lastResponse.requestId` in Node or `$order->lastResponse()?->requestId` in PHP. No second request is needed.
+
+Result-mode methods return `Result` with `data` and `raw`, plus `lastResponse` in Node or `lastResponse()` in PHP. A provider `data` envelope stays inside `data`: use `result.data.data` (PHP `$result->data->data`). Success raw text is retained only in result mode. Check unknown response enums and variants before treating a result as a known successful business state.
 
 ### Omitted and null values
 
@@ -241,7 +235,7 @@ Messages name the field and allowed values: `line_items[0].type is required: one
 
 PHP keeps `OUTCOME_NOT_SENT`, `OUTCOME_RESPONSE` and `OUTCOME_UNKNOWN`. Both `$e->code` and `$e->getCode()` return the string error code; `$e->status` carries the HTTP status. Messages are preserved verbatim; `__toString()` adds status, code and request ID for logs.
 
-Every error after a call resolves an idempotency key exposes `error.idempotencyKey` (Node) or `$error->idempotencyKey` (PHP), including validation and cancellation before sending. `WithResponse` results expose `meta.idempotencyKey` (PHP: `$result->meta['idempotencyKey']`). Keys are included in error inspection. Persist your key across process restarts and application resubmissions; automatically generated UUID v4 keys, including any configured prefix, last for one SDK call and are reused on every attempt.
+Every error after a call resolves an idempotency key exposes `error.idempotencyKey` (Node) or `$error->idempotencyKey` (PHP), including validation and cancellation before sending. Successful results expose `lastResponse.idempotencyKey` (PHP: `$result->lastResponse()?->idempotencyKey`). Keys are included in error inspection. Persist your key across process restarts and application resubmissions; automatically generated UUID v4 keys, including any configured prefix, last for one SDK call and are reused on every attempt.
 
 When an operation requires a header and has automatic keys disabled, TypeScript requires the options argument with `idempotencyKey: string`; PHP throws a `validation` error with `outcome: "not_sent"` before dispatch if the key is missing. Save the key with the action before the first attempt.
 
@@ -257,8 +251,8 @@ Backoff waits uniformly between half and all of the exponential delay, capped by
 import { SdkError, errors } from '@example/library';
 
 try {
-  const result = await client.books.retrieveWithResponse('book/123');
-  console.log(result.body.title, result.meta.requestId);
+  const book = await client.books.retrieve('book/123');
+  console.log(book.title, book.lastResponse.requestId);
 } catch (error) {
   if (!(error instanceof SdkError)) throw error;
   if (error instanceof errors.NotFoundError) {
@@ -384,20 +378,14 @@ For responses that fail schema decoding, see [schema drift](#successful-http-res
 
 Only declared capabilities generate these helpers. For a paginated operation named `list`:
 
-| Helper                       | Yields                                                                         |
-| ---------------------------- | ------------------------------------------------------------------------------ |
-| `listPages(input, options)`  | Pages with the same payload as `list`, or full `Result` values in result mode. |
-| `listPagesWithResponse(...)` | Payload mode only: `SdkResponse` pages with `body`, `meta` and `raw`.          |
-| `listItems(input, options)`  | Individual items.                                                              |
-
-Use `for await ... of` in Node and `foreach` in PHP. For a list payload containing `data`, read `page.data`; the response form reads `page.body.data` (PHP `$page->body->data`).
+`listPages(input, options)` yields each page in the base method's return mode; `listItems(input, options)` yields individual items. Use `for await ... of` in Node and `foreach` in PHP. Each page carries its own response information (`page.lastResponse` or `$page->lastResponse()`). Items do not; use pages when recording request IDs. For list payloads, read the declared item field directly, such as `page.items` or `$page->getItems()`.
 
 - Iteration is lazy. Without `maxPages`, yielding 1,000 pages with a continuation raises `PaginationLimitError` with code `pagination_limit_exceeded`, `pages: 1000` and `nextPageToken` containing the continuation. A terminal page at exactly 1,000 completes normally. Set an explicit `maxPages` for an intentional bound; reaching that bound ends quietly, including `maxPages: 1000`. `maxItems` and cancellation provide additional bounds.
 - Repeated continuations, including longer cursor cycles, raise a protocol error. Two consecutive empty pages with continuations also raise a protocol error; isolated and terminal empty pages remain valid.
 - Each page request gets a fresh `deadlineMs` budget for its retries and decoding. Time spent processing yielded values doesn't count, and there is no overall iterator deadline.
 - Pagination does not promise a stable snapshot.
 
-For a polling operation named `get`, `getWait(input, options)` returns the same payload as `get` (a full `Result` in result mode). Payload-mode `getWaitWithResponse` returns the complete body and HTTP metadata.
+For a polling operation named `get`, `getWait(input, options)` returns the same payload as `get` (a full `Result` in result mode), with the last poll’s response information.
 
 - Both evaluate states against the original provider body.
 - Unknown states keep waiting until a declared terminal state or the deadline, which covers the whole wait.
@@ -613,7 +601,8 @@ Pass client defaults to `new Client({...})` in Node or `new Client(new ClientOpt
 | `deadlineMs`              | Client or request | `30000`; positive overall duration, not an absolute timestamp. Includes retry waits. Iterator and polling scope: [pagination and polling](#pagination-and-polling). |
 | `maxAttempts`             | Client or request | A positive safe integer budget capped at the operation limit. Defaults follow [retries](#errors-and-retries).                                                       |
 | `transport`               | Client            | Fetch for buffered Node calls, native HTTP/HTTPS for Node SSE, reusable cURL in PHP. Injected transports are caller-owned.                                          |
-| `diagnostics`             | Client            | Optional callback receiving operation, attempt, status, request ID, timing and error kind, without bodies or credentials.                                           |
+| `diagnostics`             | Client            | Optional callback receiving operation, attempt, status, request ID, timing, `errorName` (class name) and `errorCode`, without bodies or credentials.                |
+| `appInfo`                 | Client            | Application `name`, optional `version` and HTTPS `url`, appended to User-Agent after SDK, runtime and OS details.                                                   |
 | `redactFields`            | Client            | Additional field names to redact in model inspection, error messages and parsed error details. Does not change response data.                                       |
 | `headers`                 | Request           | Request-local header map; includes tenant context and optional User-Agent override. A configured API-version pin takes precedence.                                  |
 | `idempotencyKey`          | Request           | Caller-owned stable key for a declared idempotent operation. Persist across retries and process restarts.                                                           |
@@ -651,6 +640,8 @@ Origins:
 - Origin checks ignore scheme and host case and normalize default ports (`https:443`, `http:80`). Pagination links with those equivalent spellings are allowed; other ports need their own allowed origin.
 - Write `allowedOrigins` entries as canonical origins without default ports, such as `https://example.invalid`.
 
+`appInfo.name` and an optional `version` must each contain 1–64 characters from `[A-Za-z0-9._-]`; an optional `url` must be an absolute HTTPS URL of at most 256 characters. Invalid values raise `ConfigurationError` with `invalid_option`. The default User-Agent includes SDK name/version, Node.js or PHP version, OS and (for Node) architecture, followed by `name`, optional `/version` and optional `(+url)` when supplied.
+
 Concurrency and cleanup:
 
 - Node clients serve concurrent calls within an event loop. Non-streaming Node clients need no cleanup and have no `close()`; clients with streaming operations expose `close()` to release owned streams.
@@ -663,14 +654,14 @@ Concurrency and cleanup:
 ### Server-sent events
 
 ```js
-const result = await client.events.watchWithResponse(input, { signal, streamIdleTimeoutMs: 30000 });
+const result = await client.events.watch(input, { signal, streamIdleTimeoutMs: 30000 });
 try {
-  for await (const event of result.body) {
+  for await (const event of result.data) {
     console.log(event.event, event.id, event.data);
     // Persist a cursor only after your application's event work succeeds.
   }
 } finally {
-  await result.body.close();
+  await result.data.close();
 }
 await client.close();
 ```
@@ -678,16 +669,13 @@ await client.close();
 PHP exposes the same result fields and closeable iteration:
 
 ```php
-$result = $client->events->watchWithResponse(
-  $input,
-  new RequestOptions(streamIdleTimeoutMs: 30000),
-);
+$result = $client->events->watch($input, new RequestOptions(streamIdleTimeoutMs: 30000));
 try {
-  foreach ($result->body as $event) {
+  foreach ($result->data as $event) {
     processEvent($event->event, $event->id, $event->data);
   }
 } finally {
-  $result->body->close();
+  $result->data->close();
 }
 $client->close();
 ```
@@ -706,9 +694,9 @@ $client->close();
 
 ### PDF downloads and declared redirects
 
-- PDF methods return `Uint8Array` in Node and binary-safe strings in PHP. `WithResponse` exposes the bytes in `body` and `raw`, preserving every byte. Don't convert them to UTF-8 text before saving.
+- PDF methods use result mode: `data` and `raw` retain `Uint8Array` bytes in Node and binary-safe strings in PHP. Do not convert them to UTF-8 text before saving.
 - JSON error responses from PDF operations decode as ordinary SDK errors.
-- Explicit `302` and `307` results expose an optional `location`. `WithResponse` exposes status and headers in `meta` and the location in `body.location`.
+- Explicit `302` and `307` results expose an optional `data.location`. Read status and headers from `lastResponse` (PHP `lastResponse()`).
 - Required Location headers are checked. Relative and cross-origin locations are returned without being followed; following one is an application decision. Undeclared redirects fail.
 - Generated redirect examples inspect the status and Location without a second request or forwarding credentials. Generated PDF examples save the bytes; set `API_DOWNLOAD_PATH` to choose the output file.
 
@@ -727,14 +715,14 @@ Inputs and outputs follow the [schema representations](configuration.md#schema-r
 
 ### TypeScript object types
 
-Response types use the referenced component name, with structurally identical declarations sharing a canonical name (shortest name, then alphabetical order). Different effective shapes retain separate names, including differences introduced by schema profiles. Payload methods return concrete component types or unions; `WithResponse` keeps the envelope and HTTP metadata. A projected payload that matches no declared alternative raises a protocol error; `WithResponse` retains the complete forward-compatible envelope.
+Response types use the referenced component name, with structurally identical declarations sharing a canonical name (shortest name, then alphabetical order). Different effective shapes retain separate names, including differences introduced by schema profiles. Payload methods return concrete object types or unions with `WithResponseInfo<Payload, Body>`. `lastResponse.body` keeps the typed envelope. A projected payload that matches no declared alternative raises `UnexpectedResponseError` with raw recovery.
 
 - Request enums are closed unions; response enums include future strings.
 - Only models reachable from operation inputs have `NameInput` types and `makeName` factories. Request bodies use their referenced component input name; anonymous bodies stay within the owning operation input.
 - Fresh object literals with undeclared properties, and misspelled response fields, are type errors. Explicitly open objects and dictionaries accept arbitrary keys.
 - Structural typing can still accept extra keys through existing variables; runtime request rules follow the schema.
 - Unknown response fields stay present. Read them with an explicit dictionary assertion or narrowing.
-- Unknown response object variants retain `Record<string, unknown>` through property guards, including nested variants and `WithResponse` envelopes. Use a generated known-variant guard or validate individual values before reading declared fields. Successful payloads and pagination items that cannot satisfy their public types fail with a protocol error and retain `raw`.
+- Unknown response object variants retain `Record<string, unknown>` through property guards, including nested variants and full response envelopes. Use a generated known-variant guard or validate individual values before reading declared fields. Successful payloads and pagination items that cannot satisfy their public types fail with a protocol error and retain `raw`.
 - `Object.keys()` and `Object.values()` can include undeclared fields. Validate values when iterating preserved extras.
 - Optional fields named like inherited `Object` members (such as `toString`) include the inherited signature, so you can omit them. Explicit own values are validated, functions are never serialized as strings, and the runtime reads only own request properties.
 - An OpenAPI 3.1 schema with `properties` or `required` but no `type` does not require an object. Its type keeps the permitted nonobject values; narrow before reading fields. An enclosing object constraint in an `allOf` still applies.
@@ -756,7 +744,7 @@ Response getters return generated entities for declared nested objects, lists of
 - In object/array alternatives, PHP lists (including `[]`) are JSON arrays; use `(object) []` for an empty JSON object.
 - Getters memoize hydrated children: repeated entity reads return the same immutable instance, and lists/maps of entities use PHP copy-on-write arrays. Mutable untyped objects and raw exports (`toArray()`, `jsonSerialize()`, `toInputArray()`, `toInputValue()`) remain defensive copies; editing them does not change the model. To change an input, edit a `toInputArray()` or `toInputValue()` copy and construct a new model. These input exports preserve exact numeric kinds in ambiguous unions.
 
-PHP integer input strings and `ExactNumber` tokens for integer fields must use integer spelling, such as `"5000"`; `"50.00"` and `"5e3"` are rejected with an “integer string” error. Decimal fields retain exact fractional/exponent spellings. Integral decimal/exponent tokens in integer responses still decode exactly. Client resource wrappers initialize on first access and remain read-only.
+PHP integer input strings and `ExactNumber` tokens for integer fields must use integer spelling, such as `"5000"`; `"50.00"` and `"5e3"` are rejected with an "integer string" error. Decimal fields retain exact fractional/exponent spellings. Integral decimal/exponent tokens in integer responses still decode exactly. Client resource wrappers initialize on first access and remain read-only.
 
 ### Schema-taking helpers
 

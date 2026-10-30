@@ -13,7 +13,16 @@ let index = 0;
 function fixture(extra = {}) {
   const dir = join(root, String(index++));
   mkdirSync(dir);
-  const schema = { type: 'object', required: ['data'], properties: { data: { type: 'string' } } };
+  const schema = {
+    type: 'object',
+    required: ['data'],
+    properties: {
+      data:
+        extra.responses?.payloadPath || extra.operations?.createPaymentIntent?.response?.payloadPath
+          ? { type: 'object', properties: { value: { type: 'string' } }, required: ['value'] }
+          : { type: 'string' },
+    },
+  };
   const api = {
     openapi: '3.1.0',
     info: { title: 'Defaults', version: '1' },
@@ -123,7 +132,7 @@ test('reserved inferred operation names fall back to valid operation IDs', async
       transport: async () => new Response('{"data":"ok"}', { status: 200 }),
     });
     assert.equal((await client.api[id]({})).data, 'ok');
-    assert.equal((await client.api[id + 'WithResponse']({})).body.data, 'ok');
+    assert.equal((await client.api[id]({})).lastResponse.body.data, 'ok');
   }
   assert.deepEqual(operationNames('listUsers', ['users']), { resource: 'users', method: 'list' });
   assert.deepEqual(operationNames('closeAccount', ['accounts']), {
@@ -186,7 +195,7 @@ echo json_encode($input);
   assert.throws(() => fixture({ models: { PaymentInput: 'Request' } }), /reserved word/);
 });
 
-test('automatic defaults generate recursive models, exact unions, direct bodies and WithResponse', async () => {
+test('automatic defaults generate recursive models, exact unions, direct bodies and response info', async () => {
   const f = fixture(),
     output = join(f.dir, 'out');
   assert.deepEqual(f.warnings, []);
@@ -212,9 +221,9 @@ test('automatic defaults generate recursive models, exact unions, direct bodies 
     'kept-envelope',
   );
   assert.equal(bodies[0], '{"amount":1.2500}');
-  const response = await client.paymentIntents.createWithResponse({ child: { amount: '1.2500' } });
-  assert.equal(response.body.data, 'kept-envelope');
-  assert.equal(response.meta.requestId, 'req_00VZKVWV7E7ECWMRV2HQKH1E8M');
+  const response = await client.paymentIntents.create({ child: { amount: '1.2500' } });
+  assert.equal(response.lastResponse.body.data, 'kept-envelope');
+  assert.equal(response.lastResponse.requestId, 'req_00VZKVWV7E7ECWMRV2HQKH1E8M');
   assert.equal(
     execFileSync(
       'php',
@@ -319,8 +328,10 @@ test('explicit payload paths work with the default return mode', async () => {
     const { Client } = await import(join(output, 'node/index.js'));
     const client = new Client({
       baseUrl: 'https://example.invalid',
-      transport: async () => new Response('{"data":"selected"}', { status: 200 }),
+      transport: async () => new Response('{"data":{"value":"selected"}}', { status: 200 }),
     });
-    assert.equal(await client.paymentIntents.create({}), 'selected');
+    assert.deepEqual(JSON.parse(JSON.stringify(await client.paymentIntents.create({}))), {
+      value: 'selected',
+    });
   }
 });

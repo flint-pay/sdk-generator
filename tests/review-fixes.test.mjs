@@ -666,6 +666,7 @@ test('native clients decode compressed successes and code-specific retry errors 
     },
     {
       config: {
+        errors: { objectPath: '' },
         operations: {
           read: {
             retry: {
@@ -712,7 +713,7 @@ test('native clients decode compressed successes and code-specific retry errors 
           },
         );
         assert.equal(result.data.value, 1);
-        assert.equal(result.meta.attempts, kind === 'retry' ? 2 : 1);
+        assert.equal(result.lastResponse.attempts, kind === 'retry' ? 2 : 1);
       }
     }
     const results = await php(
@@ -725,7 +726,7 @@ test('native clients decode compressed successes and code-specific retry errors 
           $headers = ['x-test-run'=>'php-'.($explicit ? 'true' : 'false').'-'.$kind];
           if ($explicit) $headers['accept-encoding'] = 'gzip';
           $r = $c->api->read(options:new Review\RequestOptions(headers:$headers));
-          $results[] = [$r->data->getValue(), $r->meta['attempts']];
+          $results[] = [$r->data->getValue(), $r->lastResponse()->attempts];
         }
       }
       $c->close();
@@ -1242,7 +1243,7 @@ async function consume(client: Client) {
     sent,
     values.map((v) => JSON.stringify(v)),
   );
-  await assert.rejects(client.api.read({ body: {} }), /required field/);
+  await assert.rejects(client.api.read({ body: {} }), /id is required/);
 });
 
 test('typeless nested schemas and alternatives stay broad while object intersections retain fields', async () => {
@@ -1394,7 +1395,10 @@ async function consume(client:Client){
     { id: 'a', next: [] },
     { id: 'a', nullableNext: 'wrong' },
   ])
-    await assert.rejects(client.api.read({ body }), /object|null is not permitted/);
+    await assert.rejects(
+      client.api.read({ body }),
+      /(?:next|nullableNext) must be (?:an object|a non-null value)/,
+    );
   assert.equal(sent, before);
 });
 
@@ -1468,7 +1472,7 @@ broad.toJSON().label;
   for (const child of [makeChild(null), makeChild([])])
     await assert.rejects(
       client.api.read({ body: { id: 'a', child } }),
-      /object|null is not permitted/,
+      /child must be (?:an object|a non-null value)/,
     );
   assert.equal(sent, before);
 });

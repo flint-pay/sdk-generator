@@ -43,6 +43,7 @@ function fixture(t, option = 'scalar-or-array') {
     operationNames: 'path',
     validation: 'schema',
     version: '1.0.0',
+    responses: { return: 'result' },
     npm: { name: '@example/query-arrays' },
     composer: { name: 'example/query-arrays', namespace: 'QueryArrays' },
     ...(option ? { queryArrays: option } : {}),

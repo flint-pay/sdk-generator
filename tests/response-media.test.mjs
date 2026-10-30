@@ -166,7 +166,7 @@ test('default transports preserve PDF bytes and return cross-origin redirects wi
     const client = new Client({ baseUrl, allowInsecureHttp: true });
     const result = await client.api.download();
     assert.deepEqual(Buffer.from(result.data), bytes);
-    assert.equal(result.meta.requestId, 'req_00QGW9CABGRYRC2NJFYVT65W86');
+    assert.equal(result.lastResponse.requestId, 'req_00QGW9CABGRYRC2NJFYVT65W86');
     assert.equal((await client.api.redirectDownload()).data.location, location);
     writeFileSync(
       join(dir, 'native.php'),
@@ -176,7 +176,7 @@ require ${JSON.stringify(join(out, 'php/src/Client.php'))};
 use Example\\Media\\{Client,ClientOptions};
 $c=new Client(new ClientOptions(baseUrl:$argv[1],allowInsecureHttp:true));
 $result=$c->api->download();
-if(base64_encode($result->data)!=='${bytes.toString('base64')}'||$result->raw!==$result->data||$result->meta['requestId']!=='req_00QGW9CABGRYRC2NJFYVT65W86')throw new Exception('binary corruption');
+if(base64_encode($result->data)!=='${bytes.toString('base64')}'||$result->raw!==$result->data||$result->lastResponse()->requestId!=='req_00QGW9CABGRYRC2NJFYVT65W86')throw new Exception('binary corruption');
 if($c->api->redirectDownload()->data->location!==$argv[2])throw new Exception('redirect');
 $c->close();echo 'ok';
 `,

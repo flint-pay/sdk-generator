@@ -143,6 +143,11 @@ function fixture(mode) {
       version: '1.0.0',
       requests: { style: 'object' },
       responses: { return: mode },
+      operations: {
+        download: { response: { return: 'result' } },
+        redirect: { response: { return: 'result' } },
+        optional: { response: { return: 'result' } },
+      },
       auth: { scheme: 'Bearer' },
       npm: { name: '@example/download-docs' },
       composer: { name: 'example/download-docs', namespace: 'Example\\Downloads' },
@@ -318,6 +323,7 @@ test('owning component hints retain request-body model links in both target refe
     JSON.stringify({
       version: '1.0.0',
       npm: { name: '@example/body-model-links' },
+      responses: { return: 'result' },
       composer: { name: 'example/body-model-links', namespace: 'Example\\BodyModelLinks' },
     }),
   );

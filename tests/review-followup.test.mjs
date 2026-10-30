@@ -105,7 +105,7 @@ test('native SSE connection retries and empty headers agree in Node and PHP', as
     `<?php
 require $argv[1].'/php/src/Runtime.php';require $argv[1].'/php/src/Client.php';
 $c=new FollowupSdk\\Client(new FollowupSdk\\ClientOptions(baseUrl:$argv[2],allowInsecureHttp:true));
-try {$result=$c->events->watch(new FollowupSdk\\EventsWatchInput(['X-Context'=>'original']),new FollowupSdk\\RequestOptions(headers:['X-Context'=>''],maxAttempts:(int)$argv[3]));$result->data->close();echo json_encode(['attempts'=>$result->meta['attempts']]);}
+try {$result=$c->events->watch(new FollowupSdk\\EventsWatchInput(['X-Context'=>'original']),new FollowupSdk\\RequestOptions(headers:['X-Context'=>''],maxAttempts:(int)$argv[3]));$result->data->close();echo json_encode(['attempts'=>$result->lastResponse()->attempts]);}
 catch(FollowupSdk\\SdkError $e){echo json_encode(['kind'=>substr(strrchr(get_class($e), chr(92)), 1)]);}finally{$c->close();}
 `,
   );
@@ -116,7 +116,7 @@ catch(FollowupSdk\\SdkError $e){echo json_encode(['kind'=>substr(strrchr(get_cla
       { headers: { 'X-Context': '' } },
     );
     await result.data.close();
-    assert.equal(result.meta.attempts, 2);
+    assert.equal(result.lastResponse.attempts, 2);
     assert.deepEqual(
       received.map((h) => h['x-context']),
       ['', ''],
@@ -160,7 +160,7 @@ test('binary and stream inspection omits privileged data but explicit access pre
       inspect(value, { depth: null }),
       /private-cookie|example.invalid|set-cookie/,
     );
-    assert.equal(value.meta.headers['set-cookie'], 'session=private-cookie');
+    assert.equal(value.lastResponse.headers['set-cookie'], 'session=private-cookie');
   }
   assert.equal(Buffer.from(pdf.raw).toString(), '%PDF');
   for await (const event of stream.data) {
@@ -174,8 +174,8 @@ test('binary and stream inspection omits privileged data but explicit access pre
     `<?php
 require $argv[1].'/php/src/Runtime.php';
 $source=new class implements FollowupSdk\\ByteStream {public function read():?string{return null;}public function close():void{}};
-$s=new FollowupSdk\\EventStream($source,['status'=>200,'headers'=>['set-cookie'=>'private-cookie'],'url'=>'https://private.example'],[],fn($e,$d)=>$d,fn()=>null);
-ob_start();var_dump($s);$debug=ob_get_clean();echo json_encode(['debug'=>$debug,'cookie'=>$s->meta['headers']['set-cookie']]);$s->close();
+$s=new FollowupSdk\\EventStream($source,['status'=>200,'headers'=>['set-cookie'=>'private-cookie'],'url'=>'https://private.example','attempts'=>1,'durationMs'=>0],[],fn($e,$d)=>$d,fn()=>null);
+ob_start();var_dump($s);$debug=ob_get_clean();echo json_encode(['debug'=>$debug,'cookie'=>$s->lastResponse()->headers['set-cookie']]);$s->close();
 `,
   );
   const value = JSON.parse((await exec('php', [php, out])).stdout);

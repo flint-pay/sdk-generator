@@ -221,9 +221,11 @@ const diagnostics=[];
 const c=new Client({baseUrl:'https://example.invalid',diagnostics:e=>diagnostics.push(e),transport:async()=>new Response('"ok"',{headers:{'x-request-id':'req_synthetic'}})});
 const result=await c.api.sendValue({}, {deadlineMs:20});
 assert.equal(result.data,'ok');
-assert.equal(result.meta.requestId,'req_synthetic');
-assert.equal(result.meta.durationMs,40);
-assert.equal(diagnostics.at(-1).errorKind,undefined);
+assert.equal(result.lastResponse.requestId,'req_synthetic');
+assert.equal(result.lastResponse.durationMs,40);
+assert.equal(diagnostics.at(-1).errorName,undefined);
+assert.equal(diagnostics.at(-1).errorCode,undefined);
+assert.equal('errorKind' in diagnostics.at(-1),false);
 assert.equal((await c.api.sendValue({}, {deadlineMs:1000})).data,'ok');
 `,
   );
@@ -249,8 +251,8 @@ require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
 $events=[];
 $c=new ReviewSdk\Client(new ReviewSdk\ClientOptions('https://example.invalid',diagnostics:function($e)use(&$events){$events[]=$e;},transport:fn($r)=>['status'=>200,'headers'=>['x-request-id'=>'req_synthetic'],'body'=>'"ok"']));
 $result=$c->api->sendValue(new ReviewSdk\ApiSendValueInput(),new ReviewSdk\RequestOptions(deadlineMs:20));
-if($result->data!=='ok'||$result->meta['requestId']!=='req_synthetic'||$result->meta['durationMs']!==40)throw new Exception('lost complete answer');
-if(isset(end($events)['errorKind']))throw new Exception('unexpected failure diagnostic');
+if($result->data!=='ok'||$result->lastResponse()->requestId!=='req_synthetic'||$result->lastResponse()->durationMs!==40.0)throw new Exception('lost complete answer');
+if(isset(end($events)['errorName'])||isset(end($events)['errorCode'])||array_key_exists('errorKind',end($events)))throw new Exception('unexpected failure diagnostic');
 if($c->api->sendValue(new ReviewSdk\ApiSendValueInput(),new ReviewSdk\RequestOptions(deadlineMs:1000))->data!=='ok')throw new Exception('control');
 }
 `,

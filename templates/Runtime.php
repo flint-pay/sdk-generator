@@ -259,28 +259,79 @@ class SdkError extends \RuntimeException implements \JsonSerializable
         ];
     }
 }
-/** @template T */
-final class Result
+/** Complete response information; body is available only through explicit access. */
+final class ResponseInfo
 {
-    /** @param T $data
-     * @param array{status: int, requestId?: string|null, attempts: int, durationMs: float, ...} $meta
-     */
     public function __construct(
-        public readonly mixed $data,
-        public readonly array $meta,
-        public readonly string $raw,
+        public readonly int $status,
+        public readonly array $headers,
+        public readonly ?string $requestId,
+        public readonly array $requestIds,
+        public readonly ?string $idempotencyKey,
+        public readonly int $attempts,
+        public readonly float $durationMs,
+        public readonly mixed $body,
     ) {}
+    /** @internal */
+    public static function from(array $meta, mixed $body): self
+    {
+        return new self(
+            $meta['status'],
+            $meta['headers'] ?? [],
+            $meta['requestId'] ?? null,
+            $meta['requestIds'] ?? [],
+            $meta['idempotencyKey'] ?? null,
+            $meta['attempts'],
+            $meta['durationMs'],
+            $body,
+        );
+    }
     public function __debugInfo(): array
     {
         return [
-            'meta' => array_intersect_key(
-                $this->meta,
-                array_flip(['status', 'requestId', 'attempts', 'durationMs']),
-            ),
-            'data' => '[Use data explicitly]',
+            'status' => $this->status,
+            'requestId' => $this->requestId,
+            'attempts' => $this->attempts,
+            'durationMs' => $this->durationMs,
+            'body' => '[Use body explicitly]',
         ];
     }
 }
+/** @template T */
+final class Result
+{
+    private readonly ResponseInfo $responseInfo;
+    /** @param T $data */
+    public function __construct(
+        public readonly mixed $data,
+        private readonly array $metadata,
+        public readonly string $raw,
+        private readonly array $redactFields = [],
+        private readonly array $responseCodec = [],
+        private readonly array $definitions = [],
+    ) {
+        $this->responseInfo = ResponseInfo::from($metadata, $data);
+    }
+    public function lastResponse(): ResponseInfo
+    {
+        return $this->responseInfo;
+    }
+    /** @internal Includes runtime-only continuation information. */
+    public function internalMeta(): array
+    {
+        return $this->metadata;
+    }
+    /** @internal Redaction context for generic payload models. */
+    public function inspectionContext(): array
+    {
+        return [$this->redactFields, $this->responseCodec, $this->definitions];
+    }
+    public function __debugInfo(): array
+    {
+        return ['lastResponse' => $this->responseInfo, 'data' => '[Use data explicitly]'];
+    }
+}
+
 final class Cancellation
 {
     private bool $cancelled = false;
@@ -943,6 +994,7 @@ final class ClientOptions
         public readonly array|string|Omitted|null $credentials = Omitted::Value,
         public readonly bool $ambientCredentials = true,
         public readonly ?object $credentialCache = null,
+        public readonly mixed $appInfo = Omitted::Value,
     ) {
         /* AUTH_SHORTCUT_CLIENT_PARAMETERS */
     }
@@ -1194,14 +1246,20 @@ final class EventStream implements \IteratorAggregate
     private bool $closed = false;
     private bool $started = false;
     private float $created;
+    private readonly ResponseInfo $responseInfo;
     public function __construct(
         private readonly ByteStream $source,
-        public readonly array $meta,
+        private readonly array $transportMeta,
         private readonly array $settings,
         private readonly \Closure $decode,
         private readonly \Closure $released,
     ) {
         $this->created = hrtime(true) / 1000000;
+        $this->responseInfo = ResponseInfo::from($this->transportMeta, $this);
+    }
+    public function lastResponse(): ResponseInfo
+    {
+        return $this->responseInfo;
     }
     public function close(): void
     {
@@ -1215,10 +1273,7 @@ final class EventStream implements \IteratorAggregate
     public function __debugInfo(): array
     {
         return [
-            'meta' => array_intersect_key(
-                $this->meta,
-                array_flip(['status', 'requestId', 'attempts', 'durationMs']),
-            ),
+            'lastResponse' => $this->lastResponse(),
             'closed' => $this->closed,
         ];
     }
@@ -1245,7 +1300,7 @@ final class EventStream implements \IteratorAggregate
                         'Stream cancelled',
                         'response',
                         false,
-                        $this->meta,
+                        $this->transportMeta,
                     );
                 }
                 if (
@@ -1257,7 +1312,7 @@ final class EventStream implements \IteratorAggregate
                         'Stream lifetime exceeded',
                         'response',
                         false,
-                        $this->meta,
+                        $this->transportMeta,
                     );
                 }
                 $wait = hrtime(true) / 1000000;
@@ -1268,7 +1323,7 @@ final class EventStream implements \IteratorAggregate
                         'Stream cancelled',
                         'response',
                         false,
-                        $this->meta,
+                        $this->transportMeta,
                     );
                 }
                 if (hrtime(true) / 1000000 - $wait >= $this->settings['idleTimeoutMs']) {
@@ -1277,7 +1332,7 @@ final class EventStream implements \IteratorAggregate
                         'Stream idle timeout exceeded',
                         'response',
                         false,
-                        $this->meta,
+                        $this->transportMeta,
                     );
                 }
                 if ($chunk === null) {
@@ -1287,7 +1342,7 @@ final class EventStream implements \IteratorAggregate
                             'Invalid UTF-8 stream',
                             'response',
                             false,
-                            $this->meta,
+                            $this->transportMeta,
                         );
                     }
                     break;
@@ -1303,7 +1358,7 @@ final class EventStream implements \IteratorAggregate
                             'Stream cancelled',
                             'response',
                             false,
-                            $this->meta,
+                            $this->transportMeta,
                         );
                     }
                     if (
@@ -1315,7 +1370,7 @@ final class EventStream implements \IteratorAggregate
                             'Stream lifetime exceeded',
                             'response',
                             false,
-                            $this->meta,
+                            $this->transportMeta,
                         );
                     }
                     $character = $chunk[$index];
@@ -1331,7 +1386,7 @@ final class EventStream implements \IteratorAggregate
                             'SSE event exceeds configured size limit',
                             'response',
                             false,
-                            $this->meta,
+                            $this->transportMeta,
                         );
                     }
                     if ($character !== "\r" && $character !== "\n") {
@@ -1351,7 +1406,7 @@ final class EventStream implements \IteratorAggregate
                             'Invalid UTF-8 stream',
                             'response',
                             false,
-                            $this->meta,
+                            $this->transportMeta,
                         );
                     }
                     if ($line === '') {
@@ -1371,7 +1426,7 @@ final class EventStream implements \IteratorAggregate
                                         '; inspect details.eventId and details.position',
                                     'response',
                                     false,
-                                    $this->meta,
+                                    $this->transportMeta,
                                     'sse_invalid_event',
                                     ['eventId' => $id, 'position' => $position],
                                     previous: $cause,
@@ -1421,7 +1476,7 @@ final class EventStream implements \IteratorAggregate
                 'Invalid SSE event payload',
                 'response',
                 false,
-                $this->meta,
+                $this->transportMeta,
                 previous: $error,
             );
         } catch (\Throwable $error) {
@@ -1430,7 +1485,7 @@ final class EventStream implements \IteratorAggregate
                 'Invalid or interrupted SSE stream',
                 'response',
                 false,
-                $this->meta,
+                $this->transportMeta,
                 previous: $error,
             );
         } finally {
@@ -1445,6 +1500,59 @@ final class EventStream implements \IteratorAggregate
 
 class Model implements \JsonSerializable
 {
+    private const RESPONSE_OBJECT_CODEC = /* RESPONSE_OBJECT_CODEC */ '{}';
+    private ?ResponseInfo $responseInfo = null;
+    private ?array $inspectionCodec = null;
+    private array $inspectionPath = [];
+    private array $inspectionDefinitions = [];
+    public function lastResponse(): ?ResponseInfo
+    {
+        return $this->responseInfo;
+    }
+    /** @internal Attach only the model returned by a payload call. */
+    public static function responsePayload(Result $result, array $path): mixed
+    {
+        $value = $result->data;
+        foreach ($path as $key) {
+            if ($value instanceof self && $value->has($key)) {
+                $value = $value->get($key);
+            } elseif (is_array($value) && array_key_exists($key, $value)) {
+                $value = $value[$key];
+            } elseif ($value instanceof \stdClass && property_exists($value, $key)) {
+                $value = $value->{$key};
+            } else {
+                throw SdkError::create(
+                    'protocol',
+                    'Missing configured response payload: ' . implode('.', $path),
+                    'response',
+                    false,
+                    $result->internalMeta(),
+                    raw: $result->raw,
+                );
+            }
+        }
+        if (!($value instanceof self) && (is_object($value) || is_array($value))) {
+            [$fields, $codec, $definitions] = $result->inspectionContext();
+            $value = new self(
+                $value,
+                [],
+                response: true,
+                redactFields: $fields,
+                compiled: json_decode(
+                    self::RESPONSE_OBJECT_CODEC,
+                    true,
+                    flags: JSON_THROW_ON_ERROR,
+                ),
+            );
+            $value->inspectionCodec = $codec;
+            $value->inspectionPath = $path;
+            $value->inspectionDefinitions = $definitions;
+        }
+        if ($value instanceof self) {
+            $value->responseInfo = $result->lastResponse();
+        }
+        return $value;
+    }
     private array $hydrated = [];
     private array $copyOnRead = [];
     private readonly bool $response;
@@ -1780,7 +1888,26 @@ class Model implements \JsonSerializable
     }
     public function __debugInfo(): array
     {
-        $redacted = Codec::redactPlan($this->values, $this->codec, $this->redactFields);
+        $source = $this->values;
+        if ($this->inspectionCodec !== null) {
+            foreach (array_reverse($this->inspectionPath) as $key) {
+                $source = (object) [$key => $source];
+            }
+        }
+        $redacted = Codec::redactPlan(
+            $source,
+            $this->inspectionCodec ?? $this->codec,
+            $this->redactFields,
+            $this->inspectionDefinitions,
+        );
+        if ($this->inspectionCodec !== null) {
+            foreach ($this->inspectionPath as $key) {
+                if (!is_object($redacted) || !property_exists($redacted, $key)) {
+                    break;
+                }
+                $redacted = $redacted->{$key};
+            }
+        }
         return is_array($redacted) || is_object($redacted)
             ? (array) $redacted
             : ['value' => $redacted];
@@ -4390,6 +4517,75 @@ class Runtime
     private readonly ?Internal\DescriptorSource $descriptors;
     private mixed $curl = null;
     private array $streams = [];
+    /** @internal */
+    public static function responsePayload(Result $result, array $path): mixed
+    {
+        return Model::responsePayload($result, $path);
+    }
+    /** @internal */
+    public static function responsePayloadPages(\Generator $pages, array $path): \Generator
+    {
+        foreach ($pages as $key => $result) {
+            yield $key => self::responsePayload($result, $path);
+        }
+    }
+    private function userAgent(): string
+    {
+        $agent =
+            ($this->contract['userAgent'] ?? 'PublicSDK') .
+            ' (PHP ' .
+            PHP_VERSION .
+            '; ' .
+            PHP_OS_FAMILY .
+            ')';
+        $app = $this->options->appInfo;
+        if ($app === Omitted::Value) {
+            return $agent;
+        }
+        if (
+            !is_array($app) ||
+            array_is_list($app) ||
+            array_diff(array_keys($app), ['name', 'version', 'url']) ||
+            !is_string($app['name'] ?? null) ||
+            !preg_match('/^[A-Za-z0-9._-]{1,64}$/D', $app['name']) ||
+            (array_key_exists('version', $app) &&
+                (!is_string($app['version']) ||
+                    !preg_match('/^[A-Za-z0-9._-]{1,64}$/D', $app['version'])))
+        ) {
+            self::configuration(
+                'invalid_option',
+                'appInfo name and version must contain 1 to 64 ASCII letters, digits, dots, underscores or hyphens',
+            );
+        }
+        if (
+            array_key_exists('url', $app) &&
+            (!is_string($app['url']) ||
+                ($urlLength = preg_match_all('/./us', $app['url'])) === false ||
+                $urlLength > 256 ||
+                preg_match('/[\s\x00-\x20\x7f]/u', $app['url']) ||
+                str_contains($app['url'], '\\') ||
+                !parse_url($app['url'], PHP_URL_HOST) ||
+                strtolower(parse_url($app['url'], PHP_URL_SCHEME) ?? '') !== 'https')
+        ) {
+            self::configuration(
+                'invalid_option',
+                'appInfo.url must be an absolute HTTPS URL of at most 256 characters',
+            );
+        }
+        return $agent .
+            ' ' .
+            $app['name'] .
+            (isset($app['version']) ? '/' . $app['version'] : '') .
+            (isset($app['url'])
+                ? ' (+' .
+                    preg_replace_callback(
+                        '/[^\x00-\x7f]/u',
+                        static fn($match) => rawurlencode($match[0]),
+                        $app['url'],
+                    ) .
+                    ')'
+                : '');
+    }
     private static function configuration(string $code, string $message): never
     {
         throw SdkError::create('configuration', $message, errorCode: $code);
@@ -4421,6 +4617,7 @@ class Runtime
         if (!$this->descriptors) {
             self::assertCompiledPlan($this->contract);
         }
+        $this->userAgent();
         $this->credentialOptionsPassed($options);
         $baseUrl = $options->baseUrl ?? ($this->contract['defaultBaseUrl'] ?? null);
         if ($baseUrl === null) {
@@ -5279,7 +5476,7 @@ class Runtime
                     ),
                 ) ?:
                 'application/json',
-            'user-agent' => $this->contract['userAgent'] ?? 'PublicSDK (PHP)',
+            'user-agent' => $this->userAgent(),
         ];
         $set = function (mixed $name, mixed $value) use (&$headers): void {
             if (
@@ -5831,6 +6028,7 @@ class Runtime
             $meta = null;
             $response = null;
             $diagnosticError = null;
+            $error = null;
             try {
                 $context['attempts'] = $attempt;
                 $context['observations'][$attempt - 1] = ['state' => 'not_sent'];
@@ -6095,6 +6293,20 @@ class Runtime
                         } elseif ($raw !== '') {
                             throw new \RuntimeException('Unexpected body for an empty response');
                         }
+                        if (!isset($meta['requestId'])) {
+                            $idPath =
+                                $this->contract['errors']['fields']['requestId'] ??
+                                json_decode(self::ERROR_FIELDS, true, flags: JSON_THROW_ON_ERROR)[
+                                    'requestId'
+                                ];
+                            $bodyId = self::field($data, $idPath);
+                            if (is_string($bodyId)) {
+                                $meta['requestId'] = $bodyId;
+                                $requestIds[] = $bodyId;
+                                $meta['requestIds'] = $requestIds;
+                                $context['lastResponse'] = $meta;
+                            }
+                        }
                         if (isset($declared['phpRepresentation'])) {
                             $data = Model::hydrate(
                                 $data,
@@ -6144,7 +6356,14 @@ class Runtime
                         );
                     }
                     $meta['durationMs'] = self::now() - $start;
-                    return new Result($data, $meta, $raw);
+                    return new Result(
+                        $data,
+                        $meta,
+                        $raw,
+                        $this->options->redactFields,
+                        $declared['codec'] ?? [],
+                        $this->definitions(),
+                    );
                 }
                 $kind = match (true) {
                     in_array($status, [401, 403], true) => 'authentication',
@@ -6406,7 +6625,22 @@ class Runtime
                             'durationMs' => self::now() - $start,
                         ];
                         if ($diagnosticError !== null) {
-                            $event['errorKind'] = $diagnosticError;
+                            $event['errorName'] =
+                                $error instanceof SdkError
+                                    ? substr(strrchr($error::class, '\\'), 1)
+                                    : match ($diagnosticError) {
+                                        'authentication' => 'AuthenticationError',
+                                        'timeout', 'deadline' => 'TimeoutError',
+                                        'transport' => 'ConnectionError',
+                                        'cancelled' => 'CancelledError',
+                                        default => 'UnexpectedResponseError',
+                                    };
+                            $event['errorCode'] =
+                                $error instanceof SdkError
+                                    ? $error->code
+                                    : ($diagnosticError === 'authentication'
+                                        ? 'http_error'
+                                        : '');
                         }
                         ($this->options->diagnostics)($event);
                     }
@@ -6618,7 +6852,7 @@ class Runtime
             }
             $previous =
                 $p['kind'] === 'link'
-                    ? $next ?? $result->meta['url']
+                    ? $next ?? $result->internalMeta()['url']
                     : $input[$p['parameter']] ?? null;
             if ($previous instanceof ParsedNumber) {
                 $previous = $previous->value;
@@ -6635,13 +6869,13 @@ class Runtime
                         '.' .
                         $this->operation($id)['method'],
                     outcome: 'response',
-                    status: $result->meta['status'],
-                    requestId: $result->meta['requestId'] ?? null,
-                    requestIds: $result->meta['requestIds'] ?? [],
-                    idempotencyKey: $result->meta['idempotencyKey'] ?? null,
-                    attempts: $result->meta['attempts'],
-                    durationMs: $result->meta['durationMs'],
-                    headers: $result->meta['headers'] ?? [],
+                    status: $result->internalMeta()['status'],
+                    requestId: $result->internalMeta()['requestId'] ?? null,
+                    requestIds: $result->internalMeta()['requestIds'] ?? [],
+                    idempotencyKey: $result->internalMeta()['idempotencyKey'] ?? null,
+                    attempts: $result->internalMeta()['attempts'],
+                    durationMs: $result->internalMeta()['durationMs'],
+                    headers: $result->internalMeta()['headers'] ?? [],
                     nextPageToken: $next,
                     pages: $i + 1,
                 );
@@ -6654,7 +6888,7 @@ class Runtime
                     'Pagination returned consecutive empty pages with continuations',
                     'response',
                     false,
-                    $result->meta,
+                    $result->internalMeta(),
                     'pagination_empty_pages',
                 );
             }
@@ -6662,7 +6896,7 @@ class Runtime
                 throw SdkError::create('protocol', 'Expected a pagination URL', 'response');
             }
             if ($p['kind'] === 'link') {
-                $next = self::resolveLink($next, $result->meta['url']);
+                $next = self::resolveLink($next, $result->internalMeta()['url']);
             }
             if (
                 isset($seen[(string) $next]) ||
@@ -6670,7 +6904,7 @@ class Runtime
                 ($p['kind'] === 'offset' &&
                     $previous !== null &&
                     (string) $next === (string) $previous) ||
-                ($p['kind'] === 'link' && $next === $result->meta['url'])
+                ($p['kind'] === 'link' && $next === $result->internalMeta()['url'])
             ) {
                 throw SdkError::create(
                     'protocol',
@@ -6752,7 +6986,7 @@ class Runtime
                     'Operation reached a declared failure state',
                     'response',
                     false,
-                    $result->meta,
+                    $result->internalMeta(),
                 );
             }
             self::pause(min((int) $interval, max(0, $deadline - self::now())), $o->cancellation);

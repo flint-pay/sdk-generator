@@ -227,7 +227,7 @@ await client.customers.list({ page_size: 100, page_token: nextPageToken });
 - Declared query/header names are reserved for those destinations; remaining params fields go into the body.
 - Positional style accepts a non-null object body or a `oneOf`/`anyOf` whose branches all resolve to non-null object schemas. Params are the body union intersected with the declared query/header fields. A body field colliding with a query/header parameter in any branch fails diagnosis.
 - Typed additional-property dictionaries combined with query/header parameters require object style, because their TypeScript index signatures cannot exclude the parameter keys.
-- Aliases, `WithResponse`, `Pages`, `Items`, `Wait`, `PagesWithResponse` and `WaitWithResponse` use the primary method's argument order. The schema still controls path, query, header and body encoding.
+- Aliases, `Pages`, `Items` and `Wait` use the primary method's argument order. The schema still controls path, query, header and body encoding.
 
 Per-operation `request.style: "object"` is no longer supported. Union-body operations use positional IDs and flat params, just like object-body operations:
 
@@ -247,7 +247,7 @@ Configuration `example` values, HTTP fixtures and exported operation `Input` sha
 
 ## Payload returns
 
-New SDKs return the complete decoded body directly (`responses.return: "payload"`). Select `responses.return: "result"` for the `Result` envelope with `data`, `meta` and `raw`. Declare envelope paths explicitly; a field named `data` is never unwrapped automatically.
+New SDKs return the complete decoded body directly (`responses.return: "payload"`). Select `responses.return: "result"` for the `Result` envelope with `data`, `lastResponse` and `raw`. Declare envelope paths explicitly; a field named `data` is never unwrapped automatically.
 
 ```json
 {
@@ -261,11 +261,11 @@ New SDKs return the complete decoded body directly (`responses.return: "payload"
 ```
 
 - Settings merge at the SDK and operation levels. You may set an SDK-wide `responses.payloadPath`; an operation's `response.payloadPath: null` clears it, and `response.return: "result"` opts the operation out.
-- A dot-separated `payloadPath` must name required, declared properties through non-null objects in every successful JSON response. References and compositions are checked. Optional paths, array traversal and paths through empty, binary or streaming responses fail diagnosis. A nullable payload itself is allowed. Use whole-body or result mode for endpoints with incompatible shapes.
+- A dot-separated `payloadPath` must name required, declared properties through non-null objects in every successful JSON response. References and compositions are checked. Optional paths, array traversal and paths through empty, binary or streaming responses fail diagnosis. A payload must always be an object and cannot declare `lastResponse`; use result mode for scalar, array, nullable or incompatible payload shapes.
 - Unknown union variants keep conservative output types; consumers narrow them before assuming a payload shape.
-- Each payload-mode method and alias gets a `WithResponse` companion with identical inputs and options, returning `SdkResponse` with the full `body`, HTTP `meta` and `raw`. PHP uses the same names and properties. Each call makes its own request.
-- `Pages` and `Wait` follow the base method's mode. Payload-mode operations also get `PagesWithResponse` and `WaitWithResponse`. `Items` yields individual items. Companion names take part in collision checks.
-- Pagination and polling paths always address the original response body, so projection never loses continuation or state. HTTP fixtures assert the complete wire body, through `WithResponse` for payload-mode operations.
+- Payload objects carry `lastResponse` in Node and `lastResponse()` in PHP. `ResponseInfo.body` is the complete decoded body with the operation’s declared response type. Node uses `WithResponseInfo<Payload, Body>`; PHP models return nullable `ResponseInfo` (null on nested or caller-built models).
+- `Pages` and `Wait` follow the base method’s mode. Each page carries its response information; `Wait` carries the final poll’s. `Items` yields individual items without response information.
+- Pagination and polling paths always address the original response body, so projection never loses continuation or state. The full decoded response is available through `lastResponse.body` (PHP `lastResponse()?->body`).
 - Return settings and payload types are recorded in the compiled contract. Enabling or disabling payload mode, or changing a payload path, is breaking under `semver`.
 - Regenerating an SDK that previously used `Result` returns with no `responses.return` produces a diagnostic. Set `"result"` to keep its API or `"payload"` to migrate. Operation-level explicit return choices also count.
 - Undeclared 2xx statuses need no configuration; see [response drift and recovery](using-sdks.md#successful-http-responses-and-schema-drift).

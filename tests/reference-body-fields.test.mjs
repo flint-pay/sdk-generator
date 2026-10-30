@@ -114,6 +114,7 @@ function fixture({
     join(dir, 'sdk.json'),
     JSON.stringify({
       version: '1.0.0',
+      responses: { return: 'result' },
       requests: { style: 'object' },
       validation: 'schema',
       npm: { name: '@example/synthetic-values' },
@@ -367,8 +368,8 @@ test('explicit SDK examples retain precedence for all fields', () => {
   everySample(files, ['synthetic-config'], ['synthetic-spec']);
 });
 
-test('existing body, property, item and model schema examples still drive samples; media examples are not newly copied', () => {
-  const { files } = fixture({
+test('schema examples drive samples unless complete media examples supply the operation input', () => {
+  const input = {
     schemas: {
       Body: {
         type: 'object',
@@ -386,16 +387,33 @@ test('existing body, property, item and model schema examples still drive sample
       NamedValue: { type: 'string', example: 'synthetic-model-marker' },
     },
     body: { $ref: '#/components/schemas/Body' },
+  };
+  const { files } = fixture(input);
+  everySample(files, [
+    'synthetic-property-marker',
+    'synthetic-item-marker',
+    'synthetic-model-marker',
+  ]);
+  const media = fixture({
+    ...input,
     media: {
-      example: { label: 'synthetic-media-marker' },
-      examples: { first: { value: { label: 'synthetic-media-list' } } },
+      example: {
+        label: 'synthetic-media-marker',
+        items: ['synthetic-media-item'],
+        model: 'synthetic-media-model',
+      },
     },
   });
   everySample(
-    files,
+    media.files,
+    ['synthetic-media-marker', 'synthetic-media-item', 'synthetic-media-model'],
     ['synthetic-property-marker', 'synthetic-item-marker', 'synthetic-model-marker'],
-    ['synthetic-media-marker', 'synthetic-media-list'],
   );
+  assert.deepEqual(media.contract.operations[0].body.example, {
+    label: 'synthetic-media-marker',
+    items: ['synthetic-media-item'],
+    model: 'synthetic-media-model',
+  });
   const whole = fixture({
     body: {
       type: 'object',
