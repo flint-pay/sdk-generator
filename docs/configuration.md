@@ -581,18 +581,33 @@ The prefix defines `_WORKLOAD_IDENTITY_ID`, `_OIDC_SOURCE`, `_OIDC_AUDIENCE`, `_
 
 Exchange uses HTTPS or loopback only, never follows redirects, and sends an RFC 8693 form with the configured credential parameter and optional scope. The response is flat: `access_token`, `issued_token_type`, `token_type: Bearer`, numeric `expires_in`, optional `scope`, and provider identity fields. No refresh token is used. Renew by exchanging again. See [consumer behavior](using-sdks.md#default-credentials).
 
+## Operation time budgets
+
+Set `operations.<operationId>.defaults.timeoutMs` and `.deadlineMs` to positive safe integers in milliseconds. Both targets resolve each field independently: request > client > operation default > global default. Unconfigured operations keep `timeoutMs: 10000` and `deadlineMs: 30000`.
+
+```json
+{
+  "operations": {
+    "createRefund": { "defaults": { "timeoutMs": 150000, "deadlineMs": 300000 } }
+  }
+}
+```
+
+Money-operation profiles can list pay, confirm, capture and all refund-creating operations, including operations classified as payment by the API. The generator applies the explicit profile entries. These longer defaults are interim until the server publishes an execution bound; the generated RUNTIME options table lists them.
+
 ## Errors
 
 `errors` maps provider error conventions:
 
-| Field             | Default                       | Meaning                              |
-| ----------------- | ----------------------------- | ------------------------------------ |
-| `codePath`        | `code`                        | Dot path to the provider error code. |
-| `messagePath`     | `message`                     | Dot path to the server message.      |
-| `detailsPath`     | The whole redacted error body | Dot path to error details.           |
-| `requestIdHeader` | `x-request-id`                | Response header with the request ID. |
+| Field             | Default                       | Meaning                                                        |
+| ----------------- | ----------------------------- | -------------------------------------------------------------- |
+| `codePath`        | `code`                        | Dot path to the provider error code.                           |
+| `messagePath`     | `message`                     | Dot path to the server message.                                |
+| `detailsPath`     | The whole redacted error body | Dot path to error details.                                     |
+| `requestIdHeader` | `x-request-id`                | Response header with the request ID.                           |
+| `inProgressCodes` | `[]`                          | Error codes whose answer means the operation is still running. |
 
-For nested errors: `{"codePath":"error.code","messagePath":"error.message","detailsPath":"error"}`. Paths traverse JSON objects and array indices. See [errors and retries](using-sdks.md#errors-and-retries) for how messages, codes and details are read and redacted.
+For nested errors: `{"codePath":"error.code","messagePath":"error.message","detailsPath":"error","inProgressCodes":["IDEMPOTENCY_KEY_IN_PROGRESS"]}`. Paths traverse JSON objects and array indices. See [errors and retries](using-sdks.md#errors-and-retries) for how messages, codes and details are read and redacted.
 
 ## Documentation and examples
 

@@ -43,7 +43,18 @@ export interface Metadata {
   url?: string;
   requestIds?: string[];
 }
+type AttemptObservation =
+  | { state: 'not_sent' | 'no_answer' }
+  | {
+      state: 'answered';
+      status: number;
+      inProgress: boolean;
+      uncertainWrite: boolean;
+      retryAllowed: boolean;
+    };
 type ErrorCallContext = {
+  observations: AttemptObservation[];
+  replaySafe?: boolean;
   attempts: number;
   requestIds: string[];
   start: number;
@@ -2799,6 +2810,35 @@ function positive(v: number, label: string): number {
   if (!Number.isFinite(v) || v <= 0) bad(label, 'must be a positive finite number');
   return v;
 }
+function settleCallError(error: SdkError, context: ErrorCallContext): void {
+  const last = context.observations.at(-1);
+  if (error instanceof errors.ApiError && last?.state === 'answered') {
+    error.outcome = last.inProgress || last.uncertainWrite ? 'unknown' : 'response';
+    error.retryAllowed =
+      Boolean(context.replaySafe) &&
+      error.status !== 401 &&
+      error.status !== 412 &&
+      (error.outcome === 'unknown' || last.retryAllowed);
+  } else if (
+    error instanceof errors.ConnectionError ||
+    error instanceof errors.CancelledError ||
+    (last && last.state !== 'answered')
+  ) {
+    error.outcome = context.observations.some(
+      (attempt) =>
+        attempt.state === 'no_answer' ||
+        (attempt.state === 'answered' &&
+          ((attempt.status >= 500 && attempt.status < 600) || attempt.inProgress)),
+    )
+      ? 'unknown'
+      : 'not_sent';
+    error.retryAllowed =
+      (error instanceof errors.ConnectionError || error instanceof errors.CancelledError) &&
+      Boolean(context.replaySafe) &&
+      error.status !== 401 &&
+      error.status !== 412;
+  }
+}
 function stopped(signal?: AbortSignal, outcome: 'unknown' | 'not_sent' = 'unknown') {
   if (signal?.aborted)
     throw createSdkError(
@@ -3779,7 +3819,12 @@ class CompiledRuntime {
           ? (op.idempotency.autoKeyPrefix ?? '') + process.getBuiltinModule('crypto').randomUUID()
           : undefined))
       : undefined;
-    const context: ErrorCallContext = { attempts: 0, requestIds: [], start: performance.now() };
+    const context: ErrorCallContext = {
+      attempts: 0,
+      requestIds: [],
+      observations: [],
+      start: performance.now(),
+    };
     try {
       return await this.executeRequest<T>(
         id,
@@ -3799,6 +3844,7 @@ class CompiledRuntime {
       );
     } catch (error) {
       if (error instanceof SdkError) {
+        settleCallError(error, context);
         error.attempts = context.attempts;
         error.requestIds = [...context.requestIds];
         error.durationMs = performance.now() - context.start;
@@ -3820,7 +3866,12 @@ class CompiledRuntime {
     input: Record<string, unknown> = {},
     options: RequestOptions = {},
     continuation?: string,
-    context: ErrorCallContext = { attempts: 0, requestIds: [], start: performance.now() },
+    context: ErrorCallContext = {
+      attempts: 0,
+      requestIds: [],
+      observations: [],
+      start: performance.now(),
+    },
   ): Promise<Result<T>> {
     if (!input || typeof input !== 'object' || Array.isArray(input))
       bad('input', 'expected an object');
@@ -3841,8 +3892,15 @@ class CompiledRuntime {
     if (!op) return bad('operation', 'operation is not included in this SDK');
     const start = performance.now();
     const deadline =
-      start + positive(options.deadlineMs ?? this.options.deadlineMs ?? 30000, 'deadlineMs');
-    const timeout = positive(options.timeoutMs ?? this.options.timeoutMs ?? 10000, 'timeoutMs');
+      start +
+      positive(
+        options.deadlineMs ?? this.options.deadlineMs ?? op.defaults?.deadlineMs ?? 30000,
+        'deadlineMs',
+      );
+    const timeout = positive(
+      options.timeoutMs ?? this.options.timeoutMs ?? op.defaults?.timeoutMs ?? 10000,
+      'timeoutMs',
+    );
     if (options.streamIdleTimeoutMs !== undefined)
       positive(options.streamIdleTimeoutMs, 'streamIdleTimeoutMs');
     if (options.streamLifetimeMs !== undefined)
@@ -4137,6 +4195,7 @@ class CompiledRuntime {
     const safe =
       op.replay === 'safe' ||
       Boolean(op.idempotency && headers[op.idempotency.header.toLowerCase()]);
+    context.replaySafe = ['GET', 'HEAD'].includes(op.verb) || Boolean(op.idempotency && key);
     if (!safe) attempts = 1;
     let body: string | undefined;
     if (Object.hasOwn(input, 'body') && input.body !== undefined) {
@@ -4154,7 +4213,6 @@ class CompiledRuntime {
       (Object.values(op.responses).some((r) => r.bodyKind === 'sse') ? streamFetch : fetch);
     const requestIds = context.requestIds;
     let credentialRetries = 0;
-    let mayHaveBeenSent = false;
     for (let attempt = 1; attempt <= attempts; attempt++) {
       stopped(options.signal, attempt === 1 ? 'not_sent' : 'unknown');
       const remaining = deadline - performance.now();
@@ -4176,7 +4234,12 @@ class CompiledRuntime {
       let diagnosticError: InternalErrorKind | undefined;
       try {
         context.attempts = attempt;
+        context.observations.push({ state: 'not_sent' });
         await abortable(authenticate(), controller.signal);
+        stopped(options.signal);
+        if (performance.now() >= deadline)
+          throw createSdkError('deadline', 'Overall deadline exceeded');
+        context.observations[attempt - 1] = { state: 'no_answer' };
         const response = await abortable(
           transport(url, {
             method: op.verb,
@@ -4187,7 +4250,6 @@ class CompiledRuntime {
           }),
           controller.signal,
         );
-        mayHaveBeenSent = true;
         const responseHeaders = Object.fromEntries(response.headers.entries());
         const meta: Metadata = {
           ...(key !== undefined ? { idempotencyKey: key } : {}),
@@ -4212,6 +4274,14 @@ class CompiledRuntime {
         context.lastResponse = meta;
         delete context.retryAfterMs;
         if (retryAfter !== undefined) context.retryAfterMs = retryAfter;
+        if (response.status === 401)
+          context.observations[attempt - 1] = {
+            state: 'answered',
+            status: 401,
+            inProgress: false,
+            uncertainWrite: false,
+            retryAllowed: false,
+          };
         if (response.status === 401 && safe && credentialRetries === 0 && providers.size > 0) {
           diagnosticError = 'authentication';
           try {
@@ -4297,6 +4367,13 @@ class CompiledRuntime {
           return result as Result<T>;
         }
         const bytes = await abortable(response.arrayBuffer(), controller.signal);
+        context.observations[attempt - 1] = {
+          state: 'answered',
+          status: response.status,
+          inProgress: false,
+          uncertainWrite: false,
+          retryAllowed: false,
+        };
         const redirect = op.responses[String(response.status)]?.classification === 'redirect';
         if (response.ok && declaredResponse?.bodyKind === 'binary') {
           const contentType = response.headers
@@ -4313,14 +4390,6 @@ class CompiledRuntime {
               meta,
             );
           meta.durationMs = performance.now() - start;
-          if (performance.now() >= deadline)
-            throw createSdkError(
-              'deadline',
-              'Response exceeded the overall deadline',
-              'response',
-              false,
-              meta,
-            );
           const data = new Uint8Array(bytes);
           const result = { data, meta, raw: data };
           Object.defineProperty(result, inspectCustom, {
@@ -4406,21 +4475,7 @@ class CompiledRuntime {
               raw,
             );
           }
-          // Synchronous decoding cannot yield to the abort timer. Check the
-          // overall duration again before reporting a successful response.
           meta.durationMs = performance.now() - start;
-          if (performance.now() >= deadline)
-            throw createSdkError(
-              'deadline',
-              'Response decoding exceeded the overall deadline',
-              'response',
-              false,
-              meta,
-              undefined,
-              undefined,
-              undefined,
-              raw,
-            );
           const result = { data: data as T, meta, raw };
           Object.defineProperty(result, inspectCustom, {
             value: () => ({
@@ -4508,6 +4563,35 @@ class CompiledRuntime {
           undefined,
           raw,
         );
+        const codePath = this.contract.errors?.codePath ?? 'code';
+        const parent = codePath.split('.').slice(0, -1).join('.');
+        const envelope = parent ? field(data, parent) : data;
+        const reasons: unknown = field(envelope, 'details');
+        const inProgress =
+          typeof code === 'string' && (this.contract.errors?.inProgressCodes ?? []).includes(code);
+        const uncertainWrite =
+          !['GET', 'HEAD'].includes(op.verb) &&
+          ((response.status >= 500 && response.status < 600) ||
+            code === 'IDEMPOTENCY_RECOVERY_REQUIRED' ||
+            field(envelope, 'reason') === 'outcome_unknown' ||
+            (Array.isArray(reasons) &&
+              reasons.some((detail) => field(detail, 'reason') === 'outcome_unknown')));
+        const hasEnvelope =
+          envelope !== null &&
+          typeof envelope === 'object' &&
+          !Array.isArray(envelope) &&
+          !(envelope instanceof ParsedNumber);
+        const retryAllowed = signal
+          ? (typeof retryValue === 'string' && signal.retryValues.includes(retryValue)) ||
+            (!hasEnvelope && policy.statuses.includes(response.status))
+          : eligible;
+        context.observations[attempt - 1] = {
+          state: 'answered',
+          status: response.status,
+          inProgress,
+          uncertainWrite,
+          retryAllowed,
+        };
         diagnosticError = kind;
         if (retryAfter !== undefined) error.retryAfterMs = retryAfter;
       } catch (cause) {
@@ -4538,10 +4622,10 @@ class CompiledRuntime {
             'UND_ERR_BODY_TIMEOUT',
           ].includes(code ?? '');
         const notSent: boolean =
-          !mayHaveBeenSent &&
-          diagnosticMeta === undefined &&
-          ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN'].includes(code ?? '');
-        mayHaveBeenSent ||= !notSent;
+          context.observations[attempt - 1]?.state === 'not_sent' ||
+          (diagnosticMeta === undefined &&
+            ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN'].includes(code ?? ''));
+        if (notSent) context.observations[attempt - 1] = { state: 'not_sent' };
         diagnosticError = expired ? 'deadline' : timedOut ? 'timeout' : 'transport';
         error = createSdkError(
           diagnosticError,
@@ -4697,11 +4781,15 @@ class CompiledRuntime {
     input: Record<string, unknown>,
     options: RequestOptions = {},
   ): Promise<Result<T>> {
-    const p = this.operation(id)?.polling;
+    const op = this.operation(id);
+    const p = op?.polling;
     if (!p) return bad('polling', 'capability is not declared');
     const deadline =
       performance.now() +
-      positive(options.deadlineMs ?? this.options.deadlineMs ?? 30000, 'deadlineMs');
+      positive(
+        options.deadlineMs ?? this.options.deadlineMs ?? op?.defaults?.deadlineMs ?? 30000,
+        'deadlineMs',
+      );
     let interval = p.intervalMs;
     for (;;) {
       const remaining = deadline - performance.now();

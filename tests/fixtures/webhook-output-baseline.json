@@ -5,8 +5,8 @@
       "name": "payment",
       "api": "tests/fixtures/payment-api.json",
       "config": "tests/fixtures/payment-sdk.json",
-      "nodeRuntimeSha256": "64c3c283141f3d70c9745c969aaad51a21d2d0bb62335866f31b1b8312a867e3",
-      "phpSha256": "0df587ca23e3fbce09a5b533e721a0768767511f811e2d6909362ebe23a445ac",
+      "nodeRuntimeSha256": "76518981922725e13537139254b2761ee464107d7d9ad84f7dc74a5d14cab409",
+      "phpSha256": "8651356536757febb92290281f1438383edfb8d95b48a59c4bd0acf8a1c25fb4",
       "rootExports": [
         "SdkError",
         "Model",
@@ -42,17 +42,17 @@
         "WebhookVerificationOptions"
       ],
       "singleTarget": {
-        "node": "64c3c283141f3d70c9745c969aaad51a21d2d0bb62335866f31b1b8312a867e3",
-        "php": "0df587ca23e3fbce09a5b533e721a0768767511f811e2d6909362ebe23a445ac"
+        "node": "76518981922725e13537139254b2761ee464107d7d9ad84f7dc74a5d14cab409",
+        "php": "8651356536757febb92290281f1438383edfb8d95b48a59c4bd0acf8a1c25fb4"
       },
-      "phpRuntimeSha256": "195ce65872107e7626804aea1d6bb00c598c85d862671a62d65de758f00e9198"
+      "phpRuntimeSha256": "ded4c13cbf1ff0acb5fdeb999f7dd75f060689aaddd7d97aff069fe57ca318b8"
     },
     {
       "name": "flint",
       "api": "tests/providers/flint/openapi.json",
       "config": "tests/providers/flint/sdk.json",
-      "nodeRuntimeSha256": "205fe070698ff75c5b37bef9d341cd657fa9269db67b8bb7a75783592e919667",
-      "phpSha256": "7646e08ac39440ccc4e4ce44f149ec60fbe957c32d6e9021b83b6b51669e8bfc",
+      "nodeRuntimeSha256": "c254fb5536bb743a178929afcdebd6b6fa901e579a9d503112c31a36eed37a91",
+      "phpSha256": "d3baf4b633f7191de82cef89444e4e891a9c19ccfe9a5c32401114cd2b0f0d7c",
       "rootExports": [
         "SdkError",
         "errors",
@@ -222,10 +222,10 @@
         "WebhookVerificationOptions"
       ],
       "singleTarget": {
-        "node": "ced7c358e7787d6d47cd63860c8f7be8151202eece61ec542b54fbf23daff844",
-        "php": "7646e08ac39440ccc4e4ce44f149ec60fbe957c32d6e9021b83b6b51669e8bfc"
+        "node": "cd61561e05cebf6328b08a3b58c6514d090565e01da5421cab71bb089688b143",
+        "php": "d3baf4b633f7191de82cef89444e4e891a9c19ccfe9a5c32401114cd2b0f0d7c"
       },
-      "phpRuntimeSha256": "1815fd16d7371454ac253a143f879e2802e9c82ef92675128cef50ad13898403"
+      "phpRuntimeSha256": "23a5103fd4862f96ec93909829a6be096c6d4648aeb7422e1afed27f7e2b8c9c"
     }
   ]
 }

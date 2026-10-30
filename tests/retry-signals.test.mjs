@@ -322,7 +322,11 @@ async function nodeCase(row) {
         error.details.remediation.retry,
         'same_request' === row.signal ? 'same_request' : row.signal,
       );
-      assert.equal(error.outcome, 'response');
+      assert.equal(
+        error.outcome,
+        ['auto', 'required', 'plain'].includes(row.op) ? 'unknown' : 'response',
+        row.name,
+      );
     }
     assert.ok(inspect(error).includes('idempotencyKey'));
     return {
@@ -382,7 +386,7 @@ foreach(json_decode(file_get_contents($argv[2]),true) as $row){
   try{$result=$client->api->{$row['op']??'read'}([],new \RetrySignals\RequestOptions(...($row['options']??[])));$results[]=['calls'=>$calls,'key'=>$result->meta['idempotencyKey']??null,'elapsed'=>(hrtime(true)-$start)/1000000];}
   catch(\RetrySignals\SdkError $error){
     if(($row['name']??'')==='required missing key' && !str_contains($error->getMessage(),'api.required requires idempotencyKey'))throw new \Exception('Missing method/key guidance');
-    if(($row['error']??null)==='ServerError' && ($error->code!=='old_rule'||$error->outcome!=='response'))throw new \Exception('Lost last error');
+    if(($row['error']??null)==='ServerError' && ($error->code!=='old_rule'||$error->outcome!==(in_array($row['op']??'read',['auto','required','plain'],true)?'unknown':'response')))throw new \Exception('Lost last error');
     $results[]=['calls'=>$calls,'key'=>$error->idempotencyKey,'error'=>substr(strrchr(get_class($error), chr(92)), 1),'outcome'=>$error->outcome,'retryAfterMs'=>$error->retryAfterMs,'elapsed'=>(hrtime(true)-$start)/1000000];
   }
 }

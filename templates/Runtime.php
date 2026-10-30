@@ -19,8 +19,8 @@ class SdkError extends \RuntimeException implements \JsonSerializable
         string $message,
         string $code = '',
         public ?string $operation = null,
-        public readonly string $outcome = 'not_sent',
-        public readonly bool $retryAllowed = false,
+        public string $outcome = 'not_sent',
+        public bool $retryAllowed = false,
         public ?int $status = null,
         public ?string $requestId = null,
         public array $requestIds = [],
@@ -870,8 +870,8 @@ final class ClientOptions
         public readonly string|CredentialProvider|\Closure|Omitted|null $token = Omitted::Value,
         public readonly ?array $allowedOrigins = null,
         public readonly bool $allowInsecureHttp = false,
-        public readonly int $timeoutMs = 10000,
-        public readonly int $deadlineMs = 30000,
+        public readonly ?int $timeoutMs = null,
+        public readonly ?int $deadlineMs = null,
         // Keep fractions intact in weak-mode PHP so request validation can reject them.
         public readonly int|float|null $maxAttempts = null,
         public readonly ?\Closure $transport = null,
@@ -4051,7 +4051,10 @@ class Runtime
         }
         $this->allowed = $options->allowedOrigins ?? [self::origin($this->baseUrl)];
         $this->checkUrl($this->baseUrl);
-        if ($options->timeoutMs <= 0 || $options->deadlineMs <= 0) {
+        if (
+            ($options->timeoutMs !== null && $options->timeoutMs <= 0) ||
+            ($options->deadlineMs !== null && $options->deadlineMs <= 0)
+        ) {
             Codec::fail('options', 'timeouts must be positive');
         }
     }
@@ -4120,6 +4123,17 @@ class Runtime
         }
         if (array_key_exists('errors', $contract) && !is_array($contract['errors'])) {
             throw new \InvalidArgumentException('Invalid compiled error settings');
+        }
+        if (array_key_exists('inProgressCodes', $contract['errors'] ?? [])) {
+            $codes = $contract['errors']['inProgressCodes'];
+            if (
+                !is_array($codes) ||
+                !array_is_list($codes) ||
+                count(array_filter($codes, fn($code) => !is_string($code) || trim($code) === '')) >
+                    0
+            ) {
+                throw new \InvalidArgumentException('Invalid compiled in-progress codes');
+            }
         }
         if (array_key_exists('retry', $contract['errors'] ?? [])) {
             $signal = $contract['errors']['retry'];
@@ -4291,6 +4305,21 @@ class Runtime
                 !is_array($op['responses'] ?? null)
             ) {
                 throw new \InvalidArgumentException('Invalid compiled operation');
+            }
+            if (array_key_exists('defaults', $op)) {
+                if (!is_array($op['defaults']) || !$op['defaults']) {
+                    throw new \InvalidArgumentException('Invalid compiled operation defaults');
+                }
+                foreach ($op['defaults'] as $name => $value) {
+                    if (
+                        !in_array($name, ['timeoutMs', 'deadlineMs'], true) ||
+                        !is_int($value) ||
+                        $value < 1 ||
+                        $value > 9007199254740991
+                    ) {
+                        throw new \InvalidArgumentException('Invalid compiled operation defaults');
+                    }
+                }
             }
             if (array_key_exists('autoKeyPrefix', $op['idempotency'] ?? [])) {
                 $prefix = $op['idempotency']['autoKeyPrefix'];
@@ -4621,6 +4650,40 @@ class Runtime
             throw SdkError::create('destination', 'Destination origin is not in allowedOrigins');
         }
     }
+    private static function settleCallError(SdkError $error, array $context): void
+    {
+        $observations = $context['observations'];
+        $last = $observations ? $observations[array_key_last($observations)] : null;
+        if ($error instanceof Errors\ApiError && ($last['state'] ?? null) === 'answered') {
+            $error->outcome =
+                $last['inProgress'] || $last['uncertainWrite'] ? 'unknown' : 'response';
+            $error->retryAllowed =
+                ($context['replaySafe'] ?? false) &&
+                !in_array($error->status, [401, 412], true) &&
+                ($error->outcome === 'unknown' || $last['retryAllowed']);
+        } elseif (
+            $error instanceof Errors\ConnectionError ||
+            $error instanceof Errors\CancelledError ||
+            ($last !== null && $last['state'] !== 'answered')
+        ) {
+            $mayHaveRun =
+                count(
+                    array_filter(
+                        $observations,
+                        fn($attempt) => $attempt['state'] === 'no_answer' ||
+                            ($attempt['state'] === 'answered' &&
+                                (($attempt['status'] >= 500 && $attempt['status'] < 600) ||
+                                    $attempt['inProgress'])),
+                    ),
+                ) > 0;
+            $error->outcome = $mayHaveRun ? 'unknown' : 'not_sent';
+            $error->retryAllowed =
+                ($error instanceof Errors\ConnectionError ||
+                    $error instanceof Errors\CancelledError) &&
+                ($context['replaySafe'] ?? false) &&
+                !in_array($error->status, [401, 412], true);
+        }
+    }
     private static function checkCancel(?Cancellation $c, string $outcome = 'unknown'): void
     {
         if ($c?->isCancelled()) {
@@ -4689,7 +4752,7 @@ class Runtime
                     substr($hex, 20);
             }
         }
-        $context = ['attempts' => 0, 'requestIds' => []];
+        $context = ['attempts' => 0, 'requestIds' => [], 'observations' => []];
         $callStart = self::now();
         try {
             $effective = $options;
@@ -4702,6 +4765,7 @@ class Runtime
             }
             return $this->executeRequest($id, $input, $effective, $continuation, $context);
         } catch (SdkError $error) {
+            self::settleCallError($error, $context);
             $error->attempts = $context['attempts'];
             $error->requestIds = $context['requestIds'];
             $error->durationMs = self::now() - $callStart;
@@ -4737,8 +4801,11 @@ class Runtime
             }
         }
         $start = self::now();
-        $timeout = $o->timeoutMs ?? $this->options->timeoutMs;
-        $duration = $o->deadlineMs ?? $this->options->deadlineMs;
+        $timeout =
+            $o->timeoutMs ?? ($this->options->timeoutMs ?? ($op['defaults']['timeoutMs'] ?? 10000));
+        $duration =
+            $o->deadlineMs ??
+            ($this->options->deadlineMs ?? ($op['defaults']['deadlineMs'] ?? 30000));
         if ($timeout <= 0 || $duration <= 0) {
             Codec::fail('options', 'timeouts must be positive');
         }
@@ -5240,6 +5307,9 @@ class Runtime
         $safe =
             $op['replay'] === 'safe' ||
             isset($headers[strtolower($op['idempotency']['header'] ?? '')]);
+        $context['replaySafe'] =
+            in_array($op['verb'], ['GET', 'HEAD'], true) ||
+            (isset($op['idempotency']) && $key !== null);
         if (!$safe) {
             $attempts = 1;
         }
@@ -5260,7 +5330,6 @@ class Runtime
         }
         $requestIds = &$context['requestIds'];
         $credentialRetries = 0;
-        $mayHaveBeenSent = false;
         for ($attempt = 1; $attempt <= $attempts; $attempt++) {
             self::checkCancel($o->cancellation, $attempt === 1 ? 'not_sent' : 'unknown');
             $remaining = $deadline - self::now();
@@ -5277,6 +5346,7 @@ class Runtime
             $diagnosticError = null;
             try {
                 $context['attempts'] = $attempt;
+                $context['observations'][$attempt - 1] = ['state' => 'not_sent'];
                 $authenticate();
                 self::checkCancel($o->cancellation);
                 $remaining = $deadline - self::now();
@@ -5301,13 +5371,11 @@ class Runtime
                         $o->streamIdleTimeoutMs ?? ($op['stream']['idleTimeoutMs'] ?? 30000),
                     'streamLifetimeMs' => $o->streamLifetimeMs,
                 ];
+                $context['observations'][$attempt - 1] = ['state' => 'no_answer'];
                 $response = $this->options->transport
                     ? ($this->options->transport)($request)
                     : $this->send($request);
                 $status = $response['status'];
-                if ($status > 0) {
-                    $mayHaveBeenSent = true;
-                }
                 $rh = array_change_key_case($response['headers'], CASE_LOWER);
                 $raw = $response['body'] ?? '';
                 $declaredResponse =
@@ -5346,6 +5414,15 @@ class Runtime
                 if ($status > 0) {
                     $context['lastResponse'] = $meta;
                     $context['retryAfterMs'] = $retryAfter;
+                }
+                if ($status === 401) {
+                    $context['observations'][$attempt - 1] = [
+                        'state' => 'answered',
+                        'status' => 401,
+                        'inProgress' => false,
+                        'uncertainWrite' => false,
+                        'retryAllowed' => false,
+                    ];
                 }
                 if ($status === 401 && $safe && $credentialRetries === 0 && $providers) {
                     $diagnosticError = 'authentication';
@@ -5440,6 +5517,13 @@ class Runtime
                         $response['stream']->close();
                     }
                 }
+                $context['observations'][$attempt - 1] = [
+                    'state' => 'answered',
+                    'status' => $status,
+                    'inProgress' => false,
+                    'uncertainWrite' => false,
+                    'retryAllowed' => false,
+                ];
                 $data = null;
                 try {
                     if ($raw !== '' && !$binary && !$redirect) {
@@ -5566,19 +5650,7 @@ class Runtime
                             raw: $raw,
                         );
                     }
-                    // Decoding and model construction are synchronous; transport
-                    // timeouts cannot interrupt them. Include them in the deadline.
                     $meta['durationMs'] = self::now() - $start;
-                    if (self::now() >= $deadline) {
-                        throw SdkError::create(
-                            'deadline',
-                            'Response decoding exceeded the overall deadline',
-                            'response',
-                            false,
-                            $meta,
-                            raw: $raw,
-                        );
-                    }
                     return new Result($data, $meta, $raw);
                 }
                 $kind = match (true) {
@@ -5647,6 +5719,42 @@ class Runtime
                     $details,
                     raw: $raw,
                 );
+                $codePath = $this->contract['errors']['codePath'] ?? 'code';
+                $parent = str_contains($codePath, '.')
+                    ? substr($codePath, 0, strrpos($codePath, '.'))
+                    : '';
+                $envelope = $parent !== '' ? self::field($data, $parent) : $data;
+                $reasons = self::field($envelope, 'details');
+                $inProgress =
+                    is_string($code) &&
+                    in_array($code, $this->contract['errors']['inProgressCodes'] ?? [], true);
+                $uncertainWrite =
+                    !in_array($op['verb'], ['GET', 'HEAD'], true) &&
+                    (($status >= 500 && $status < 600) ||
+                        $code === 'IDEMPOTENCY_RECOVERY_REQUIRED' ||
+                        self::field($envelope, 'reason') === 'outcome_unknown' ||
+                        (is_array($reasons) &&
+                            count(
+                                array_filter(
+                                    $reasons,
+                                    fn($detail) => self::field($detail, 'reason') ===
+                                        'outcome_unknown',
+                                ),
+                            ) > 0));
+                $hasEnvelope = is_object($envelope) && !($envelope instanceof ParsedNumber);
+                $retryAllowed =
+                    $signal !== null
+                        ? (is_string($retryValue) &&
+                                in_array($retryValue, $signal['retryValues'], true)) ||
+                            (!$hasEnvelope && in_array($status, $policy['statuses'], true))
+                        : $error->retryAllowed;
+                $context['observations'][$attempt - 1] = [
+                    'state' => 'answered',
+                    'status' => $status,
+                    'inProgress' => $inProgress,
+                    'uncertainWrite' => $uncertainWrite,
+                    'retryAllowed' => $retryAllowed,
+                ];
                 $error->retryAfterMs = $retryAfter;
             } catch (SdkError $error) {
                 $diagnosticError = SdkError::internalKind($error);
@@ -5672,18 +5780,21 @@ class Runtime
                 $expired = self::now() >= $deadline;
                 $timedOut = $curlCode === CURLE_OPERATION_TIMEDOUT;
                 $notSent =
-                    !$mayHaveBeenSent &&
-                    !($meta['status'] ?? null) &&
-                    in_array(
-                        $curlCode,
-                        [
-                            CURLE_COULDNT_CONNECT,
-                            CURLE_COULDNT_RESOLVE_HOST,
-                            CURLE_COULDNT_RESOLVE_PROXY,
-                        ],
-                        true,
-                    );
-                $mayHaveBeenSent = $mayHaveBeenSent || !$notSent;
+                    ($context['observations'][$attempt - 1]['state'] ?? 'not_sent') ===
+                        'not_sent' ||
+                    (!($meta['status'] ?? null) &&
+                        in_array(
+                            $curlCode,
+                            [
+                                CURLE_COULDNT_CONNECT,
+                                CURLE_COULDNT_RESOLVE_HOST,
+                                CURLE_COULDNT_RESOLVE_PROXY,
+                            ],
+                            true,
+                        ));
+                if ($notSent) {
+                    $context['observations'][$attempt - 1] = ['state' => 'not_sent'];
+                }
                 $diagnosticError = $o->cancellation?->isCancelled()
                     ? 'cancelled'
                     : ($expired
@@ -6042,11 +6153,15 @@ class Runtime
     public function wait(string $id, array $input, ?RequestOptions $options = null): Result
     {
         $o = $options ?? new RequestOptions();
-        $p = $this->operation($id)['polling'] ?? null;
+        $op = $this->operation($id);
+        $p = $op['polling'] ?? null;
         if (!$p) {
             Codec::fail('polling', 'capability is not declared');
         }
-        $deadline = self::now() + ($o->deadlineMs ?? $this->options->deadlineMs);
+        $deadline =
+            self::now() +
+            ($o->deadlineMs ??
+                ($this->options->deadlineMs ?? ($op['defaults']['deadlineMs'] ?? 30000)));
         $interval = $p['intervalMs'];
         while (true) {
             $remaining = $deadline - self::now();

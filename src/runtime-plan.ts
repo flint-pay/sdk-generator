@@ -459,6 +459,12 @@ export function assertRuntimePlan(
     throw new Error('Unsupported compiled retry semantics');
   if (plan.errors !== undefined) {
     const errors = record(plan.errors, 'errors');
+    if (
+      errors.inProgressCodes !== undefined &&
+      (!Array.isArray(errors.inProgressCodes) ||
+        errors.inProgressCodes.some((code) => typeof code !== 'string' || !code.trim()))
+    )
+      throw new Error('Invalid compiled in-progress codes');
     if (errors.retry !== undefined) {
       const retry = record(errors.retry, 'errors.retry');
       if (
@@ -542,6 +548,19 @@ export function assertRuntimePlan(
       !Array.isArray(op.parameters)
     )
       throw new Error('Invalid compiled operation');
+    if (op.defaults !== undefined) {
+      const defaults = record(op.defaults, `${op.id}.defaults`);
+      if (
+        !Object.keys(defaults).length ||
+        Object.entries(defaults).some(
+          ([name, value]) =>
+            !['timeoutMs', 'deadlineMs'].includes(name) ||
+            !Number.isSafeInteger(value) ||
+            Number(value) <= 0,
+        )
+      )
+        throw new Error('Invalid compiled operation defaults');
+    }
     if (!legacyRetry || op.retry !== undefined) {
       const retry = record(op.retry, `${op.id}.retry`);
       if (

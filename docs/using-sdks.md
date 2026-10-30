@@ -346,7 +346,10 @@ Retries:
 - Conflicting keys across operation headers, request headers and `idempotencyKey` fail before dispatch.
 - Automatic idempotency keys last for one SDK call. Persist a caller key for application resubmission. After a lost response, never send a fresh mutation with a different key.
 - `Retry-After` accepts nonnegative decimal seconds with optional surrounding spaces/tabs, or a canonical GMT HTTP date such as `Wed, 21 Oct 2015 07:28:00 GMT`. Signed numbers, exponent notation, relative dates and malformed dates are ignored in both targets.
-- `retryAllowed` reports retry eligibility. It does not authorize a new business operation or exceed the provider policy.
+- `retryAllowed` describes a caller's next identical call after automatic retries stop. It is true for a replay-safe call ending with an unknown outcome, a connection/timeout/cancellation error, a configured retry signal, or an envelope-less retry status. It remains false for 401, 412, local errors and unusable successes. Reuse the original key and input.
+- Each time budget resolves as request > client > operation default > global default. Global defaults remain 10 seconds per attempt and 30 seconds per call. Profiles can set longer operation defaults, listed in RUNTIME.md; money-operation defaults of 150 seconds and 300 seconds are interim until the server publishes an execution bound.
+- A fully read success is returned even after an earlier timeout or decoding past the deadline. A final answered error settles an earlier timeout, except configured in-progress codes and uncertain write answers (5xx, `IDEMPOTENCY_RECOVERY_REQUIRED` or reason `outcome_unknown`), which report `unknown`. Those uncertain write answers report `response` on GET/HEAD.
+- Without a final answer, the outcome is `unknown` if an attempt got no complete answer, a 5xx or an in-progress answer; otherwise it is `not_sent`. A later refused connection cannot erase an earlier attempt's uncertainty. If the next wait would exceed the deadline, the SDK preserves the last error and its `retryAfterMs`.
 
 Sensitive data:
 

@@ -199,33 +199,31 @@ $response=$cases->futureWire;same($c->api->sendValue(new ReviewSdk\ApiSendValueI
   }
 });
 
-test('synchronous response decoding cannot report success after the overall deadline', () => {
+test('fully read successes survive synchronous decoding past the overall deadline', () => {
   const { dir, out } = emit({ type: 'string' });
-  // Simulate a slow synchronous codec, independently of processor speed and
-  // schema complexity. The real public client must account for this elapsed time.
+  // Advance a monotonic clock inside the codec, independently of processor speed.
   const nodeRuntime = join(out, 'node/runtime.js');
   const original = readFileSync(nodeRuntime, 'utf8');
   const entry = 'export function executeCodec(value, s, context) {';
   assert.ok(original.includes(entry));
   writeFileSync(
     nodeRuntime,
-    original.replace(
-      entry,
-      entry +
-        `
-if(context.mode==='response'){const until=performance.now()+40;while(performance.now()<until){}}
-`,
-    ),
+    original.replace(entry, entry + "\nif(context.mode==='response')globalThis.decodeClock+=40;\n"),
   );
   const node = join(dir, 'deadline.mjs');
   writeFileSync(
     node,
     `import assert from 'node:assert/strict';
 import {Client} from ${JSON.stringify(pathToFileURL(join(out, 'node/index.js')).href)};
+globalThis.decodeClock=0;
+Object.defineProperty(performance,'now',{value:()=>globalThis.decodeClock});
 const diagnostics=[];
-const c=new Client({baseUrl:'https://example.invalid',diagnostics:e=>diagnostics.push(e),transport:async()=>new Response('"ok"',{headers:{'x-request-id':'req_00BR6FFF8XZ8W32Y4B1KVDXQ6X'}})});
-await assert.rejects(c.api.sendValue({}, {deadlineMs:20}),e=>e.name==='TimeoutError'&&e.outcome==='response'&&e.retryAllowed===false&&e.requestId==='req_00BR6FFF8XZ8W32Y4B1KVDXQ6X');
-assert.equal(diagnostics.at(-1).errorKind,'deadline');
+const c=new Client({baseUrl:'https://example.invalid',diagnostics:e=>diagnostics.push(e),transport:async()=>new Response('"ok"',{headers:{'x-request-id':'req_synthetic'}})});
+const result=await c.api.sendValue({}, {deadlineMs:20});
+assert.equal(result.data,'ok');
+assert.equal(result.meta.requestId,'req_synthetic');
+assert.equal(result.meta.durationMs,40);
+assert.equal(diagnostics.at(-1).errorKind,undefined);
 assert.equal((await c.api.sendValue({}, {deadlineMs:1000})).data,'ok');
 `,
   );
@@ -235,7 +233,7 @@ assert.equal((await c.api.sendValue({}, {deadlineMs:1000})).data,'ok');
   const slow = phpSource.replace(
     /(public static function execute\([^)]*\): mixed\s*\{)/,
     `$1
-if (($context['mode'] ?? '') === 'response') { usleep(40000); }
+if (($context['mode'] ?? '') === 'response') { $GLOBALS['decodeClock']+=40; }
 `,
   );
   assert.notEqual(slow, phpSource);
@@ -244,13 +242,17 @@ if (($context['mode'] ?? '') === 'response') { usleep(40000); }
   writeFileSync(
     php,
     String.raw`<?php
+namespace ReviewSdk { function hrtime(bool $asNumber=false): int { return $GLOBALS['decodeClock']*1000000; } }
+namespace {
+$GLOBALS['decodeClock']=0;
 require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
 $events=[];
-$c=new ReviewSdk\Client(new ReviewSdk\ClientOptions('https://example.invalid',diagnostics:function($e)use(&$events){$events[]=$e;},transport:fn($r)=>['status'=>200,'headers'=>['x-request-id'=>'req_00BR6FFF8XZ8W32Y4B1KVDXQ6X'],'body'=>'"ok"']));
-try{$c->api->sendValue(new ReviewSdk\ApiSendValueInput(),new ReviewSdk\RequestOptions(deadlineMs:20));throw new Exception('late success');}
-catch(ReviewSdk\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='TimeoutError'||$e->outcome!=='response'||$e->retryAllowed||$e->requestId!=='req_00BR6FFF8XZ8W32Y4B1KVDXQ6X')throw $e;}
-if(end($events)['errorKind']!=='deadline')throw new Exception('missing diagnostic');
+$c=new ReviewSdk\Client(new ReviewSdk\ClientOptions('https://example.invalid',diagnostics:function($e)use(&$events){$events[]=$e;},transport:fn($r)=>['status'=>200,'headers'=>['x-request-id'=>'req_synthetic'],'body'=>'"ok"']));
+$result=$c->api->sendValue(new ReviewSdk\ApiSendValueInput(),new ReviewSdk\RequestOptions(deadlineMs:20));
+if($result->data!=='ok'||$result->meta['requestId']!=='req_synthetic'||$result->meta['durationMs']!==40)throw new Exception('lost complete answer');
+if(isset(end($events)['errorKind']))throw new Exception('unexpected failure diagnostic');
 if($c->api->sendValue(new ReviewSdk\ApiSendValueInput(),new ReviewSdk\RequestOptions(deadlineMs:1000))->data!=='ok')throw new Exception('control');
+}
 `,
   );
   run('php', [php, join(out, 'php')]);
