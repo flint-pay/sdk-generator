@@ -556,14 +556,14 @@ try{$verify('{"event_type":"plain.updated","data":{"signed":9007199254740993}}')
     f.dir,
     f.output,
     String.raw`
-use Example\Types\{Client,ClientOptions,WebhookEventReadingUpdated,WebhookEventPlainUpdated};
+use Example\Types\{Client,ClientOptions,ReadingUpdatedEvent,PlainUpdatedEvent};
 /** @param string $value */ function exact($value): void {}
 /** @param int $value */ function ordinary($value): void {}
 $c=new Client(new ClientOptions(baseUrl:'https://example.invalid'));
 $r=$c->api->read(); exact($r->getSigned()); exact($r->getUnsigned()); ordinary($r->getOrdinary());
 $w=$c->verifyWebhook('{}',[],'synthetic');
-if($w['known'] && $w['event'] instanceof WebhookEventReadingUpdated){exact($w['event']->getData()->getSigned());exact($w['event']->getData()->getUnsigned());ordinary($w['event']->getData()->getOrdinary());}
-if($w['known'] && $w['event'] instanceof WebhookEventPlainUpdated){ordinary($w['event']->getData()->getSigned());}
+if($w['known'] && $w['event'] instanceof ReadingUpdatedEvent){exact($w['event']->getData()->getSigned());exact($w['event']->getData()->getUnsigned());ordinary($w['event']->getData()->getOrdinary());}
+if($w['known'] && $w['event'] instanceof PlainUpdatedEvent){ordinary($w['event']->getData()->getSigned());}
 `,
   );
   assert.match(
@@ -571,9 +571,9 @@ if($w['known'] && $w['event'] instanceof WebhookEventPlainUpdated){ordinary($w['
       f.dir,
       f.output,
       String.raw`
-use Example\Types\WebhookEventReadingUpdated;
+use Example\Types\ReadingUpdatedEvent;
 /** @param int $value */ function ordinary($value): void {}
-/** @param WebhookEventReadingUpdated $event */ function check($event): void {ordinary($event->getData()->getSigned());}
+/** @param ReadingUpdatedEvent $event */ function check($event): void {ordinary($event->getData()->getSigned());}
 `,
       false,
     ),

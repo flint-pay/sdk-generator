@@ -127,6 +127,22 @@ export function typescriptType(
   documentation = false,
 ): string {
   definitions = s['x-sdk-definitions'] ?? definitions;
+  if (response && typeof s['x-flint-partial-of'] === 'string')
+    return `Partial<${s['x-flint-partial-of']}>`;
+  if (
+    response &&
+    s['x-sdk-event-tag'] &&
+    (typeof s.const === 'string' || typeof s.const === 'boolean' || s.const === null)
+  )
+    return JSON.stringify(s.const);
+  if (s['x-sdk-event-tag']) {
+    const literal = valueScopes(s, definitions).find(
+      (shape) =>
+        typeof shape.const === 'string' ||
+        (shape.enum?.length === 1 && typeof shape.enum[0] === 'string'),
+    );
+    if (literal) return JSON.stringify(literal.const ?? literal.enum?.[0]);
+  }
   if (!response && s['x-sdk-query-array-items']) {
     const item = typescriptType(
       s['x-sdk-query-array-items'],

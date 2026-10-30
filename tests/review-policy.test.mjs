@@ -785,7 +785,7 @@ test('added success results distinguish incompatible bodies from matching shapes
   assert(!compare(typeless, stringResult).some((c) => c.severity === 'breaking'));
 });
 
-test('new PHP status classes break typed consumers even when JSON schemas match', () => {
+test('matching success statuses retain PHP class identities', () => {
   const object = { type: 'object', required: ['id'], properties: { id: { type: 'string' } } };
   const tagged = {
     oneOf: [
@@ -814,7 +814,7 @@ test('new PHP status classes break typed consumers even when JSON schemas match'
     emit(f);
     const baseline = load(f);
     const call = (status) =>
-      String.raw`function consume(PolicySdk\ApiReadResponse200${suffix} $data){return $data->id;}$c=new PolicySdk\Client(new PolicySdk\ClientOptions('https://example.invalid',transport:fn($r)=>['status'=>${status},'headers'=>[],'body'=>'{"id":"abc","kind":"known"}']));try{echo json_encode(['id'=>consume($c->api->read()->data)]);}catch(\TypeError $e){echo json_encode(['error'=>$e->getMessage()]);}`;
+      String.raw`function consume(PolicySdk\ApiReadResponse${suffix} $data){return $data->id;}$c=new PolicySdk\Client(new PolicySdk\ClientOptions('https://example.invalid',transport:fn($r)=>['status'=>${status},'headers'=>[],'body'=>'{"id":"abc","kind":"known"}']));try{echo json_encode(['id'=>consume($c->api->read()->data)]);}catch(\TypeError $e){echo json_encode(['error'=>$e->getMessage()]);}`;
     assert.deepEqual(php(f, call(200)), { id: 'abc' });
     for (const targets of [['php'], ['node', 'php'], ['node']]) {
       for (const status of ['201', 'default']) {
@@ -825,7 +825,7 @@ test('new PHP status classes break typed consumers even when JSON schemas match'
         const findings = compare(before, next);
         assert.equal(
           findings.some((c) => c.severity === 'breaking'),
-          targets.includes('php'),
+          false,
         );
       }
     }
@@ -847,17 +847,10 @@ test('new PHP status classes break typed consumers even when JSON schemas match'
     assert(!compare(baseline, error).some((c) => c.severity === 'breaking'));
     f.doc.paths['/values'].get.responses[201] = json(schema);
     f.cfg.version = '1.0.1';
-    assert(
-      emit(f).compatibility.some(
-        (c) => c.severity === 'breaking' && /PHP response classes/.test(c.message),
-      ),
-    );
+    assert(!emit(f).compatibility.some((c) => c.severity === 'breaking'));
     assert.deepEqual(php(f, call(200)), { id: 'abc' });
-    assert.match(php(f, call(201)).error, /ApiReadResponse200.*ApiReadResponse201/);
-    assert.throws(() => prepareRelease(f.out, join(f.dir, 'patch')), /major/);
-    f.cfg.version = '2.0.0';
-    emit(f);
-    assert.equal(prepareRelease(f.out, join(f.dir, 'major')).version, '2.0.0');
+    assert.deepEqual(php(f, call(201)), { id: 'abc' });
+    assert.equal(prepareRelease(f.out, join(f.dir, 'patch')).version, '1.0.1');
   }
 });
 
@@ -1024,7 +1017,7 @@ test('PHP variant reassignment and additions widen concrete types while Node-onl
   });
   emit(f);
   const baseline = load(f);
-  const call = String.raw`$c=new PolicySdk\Client(new PolicySdk\ClientOptions('https://example.invalid',transport:fn($r)=>['status'=>200,'headers'=>[],'body'=>'{"kind":"paid","amount":100}']));$data=$c->api->read()->data;echo json_encode(['class'=>get_class($data),'oldClass'=>$data instanceof PolicySdk\ApiReadResponse200Variant0]);`;
+  const call = String.raw`$c=new PolicySdk\Client(new PolicySdk\ClientOptions('https://example.invalid',transport:fn($r)=>['status'=>200,'headers'=>[],'body'=>'{"kind":"paid","amount":100}']));$data=$c->api->read()->data;echo json_encode(['class'=>get_class($data),'oldClass'=>$data instanceof PolicySdk\ApiReadResponseVariant0]);`;
   assert.equal(php(f, call).oldClass, true);
   f.doc.paths['/values'].get.responses[200].content['application/json'].schema.oneOf.reverse();
   f.cfg.version = '1.0.1';

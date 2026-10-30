@@ -35,8 +35,12 @@ export function pascalWords(value: string): string {
 }
 
 /** Public webhook identities shared by Node event types and PHP event classes. */
-export function webhookEventTypeName(event: string): string {
-  return 'WebhookEvent' + pascalWords(event);
+export function webhookEventTypeName(
+  event: string,
+  occupied: ReadonlySet<string> = new Set(),
+): string {
+  const base = pascalWords(event);
+  return base + (occupied.has((base + 'Event').toLowerCase()) ? 'WebhookEvent' : 'Event');
 }
 const camel = (parts: string[]) =>
   parts.map((part, i) => (i ? part[0]!.toUpperCase() + part.slice(1) : part)).join('');
@@ -212,7 +216,8 @@ export function modelNames(originals: string[], overrides: Record<string, string
     else if (!original.endsWith('Input')) reserve(original, original);
   for (const original of originals.slice().sort()) {
     if (names.has(original)) continue;
-    const base = original.slice(0, -5) + 'Request';
+    const stem = original.slice(0, -5);
+    const base = stem.endsWith('Request') ? stem : stem + 'Request';
     let name = base;
     let suffix = 1;
     while (occupied.has(name.toLowerCase()) || occupied.has((name + 'Input').toLowerCase()))

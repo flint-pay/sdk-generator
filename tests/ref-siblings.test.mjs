@@ -167,13 +167,10 @@ test('description siblings retain named identity despite structurally identical 
     );
   }
   assert.match(
-    files.get('php/src/classes/ApiSendValueResponse200.php'),
+    files.get('php/src/classes/ApiSendValueResponse.php'),
     /getAnnotated\(\): SecondRecord/,
   );
-  assert.match(
-    files.get('php/src/classes/ApiSendValueResponse200.php'),
-    /getOther\(\): FirstRecord/,
-  );
+  assert.match(files.get('php/src/classes/ApiSendValueResponse.php'), /getOther\(\): FirstRecord/);
   assert.match(renderedDeclarations(files), /"annotated": FirstRecord;/);
   assert.match(renderedDeclarations(files), /"annotated": SecondRecordInput;/);
   const value = { plain: { id: 'plain' }, annotated: { id: 'field' }, other: { id: 'other' } };
@@ -189,7 +186,7 @@ test('description siblings retain named identity despite structurally identical 
       declare(strict_types=1);
       require $argv[1].'/src/Runtime.php';require $argv[1].'/src/Client.php';
       function recordId(SiblingsSdk\SecondRecord $record): string { return $record->getId(); }
-      $model=new SiblingsSdk\ApiSendValueResponse200(json_decode($argv[2],false));
+      $model=new SiblingsSdk\ApiSendValueResponse(json_decode($argv[2],false));
       if(recordId($model->getPlain())!=='plain'||recordId($model->getAnnotated())!=='field')exit(2);
       if(get_class($model->getOther())!==SiblingsSdk\FirstRecord::class)exit(3);
       if(get_class($model->getAnnotated())!==SiblingsSdk\SecondRecord::class)exit(4);
@@ -306,7 +303,7 @@ test('descriptions retain the existing shared identity of otherwise identical na
       String.raw`
       require $argv[1].'/src/Client.php';
       function id(SiblingsSdk\SecondRecord $record): string { return $record->getId(); }
-      $value=new SiblingsSdk\ApiSendValueResponse200(json_decode($argv[2],false));
+      $value=new SiblingsSdk\ApiSendValueResponse(json_decode($argv[2],false));
       if(id($value->getPlain())!=='plain'||id($value->getAnnotated())!=='annotated')exit(2);
       `,
       join(i.output, 'php'),
@@ -373,7 +370,7 @@ test('described incoming webhook roots keep their generated response classes and
       require $argv[1].'/src/Client.php';
       $client=new SiblingsSdk\Client(new SiblingsSdk\ClientOptions('https://example.invalid'));
       $value=$client->verifyWebhook($argv[2],json_decode($argv[3],true),[$argv[4]],(int)$argv[5]);
-      if(!$value['known']||!$value['event'] instanceof SiblingsSdk\WebhookEventRecordCreated)exit(2);
+      if(!$value['known']||!$value['event'] instanceof SiblingsSdk\RecordCreatedEvent)exit(2);
       if(!$value['event']->getData() instanceof SiblingsSdk\EventRecord)exit(3);
       if($value['event']->get('data')->getId()!=='synthetic-record')exit(4);
       `,
@@ -1414,12 +1411,12 @@ if(isApiSendValueResponseKnown(value)) {
       $raw='{"kind":"paid","amount":5,"traceId":"abc","label":"do-not-print"}';
       $client=new SiblingsSdk\Client(new SiblingsSdk\ClientOptions('https://example.invalid',transport:fn($r)=>['status'=>200,'headers'=>[],'body'=>$raw]));
       $value=$client->api->sendValue(new SiblingsSdk\ApiSendValueInput())->data;
-      if(!($value instanceof SiblingsSdk\ApiSendValueResponse200Variant0))exit(2);
+      if(!($value instanceof SiblingsSdk\ApiSendValueResponseVariant0))exit(2);
       if($value->getAmount()!=='5'||$value->getTraceId()!=='abc')exit(3);
       var_dump($value);
-      try { new SiblingsSdk\ApiSendValueResponse200Variant0(['kind'=>'paid','amount'=>'5']);exit(4); }
+      try { new SiblingsSdk\ApiSendValueResponseVariant0(['kind'=>'paid','amount'=>'5']);exit(4); }
       catch(SiblingsSdk\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='InvalidInputError')throw $e;}
-      try { new SiblingsSdk\ApiSendValueResponse200Variant0(['kind'=>'paid','amount'=>'5','traceId'=>'abc','forbidden'=>true]);exit(5); }
+      try { new SiblingsSdk\ApiSendValueResponseVariant0(['kind'=>'paid','amount'=>'5','traceId'=>'abc','forbidden'=>true]);exit(5); }
       catch(SiblingsSdk\SdkError $e){if(substr(strrchr(get_class($e), chr(92)), 1)!=='InvalidInputError')throw $e;}
     `,
         join(i.output, 'php'),

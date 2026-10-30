@@ -243,13 +243,13 @@ test('independent certifier covers value branches, nested collections and declar
       );
       for (const field of Object.values(oracleInput.models.Facts.properties))
         assertSourceFieldDocumentation(source, field, definitions, names);
-      assert.match(source, /Shape \$/);
+      assert.doesNotMatch(source, /Shape \$/);
       assert.match(source, /minItems: 2/);
       assert.match(source, /minItems: 3/);
       assert.match(source, /Array of \(string or null\)/);
       const annotated = [...source.matchAll(/\/\*\*[\s\S]*?\*\//g)]
         .map(([comment]) => comment.replace(/\n\s*\* ?/g, ' '))
-        .filter((comment) => comment.includes('Shape $ (Value): string. A synthetic description.'));
+        .filter((comment) => comment.includes('A synthetic description.'));
       assert.ok(annotated.length, `${target}: scalar annotation witness`);
       for (const comment of annotated) {
         assert.equal(comment.split('A synthetic description.').length - 1, 1, comment);

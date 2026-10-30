@@ -234,7 +234,7 @@ test('Composer autoload is inert and PHP clients defer descriptors until first u
       foreach(get_included_files() as $file)if(str_contains($file,'/src/'))throw new Exception('eager SDK loading');
       $c=new Example\Library\Client(new Example\Library\ClientOptions(baseUrl:'https://example.invalid',transport:fn($r)=>['status'=>200,'headers'=>[],'body'=>'{"id":"a","title":"Book"}']));
       if(($GLOBALS['sdk_plan_validations']??0)!==1||($GLOBALS['sdk_codec_validations']??0)!==0)throw new Exception('construction loaded codecs');
-      if(class_exists(Example\Library\BooksRetrieveResponse200::class,false))throw new Exception('eager model');
+      if(class_exists(Example\Library\BooksRetrieveResponse::class,false))throw new Exception('eager model');
       $value=$c->books->retrieve('a');if($value->title!=='Book')throw new Exception('wrong response');
       $counts=[$GLOBALS['sdk_plan_validations'],$GLOBALS['sdk_codec_validations']];
       $other=new Example\Library\Client(new Example\Library\ClientOptions(baseUrl:'https://example.invalid',transport:fn($r)=>['status'=>200,'headers'=>[],'body'=>'{"id":"b","title":"Other"}']));

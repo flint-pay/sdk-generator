@@ -147,7 +147,7 @@ result.choice?.level;
   assert.equal(checked.status, 0, checked.stdout + checked.stderr);
   assert.equal(
     php(String.raw`
-$r=new ReflectionMethod(Example\Nullable\ApiGetValuesResponse200::class,'getRisk');
+$r=new ReflectionMethod(Example\Nullable\ApiGetValuesResponse::class,'getRisk');
 $type=$r->getReturnType();echo $type->getName().($type->allowsNull()?'|null':'');
 `),
     'Example\\Nullable\\Detail|null',

@@ -34,6 +34,7 @@ const semantic = new Set([
   'request-style',
   'query-arrays',
   'integer-policy',
+  'webhook-names',
   'request-options',
   'response-compatibility',
   'compiled-compatibility',

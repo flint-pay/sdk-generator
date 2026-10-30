@@ -1,3 +1,4 @@
+import { eventTypeName } from './webhook-names.js';
 import {
   compileDocumentation,
   documentationPositions,
@@ -24,7 +25,7 @@ import {
   hasProtectedDocumentation,
 } from './example-protection.js';
 import { reservePublicSymbols } from './public-symbols.js';
-import { pascalWords, webhookEventTypeName, isReservedTypeName } from './naming.js';
+import { pascalWords, isReservedTypeName } from './naming.js';
 import {
   phpRepresentations,
   phpRepresentationType,
@@ -1009,7 +1010,7 @@ function webhookDeclarations(
     Object.keys(webhook.events).map((event) => {
       const schema = webhook.events[event];
       if (!schema) throw new Error('Missing webhook declaration ' + event);
-      const name = webhookEventTypeName(event);
+      const name = eventTypeName(c, event);
       const tag = webhook.typeField
         .split('.')
         .reduceRight(
@@ -1036,6 +1037,17 @@ function webhookDeclarations(
     'export type VerifiedWebhook = { known: true; event: KnownWebhookEvent } | { known: false; event: unknown; reason: "unknown_event" | "unmatched_envelope" };\n',
   );
   return { eventType: 'KnownWebhookEvent', eventDeclarations: declarations.join(''), eventTypes };
+}
+
+function phpResponseName(op: Operation, status: string): string {
+  const schemas = new Set(
+    Object.entries(op.responses)
+      .filter(([key, response]) => (successStatus(key) || key === 'default') && response.schema)
+      .map(([, response]) => stable(response.schema)),
+  );
+  return (
+    pascal(op.resource) + pascal(op.method) + 'Response' + (schemas.size > 1 ? pascal(status) : '')
+  );
 }
 
 /** Compile language interfaces and response class routing before any source rendering. */
@@ -1105,7 +1117,7 @@ export function compileSdkContract(source: Contract): {
       if (!(successStatus(status) || status === 'default')) continue;
       const result = compiled.responses[status];
       if (!result) throw new Error('Missing compiled response ' + status);
-      const prefix = pascal(op.resource) + pascal(op.method) + 'Response' + pascal(status);
+      const prefix = phpResponseName(op, status);
       if (
         response.schema?.oneOf &&
         response.schema.discriminator &&
@@ -1136,7 +1148,7 @@ export function compileSdkContract(source: Contract): {
   const eventModels: Record<string, string> = {};
   for (const [event, schema] of Object.entries(c.config.webhook?.events ?? {})) {
     if (objectConstraint(schema) === 'object') {
-      const name = webhookEventTypeName(event);
+      const name = eventTypeName(c, event);
       eventModels[event] = name;
       responseModels.push(compilePhpModel(name, schema, true, sharedNames));
     }
@@ -1298,7 +1310,7 @@ export function compileSdkContract(source: Contract): {
               c.definitions,
             ),
           ),
-        ...responseModels,
+        ...new Map(responseModels.map((model) => [model.name, model])).values(),
       ],
       operations: Object.fromEntries(
         c.operations.map((op) => [
@@ -1409,6 +1421,16 @@ export function compileSdkContract(source: Contract): {
     },
   };
   const outputAliases = new Map<string, string>();
+  const partialResources = new Set<string>();
+  const findPartials = (schema: Schema): void => {
+    if (typeof schema['x-flint-partial-of'] === 'string')
+      partialResources.add(schema['x-flint-partial-of']);
+    Object.values(schema.properties ?? {}).forEach(findPartials);
+    for (const branches of [schema.allOf, schema.oneOf, schema.anyOf])
+      branches?.forEach(findPartials);
+    if (schema.items) findPartials(schema.items);
+  };
+  Object.values(models).forEach(findPartials);
   // Consume comments before literals: prose punctuation must not hide type references.
   const replaceOutputNames = (type: string): string =>
     type.replace(
@@ -1428,7 +1450,7 @@ export function compileSdkContract(source: Contract): {
     for (const name of Object.keys(plan.node.models).sort(
       (a, b) => a.length - b.length || a.localeCompare(b, 'en'),
     )) {
-      if (outputAliases.has(name)) continue;
+      if (outputAliases.has(name) || partialResources.has(name)) continue;
       const model = plan.node.models[name]!;
       const shape = replaceOutputNames(model.output);
       const existing = shapes.get(shape);
@@ -1546,6 +1568,8 @@ export function compileSdkContract(source: Contract): {
     plan.responseReturns = responseReturns;
     plan.node.responseReturnDeclarations = `export interface SdkResponse<T> { body: T; meta: Result<T>['meta']; raw: Result<T>['raw']; }\n`;
   }
+  for (const name of Object.values(plan.node.eventTypes ?? {}))
+    if (plan.node.models[name]) plan.node.models[name]!.outputAlias = name;
   if (plan.targets.includes('node')) {
     // The finalized declaration expressions are the sole source of certification.
     // Parse their TypeScript syntax rather than interpreting source schemas again.
@@ -1604,7 +1628,7 @@ export function compileSdkContract(source: Contract): {
         const result = compiled.responses[status];
         if (!result || !response.schema || !(successStatus(status) || status === 'default'))
           continue;
-        const prefix = pascal(op.resource) + pascal(op.method) + 'Response' + pascal(status);
+        const prefix = phpResponseName(op, status);
         const shape = phpDeclaration(response.schema, semantic.definitions);
         if (
           result.model &&
@@ -1683,6 +1707,8 @@ export function compileSdkContract(source: Contract): {
       const schema = semantic.config.webhook?.events[event];
       if (schema) representations.model(name, schema);
     }
+    for (const name of c.webhookAudienceModels ?? [])
+      if (semantic.models[name]) representations.model(name, semantic.models[name]);
     representations.checkFieldClasses();
     for (const entity of representations.entities.values()) {
       const model = compilePhpModel(

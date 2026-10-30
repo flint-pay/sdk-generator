@@ -723,7 +723,7 @@ test('signed webhook root pins are consumed before stale checks and operation-ro
   };
   const f = fixture(
     undefined,
-    { WebhookEventVenueCreated: { location: 'Location' } },
+    { VenueCreatedEvent: { location: 'Location' } },
     {
       api: {
         webhooks: { 'venue.created': { post: { requestBody: { content: content(event) } } } },
@@ -755,7 +755,7 @@ test('signed webhook root pins are consumed before stale checks and operation-ro
     String.raw`
     $client=new FieldClasses\Sdk\Client(new FieldClasses\Sdk\ClientOptions('https://example.invalid'));
     $verified=$client->verifyWebhook($argv[2],json_decode($argv[3],true),[$argv[4]],(int)$argv[5]);
-    if(!$verified['known']||get_class($verified['event'])!==FieldClasses\Sdk\WebhookEventVenueCreated::class)exit(2);
+    if(!$verified['known']||get_class($verified['event'])!==FieldClasses\Sdk\VenueCreatedEvent::class)exit(2);
     if(get_class($verified['event']->getLocation())!==FieldClasses\Sdk\Location::class)exit(3);
   `,
     raw,
@@ -763,14 +763,14 @@ test('signed webhook root pins are consumed before stale checks and operation-ro
     secret,
     String(timestamp),
   );
-  const rootPin = fixture(undefined, { ApiSendValueResponse200: { data: 'Venue' } });
+  const rootPin = fixture(undefined, { ApiSendValueResponse: { data: 'Venue' } });
   assert.equal(
-    selected(rootPin).php.models.find((value) => value.name === 'ApiSendValueResponse200')
+    selected(rootPin).php.models.find((value) => value.name === 'ApiSendValueResponse')
       .representation.fields.data.name,
     'Venue',
   );
   const variants = fixture(undefined, {
-    ApiSendValueResponse200Variant0: { location: 'Location' },
+    ApiSendValueResponseVariant0: { location: 'Location' },
   });
   const branch = (tag) => ({
     type: 'object',
@@ -786,8 +786,8 @@ test('signed webhook root pins are consumed before stale checks and operation-ro
   php(
     variants,
     String.raw`
-    $first=new FieldClasses\Sdk\ApiSendValueResponse200Variant0((object)['kind'=>'first','location'=>(object)['id'=>'pinned']]);
-    $second=new FieldClasses\Sdk\ApiSendValueResponse200Variant1((object)['kind'=>'second','location'=>(object)['id'=>'default']]);
+    $first=new FieldClasses\Sdk\ApiSendValueResponseVariant0((object)['kind'=>'first','location'=>(object)['id'=>'pinned']]);
+    $second=new FieldClasses\Sdk\ApiSendValueResponseVariant1((object)['kind'=>'second','location'=>(object)['id'=>'default']]);
     if(get_class($first->getLocation())!==FieldClasses\Sdk\Location::class||get_class($second->getLocation())!==FieldClasses\Sdk\Place::class)exit(2);
   `,
   );

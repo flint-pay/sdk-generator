@@ -242,10 +242,10 @@ test('compiled target plans are deterministic, preserve source contracts, and na
     b = compileSdkContract(f.contract);
   assert.deepEqual(a, b);
   assert.deepEqual(f.contract, source);
-  assert.equal(a.plan.php.runtime.operations[0].responses['200'].model, 'ApiReadValueResponse200');
+  assert.equal(a.plan.php.runtime.operations[0].responses['200'].model, 'ApiReadValueResponse');
   assert.equal(a.plan.node.operations.readValue.inputRequired, false);
   assert.equal(
-    a.plan.php.models.find((m) => m.name === 'ApiReadValueResponse200').constructorType,
+    a.plan.php.models.find((m) => m.name === 'ApiReadValueResponse').constructorType,
     'array|object',
   );
 });

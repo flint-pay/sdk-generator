@@ -309,7 +309,7 @@ test('canonical union tables retain effective branch fields, presence, types and
         assert.match(docs, /`nullable_named` \| Optional \| \[NamedChoiceInput\]\([^)]+\) or null/);
         assert.match(
           docs,
-          /### ApiOwnerOneResponse200.nullable_named[\s\S]*?- Required: [^\n]*`left_values`/,
+          /### ApiOwnerOneResponse.nullable_named[\s\S]*?- Required: [^\n]*`left_values`/,
         );
       }
       assert.equal(
@@ -382,7 +382,7 @@ test('canonical union tables retain effective branch fields, presence, types and
       );
       assert.ok(returned.length);
       assert.match(returned[0].source, /\| `revoked` \| Required \|/);
-      if (target === 'php') assert.equal(returned[0].label, 'ApiRevokeResponse200');
+      if (target === 'php') assert.equal(returned[0].label, 'ApiRevokeResponse');
       const first = operationDocuments(root).find((op) => op.name.endsWith('.first'));
       const branchDoc = linkedModelSections(
         first.path,

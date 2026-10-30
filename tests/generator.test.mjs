@@ -595,7 +595,7 @@ test('durable webhook inbox handles redelivery across database reopen in Node an
   assert.deepEqual(JSON.parse(result.stdout), [true, false]);
 });
 test('generated PHP responses expose typed getters and redact model printing', () => {
-  const code = `require $argv[1].'/src/Runtime.php'; require $argv[1].'/src/Client.php'; $r = new Example\\Payments\\PaymentsRetrieveResponse200(['id'=>'p','amount'=>'9007199254740993','status'=>'future','secret'=>'hidden-secret']); if ($r->getAmount() !== '9007199254740993') exit(1); var_dump($r);`;
+  const code = `require $argv[1].'/src/Runtime.php'; require $argv[1].'/src/Client.php'; $r = new Example\\Payments\\PaymentsRetrieveResponse(['id'=>'p','amount'=>'9007199254740993','status'=>'future','secret'=>'hidden-secret']); if ($r->getAmount() !== '9007199254740993') exit(1); var_dump($r);`;
   const r = spawnSync('php', ['-r', code, join(output, 'php')], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
   assert.ok(r.stdout.includes('[REDACTED]'));

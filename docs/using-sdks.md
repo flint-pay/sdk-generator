@@ -513,10 +513,10 @@ Never rebuild the body with `JSON.stringify` or `json_encode`. Whitespace, prope
 import type {
   VerifiedWebhook,
   KnownWebhookEvent,
-  WebhookEventPaymentIntentSucceeded,
+  PaymentIntentSucceededEvent,
 } from '@example/provider-sdk';
 
-function handleSucceeded(event: WebhookEventPaymentIntentSucceeded): void {
+function handleSucceeded(event: PaymentIntentSucceededEvent): void {
   // Persist and process event.data idempotently.
 }
 
@@ -532,9 +532,9 @@ if (verified.known) {
 }
 ```
 
-Node exports `VerifiedWebhook`, `KnownWebhookEvent` and one `WebhookEvent<EventName>` type per declared event from the package root and the `webhooks` subpath. Per-event types use the PHP event naming rule: `payment_intent.succeeded` becomes `WebhookEventPaymentIntentSucceeded`. Names match where PHP emits an event class; multi-variant events have a named Node union without a corresponding PHP event class. These types are unavailable from `resources/*`; `KnownWebhookEvent` is `never` when no events are declared.
+Node exports `VerifiedWebhook`, `KnownWebhookEvent` and one `<EventName>Event` type per declared event from the package root and the `webhooks` subpath. Per-event types use the PHP event naming rule: `payment_intent.succeeded` becomes `PaymentIntentSucceededEvent`. Names match where PHP emits an event class; multi-variant events have a named Node union without a corresponding PHP event class. These types are unavailable from `resources/*`; `KnownWebhookEvent` is `never` when no events are declared.
 
-Use indexed access for payload annotations, for example `type SucceededPayload = WebhookEventPaymentIntentSucceeded['data']`. A top-level `typeField` supports exhaustive `switch` narrowing with a `never` default. For a dotted path such as `meta.name`, annotate a handler with the named event type or use `Extract<KnownWebhookEvent, { meta: { name: 'payment_intent.succeeded' } }>`.
+Use indexed access for payload annotations, for example `type SucceededPayload = PaymentIntentSucceededEvent['data']`. A top-level `typeField` supports exhaustive `switch` narrowing with a `never` default. For a dotted path such as `meta.name`, annotate a handler with the named event type or use `Extract<KnownWebhookEvent, { meta: { name: 'payment_intent.succeeded' } }>`.
 
 - Authenticated unknown names return `known: false` with `reason: "unknown_event"`; declared names whose payload matches no envelope use `reason: "unmatched_envelope"`. PHP uses the same `reason` array key. Known deliveries have no `reason`. Keep unrecognized deliveries for review.
 - Malformed declared payloads produce a `protocol` error.
@@ -729,7 +729,7 @@ Response getters return generated entities for declared nested objects, lists of
 - Nested entities use configured component names, such as `Payment`. Inline entities are named from the owning model and property path. Nullable wrappers hydrate the existing named entity or an inline entity.
 - A typed envelope reads as `$result->data->getData()->getId()`. Dictionaries use array access, such as `$payment->getMetadata()['label']`, and their values can be entities. Numeric-string dictionary keys follow PHP array-key conversion.
 - Wire names are unchanged. Accessors use word boundaries: `request_id` becomes `getRequestId()` and `hasRequestId()`.
-- Webhook classes use event names, such as `WebhookEventPaymentIntentSucceeded`, and stay stable when events are added or reordered.
+- Webhook classes use event names, such as `PaymentIntentSucceededEvent`, and stay stable when events are added or reordered.
 - Response class names include the response status; tagged alternatives also include the branch position. When dispatching by class, a new status can add a return class even with an identical JSON shape. When dispatching by discriminator value, handle unknown tags.
 - Unknown or ambiguous alternatives keep their raw fallback representation. Check discriminator values before using a known variant.
 - `toArray()` and `jsonSerialize()` return normalized JSON objects and lists, including empty objects.

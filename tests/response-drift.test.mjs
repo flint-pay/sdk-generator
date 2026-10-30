@@ -110,8 +110,8 @@ const decoded = {
 };
 const schemaMessage = 'Response cannot be represented by the declared schema';
 const cases = [
-  { op: 'create', raw: valid, data: decoded, model: 'ApiCreateResponse201' },
-  { op: 'withEmpty', raw: valid, data: decoded, model: 'ApiWithEmptyResponse201' },
+  { op: 'create', raw: valid, data: decoded, model: 'ApiCreateResponse' },
+  { op: 'withEmpty', raw: valid, data: decoded, model: 'ApiWithEmptyResponse' },
   {
     op: 'incomplete',
     raw: valid,
@@ -193,7 +193,7 @@ const cases = [
     raw: '{"payment":{"id":"pay_payload"}}',
     data: { payment: { id: 'pay_payload' } },
     withResponse: true,
-    model: 'ApiPayloadResponse201',
+    model: 'ApiPayloadResponse',
   },
   {
     op: 'payload',
@@ -205,7 +205,7 @@ const cases = [
     op: 'tagged',
     raw: '{"id":"pay_tagged","kind":"card"}',
     data: { id: 'pay_tagged', kind: 'card' },
-    model: 'ApiTaggedResponse201Variant0',
+    model: 'ApiTaggedResponseVariant0',
   },
 ];
 

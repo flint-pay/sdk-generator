@@ -143,6 +143,7 @@ export function compileSchemaPolicy(
     'readOnly',
     'writeOnly',
     'x-sensitive',
+    'x-sdk-event-tag',
     'x-sdk-integer-mode',
     'x-sdk-ref',
     'x-sdk-type-name',

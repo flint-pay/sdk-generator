@@ -109,10 +109,7 @@ try{$c->catalog->retrieve('list');throw new Exception('required field accepted')
 echo 'ok';`),
     'ok',
   );
-  const source = readFileSync(
-    join(output, 'php/src/classes/CatalogRetrieveResponse200.php'),
-    'utf8',
-  );
+  const source = readFileSync(join(output, 'php/src/classes/CatalogRetrieveResponse.php'), 'utf8');
   assert.match(source, /@property-read \?string \$next/);
   assert.match(source, /function getNext\(\): \?string/);
   const { Client } = await import(pathToFileURL(join(output, 'node/index.js')).href);

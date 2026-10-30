@@ -100,6 +100,30 @@ export function publicTypePlanner(declarations: Readonly<Record<string, string>>
         const args = node.typeArguments ?? [];
         if ((name === 'Array' || name === 'ReadonlyArray') && args[0])
           return { kind: 'array', element: convert(args[0]) };
+        if (name === 'Partial' && args[0]) {
+          const partial = (value: PublicType, seen = new Set<string>()): PublicType => {
+            if (value.kind === 'reference') {
+              const expression = declarations[value.name];
+              if (!expression || seen.has(value.name))
+                throw new Error('Invalid partial resource ' + value.name);
+              return partial(parse(expression), new Set([...seen, value.name]));
+            }
+            if (value.kind === 'union' || value.kind === 'intersection')
+              return { ...value, members: value.members.map((member) => partial(member, seen)) };
+            if (value.kind === 'record')
+              return {
+                ...value,
+                fields: Object.fromEntries(
+                  Object.entries(value.fields).map(([key, field]) => [
+                    key,
+                    { ...field, optional: true },
+                  ]),
+                ),
+              };
+            return value;
+          };
+          return partial(convert(args[0]));
+        }
         if (name === 'Record' && args[1])
           return { kind: 'record', fields: {}, extra: convert(args[1]) };
         if (name === 'Exclude' && args[0] && args[1]) {

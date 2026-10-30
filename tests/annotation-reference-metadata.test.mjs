@@ -231,7 +231,7 @@ test('annotated refs retain both-target input requiredness and output omission w
     /"credential"|"inheritedWrite"/,
   );
   assert.doesNotMatch(
-    files.get('php/src/classes/ApiSendRecordResponse200.php'),
+    files.get('php/src/classes/ApiSendRecordResponse.php'),
     /getCredential|getInheritedWrite/,
   );
 });

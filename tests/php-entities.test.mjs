@@ -77,7 +77,13 @@ function fixture(
   generate(contract, output);
   return { dir, contract, output };
 }
-const child = { id: 'child', request_id: 'req_00G49T7PWV0CVHAW24A9W35BQS', metadata: {}, children: [], related: {} };
+const child = {
+  id: 'child',
+  request_id: 'req_00G49T7PWV0CVHAW24A9W35BQS',
+  metadata: {},
+  children: [],
+  related: {},
+};
 const body = {
   data: {
     id: 'pay_1',
@@ -195,7 +201,7 @@ test('event names are meaningful and independent of order; collisions are diagno
   const second = fixture(undefined, { 'payment.failed': event, 'payment_intent.succeeded': event });
   const a = compileSdkContract(first.contract).plan.php.eventModels;
   assert.deepEqual(a, compileSdkContract(second.contract).plan.php.eventModels);
-  assert.equal(a['payment_intent.succeeded'], 'WebhookEventPaymentIntentSucceeded');
+  assert.equal(a['payment_intent.succeeded'], 'PaymentIntentSucceededEvent');
   assert.throws(
     () =>
       fixture({
@@ -317,7 +323,7 @@ test('PHPStan checks the generated payment README including convenience methods'
 
 test('representation descriptors reject malformed kinds and dangling entity links', () => {
   const f = fixture();
-  const path = join(f.output, 'php/src/descriptors/models/PaymentsRetrieveResponse200.json');
+  const path = join(f.output, 'php/src/descriptors/models/PaymentsRetrieveResponse.json');
   const descriptor = JSON.parse(readFileSync(path, 'utf8'));
   for (const invalid of [{ kind: 'future' }, { kind: 'entity', name: 'MissingEntity' }]) {
     descriptor.phpRepresentation.fields.data = invalid;
@@ -356,7 +362,7 @@ test('inline class name collisions identify both property paths', () => {
   );
 });
 
-test('new composed response classes are breaking even when their wire shapes match', () => {
+test('matching success statuses reuse the same composed response class', () => {
   const f = fixture();
   const contract = structuredClone(f.contract);
   const response = contract.operations[0].responses['200'];
@@ -364,10 +370,12 @@ test('new composed response classes are breaking even when their wire shapes mat
   const before = compileSdkContract(contract).plan;
   contract.operations[0].responses['201'] = structuredClone(response);
   const after = compileSdkContract(contract).plan;
+  assert.equal(
+    after.php.runtime.operations[0].responses['200'].phpRepresentation.name,
+    after.php.runtime.operations[0].responses['201'].phpRepresentation.name,
+  );
   assert.ok(
-    compareCompiledContracts(before, after).some(
-      (finding) => finding.severity === 'breaking' && finding.subject.includes('response.201'),
-    ),
+    !compareCompiledContracts(before, after).some((finding) => finding.severity === 'breaking'),
   );
 });
 
@@ -388,7 +396,7 @@ test('merged properties preserve response writeOnly and input readOnly declarati
   assert.doesNotMatch(phpDocType(schema), /'id'/);
   const f = fixture(schema);
   const model = compileSdkContract(f.contract).plan.php.models.find(
-    (model) => model.name === 'PaymentsRetrieveResponse200',
+    (model) => model.name === 'PaymentsRetrieveResponse',
   );
   assert.ok(model.getters.some((getter) => getter.method === 'getId'));
   assert.ok(!model.getters.some((getter) => getter.method === 'getSecret'));
@@ -427,10 +435,10 @@ test('verified webhooks hydrate nested entities and expose their types to PHPSta
     file,
     String.raw`<?php
 use Example\Entities\Client;
-use Example\Entities\WebhookEventPaymentIntentSucceeded;
+use Example\Entities\PaymentIntentSucceededEvent;
 function webhookId(Client $client, string $body, string $signature): string {
     $verified = $client->verifyWebhook($body, ['X-Signature' => $signature], 'synthetic', 1000);
-    if (!$verified['known'] || !$verified['event'] instanceof WebhookEventPaymentIntentSucceeded) {
+    if (!$verified['known'] || !$verified['event'] instanceof PaymentIntentSucceededEvent) {
         throw new RuntimeException('Unexpected event');
     }
     return $verified['event']->getData()->getId();
@@ -472,7 +480,7 @@ test('numeric intersections keep getter, magic and dynamic access consistent', (
     String.raw`
 require $argv[1].'/php/src/Runtime.php';
 require $argv[1].'/php/src/Client.php';
-$m = new Example\Entities\PaymentsRetrieveResponse200(['count' => 3]);
+$m = new Example\Entities\PaymentsRetrieveResponse(['count' => 3]);
 if ($m->getCount() !== 3.0 || $m->get('count') !== 3.0 || $m->count !== 3.0) throw new Exception('numeric representation');
 `,
     f.output,
@@ -485,7 +493,7 @@ test('reference-site annotations reuse the configured entity without erasing nes
     properties: { data: { ...ref('Payment'), readOnly: true } },
   });
   const wrapper = compileSdkContract(f.contract).plan.php.models.find(
-    (model) => model.name === 'PaymentsRetrieveResponse200',
+    (model) => model.name === 'PaymentsRetrieveResponse',
   );
   assert.equal(wrapper.getters.find((getter) => getter.field === 'data').doc, '?Payment');
   const child = { type: 'object', properties: { id: { type: 'string' } } };
