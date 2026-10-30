@@ -115,32 +115,32 @@ const cases = [
   {
     op: 'incomplete',
     raw: valid,
-    message: schemaMessage + ': response.status: required field is missing',
+    message: schemaMessage + ': response.status is required',
     cause: true,
   },
   {
     op: 'create',
     raw: '{"secret":"synthetic-private-value"}',
-    message: schemaMessage + ': response.id: required field is missing',
+    message: schemaMessage + ': response.id is required',
     cause: true,
   },
   {
     op: 'nested',
     raw: '{"payment":{"secret":"synthetic-private-value"}}',
-    message: schemaMessage + ': response.payment.id: required field is missing',
+    message: schemaMessage + ': response.payment.id is required',
     cause: true,
   },
   {
     op: 'arrayPayments',
     raw: '[{"secret":"synthetic-private-value"}]',
-    message: schemaMessage + ': response[0].id: required field is missing',
+    message: schemaMessage + ': response[0].id is required',
     cause: true,
   },
   { op: 'create', raw: '', message: schemaMessage, cause: true },
   {
     op: 'create',
     raw: '{"id":42}',
-    message: schemaMessage + ': response.id: expected a string',
+    message: schemaMessage + ': response.id must be a string; received a number',
     cause: true,
   },
   {
@@ -153,13 +153,13 @@ const cases = [
   {
     op: 'exact',
     raw: valid,
-    message: schemaMessage + ': response.payment: required field is missing',
+    message: schemaMessage + ': response.payment is required',
     cause: true,
   },
   {
     op: 'fallbackDefault',
     raw: valid,
-    message: schemaMessage + ': response.payment: required field is missing',
+    message: schemaMessage + ': response.payment is required',
     cause: true,
   },
   {
@@ -198,7 +198,7 @@ const cases = [
   {
     op: 'payload',
     raw: '{"payment":{}}',
-    message: schemaMessage + ': response.payment.id: required field is missing',
+    message: schemaMessage + ': response.payment.id is required',
     cause: true,
   },
   {

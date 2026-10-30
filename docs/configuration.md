@@ -704,6 +704,8 @@ READMEs start with the install command and one complete quickstart, then up to t
 
 ## Validation
 
+Request validation failures use `InvalidInputError` with `code: "INVALID_REQUEST"` and stage-1 `details[]` (`REQUIRED`, `INVALID_VALUE`, `UNKNOWN_FIELD`, `NOT_ALLOWED`). Both targets use the [same messages and API field paths](using-sdks.md#errors-and-retries). Enum messages suppress received values for `x-sensitive`, write-only and `redactFields` fields.
+
 `"validation": "encoding"` (default) checks required fields, declared types and enums, field choices, nullability, exact numeric representation and integer format ranges. Business limits stay server checks.
 
 `"validation": "schema"` also checks, on requests and model factories:

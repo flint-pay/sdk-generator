@@ -1,3 +1,4 @@
+import { runtimeTemplate, runtimeTemplatePath } from './helpers/runtime-template.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { compileCodec } from '../dist/codec-plan.js';
@@ -36,9 +37,9 @@ test('compiled mixed objects enforce required-only keys and nested additional-va
     (value) => normalize(value, schema, 'response', true),
   ]) {
     assert.equal(evaluate({ entry: { id: 'abc' } }).entry.id, 'abc');
-    assert.throws(() => evaluate({ entry: {} }), /entry.id: required field is missing/);
-    assert.throws(() => evaluate({}), /entry: required field is missing/);
-    assert.throws(() => evaluate({ label: 4, entry: { id: 'abc' } }), /label: expected a string/);
+    assert.throws(() => evaluate({ entry: {} }), /entry.id is required/);
+    assert.throws(() => evaluate({}), /entry is required/);
+    assert.throws(() => evaluate({ label: 4, entry: { id: 'abc' } }), /label must be a string/);
   }
 });
 
@@ -61,9 +62,9 @@ test('direction compilation retains enclosing composition omissions and independ
   assert.equal(executeCodec({ id: 'x' }, plan, { mode: 'response' }).id, 'x');
   assert.throws(
     () => executeCodec({ id: 'x', password: 's' }, plan, { mode: 'request' }),
-    /readOnly/,
+    /read-only/,
   );
-  assert.throws(() => executeCodec({}, plan, { mode: 'response' }), /id: required/);
+  assert.throws(() => executeCodec({}, plan, { mode: 'response' }), /id is required/);
   assert.deepEqual(schema, snapshot);
   assert.deepEqual(compileCodec(schema), plan);
 });
@@ -132,7 +133,9 @@ test('compiled and dynamic codecs in both languages obey independent serializati
     for (const filename of ['Runtime.php', 'SchemaAdapter.php'])
       writeFileSync(
         join(dir, filename),
-        readFileSync(new URL('../templates/' + filename, import.meta.url)),
+        filename === 'Runtime.php'
+          ? runtimeTemplate()
+          : readFileSync(new URL('../templates/' + filename, import.meta.url)),
       );
     const compiled = cases.map((c) => ({ ...c, plan: compileCodec(c.schema) }));
     for (const c of compiled) {
@@ -210,13 +213,14 @@ test('public dynamic helpers retain caller-owned schema mutation behavior withou
   assert.equal((await runtime.request('read')).data, 2);
 });
 
-test('null-only type arrays retain the existing target-specific helper behavior', async () => {
+test('null-only type arrays retain the existing target-specific helper behavior', async (t) => {
+  const runtime = runtimeTemplatePath(t);
   const { spawnSync } = await import('node:child_process');
   for (const schema of [{ type: ['null'] }, { type: [] }]) {
     assert.equal(serialize('value', schema), '"value"');
     assert.equal(executeCodec('value', compileCodec(schema), { mode: 'response' }), 'value');
-    const program = String.raw`require 'templates/Runtime.php';$input=json_decode(stream_get_contents(STDIN),true);foreach([false,true] as $compiled){try{$compiled?\SdkNamespace\Codec::execute('value',$input['plan']):\SdkNamespace\Codec::normalize('value',$input['schema']);exit(2);}catch(\SdkNamespace\SdkError $e){}}echo 'ok';`;
-    const result = spawnSync('php', ['-r', program], {
+    const program = String.raw`require $argv[1];$input=json_decode(stream_get_contents(STDIN),true);foreach([false,true] as $compiled){try{$compiled?\SdkNamespace\Codec::execute('value',$input['plan']):\SdkNamespace\Codec::normalize('value',$input['schema']);exit(2);}catch(\SdkNamespace\SdkError $e){}}echo 'ok';`;
+    const result = spawnSync('php', ['-r', program, runtime], {
       input: JSON.stringify({ schema, plan: compileCodec(schema) }),
       encoding: 'utf8',
     });

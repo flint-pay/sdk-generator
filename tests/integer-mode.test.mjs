@@ -148,7 +148,7 @@ test('native counters and exact money preserve values and error classes in Node 
       input: { ...input, expected_version: value },
       responses: [],
       attempts: 0,
-      error: { name: 'InvalidInputError', code: 'invalid_value', outcome: 'not_sent' },
+      error: { name: 'InvalidInputError', code: 'INVALID_REQUEST', outcome: 'not_sent' },
     })),
     ...['9007199254740992', '-9007199254740992', '9007199254740991.1'].map((token, i) => ({
       name: 'bad response ' + i,

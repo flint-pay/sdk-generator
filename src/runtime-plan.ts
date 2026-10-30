@@ -166,6 +166,37 @@ export function parameterSource(
   return 'input';
 }
 
+/** Local validation wording is serialized into both target runtimes. */
+export const VALIDATION_MESSAGES = {
+  required: '{param} is required',
+  discriminator: '{param} is required: one of {allowed}',
+  enum: '{param} must be one of {allowed}; received {value}{suggestion}',
+  unknown: '{param} is not a field of {where}{suggestion}',
+  notAllowed: "{param} can't be sent: {reason}",
+  invalid: '{param} must be {expectation}',
+  minimum: '{param} must be at least {limit}; received a number',
+  maximum: '{param} must be at most {limit}; received a number',
+  exclusiveMinimum: '{param} must be greater than {limit}; received a number',
+  exclusiveMaximum: '{param} must be less than {limit}; received a number',
+  multipleOf: '{param} must be a multiple of {limit}; received a number',
+  minLength:
+    '{param} must be a string with at least {limit} characters; received a string of length {length}',
+  maxLength:
+    '{param} must be a string with at most {limit} characters; received a string of length {length}',
+  minItems:
+    '{param} must be an array with at least {limit} items; received an array of length {length}',
+  maxItems:
+    '{param} must be an array with at most {limit} items; received an array of length {length}',
+  minProperties:
+    '{param} must be an object with at least {limit} fields; received an object with {length} fields',
+  maxProperties:
+    '{param} must be an object with at most {limit} fields; received an object with {length} fields',
+  pattern: '{param} must be a string matching the required pattern; received a string',
+  uniqueItems: '{param} must be an array of unique items; received an array',
+  contains: '{param} must be an array containing the required shape; received an array',
+  union: '{param} matches none of its {count} shapes; closest is {shape}: {failure}',
+} as const;
+
 /** Envelope defaults shared by compilation, documentation and both executors. */
 export const ERROR_FIELDS = {
   code: 'code',

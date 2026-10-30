@@ -1003,7 +1003,7 @@ test('prototype property names do not bypass required fields or identify known w
         type: 'object',
         additionalProperties: false,
       }),
-    /unknown request field/,
+    /__proto__ is not a field of this input/,
   );
   const runtime = new Runtime(runtimeContract, { baseUrl: 'https://example.invalid' });
   assert.throws(() => runtime.money('constructor', '1'), /currency is not declared/);

@@ -164,7 +164,7 @@ test('generated clients and schema adapters retain unknown alternatives for obje
             (error) => error.name === 'UnexpectedResponseError',
           );
           for (const call of evaluate)
-            assert.throws(call, /expected an object response alternative/);
+            assert.throws(call, /must be an object response alternative/);
         }
       }
       const result = php(
