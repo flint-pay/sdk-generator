@@ -686,9 +686,9 @@ $client->close();
 
 - Events expose `event`, `id`, `data`, `rawData` and optional `retry` milliseconds.
 - The parser handles comments, multiline data, split UTF-8 and CR/LF/CRLF. Incomplete final events are discarded.
-- Invalid UTF-8, malformed configured JSON payloads and oversized events close the stream with a `protocol` error.
+- Invalid UTF-8, malformed configured JSON payloads and oversized events close the stream with `UnexpectedResponseError` code `invalid_event`.
 - Breaking out of iteration closes the connection. Explicit `close()` also handles streams that were never iterated. Closing the client releases owned streams.
-- Malformed known SSE payloads raise `sse_invalid_event` with `details.eventId` and the one-based `details.position`, without including payload bytes in the message.
+- Malformed known SSE payloads raise `invalid_event` with `event.id` and the one-based `event.position`, without including payload bytes in the message.
 - Unconsumed default Node streams and their timers do not keep the process alive. Start iteration within `streamIdleTimeoutMs` or the stream closes; iteration retains the connection. Injected transports own their socket lifecycle.
 - Iteration provides backpressure. PHP's default cURL multi transport queues at most one write chunk and pauses until it is consumed.
 - Node cancels with `AbortSignal`, including during an idle read. PHP cancellation and lifetime checks are cooperative while reading; synchronous injected transports must honor cancellation while blocked.

@@ -115,50 +115,64 @@ const cases = [
   {
     op: 'incomplete',
     raw: valid,
+    code: 'schema_mismatch',
     message: schemaMessage + ': response.status is required',
     cause: true,
   },
   {
     op: 'create',
     raw: '{"secret":"synthetic-private-value"}',
+    code: 'schema_mismatch',
     message: schemaMessage + ': response.id is required',
     cause: true,
   },
   {
     op: 'nested',
     raw: '{"payment":{"secret":"synthetic-private-value"}}',
+    code: 'schema_mismatch',
     message: schemaMessage + ': response.payment.id is required',
     cause: true,
   },
   {
     op: 'arrayPayments',
     raw: '[{"secret":"synthetic-private-value"}]',
+    code: 'schema_mismatch',
     message: schemaMessage + ': response[0].id is required',
     cause: true,
   },
-  { op: 'create', raw: '', message: schemaMessage, cause: true },
+  { op: 'create', raw: '', code: 'missing_payload', message: schemaMessage, cause: true },
   {
     op: 'create',
     raw: '{"id":42}',
+    code: 'schema_mismatch',
     message: schemaMessage + ': response.id must be a string; received a number',
     cause: true,
   },
   {
     op: 'create',
     raw: '{"secret":"synthetic-private-value",',
+    code: 'invalid_json',
     message: 'Invalid JSON success response',
     cause: true,
   },
-  { op: 'ambiguous', raw: valid, message: 'Undeclared success status', cause: false },
+  {
+    op: 'ambiguous',
+    raw: valid,
+    code: 'undeclared_status',
+    message: 'Undeclared success status',
+    cause: false,
+  },
   {
     op: 'exact',
     raw: valid,
+    code: 'schema_mismatch',
     message: schemaMessage + ': response.payment is required',
     cause: true,
   },
   {
     op: 'fallbackDefault',
     raw: valid,
+    code: 'schema_mismatch',
     message: schemaMessage + ': response.payment is required',
     cause: true,
   },
@@ -177,11 +191,26 @@ const cases = [
   ...['noContent', 'binary', 'stream'].map((op) => ({
     op,
     raw: valid,
+    code: 'undeclared_status',
     message: 'Undeclared success status',
     cause: false,
   })),
-  { op: 'create', status: 304, raw: '', message: 'Undeclared success status', cause: false },
-  { op: 'create', status: 204, raw: '', message: schemaMessage, cause: true },
+  {
+    op: 'create',
+    status: 304,
+    raw: '',
+    code: 'undeclared_status',
+    message: 'Undeclared success status',
+    cause: false,
+  },
+  {
+    op: 'create',
+    status: 204,
+    raw: '',
+    code: 'missing_payload',
+    message: schemaMessage,
+    cause: true,
+  },
   {
     op: 'payload',
     raw: '{"payment":{"id":"pay_payload"}}',
@@ -198,6 +227,7 @@ const cases = [
   {
     op: 'payload',
     raw: '{"payment":{}}',
+    code: 'schema_mismatch',
     message: schemaMessage + ': response.payment.id is required',
     cause: true,
   },
@@ -235,6 +265,7 @@ test('generated Node and PHP preserve typed successes and actionable recovery on
           assert.ok(error instanceof SdkError);
           assert.equal(error.message, c.message, c.op);
           assert.equal(error.name, 'UnexpectedResponseError');
+          assert.equal(error.code, c.code ?? '', c.op);
           assert.equal(error.outcome, 'response');
           assert.equal(error.retryAllowed, false);
           assert.equal(error.status, c.status ?? 200);
@@ -263,7 +294,7 @@ test('generated Node and PHP preserve typed successes and actionable recovery on
       assert.equal(calls, 1, c.op);
       assert.equal(diagnostics.length, 1);
       assert.equal(diagnostics[0].errorName, c.message ? 'UnexpectedResponseError' : undefined);
-      assert.equal(diagnostics[0].errorCode, c.message ? '' : undefined);
+      assert.equal(diagnostics[0].errorCode, c.message ? (c.code ?? '') : undefined);
       assert.equal(Object.hasOwn(diagnostics[0], 'errorKind'), false);
       assert.ok(!JSON.stringify(diagnostics).includes('synthetic-private-value'));
     } finally {
@@ -294,7 +325,7 @@ foreach(json_decode(file_get_contents($argv[2]),true) as $case){
         }
     }catch(SdkError $error){
         ob_start();var_dump($error);$debug=ob_get_clean();
-        $row=['message'=>$error->getMessage(),'kind'=>substr(strrchr(get_class($error), chr(92)), 1),'outcome'=>$error->outcome,
+        $row=['message'=>$error->getMessage(),'kind'=>substr(strrchr(get_class($error), chr(92)), 1),'code'=>$error->code,'outcome'=>$error->outcome,
             'retryAllowed'=>$error->retryAllowed,'status'=>$error->status,'raw'=>$error->raw,
             'cause'=>$error->getPrevious()!==null,'requestId'=>$error->requestId,
             'leaked'=>str_contains($debug,'synthetic-private-value')];
@@ -315,7 +346,7 @@ echo json_encode($results,JSON_THROW_ON_ERROR);
     assert.equal(row.calls, 1, c.op);
     assert.equal(row.events.length, 1);
     assert.equal(row.events[0].errorName, c.message ? 'UnexpectedResponseError' : undefined);
-    assert.equal(row.events[0].errorCode, c.message ? '' : undefined);
+    assert.equal(row.events[0].errorCode, c.message ? (c.code ?? '') : undefined);
     assert.equal(Object.hasOwn(row.events[0], 'errorKind'), false);
     assert.ok(!JSON.stringify(row.events).includes('synthetic-private-value'));
     if (c.message) {
@@ -324,6 +355,7 @@ echo json_encode($results,JSON_THROW_ON_ERROR);
         {
           message: c.message + ``,
           kind: 'UnexpectedResponseError',
+          code: c.code ?? '',
           outcome: 'response',
           retryAllowed: false,
           status: c.status ?? 200,
@@ -359,6 +391,7 @@ test('payload extraction retains raw response in both adapters', async (t) => {
       e.status === meta.status &&
       e.requestId === meta.requestId &&
       e.name === 'UnexpectedResponseError' &&
+      e.code === 'missing_payload' &&
       e.outcome === 'response' &&
       !e.retryAllowed,
   );
@@ -370,14 +403,21 @@ test('payload extraction retains raw response in both adapters', async (t) => {
 require $argv[1].'/php/src/Runtime.php';
 use Example\Drift\{Runtime,Result,SdkError};
 try{Runtime::responsePayload(new Result((object)['id'=>'pay_recover'],['status'=>200,'headers'=>[],'requestIds'=>[],'attempts'=>1,'durationMs'=>0],$argv[2]),['payment']);}
-catch(SdkError $e){echo json_encode([$e->raw,$e->status,substr(strrchr(get_class($e), chr(92)), 1),$e->outcome,$e->retryAllowed]);}
+catch(SdkError $e){echo json_encode([$e->raw,$e->status,substr(strrchr(get_class($e), chr(92)), 1),$e->outcome,$e->retryAllowed,$e->code]);}
 `,
       f.out,
       raw,
     ],
     { encoding: 'utf8' },
   );
-  assert.deepEqual(JSON.parse(output), [raw, 200, 'UnexpectedResponseError', 'response', false]);
+  assert.deepEqual(JSON.parse(output), [
+    raw,
+    200,
+    'UnexpectedResponseError',
+    'response',
+    false,
+    'missing_payload',
+  ]);
 });
 
 test('compiled fallback is deterministic and malformed routing descriptors are rejected in both targets', (t) => {
@@ -469,7 +509,7 @@ catch(SdkError $e){
     'synthetic-private-constructor-message',
     1,
     'UnexpectedResponseError',
-    '',
+    'schema_mismatch',
     false,
   ]);
 });

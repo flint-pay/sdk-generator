@@ -60,8 +60,8 @@ test('binary bytes and declared redirects are returned unchanged by both clients
     responses: [response],
     ...expected,
   });
-  const failure = (name, operation, path, response, kind) =>
-    success(name, operation, path, response, { error: { name: kind } });
+  const failure = (name, operation, path, response, kind, code) =>
+    success(name, operation, path, response, { error: { name: kind, ...(code ? { code } : {}) } });
   const cases = [
     success(
       'binary exact bytes',
@@ -83,6 +83,7 @@ test('binary bytes and declared redirects are returned unchanged by both clients
       '/v1/pdf',
       { status: 200, headers: { 'Content-Type': 'text/plain' }, body: 'x' },
       'UnexpectedResponseError',
+      'unexpected_media_type',
     ),
     failure(
       'PDF JSON error',
@@ -115,6 +116,7 @@ test('binary bytes and declared redirects are returned unchanged by both clients
       '/v1/redirect',
       { status: 307 },
       'UnexpectedResponseError',
+      'unexpected_redirect',
     ),
     failure(
       'undeclared redirect',
@@ -122,6 +124,7 @@ test('binary bytes and declared redirects are returned unchanged by both clients
       '/v1/pdf',
       { status: 302, headers: { Location: 'https://untrusted.example.invalid' } },
       'UnexpectedResponseError',
+      'unexpected_redirect',
     ),
   ];
   writeFileSync(join(dir, 'cases.json'), JSON.stringify(cases));

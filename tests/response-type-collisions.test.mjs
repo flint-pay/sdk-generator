@@ -135,6 +135,23 @@ test('declared response components win over a same-name operation class in both 
   await exercise(f, 'WidgetsGetResponse', 'widgets', 'get', { id: 'item_synthetic' });
 });
 
+test('declared response components share their PHP identity with nested references', async (t) => {
+  const f = fixture(t, {
+    schema: ref('Payment'),
+    components: {
+      Payment: {
+        ...object,
+        properties: { ...object.properties, related: ref('Payment') },
+      },
+    },
+  });
+  assert.deepEqual(diagnoseContract(f.contract), {});
+  await exercise(f, 'Payment', 'widgets', 'get', {
+    id: 'payment_synthetic',
+    related: { id: 'related_synthetic' },
+  });
+});
+
 for (const doubleCollision of [false, true])
   test(`inline response name collisions use deterministic suffixes (${doubleCollision ? 'occupied fallback' : 'first fallback'})`, async (t) => {
     const components = {

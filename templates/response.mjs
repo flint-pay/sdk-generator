@@ -10,7 +10,7 @@ export function responsePayload(result, path, decode) {
         'response',
         false,
         result.lastResponse,
-        undefined,
+        'missing_payload',
         undefined,
         undefined,
         result.raw,
