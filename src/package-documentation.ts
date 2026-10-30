@@ -1,3 +1,4 @@
+import { integerDocumentation } from './integer-policy.js';
 import { compileDocumentation, factParts, factShape } from './documentation-plan.js';
 import { factNotes } from './documentation-format.js';
 import { schemaLiteral, type EnumLinks } from './schema-documentation.js';
@@ -581,7 +582,7 @@ export function phpModelReference(
   }
   const shapes = new Map<string, string>();
   return (
-    `# ${c.title} models\n\n[API reference](REFERENCE.md) · [Runtime guide](RUNTIME.md)\n\nThese classes expose presence-aware getters. Omitted optional response fields return null; has() distinguishes omission from present-null. Input classes omit read-only fields, and responses omit write-only fields. int64/uint64 values use integer strings; decimal fields preserve exact numeric strings.\n\n` +
+    `# ${c.title} models\n\n[API reference](REFERENCE.md) · [Runtime guide](RUNTIME.md)\n\nThese classes expose presence-aware getters. Omitted optional response fields return null; has() distinguishes omission from present-null. Input classes omit read-only fields, and responses omit write-only fields. ${integerDocumentation(c.config, false)} Decimal fields preserve exact numeric strings.\n\n` +
     modelDocumentationConventions +
     selected
       .map((plan) => {

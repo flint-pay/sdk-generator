@@ -1233,9 +1233,9 @@ export class EventStream implements AsyncIterable<ServerSentEvent> {
   }
 }
 const validationFailures = new WeakMap<Error, string>();
-const bad = (path: string, reason: string): never => {
+const bad = (path: string, reason: string, code?: string): never => {
   const message = `${path}: ${reason}`;
-  const error = createSdkError('validation', message);
+  const error = createSdkError('validation', message, 'not_sent', false, undefined, code);
   validationFailures.set(error, message);
   throw error;
 };
@@ -2432,7 +2432,7 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
       return value;
     }
     if (typeof value !== 'number' || !Number.isSafeInteger(value))
-      return bad(path, 'expected a safe integer; declare int64 for larger values');
+      return bad(path, 'expected a safe integer in ±(2^53 − 1)', 'invalid_value');
     if (!response || matching)
       numericConstraints(String(value), s, path, validateConstraints || matching);
     return value;

@@ -446,6 +446,30 @@
     },
     "queryArrays": {
       "enum": ["scalar-or-array"]
+    },
+    "integers": {
+      "oneOf": [
+        {
+          "enum": ["exact", "number"]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "enum": ["exact", "number"]
+            },
+            "exactComponents": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "uniqueItems": true
+            }
+          },
+          "required": ["mode"],
+          "additionalProperties": false
+        }
+      ]
     }
   },
   "additionalProperties": false,

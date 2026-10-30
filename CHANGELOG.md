@@ -4,6 +4,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ## Unreleased (generator 0.1.0)
 
+- Add opt-in native integer counters with `integers: "number"` and exact component exceptions via `{ mode: "number", exactComponents: ["Money"] }`. Both targets enforce the shared safe range; money integers remain exact strings when their component is listed. Codec semantics advance to 5.
+
 - Add opt-in `queryArrays: "scalar-or-array"` for exploded form array query parameters in Node and PHP, preserving per-item validation and wire encoding. Node accepts readonly arrays.
 
 - Positional calls use named `*Params` types/models with parameter descriptions and path `@param` documentation. Declared idempotency keys must use `options.idempotencyKey`; params and generic-header channels are rejected. PHP's caller-correlation option is now `clientRequestId`.

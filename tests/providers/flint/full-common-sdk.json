@@ -800,7 +800,7 @@
               "calculated": {},
               "type": "calculated"
             },
-            "minimum_option_lifetime_seconds": "120"
+            "minimum_option_lifetime_seconds": 120
           },
           "type": "shipment",
           "name": "Standard shipping"
@@ -1639,22 +1639,21 @@
       "pagination": false,
       "example": {
         "body": {
-          "expected_version": "2",
+          "expected_version": 2,
           "observations": [
             {
-              "counted_damaged_quantity": "0",
-              "counted_on_hand_quantity": "12",
-              "counted_quality_control_quantity": "0",
-              "counted_quarantined_quantity": "0",
+              "counted_damaged_quantity": 0,
+              "counted_on_hand_quantity": 12,
+              "counted_quality_control_quantity": 0,
+              "counted_quarantined_quantity": 0,
               "inventory_item_id": "invi_01K0P7W6A4N9F3J2T8Q5R1C6XM",
-              "expected_physical_version": "0"
+              "expected_physical_version": 0
             }
           ],
           "source_system": {
             "type": "manual"
           }
         },
-        "Idempotency-Key": "example",
         "inventory_count_id": "example"
       }
     },
@@ -3058,8 +3057,7 @@
             "currency": "USD"
           },
           "payment_options": ["card"]
-        },
-        "Idempotency-Key": "00000000-0000-4000-8000-000000000001"
+        }
       },
       "pagination": false
     },
@@ -3512,8 +3510,7 @@
           "interval_start_at": "2026-01-01T00:00:00Z",
           "interval_end_at": "2026-01-02T00:00:00Z",
           "report_type": "orders_itemized_v1"
-        },
-        "Idempotency-Key": "00000000-0000-4000-8000-000000000002"
+        }
       },
       "pagination": false
     },
@@ -3793,7 +3790,7 @@
         "body": {
           "line_items": [
             {
-              "approved_quantity": "1",
+              "approved_quantity": 1,
               "receiving_location_id": "loc_00000000000000000000000000",
               "return_line_item_id": "retli_00000000000000000000000000"
             }
@@ -3878,7 +3875,7 @@
           "line_items": [
             {
               "return_line_item_id": "rtli_example",
-              "quantity": "1"
+              "quantity": 1
             }
           ]
         }
@@ -4475,5 +4472,9 @@
       "parameter": "page_token"
     }
   },
-  "queryArrays": "scalar-or-array"
+  "queryArrays": "scalar-or-array",
+  "integers": {
+    "mode": "number",
+    "exactComponents": ["Money"]
+  }
 }

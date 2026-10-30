@@ -77,10 +77,14 @@ export interface CodecPlan {
 }
 
 export const CODEC_FORMAT = 1;
-// Native ordinary numbers and native date inputs; exact formats retain token semantics.
-export const CODEC_SEMANTICS = '4';
+// Opt-in safe integer counters; explicit exact components retain token semantics.
+export const CODEC_SEMANTICS = '5';
 
-export function valueInstruction(type: string | undefined, format?: string): ValueInstruction {
+export function valueInstruction(
+  type: string | undefined,
+  format?: string,
+  integers: 'number' | 'exact' | undefined = undefined,
+): ValueInstruction {
   switch (type) {
     case undefined:
       return { kind: 'dynamic' };
@@ -92,7 +96,13 @@ export function valueInstruction(type: string | undefined, format?: string): Val
     case 'string':
       return { kind: format === 'date-time' ? 'date-time' : 'string' };
     case 'integer':
-      return { kind: format === 'int64' || format === 'uint64' ? 'exact-integer' : 'safe-integer' };
+      return {
+        kind:
+          integers === 'exact' ||
+          (integers !== 'number' && (format === 'int64' || format === 'uint64'))
+            ? 'exact-integer'
+            : 'safe-integer',
+      };
     case 'number':
       return { kind: format === 'decimal' ? 'decimal' : 'native-number' };
     default:
@@ -272,7 +282,7 @@ function compileNode(input: Schema, output: Schema, depth: number): CodecPlan {
     value:
       Array.isArray(input.type) && !input.type.some((type) => type !== 'null')
         ? { kind: 'null-array' }
-        : valueInstruction(kind, input.format),
+        : valueInstruction(kind, input.format, input['x-sdk-integer-mode']),
     nullable: input.type === undefined || kinds.includes('null'),
     ...(input.type === 'object' ? { objectOnlyAlternative: true } : {}),
     modelObjectInput:

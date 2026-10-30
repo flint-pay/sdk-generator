@@ -1,3 +1,4 @@
+import { integerDocumentation } from './integer-policy.js';
 import {
   compileDocumentation,
   factShape,
@@ -909,7 +910,7 @@ export function modelReference(
   ) =>
     `## ${name}\n\n${replacement}${markdownNotes(schema)}\n\n${modelDescriptions(schema, c.definitions ?? c.models, response, true)}\n\n${enumNotes(schemaEnumValues(schema, c.definitions ?? c.models), literal, enumLinks)}\n\n${modelFieldReference(schema, c.definitions ?? c.models, name, names, enumLinks, response, true, new Set(), fragments)}`;
   return (
-    `# ${c.title} models\n\n[API reference](REFERENCE.md) · [Runtime guide](RUNTIME.md)\n\nFields describe the API's declared shape. Inputs omit read-only fields; responses omit write-only fields and preserve unknown fields and enum values. ${target === 'node' ? 'Request enums are closed unions; response enums accept unknown strings. Input types use the Input suffix.' : 'Operation responses use presence-aware classes with typed getters; optional omitted fields return null.'}\n\nint64/uint64 values are integer strings${target === 'node' ? ' (TypeScript `${bigint}`); inputs also accept bigint' : ''}. Decimal fields use exact numeric strings. Use each field's declared units.\n\n` +
+    `# ${c.title} models\n\n[API reference](REFERENCE.md) · [Runtime guide](RUNTIME.md)\n\nFields describe the API's declared shape. Inputs omit read-only fields; responses omit write-only fields and preserve unknown fields and enum values. ${target === 'node' ? 'Request enums are closed unions; response enums accept unknown strings. Input types use the Input suffix.' : 'Operation responses use presence-aware classes with typed getters; optional omitted fields return null.'}\n\n${integerDocumentation(c.config, target === 'node')} Decimal fields use exact numeric strings. Use each field's declared units.\n\n` +
     modelDocumentationConventions +
     Object.entries(c.models)
       .map(([name, schema]) => {
