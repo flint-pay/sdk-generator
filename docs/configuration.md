@@ -63,6 +63,7 @@ Unknown configuration keys fail with a source location. Capability declarations 
 | `license`              | Package license metadata; defaults to `Apache-2.0`. Bundled runtime license is retained.                                                                        |
 | `requests`             | Request argument style: `positional` (default) or `object`; see [request arguments](#request-arguments).                                                        |
 | `responses`            | Optional SDK-wide return mode (`payload` by default, or `result`) and payload path; see [payload returns](#payload-returns).                                    |
+| `queryArrays`          | Optional `"scalar-or-array"`: exploded form query arrays accept scalars as one-element arrays.                                                                  |
 | `operationNames`       | `tags` (default) or `path`. Path names follow the first literal segment after `/v1` and the operation ID.                                                       |
 | `operations`           | Public naming, aliases, examples and declared operation capabilities. Matching resource tags and operation IDs supply names; otherwise `api` and `operationId`. |
 | `include`, `audiences` | Optional operation filters; operation `hidden: true` excludes that operation.                                                                                   |
@@ -119,6 +120,10 @@ See [CLI usage](cli.md) to diagnose or preview inputs, and [using generated SDKs
 ```
 
 Stale operation and model customization targets fail diagnosis.
+
+### Scalar query arrays
+
+Set `"queryArrays": "scalar-or-array"` in a configuration or shared profile to accept either a scalar or an array for array-valued query parameters using `style: form` and `explode: true` (including those defaults). Node types use `T | readonly T[]`; PHP accepts a scalar or array. For example, `refunds.list({ reason: "duplicate" })` and `refunds.list({ reason: ["duplicate"] })` send the same query. The scalar is normalized to one element before wire validation, so item enums and array bounds still apply. Nonexploded queries, headers and path parameters keep their declared shapes. Without the option, array-only parameters remain array-only. Flint's full fixture opts in.
 
 ### Names
 

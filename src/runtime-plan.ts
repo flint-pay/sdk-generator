@@ -223,6 +223,7 @@ export interface CompiledOperation
   itemCertificate?: TypeCertificate;
   parameters: (Omit<Operation['parameters'][number], 'schema'> & {
     codec: CodecPlan;
+    scalarArray?: true;
     /** Absent in historical descriptors and for ordinary input parameters. */
     source?: 'authentication' | 'request-option';
     requestOption?: { node: string; php: string };
@@ -327,6 +328,7 @@ export function compileRuntimePlan(contract: RuntimeContract): CompiledRuntimePl
           return {
             ...parameter,
             codec: root(schema),
+            ...(schema['x-sdk-query-array-items'] ? { scalarArray: true as const } : {}),
             ...(parameterSource(op, parameter, contract) === 'authentication'
               ? { source: 'authentication' as const }
               : {}),
@@ -627,6 +629,14 @@ export function assertRuntimePlan(
             field.in !== 'header'))
       )
         throw new Error(`${op.id}: invalid compiled parameter`);
+      if (
+        field.scalarArray !== undefined &&
+        (field.scalarArray !== true ||
+          field.in !== 'query' ||
+          field.explode === false ||
+          (field.style !== undefined && field.style !== 'form'))
+      )
+        throw new Error('Invalid compiled scalar query array');
       if (field.source === 'request-option') {
         const option = compileRequestOption(
           field['x-flint-request-option'],

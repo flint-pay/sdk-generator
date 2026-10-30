@@ -126,6 +126,19 @@ export function typescriptType(
   documentation = false,
 ): string {
   definitions = s['x-sdk-definitions'] ?? definitions;
+  if (!response && s['x-sdk-query-array-items']) {
+    const item = typescriptType(
+      s['x-sdk-query-array-items'],
+      false,
+      undefined,
+      false,
+      undefined,
+      undefined,
+      definitions,
+      documentation,
+    );
+    return `(${item}) | readonly (${item})[]`;
+  }
   const render = (
     schema: Schema,
     output = false,
