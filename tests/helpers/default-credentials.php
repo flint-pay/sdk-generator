@@ -245,7 +245,7 @@ namespace {
                 $c['provider'] === 'identity'
                     ? \Example\Discovery\workloadIdentityCredentials([
                         'workloadIdentityId' => $id,
-                        'source' => 'token',
+                        'source' => $c['providerSource'] ?? 'token',
                     ])
                     : \Example\Discovery\defaultCredentials();
         }

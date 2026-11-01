@@ -592,12 +592,6 @@ final class AmbientCredentialProvider implements CredentialProvider
             );
         }
         if ($source === 'kubernetes') {
-            if (!$present('KUBERNETES_SERVICE_HOST')) {
-                $fail(
-                    'source_unavailable',
-                    'KUBERNETES_SERVICE_HOST is required for a Flint projected token',
-                );
-            }
             $file ??= '/var/run/secrets/flint/token';
         }
         if (
@@ -662,6 +656,11 @@ final class AmbientCredentialProvider implements CredentialProvider
                     getenv('IDENTITY_ENDPOINT'),
                     hash('sha256', getenv('IDENTITY_HEADER') ?: ''),
                     $read('AZURE_CLIENT_ID'),
+                    getenv('AWS_PROFILE'),
+                    getenv('AWS_DEFAULT_PROFILE'),
+                    getenv('AWS_CONFIG_FILE'),
+                    getenv('AWS_SHARED_CREDENTIALS_FILE'),
+                    getenv('AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE'),
                     getenv('AWS_REGION'),
                     getenv('AWS_DEFAULT_REGION'),
                     getenv('AWS_CONTAINER_CREDENTIALS_FULL_URI'),
@@ -673,6 +672,7 @@ final class AmbientCredentialProvider implements CredentialProvider
                             getenv('AWS_ACCESS_KEY_ID'),
                             getenv('AWS_SECRET_ACCESS_KEY'),
                             getenv('AWS_SESSION_TOKEN'),
+                            getenv('AWS_CONTAINER_AUTHORIZATION_TOKEN'),
                         ]),
                     ),
                 ]);
@@ -879,16 +879,83 @@ final class AmbientCredentialProvider implements CredentialProvider
             } elseif ($source === 'aws') {
                 if (
                     !class_exists(\Aws\Sts\StsClient::class) ||
-                    !class_exists(\Aws\Credentials\Credentials::class)
+                    !class_exists(\Aws\Credentials\CredentialProvider::class)
                 ) {
                     $fail(
                         'source_unavailable',
                         'Install aws/aws-sdk-php >=3.402.5 to use the aws source',
                     );
                 }
+                // The SDK has no switch to omit its inbound web-identity provider.
+                // Refuse that configuration before invoking the standard chain.
+                $home = \Aws\Credentials\CredentialProvider::getHomeDir();
+                $sharedFiles = array_unique([
+                    getenv('AWS_CONFIG_FILE') ?: $home . '/.aws/config',
+                    getenv('AWS_SHARED_CREDENTIALS_FILE') ?: $home . '/.aws/credentials',
+                    $home . '/.aws/config',
+                    $home . '/.aws/credentials',
+                ]);
+                $inboundIdentity = (bool) getenv('AWS_WEB_IDENTITY_TOKEN_FILE');
+                foreach ($sharedFiles as $sharedFile) {
+                    if (!file_exists($sharedFile)) {
+                        continue;
+                    }
+                    $contents = @file_get_contents($sharedFile);
+                    if ($contents === false) {
+                        $fail(
+                            'source_unavailable',
+                            'Cannot inspect AWS shared configuration for inbound web identity',
+                        );
+                    }
+                    $inboundIdentity =
+                        $inboundIdentity ||
+                        preg_match('/^\s*web_identity_token_file\s*=/m', $contents);
+                }
+                if ($inboundIdentity) {
+                    $fail(
+                        'source_unavailable',
+                        'The aws source refuses AWS_WEB_IDENTITY_TOKEN_FILE and profile web_identity_token_file; use outbound IAM federation',
+                    );
+                }
                 try {
                     $cloudDeadline = min($deadline, hrtime(true) / 1e6 + 5000);
-                    $role = self::awsRole($context, $cloudDeadline);
+                    $handler = \Aws\default_http_handler();
+                    // defaultProvider forwards client to its ECS and IMDS providers.
+                    $credentials = \Aws\Credentials\CredentialProvider::defaultProvider([
+                        'region' => getenv('AWS_REGION') ?: getenv('AWS_DEFAULT_REGION') ?: null,
+                        'retries' => 0,
+                        'timeout' => 1,
+                        'client' => static function ($request, $options) use (
+                            $handler,
+                            $cloudDeadline,
+                        ) {
+                            return $handler(
+                                $request,
+                                array_replace($options, [
+                                    'proxy' => '',
+                                    'allow_redirects' => false,
+                                    'connect_timeout' => 1,
+                                    'timeout' => max(
+                                        0.001,
+                                        min(2, ($cloudDeadline - hrtime(true) / 1e6) / 1000),
+                                    ),
+                                ]),
+                            )->then(static function ($response) {
+                                if (
+                                    $response->getStatusCode() < 200 ||
+                                    $response->getStatusCode() >= 300
+                                ) {
+                                    return \GuzzleHttp\Promise\Create::rejectionFor([
+                                        'exception' => new \RuntimeException(
+                                            'AWS metadata response refused',
+                                        ),
+                                    ]);
+                                }
+                                return $response;
+                            });
+                        },
+                    ]);
+                    $role = $credentials()->wait();
                     if (
                         hrtime(true) / 1e6 >= $cloudDeadline ||
                         ($context['cancellation'] ?? null)?->isCancelled()
@@ -899,11 +966,7 @@ final class AmbientCredentialProvider implements CredentialProvider
                         'version' => '2011-06-15',
                         'sts_regional_endpoints' => 'regional',
                         'region' => getenv('AWS_REGION') ?: getenv('AWS_DEFAULT_REGION') ?: null,
-                        'credentials' => new \Aws\Credentials\Credentials(
-                            $role['AccessKeyId'],
-                            $role['SecretAccessKey'],
-                            $role['Token'] ?? null,
-                        ),
+                        'credentials' => $role,
                         'retries' => 0,
                         'http' => [
                             'proxy' => '',
@@ -1289,94 +1352,6 @@ final class AmbientCredentialProvider implements CredentialProvider
             throw new \RuntimeException();
         }
         return $response['body'] ?? '';
-    }
-    private static function awsRole(#[\SensitiveParameter] array $context, float $deadline): array
-    {
-        if (getenv('AWS_ACCESS_KEY_ID') && getenv('AWS_SECRET_ACCESS_KEY')) {
-            return [
-                'AccessKeyId' => getenv('AWS_ACCESS_KEY_ID'),
-                'SecretAccessKey' => getenv('AWS_SECRET_ACCESS_KEY'),
-                'Token' => getenv('AWS_SESSION_TOKEN') ?: null,
-            ];
-        }
-        $full = getenv('AWS_CONTAINER_CREDENTIALS_FULL_URI');
-        $relative = getenv('AWS_CONTAINER_CREDENTIALS_RELATIVE_URI');
-        $headers = [];
-        if ($full || $relative) {
-            $url = $full ?: 'http://169.254.170.2' . $relative;
-            $endpoint = parse_url($url);
-            if (
-                !$endpoint ||
-                !(
-                    ($endpoint['scheme'] ?? '') === 'https' ||
-                    (($endpoint['scheme'] ?? '') === 'http' &&
-                        in_array(
-                            $endpoint['host'] ?? '',
-                            ['169.254.170.2', '169.254.170.23', '127.0.0.1', 'localhost', '[::1]'],
-                            true,
-                        ))
-                )
-            ) {
-                throw new \RuntimeException();
-            }
-            if (getenv('AWS_CONTAINER_AUTHORIZATION_TOKEN')) {
-                $headers['Authorization'] = getenv('AWS_CONTAINER_AUTHORIZATION_TOKEN');
-            }
-        } else {
-            if (getenv('AWS_EC2_METADATA_DISABLED') === 'true') {
-                throw new \RuntimeException();
-            }
-            $base = rtrim(
-                getenv('AWS_EC2_METADATA_SERVICE_ENDPOINT') ?: 'http://169.254.169.254',
-                '/',
-            );
-            $endpoint = parse_url($base);
-            if (
-                !$endpoint ||
-                !in_array($endpoint['scheme'] ?? '', ['http', 'https'], true) ||
-                isset($endpoint['user']) ||
-                isset($endpoint['pass']) ||
-                isset($endpoint['fragment'])
-            ) {
-                throw new \RuntimeException();
-            }
-            $token = self::metadata(
-                $base . '/latest/api/token',
-                ['X-aws-ec2-metadata-token-ttl-seconds' => '60'],
-                $context,
-                $deadline,
-                'PUT',
-            );
-            if (trim($token) === '' || preg_match('/[\r\n]/', $token)) {
-                throw new \RuntimeException();
-            }
-            $headers['X-aws-ec2-metadata-token'] = $token;
-            $role = trim(
-                self::metadata(
-                    $base . '/latest/meta-data/iam/security-credentials/',
-                    $headers,
-                    $context,
-                    $deadline,
-                ),
-            );
-            if (!preg_match('/^[A-Za-z0-9+=,.@_-]+$/D', $role)) {
-                throw new \RuntimeException();
-            }
-            $url = $base . '/latest/meta-data/iam/security-credentials/' . rawurlencode($role);
-        }
-        if (isset($endpoint['user']) || isset($endpoint['pass']) || isset($endpoint['fragment'])) {
-            throw new \RuntimeException();
-        }
-        $role = json_decode(self::metadata($url, $headers, $context, $deadline), true);
-        if (
-            !is_array($role) ||
-            !is_string($role['AccessKeyId'] ?? null) ||
-            !is_string($role['SecretAccessKey'] ?? null) ||
-            !is_string($role['Token'] ?? null)
-        ) {
-            throw new \RuntimeException();
-        }
-        return $role;
     }
     private static function send(#[\SensitiveParameter] array $request): array
     {

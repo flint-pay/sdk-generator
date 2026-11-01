@@ -1,9 +1,21 @@
 <?php
 declare(strict_types=1);
 namespace Aws\Credentials {
-    final class Credentials
+    final class CredentialProvider
     {
-        public function __construct($key, $secret, $token) {}
+        public static function getHomeDir()
+        {
+            return '/synthetic/no-home';
+        }
+        public static function defaultProvider($config)
+        {
+            return static fn() => new class {
+                public function wait()
+                {
+                    return new \stdClass();
+                }
+            };
+        }
     }
 }
 namespace Aws\Sts {
@@ -31,6 +43,12 @@ namespace Aws\Sts {
                 return ['WebIdentityToken' => getenv('SYNTHETIC_AWS_TOKEN')];
             }
         }
+    }
+}
+namespace Aws {
+    function default_http_handler()
+    {
+        return static fn() => null;
     }
 }
 namespace {

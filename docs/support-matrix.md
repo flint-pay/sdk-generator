@@ -57,6 +57,8 @@ Node response declarations use referenced component names and collapse identical
 
 Both targets compare HTTP/HTTPS origins without scheme or host case distinctions and normalize default ports. Nondefault ports remain distinct origins, including for pagination links. Explicit `allowedOrigins` entries must be canonical origin strings with default ports omitted. Error paths traverse JSON objects and array indices, and scalar values have no child fields. Error messages, provider codes and code-based retries require original JSON strings; exact numeric preservation in parsed details does not convert JSON numbers into valid messages or codes.
 
+AWS workload identity uses the optional platform SDK's standard default credential chain in both targets. Node refuses its opt-in global environment proxy mode. PHP protects direct ECS/IMDS and STS requests, but internal profile and SSO clients can retain environment proxy and redirect behavior; see [default credentials](using-sdks.md#default-credentials). Explicit Kubernetes reads the Flint projected token without a cluster marker; auto selection still requires one.
+
 ## Exact OpenAPI subset
 
 | Area           | Supported                                                                                                                                                                                                                                                                        | Rejected or unsupported                                                                                                                         |

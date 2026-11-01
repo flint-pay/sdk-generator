@@ -237,7 +237,10 @@ test('shared default credential conformance in Node and PHP', async () => {
       if (c.provider)
         options.apiKey =
           c.provider === 'identity'
-            ? sdk.workloadIdentityCredentials({ workloadIdentityId: id, source: 'token' })
+            ? sdk.workloadIdentityCredentials({
+                workloadIdentityId: id,
+                source: c.providerSource ?? 'token',
+              })
             : sdk.defaultCredentials();
       const client = new sdk.Client(options);
       assert.equal(exchanges, 0, 'construction must be lazy');
@@ -976,7 +979,6 @@ import('node:fs').then(({appendFileSync}) => {
 export class GetWebIdentityTokenCommand { constructor(input) { this.input = input; } }
 export class STSClient { constructor(config) { if (config.useGlobalEndpoint !== false) throw Error('STS must use regional endpoints'); this.config = config; } destroy() {} async send(command) {
  if (JSON.stringify(command.input) !== JSON.stringify({Audience:['https://example.invalid'],SigningAlgorithm:'ES384'})) throw Error('Invalid STS input');
- await this.config.credentials();
  appendFileSync(process.env.SYNTHETIC_AWS_LOG, 'sts\\n');
  if (process.env.SYNTHETIC_AWS_FAILURE) throw Error(process.env.SYNTHETIC_AWS_TOKEN);
  return {WebIdentityToken:process.env.SYNTHETIC_AWS_TOKEN};
@@ -1097,7 +1099,7 @@ export class STSClient { constructor(config) { if (config.useGlobalEndpoint !== 
   }
 });
 
-test('platform AWS SDKs protect ECS, IMDSv2 and STS requests', async () => {
+test('platform AWS default chains select credentials and protect ECS, IMDSv2 and STS requests', async () => {
   const { createServer } = await import('node:http');
   const { spawn } = await import('node:child_process');
   const live = join(root, 'aws-platform');
@@ -1121,11 +1123,22 @@ test('platform AWS SDKs protect ECS, IMDSv2 and STS requests', async () => {
     { cwd: join(live, 'php'), encoding: 'utf8' },
   );
   assert.equal(installed.status, 0, installed.stderr);
-  let mode, baseUrl, metadata, sts, stolen;
+  let mode, baseUrl, metadata, sts, stolen, assumed;
+  const tokenFile = join(root, 'pod-authorization.txt');
+  writeFileSync(tokenFile, 'synthetic-pod-auth');
+  const sharedConfig = join(root, 'aws-config');
+  const sharedCredentials = join(root, 'aws-credentials');
   const server = createServer(async (req, res) => {
     if (req.url === '/credentials') {
       metadata++;
-      assert.equal(req.headers.authorization, 'synthetic-container-auth');
+      assert.equal(
+        req.headers.authorization,
+        mode.startsWith('pod') ? 'synthetic-pod-auth' : 'synthetic-container-auth',
+      );
+      if (mode === 'relative-precedence')
+        assert.equal(req.headers['x-synthetic-original-host'], '169.254.170.2');
+      if (mode === 'pod-ipv6')
+        assert.equal(req.headers['x-synthetic-original-host'], '[fd00:ec2::23]');
       if (mode === '307' || mode === '308') {
         res.writeHead(Number(mode), { location: baseUrl + '/stolen' });
         res.end();
@@ -1158,6 +1171,8 @@ test('platform AWS SDKs protect ECS, IMDSv2 and STS requests', async () => {
                 AccessKeyId: 'synthetic-role-key',
                 SecretAccessKey: 'synthetic-role-secret',
                 Token: 'synthetic-role-session',
+                Code: 'Success',
+                Expiration: new Date(Date.now() + 3600000).toISOString(),
               }),
         );
       }
@@ -1166,7 +1181,26 @@ test('platform AWS SDKs protect ECS, IMDSv2 and STS requests', async () => {
       let body = '';
       for await (const chunk of req) body += chunk;
       const form = new URLSearchParams(body);
+      if (form.get('Action') === 'AssumeRole') {
+        assumed++;
+        assert.match(req.headers.authorization, /Credential=synthetic-profile-key\//);
+        res.setHeader('content-type', 'text/xml');
+        res.end(
+          `<AssumeRoleResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><AssumeRoleResult><Credentials><AccessKeyId>synthetic-assumed-key</AccessKeyId><SecretAccessKey>synthetic-assumed-secret</SecretAccessKey><SessionToken>synthetic-assumed-session</SessionToken><Expiration>${new Date(Date.now() + 3600000).toISOString()}</Expiration></Credentials><AssumedRoleUser><AssumedRoleId>synthetic:session</AssumedRoleId><Arn>arn:aws:sts::000000000000:assumed-role/synthetic/session</Arn></AssumedRoleUser></AssumeRoleResult></AssumeRoleResponse>`,
+        );
+        return;
+      }
       assert.equal(form.get('Action'), 'GetWebIdentityToken');
+      const signingKey =
+        mode === 'profile'
+          ? 'synthetic-profile-key'
+          : mode === 'assume-role'
+            ? 'synthetic-assumed-key'
+            : 'synthetic-role-key';
+      assert.ok(
+        req.headers.authorization.includes('Credential=' + signingKey + '/'),
+        req.headers.authorization,
+      );
       assert.equal(form.get('Audience.member.1'), baseUrl);
       assert.equal(form.get('SigningAlgorithm'), 'ES384');
       assert.match(req.headers.authorization, /AWS4-HMAC-SHA256/);
@@ -1198,6 +1232,41 @@ test('platform AWS SDKs protect ECS, IMDSv2 and STS requests', async () => {
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   baseUrl = 'http://127.0.0.1:' + server.address().port;
+  // Inject loopback routing below the AWS providers for reserved link-local hosts.
+  // Their endpoint validation, variable precedence and token-file handling stay real.
+  const routing = join(root, 'aws-routing.cjs');
+  writeFileSync(
+    routing,
+    `const http = require('node:http');
+const request = http.request;
+http.request = function(options, ...rest) {
+  const host = options?.hostname ?? options?.host;
+  if (['169.254.170.2', '[fd00:ec2::23]', 'fd00:ec2::23'].includes(host)) {
+    options = {...options, host:'127.0.0.1', hostname:'127.0.0.1', port:process.env.SYNTHETIC_METADATA_PORT, headers:{...options.headers,'x-synthetic-original-host':host.includes('fd00')?'[fd00:ec2::23]':host}};
+  }
+  return request.call(this, options, ...rest);
+};`,
+  );
+  const awsFunctions = join(live, 'php/vendor/aws/aws-sdk-php/src/functions.php');
+  const originalHandler =
+    'return new \\Aws\\Handler\\Guzzle\\GuzzleHandler(null, $transportSharing);';
+  const functions = readFileSync(awsFunctions, 'utf8');
+  assert.ok(functions.includes(originalHandler));
+  writeFileSync(
+    awsFunctions,
+    functions.replace(
+      originalHandler,
+      `$handler = new \\Aws\\Handler\\Guzzle\\GuzzleHandler(null, $transportSharing);
+    return static function ($request, $options) use ($handler) {
+        $host = $request->getUri()->getHost();
+        if (in_array($host, ['169.254.170.2', '[fd00:ec2::23]', 'fd00:ec2::23'], true)) {
+            $request = $request->withHeader('x-synthetic-original-host', str_contains($host, 'fd00') ? '[fd00:ec2::23]' : $host)
+                ->withUri($request->getUri()->withHost('127.0.0.1')->withPort((int) getenv('SYNTHETIC_METADATA_PORT')));
+        }
+        return $handler($request, $options);
+    };`,
+    ),
+  );
   const php = join(root, 'aws-platform.php');
   writeFileSync(
     php,
@@ -1212,7 +1281,22 @@ try { $client = new Example\\Discovery\\Client(new Example\\Discovery\\ClientOpt
         readFileSync('tests/fixtures/default-credentials-aws-http.json', 'utf8'),
       )) {
         mode = scenario.name;
-        metadata = sts = stolen = 0;
+        metadata = sts = stolen = assumed = 0;
+        writeFileSync(
+          sharedConfig,
+          scenario.profileWebIdentity
+            ? '[profile selected]\nrole_arn=arn:aws:iam::000000000000:role/synthetic\nweb_identity_token_file=/synthetic/foreign-must-not-open\n'
+            : '',
+        );
+        writeFileSync(
+          sharedCredentials,
+          scenario.profile
+            ? '[selected]\naws_access_key_id=synthetic-profile-key\naws_secret_access_key=synthetic-profile-secret\n' +
+                (scenario.assumeRole
+                  ? '[assumed]\nrole_arn=arn:aws:iam::000000000000:role/synthetic\nsource_profile=selected\nregion=us-east-2\n'
+                  : '')
+            : '',
+        );
         clearEnv();
         const env = {
           ...process.env,
@@ -1222,14 +1306,17 @@ try { $client = new Example\\Discovery\\Client(new Example\\Discovery\\ClientOpt
             baseUrl.replace('127.0.0.1', 'localhost') + '/credentials',
           AWS_CONTAINER_AUTHORIZATION_TOKEN: 'synthetic-container-auth',
           AWS_EC2_METADATA_SERVICE_ENDPOINT: baseUrl.replace('127.0.0.1', 'localhost'),
-          AWS_WEB_IDENTITY_TOKEN_FILE: '/synthetic/foreign-must-not-open',
+          AWS_CONFIG_FILE: sharedConfig,
+          AWS_SHARED_CREDENTIALS_FILE: sharedCredentials,
+          SYNTHETIC_METADATA_PORT: String(server.address().port),
           AZURE_FEDERATED_TOKEN_FILE: '/synthetic/foreign-must-not-open',
           AWS_ROLE_ARN: 'arn:aws:iam::000000000000:role/synthetic',
           HTTP_PROXY: 'http://127.0.0.1:1',
           http_proxy: 'http://127.0.0.1:1',
           NO_PROXY: '127.0.0.1',
           no_proxy: '127.0.0.1',
-          NODE_USE_ENV_PROXY: '1',
+          HTTPS_PROXY: 'http://127.0.0.1:1',
+          https_proxy: 'http://127.0.0.1:1',
         };
         for (const key of [
           'AWS_ACCESS_KEY_ID',
@@ -1240,15 +1327,48 @@ try { $client = new Example\\Discovery\\Client(new Example\\Discovery\\ClientOpt
           'ECS_CONTAINER_METADATA_URI',
           'ECS_CONTAINER_METADATA_URI_V4',
           'AWS_EC2_METADATA_DISABLED',
+          'AWS_PROFILE',
+          'AWS_DEFAULT_PROFILE',
+          'AWS_CONTAINER_CREDENTIALS_RELATIVE_URI',
+          'AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE',
+          'NODE_USE_ENV_PROXY',
+          'NODE_OPTIONS',
         ])
           delete env[key];
-        if (mode.startsWith('imds')) delete env.AWS_CONTAINER_CREDENTIALS_FULL_URI;
+        if (mode.startsWith('imds') || scenario.profile)
+          delete env.AWS_CONTAINER_CREDENTIALS_FULL_URI;
+        if (scenario.profile) env.AWS_PROFILE = scenario.assumeRole ? 'assumed' : 'selected';
+        if (scenario.profileWebIdentity) env.AWS_PROFILE = 'selected';
+        if (scenario.inboundFile)
+          env.AWS_WEB_IDENTITY_TOKEN_FILE = '/synthetic/foreign-must-not-open';
+        if (mode.startsWith('pod')) env.AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE = tokenFile;
+        if (mode === 'pod-ipv6')
+          env.AWS_CONTAINER_CREDENTIALS_FULL_URI = 'http://[fd00:ec2::23]/credentials';
+        if (mode === 'relative-precedence') {
+          env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI = '/credentials';
+          env.AWS_CONTAINER_CREDENTIALS_FULL_URI = baseUrl + '/wrong-full-uri';
+        }
+        // PHP's internal profile STS client does not inherit the protected handler.
+        if (language === 'php' && scenario.assumeRole)
+          env.NO_PROXY = env.no_proxy = '127.0.0.1,localhost';
+        if (scenario.envProxy) env.NODE_USE_ENV_PROXY = '1';
+        if (scenario.nodeOptionsProxy) env.NODE_OPTIONS = '--use-env-proxy';
+        if (scenario.nodeOnly && language !== 'node') continue;
+        if (scenario.proxyFlag && !process.allowedNodeEnvironmentFlags.has('--use-env-proxy'))
+          continue;
         const code = `const {Client,workloadIdentityCredentials}=await import(${JSON.stringify(pathToFileURL(join(live, 'node/index.js')).href)});try {await new Client({baseUrl:${JSON.stringify(baseUrl)},allowInsecureHttp:true,apiKey:workloadIdentityCredentials({workloadIdentityId:'wid_platform',source:'aws'})}).api.read();process.stdout.write('ok');}catch(e){process.stdout.write(e.workloadIdentity?.reason??e.code);}`;
         const child = spawn(
           language === 'php' ? 'php' : process.execPath,
           language === 'php'
             ? [php, join(live, 'php'), baseUrl]
-            : ['--input-type=module', '-e', code],
+            : [
+                '--require',
+                routing,
+                ...(scenario.proxyFlag ? ['--use-env-proxy'] : []),
+                '--input-type=module',
+                '-e',
+                code,
+              ],
           { env },
         );
         let stdout = '',
@@ -1265,8 +1385,16 @@ try { $client = new Example\\Discovery\\Client(new Example\\Discovery\\ClientOpt
           scenario.expected,
           language + mode + stderr + JSON.stringify({ metadata, sts, stolen }),
         );
-        assert.equal(metadata, scenario.metadataRequests);
+        // Node tries its legacy ECS provider after a failed HTTP provider.
+        assert.equal(
+          metadata,
+          language === 'node'
+            ? (scenario.nodeMetadataRequests ?? scenario.metadataRequests)
+            : scenario.metadataRequests,
+          language + mode,
+        );
         assert.equal(sts, scenario.stsRequests);
+        assert.equal(assumed, scenario.assumeRole ? 1 : 0);
         assert.equal(stolen, 0);
       }
   } finally {
