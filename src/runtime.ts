@@ -491,7 +491,8 @@ export type WorkloadIdentitySource =
   | 'gitlab_ci'
   | 'kubernetes'
   | 'gcp'
-  | 'azure';
+  | 'azure'
+  | 'aws';
 export interface WorkloadIdentityOptions {
   workloadIdentityId: string;
   source?: WorkloadIdentitySource;
@@ -507,6 +508,155 @@ type CredentialContext = {
 type CachedCredential = { value: string; expiresAt: Date; lifetime: number };
 const identityTokens = new Map<string, CachedCredential>();
 const identityFlights = new Map<string, Promise<CachedCredential>>();
+
+type CliCredential = { value: string; expiresAt?: Date; lifetime: number };
+const cliTokens = new Map<string, CliCredential>();
+const cliFlights = new Map<string, Promise<CliCredential>>();
+// Node 24+ can configure proxying globally; an empty proxyEnv also opts private agents out.
+const identityAgentOptions = { keepAlive: false, proxyEnv: {} };
+async function identityMetadata(
+  endpoint: URL,
+  headers: Record<string, string>,
+  context: CredentialContext | undefined,
+  deadline: number,
+  method = 'GET',
+): Promise<string> {
+  const agent =
+    endpoint.protocol === 'https:'
+      ? new (process.getBuiltinModule('https').Agent)(identityAgentOptions)
+      : new (process.getBuiltinModule('http').Agent)(identityAgentOptions);
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  context?.signal?.addEventListener('abort', abort, { once: true });
+  if (context?.signal?.aborted || deadline <= performance.now()) controller.abort();
+  const timer = schedule(abort, Math.max(0, Math.min(2000, deadline - performance.now())));
+  try {
+    // Private agents bypass environment proxies; native HTTP never follows redirects.
+    const response =
+      context?.transport && context.transport !== fetch
+        ? await abortable(
+            context.transport(endpoint, {
+              method,
+              headers,
+              redirect: 'manual',
+              signal: controller.signal,
+            }),
+            controller.signal,
+          )
+        : await new Promise<{ status: number; text(): Promise<string> }>((resolve, reject) => {
+            const request = (
+              endpoint.protocol === 'https:'
+                ? process.getBuiltinModule('https')
+                : process.getBuiltinModule('http')
+            ).request(
+              endpoint,
+              { method, headers, signal: controller.signal, agent },
+              (response) => {
+                const chunks: Buffer[] = [];
+                let size = 0;
+                response.on('data', (chunk: Buffer) => {
+                  size += chunk.length;
+                  if (size > 65536) request.destroy(new Error());
+                  else chunks.push(chunk);
+                });
+                response.on('error', reject);
+                response.on('end', () =>
+                  resolve({
+                    status: response.statusCode ?? 0,
+                    text: async () => Buffer.concat(chunks).toString('utf8'),
+                  }),
+                );
+              },
+            );
+            request.on('error', reject);
+            request.end();
+          });
+    if (response.status !== 200) throw new Error();
+    return await abortable(response.text(), controller.signal);
+  } finally {
+    timer.cancel();
+    agent.destroy();
+    context?.signal?.removeEventListener('abort', abort);
+  }
+}
+async function awsRoleCredential(context: CredentialContext | undefined, deadline: number) {
+  if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY)
+    return {
+      accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+      sessionToken: process.env.AWS_SESSION_TOKEN,
+    };
+  let endpoint: URL;
+  const headers: Record<string, string> = {};
+  const full = process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI,
+    relative = process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI;
+  if (full || relative) {
+    endpoint = new URL(full || 'http://169.254.170.2' + relative);
+    if (
+      endpoint.protocol !== 'https:' &&
+      !(
+        endpoint.protocol === 'http:' &&
+        ['169.254.170.2', '169.254.170.23', '127.0.0.1', 'localhost', '[::1]'].includes(
+          endpoint.hostname,
+        )
+      )
+    )
+      throw new Error();
+    if (process.env.AWS_CONTAINER_AUTHORIZATION_TOKEN)
+      headers.Authorization = process.env.AWS_CONTAINER_AUTHORIZATION_TOKEN;
+  } else {
+    if (process.env.AWS_EC2_METADATA_DISABLED === 'true') throw new Error();
+    const base = process.env.AWS_EC2_METADATA_SERVICE_ENDPOINT || 'http://169.254.169.254';
+    endpoint = new URL(base);
+    if (
+      !['http:', 'https:'].includes(endpoint.protocol) ||
+      endpoint.username ||
+      endpoint.password ||
+      endpoint.hash
+    )
+      throw new Error();
+    const token = await identityMetadata(
+      new URL('/latest/api/token', endpoint),
+      { 'X-aws-ec2-metadata-token-ttl-seconds': '60' },
+      context,
+      deadline,
+      'PUT',
+    );
+    if (!token.trim() || /[\r\n]/.test(token)) throw new Error();
+    headers['X-aws-ec2-metadata-token'] = token;
+    const role = (
+      await identityMetadata(
+        new URL('/latest/meta-data/iam/security-credentials/', endpoint),
+        headers,
+        context,
+        deadline,
+      )
+    ).trim();
+    if (!/^[A-Za-z0-9+=,.@_-]+$/.test(role)) throw new Error();
+    endpoint = new URL(
+      '/latest/meta-data/iam/security-credentials/' + encodeURIComponent(role),
+      endpoint,
+    );
+  }
+  if (endpoint.username || endpoint.password || endpoint.hash) throw new Error();
+  const raw: unknown = JSON.parse(await identityMetadata(endpoint, headers, context, deadline));
+  if (
+    !raw ||
+    typeof raw !== 'object' ||
+    !('AccessKeyId' in raw) ||
+    typeof raw.AccessKeyId !== 'string' ||
+    !('SecretAccessKey' in raw) ||
+    typeof raw.SecretAccessKey !== 'string' ||
+    !('Token' in raw) ||
+    typeof raw.Token !== 'string'
+  )
+    throw new Error();
+  return {
+    accessKeyId: raw.AccessKeyId,
+    secretAccessKey: raw.SecretAccessKey,
+    sessionToken: raw.Token,
+  };
+}
 
 /** Generated package wrappers supply provider configuration; no provider names live here. */
 export function configuredDefaultCredentials(
@@ -543,6 +693,124 @@ class AmbientCredentialProvider implements CredentialProvider {
   invalidate(credential = this.#lastCredential) {
     if (credential) this.#invalidations.get(credential)?.();
   }
+  private async cliCredential(
+    context: CredentialContext | undefined,
+    fail: (reason: string, description?: string) => never,
+  ): Promise<{ value: string; expiresAt?: Date }> {
+    const help = `Set ${this.config.environment.apiKey}, ${this.config.environment.token}, or ${this.config.workloadIdentity.envPrefix}_WORKLOAD_IDENTITY_ID with token/token_file, GitHub permissions: id-token: write, GitLab id_tokens:, Kubernetes projected /var/run/secrets/flint/token, GCP metadata identity, Azure managed identity with OIDC_AUDIENCE, or AWS STS GetWebIdentityToken.`;
+    const key = JSON.stringify([
+      'cli',
+      context?.baseUrl ?? this.baseUrl,
+      this.config.workloadIdentity.envPrefix,
+      process.env.PATH,
+      process.env.FLINT_PROFILE,
+      process.env.FLINT_BASE_URL,
+    ]);
+    const result = (entry: CliCredential) => {
+      const credential = {
+        value: entry.value,
+        ...(entry.expiresAt ? { expiresAt: entry.expiresAt } : {}),
+      };
+      this.#invalidations.set(credential, () => {
+        if (cliTokens.get(key) === entry) cliTokens.delete(key);
+      });
+      this.#lastCredential = credential;
+      return credential;
+    };
+    const cached = cliTokens.get(key),
+      remaining = cached?.expiresAt ? cached.expiresAt.getTime() - Date.now() : 0;
+    if (cached && remaining > 30000 && remaining >= Math.max(60000, cached.lifetime * 0.2))
+      return result(cached);
+    const existing = cliFlights.get(key);
+    if (existing) return result(await existing);
+    const resolve = async (): Promise<CliCredential> => {
+      const timeout = Math.min(5000, (context?.deadline ?? Infinity) - performance.now());
+      if (timeout <= 0 || context?.signal?.aborted)
+        return fail('source_unavailable', 'CLI credential request cancelled or expired');
+      const output = await new Promise<{
+        ok: boolean;
+        missing: boolean;
+        stdout: string;
+        stderr: string;
+      }>((resolve) => {
+        const child = process.getBuiltinModule('child_process').execFile(
+          'flint',
+          ['auth', 'token', '--output', 'json'],
+          {
+            encoding: 'utf8',
+            timeout: Math.max(1, Math.ceil(timeout)),
+            maxBuffer: 65536,
+            windowsHide: true,
+            killSignal: 'SIGKILL',
+            ...(context?.signal ? { signal: context.signal } : {}),
+          },
+          (error, stdout, stderr) =>
+            resolve({ ok: !error, missing: error?.code === 'ENOENT', stdout, stderr }),
+        );
+        child.stdin?.end();
+      });
+      if (output.missing)
+        return fail(
+          'no_credentials',
+          'No CLI session: install flint and run flint auth login. ' + help,
+        );
+      if (!output.ok && (output.stderr + output.stdout).includes('API_KEY_REQUIRED'))
+        return fail('no_credentials', 'Run flint auth login. ' + help);
+      if (!output.ok)
+        return fail(
+          'source_unavailable',
+          output.stderr.includes('API_KEY_NOT_EXPORTABLE') ||
+            output.stdout.includes('API_KEY_NOT_EXPORTABLE')
+            ? 'API_KEY_NOT_EXPORTABLE: run flint auth login or configure workload identity; API keys cannot be exported'
+            : 'flint auth token failed; run flint auth login or disable CLI credentials. ' + help,
+        );
+      let payload: unknown;
+      try {
+        payload = JSON.parse(output.stdout);
+      } catch {
+        return fail('source_unavailable', 'Invalid flint auth token JSON response');
+      }
+      if (
+        !payload ||
+        typeof payload !== 'object' ||
+        !('access_token' in payload) ||
+        typeof payload.access_token !== 'string' ||
+        !payload.access_token.trim() ||
+        /[\r\n]/.test(payload.access_token) ||
+        !('token_type' in payload) ||
+        payload.token_type !== 'Bearer'
+      )
+        return fail('source_unavailable', 'Invalid flint auth token response');
+      if (/^flint_(test|live)_/.test(payload.access_token))
+        return fail(
+          'source_unavailable',
+          'API_KEY_NOT_EXPORTABLE: the CLI must export an OAuth or workload identity bearer token',
+        );
+      const expiresAt =
+        'expires_at' in payload
+          ? new Date(typeof payload.expires_at === 'string' ? payload.expires_at : '')
+          : undefined;
+      if (
+        expiresAt &&
+        (!Number.isFinite(expiresAt.getTime()) || expiresAt.getTime() <= Date.now() + 30000)
+      )
+        return fail('source_unavailable', 'CLI access token is expired or has an invalid expiry');
+      return {
+        value: payload.access_token,
+        ...(expiresAt ? { expiresAt } : {}),
+        lifetime: expiresAt ? expiresAt.getTime() - Date.now() : 0,
+      };
+    };
+    const flight = resolve();
+    cliFlights.set(key, flight);
+    try {
+      const entry = await flight;
+      if (entry.expiresAt) cliTokens.set(key, entry);
+      return result(entry);
+    } finally {
+      cliFlights.delete(key);
+    }
+  }
   async getCredential(context?: CredentialContext): Promise<{ value: string; expiresAt?: Date }> {
     const env = this.config.environment;
     const prefix = this.config.workloadIdentity.envPrefix;
@@ -561,6 +829,9 @@ class AmbientCredentialProvider implements CredentialProvider {
         process.env[env.token],
         process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN,
         process.env.IDENTITY_HEADER,
+        process.env.AWS_SECRET_ACCESS_KEY,
+        process.env.AWS_SESSION_TOKEN,
+        process.env.AWS_CONTAINER_AUTHORIZATION_TOKEN,
         read('OIDC_TOKEN'),
       ])
         if (token)
@@ -603,10 +874,14 @@ class AmbientCredentialProvider implements CredentialProvider {
         this.#lastCredential = undefined;
         return { value: apiKey || token || '' };
       }
+      if (!id && read('CLI_CREDENTIALS') !== '0') {
+        source = 'cli';
+        return this.cliCredential(context, fail);
+      }
       if (!id)
         fail(
           'no_credentials',
-          `Set ${env.apiKey}, ${env.token}, or ${prefix}_WORKLOAD_IDENTITY_ID with ${prefix}_OIDC_TOKEN, ${prefix}_OIDC_TOKEN_FILE, or GitHub Actions permissions: id-token: write. Other sources: GitLab id_tokens:, Kubernetes projected /var/run/secrets/flint/token, GCP metadata identity, Azure managed identity with OIDC_AUDIENCE`,
+          `Set ${env.apiKey}, ${env.token}, or ${prefix}_WORKLOAD_IDENTITY_ID with ${prefix}_OIDC_TOKEN, ${prefix}_OIDC_TOKEN_FILE, or GitHub Actions permissions: id-token: write. Other sources: GitLab id_tokens:, Kubernetes projected /var/run/secrets/flint/token, GCP metadata identity, Azure managed identity with OIDC_AUDIENCE, AWS STS GetWebIdentityToken, or flint auth login (CLI credentials are disabled)`,
         );
     }
     if (typeof id !== 'string' || !id || /[\r\n]/.test(id))
@@ -632,11 +907,18 @@ class AmbientCredentialProvider implements CredentialProvider {
         ['K_SERVICE', 'FUNCTION_TARGET', 'GCE_METADATA_HOST'].some((name) => process.env[name])
       )
         source = 'gcp';
+      else if (process.env.IDENTITY_ENDPOINT && process.env.IDENTITY_HEADER) source = 'azure';
       else if (
-        (process.env.IDENTITY_ENDPOINT && process.env.IDENTITY_HEADER) ||
-        process.env.AZURE_RESOURCE_ID
+        ['AWS_Lambda_', 'AWS_ECS_'].some((prefix) =>
+          process.env.AWS_EXECUTION_ENV?.startsWith(prefix),
+        ) ||
+        [
+          'AWS_LAMBDA_FUNCTION_NAME',
+          'ECS_CONTAINER_METADATA_URI',
+          'ECS_CONTAINER_METADATA_URI_V4',
+        ].some((name) => process.env[name])
       )
-        source = 'azure';
+        source = 'aws';
       else source = 'none';
     }
     if (
@@ -648,11 +930,12 @@ class AmbientCredentialProvider implements CredentialProvider {
         'kubernetes',
         'gcp',
         'azure',
+        'aws',
       ].includes(source)
     )
       fail(
         'source_unavailable',
-        'Choose token, token_file, github_actions (permissions: id-token: write), gitlab_ci (id_tokens:), kubernetes (project /var/run/secrets/flint/token), gcp (metadata identity), or azure (managed identity and OIDC_AUDIENCE). Cloud auto discovery requires a platform environment marker.',
+        'Choose token, token_file, github_actions (permissions: id-token: write), gitlab_ci (id_tokens:), kubernetes (project /var/run/secrets/flint/token), gcp (metadata identity), azure (managed identity and OIDC_AUDIENCE), or aws (STS GetWebIdentityToken). Cloud auto discovery requires a platform environment marker.',
       );
     if (source === 'gitlab_ci' && !read('OIDC_TOKEN'))
       fail(
@@ -693,8 +976,10 @@ class AmbientCredentialProvider implements CredentialProvider {
           'Refusing a token file intended for another service; project a separate Flint audience token',
         );
     }
-    if (source === 'azure' && process.env.IDENTITY_ENDPOINT && !process.env.IDENTITY_HEADER)
-      fail('source_unavailable', 'Azure identity endpoint requires IDENTITY_HEADER');
+    const azureEndpoint =
+      process.env.IDENTITY_ENDPOINT && process.env.IDENTITY_HEADER
+        ? process.env.IDENTITY_ENDPOINT
+        : undefined;
     const githubUrl = process.env.ACTIONS_ID_TOKEN_REQUEST_URL;
     const githubToken = process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
     if (source === 'github_actions' && (!githubUrl || !githubToken))
@@ -722,6 +1007,22 @@ class AmbientCredentialProvider implements CredentialProvider {
                 .update(process.env.IDENTITY_HEADER ?? '')
                 .digest('hex'),
               read('AZURE_CLIENT_ID'),
+              process.env.AWS_REGION,
+              process.env.AWS_DEFAULT_REGION,
+              process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI,
+              process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI,
+              process.env.AWS_EC2_METADATA_SERVICE_ENDPOINT,
+              process
+                .getBuiltinModule('crypto')
+                .createHash('sha256')
+                .update(
+                  JSON.stringify([
+                    process.env.AWS_ACCESS_KEY_ID,
+                    process.env.AWS_SECRET_ACCESS_KEY,
+                    process.env.AWS_SESSION_TOKEN,
+                  ]),
+                )
+                .digest('hex'),
             ];
     const key = JSON.stringify([
       url.origin,
@@ -824,10 +1125,7 @@ class AmbientCredentialProvider implements CredentialProvider {
                     (process.env.GCE_METADATA_HOST || 'metadata.google.internal') +
                     '/computeMetadata/v1/instance/service-accounts/default/identity',
                 )
-              : new URL(
-                  process.env.IDENTITY_ENDPOINT ||
-                    'http://169.254.169.254/metadata/identity/oauth2/token',
-                );
+              : new URL(azureEndpoint || 'http://169.254.169.254/metadata/identity/oauth2/token');
           if (
             !['http:', 'https:'].includes(endpoint.protocol) ||
             endpoint.username ||
@@ -841,88 +1139,106 @@ class AmbientCredentialProvider implements CredentialProvider {
             endpoint.searchParams.set('format', 'full');
             headers['Metadata-Flavor'] = 'Google';
           } else {
-            endpoint.searchParams.set(
-              'api-version',
-              process.env.IDENTITY_ENDPOINT ? '2019-08-01' : '2018-02-01',
-            );
+            endpoint.searchParams.set('api-version', azureEndpoint ? '2019-08-01' : '2018-02-01');
             endpoint.searchParams.set('resource', audience);
             if (read('AZURE_CLIENT_ID'))
               endpoint.searchParams.set('client_id', read('AZURE_CLIENT_ID') ?? '');
-            if (process.env.IDENTITY_ENDPOINT) {
-              if (!process.env.IDENTITY_HEADER)
-                return fail(
-                  'source_unavailable',
-                  'Azure identity endpoint requires IDENTITY_HEADER',
-                );
-              headers['X-IDENTITY-HEADER'] = process.env.IDENTITY_HEADER;
-            } else headers.Metadata = 'true';
+            if (azureEndpoint) headers['X-IDENTITY-HEADER'] = process.env.IDENTITY_HEADER ?? '';
+            else headers.Metadata = 'true';
           }
-          const controller = new AbortController();
-          const abort = () => controller.abort();
-          context?.signal?.addEventListener('abort', abort, { once: true });
-          if (context?.signal?.aborted) controller.abort();
-          const timer = schedule(abort, Math.max(0, Math.min(2000, deadline - performance.now())));
-          try {
-            // Native HTTP has no environment proxy handling and never follows redirects.
-            const response =
-              context?.transport && context.transport !== fetch
-                ? await abortable(
-                    context.transport(endpoint, {
-                      method: 'GET',
-                      headers,
-                      redirect: 'manual',
-                      signal: controller.signal,
-                    }),
-                    controller.signal,
-                  )
-                : await new Promise<{ status: number; text(): Promise<string> }>(
-                    (resolve, reject) => {
-                      const request = (
-                        endpoint.protocol === 'https:'
-                          ? process.getBuiltinModule('https')
-                          : process.getBuiltinModule('http')
-                      ).get(
-                        endpoint,
-                        { headers, signal: controller.signal, agent: false },
-                        (response) => {
-                          const chunks: Buffer[] = [];
-                          let size = 0;
-                          response.on('data', (chunk: Buffer) => {
-                            size += chunk.length;
-                            if (size > 65536) request.destroy(new Error());
-                            else chunks.push(chunk);
-                          });
-                          response.on('error', reject);
-                          response.on('end', () =>
-                            resolve({
-                              status: response.statusCode ?? 0,
-                              text: async () => Buffer.concat(chunks).toString('utf8'),
-                            }),
-                          );
-                        },
-                      );
-                      request.on('error', reject);
-                    },
-                  );
-            if (response.status !== 200) throw new Error();
-            const body = await abortable(response.text(), controller.signal);
-            const payload: unknown = source === 'gcp' ? body.trim() : JSON.parse(body);
-            subject =
-              typeof payload === 'string'
-                ? payload
-                : payload &&
-                    typeof payload === 'object' &&
-                    'access_token' in payload &&
-                    typeof payload.access_token === 'string'
-                  ? payload.access_token
-                  : '';
-            if (!subject) throw new Error();
-          } finally {
-            timer.cancel();
-            context?.signal?.removeEventListener('abort', abort);
-          }
+          const body = await identityMetadata(endpoint, headers, context, deadline);
+          const payload: unknown = source === 'gcp' ? body.trim() : JSON.parse(body);
+          subject =
+            typeof payload === 'string'
+              ? payload
+              : payload &&
+                  typeof payload === 'object' &&
+                  'access_token' in payload &&
+                  typeof payload.access_token === 'string'
+                ? payload.access_token
+                : '';
+          if (!subject) throw new Error();
         } catch {
           return fail('subject_token_request_failed', 'Metadata identity request failed');
+        }
+      } else if (source === 'aws') {
+        const packageName = '@aws-sdk/client-sts';
+        let loaded: unknown;
+        try {
+          loaded = await import(packageName);
+        } catch {
+          return fail(
+            'source_unavailable',
+            'Install @aws-sdk/client-sts >=3.1161.0 to use the aws source',
+          );
+        }
+        if (
+          !loaded ||
+          typeof loaded !== 'object' ||
+          !('STSClient' in loaded) ||
+          typeof loaded.STSClient !== 'function' ||
+          !('GetWebIdentityTokenCommand' in loaded) ||
+          typeof loaded.GetWebIdentityTokenCommand !== 'function'
+        )
+          return fail(
+            'source_unavailable',
+            'Upgrade @aws-sdk/client-sts to >=3.1161.0 for GetWebIdentityToken',
+          );
+        // Runtime export guards above protect this optional SDK interop boundary.
+        const sdk = loaded as {
+          STSClient: new (config: Record<string, unknown>) => {
+            send(command: unknown, options: { abortSignal: AbortSignal }): Promise<unknown>;
+            destroy(): void;
+          };
+          GetWebIdentityTokenCommand: new (input: Record<string, unknown>) => unknown;
+        };
+        const controller = new AbortController();
+        const abort = () => controller.abort();
+        context?.signal?.addEventListener('abort', abort, { once: true });
+        const cloudDeadline = Math.min(deadline, performance.now() + 5000);
+        if (context?.signal?.aborted || cloudDeadline <= performance.now()) controller.abort();
+        const timer = schedule(abort, Math.max(0, cloudDeadline - performance.now()));
+        let client: InstanceType<typeof sdk.STSClient> | undefined;
+        try {
+          client = new sdk.STSClient({
+            region: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION,
+            maxAttempts: 1,
+            credentials: () => awsRoleCredential(context, cloudDeadline),
+            requestHandler: {
+              connectionTimeout: 1000,
+              requestTimeout: 2000,
+              httpAgent: new (process.getBuiltinModule('http').Agent)(identityAgentOptions),
+              httpsAgent: new (process.getBuiltinModule('https').Agent)(identityAgentOptions),
+            },
+          });
+          const result = await abortable(
+            client.send(
+              new sdk.GetWebIdentityTokenCommand({
+                Audience: [audience],
+                SigningAlgorithm: 'ES384',
+              }),
+              { abortSignal: controller.signal },
+            ),
+            controller.signal,
+          );
+          if (
+            !result ||
+            typeof result !== 'object' ||
+            !('WebIdentityToken' in result) ||
+            typeof result.WebIdentityToken !== 'string' ||
+            !result.WebIdentityToken
+          )
+            throw new Error();
+          subject = result.WebIdentityToken;
+        } catch {
+          return fail(
+            'subject_token_request_failed',
+            'AWS STS GetWebIdentityToken failed; configure a regional workload role with sts:GetWebIdentityToken permission',
+          );
+        } finally {
+          timer.cancel();
+          context?.signal?.removeEventListener('abort', abort);
+          client?.destroy();
         }
       } else
         try {

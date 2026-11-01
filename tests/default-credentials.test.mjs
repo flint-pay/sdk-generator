@@ -106,6 +106,7 @@ const envKeys = [
   'AZURE_CLIENT_ID',
 ];
 function clearEnv() {
+  process.env.EXAMPLE_CLI_CREDENTIALS = '0';
   for (const key of envKeys) delete process.env['EXAMPLE_' + key];
   for (const key of [
     'GITLAB_CI',
@@ -118,6 +119,10 @@ function clearEnv() {
     'IDENTITY_ENDPOINT',
     'IDENTITY_HEADER',
     'AZURE_RESOURCE_ID',
+    'AWS_EXECUTION_ENV',
+    'AWS_LAMBDA_FUNCTION_NAME',
+    'ECS_CONTAINER_METADATA_URI',
+    'ECS_CONTAINER_METADATA_URI_V4',
     'AWS_WEB_IDENTITY_TOKEN_FILE',
     'AZURE_FEDERATED_TOKEN_FILE',
     'GITHUB_ACTIONS',
@@ -910,6 +915,360 @@ try {
           assert.equal(metadata, 1);
           assert.equal(exchanges, mode === 'success' ? 1 : 0);
         }
+  } finally {
+    clearEnv();
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('shared AWS and CLI-process source conformance in both runtimes', async () => {
+  const { mkdirSync, chmodSync, existsSync } = await import('node:fs');
+  const { spawn } = await import('node:child_process');
+  const php = spawnSync('which', ['php'], { encoding: 'utf8' }).stdout.trim();
+  const scenarios = JSON.parse(
+    readFileSync('tests/fixtures/default-credentials-aws-cli.json', 'utf8'),
+  );
+  scenarios.sort(
+    (a, b) =>
+      Number(Boolean(b.source === 'aws' && b.missing)) -
+      Number(Boolean(a.source === 'aws' && a.missing)),
+  );
+  const nodePackage = JSON.parse(readFileSync(join(output, 'node/package.json'), 'utf8'));
+  assert.equal(nodePackage.peerDependenciesMeta['@aws-sdk/client-sts'].optional, true);
+  assert.ok(
+    JSON.parse(readFileSync(join(output, 'php/composer.json'), 'utf8')).suggest['aws/aws-sdk-php'],
+  );
+  const awsDir = join(output, 'node/node_modules/@aws-sdk/client-sts');
+  const bin = join(root, 'bin'),
+    emptyBin = join(root, 'empty-bin');
+  mkdirSync(bin);
+  mkdirSync(emptyBin);
+  const cli = join(bin, 'flint');
+  writeFileSync(
+    cli,
+    `#!${process.execPath}
+import('node:fs').then(({appendFileSync}) => {
+ if (JSON.stringify(process.argv.slice(2)) !== JSON.stringify(['auth','token','--output','json'])) process.exit(42);
+ appendFileSync(process.env.SYNTHETIC_CLI_LOG, 'cli\\n');
+ const c = JSON.parse(process.env.SYNTHETIC_CASE);
+ if (c.hang) { setInterval(()=>{},1000); return; }
+ if (c.large) { process.stdout.write('x'.repeat(70000)); return; }
+ if (c.error) { process.stderr.write(JSON.stringify({error:{code:c.error,message:process.env.SYNTHETIC_CLI_TOKEN}})); process.exitCode = 1; }
+ else process.stdout.write(c.raw ?? JSON.stringify({access_token:process.env.SYNTHETIC_CLI_TOKEN,token_type:'Bearer',...(c.noExpiry ? {} : {expires_at:c.expires ?? process.env.SYNTHETIC_CLI_EXPIRY})}));
+});
+`,
+  );
+  chmodSync(cli, 0o755);
+  const original = { ...process.env };
+  try {
+    for (const c of scenarios) {
+      clearEnv();
+      if (c.source === 'aws' && !c.missing && !existsSync(awsDir)) {
+        mkdirSync(awsDir, { recursive: true });
+        writeFileSync(
+          join(awsDir, 'package.json'),
+          JSON.stringify({ type: 'module', exports: './index.js' }),
+        );
+        writeFileSync(
+          join(awsDir, 'index.js'),
+          `import {appendFileSync} from 'node:fs';
+export class GetWebIdentityTokenCommand { constructor(input) { this.input = input; } }
+export class STSClient { constructor(config) { this.config = config; } destroy() {} async send(command) {
+ if (JSON.stringify(command.input) !== JSON.stringify({Audience:['https://example.invalid'],SigningAlgorithm:'ES384'})) throw Error('Invalid STS input');
+ await this.config.credentials();
+ appendFileSync(process.env.SYNTHETIC_AWS_LOG, 'sts\\n');
+ if (process.env.SYNTHETIC_AWS_FAILURE) throw Error(process.env.SYNTHETIC_AWS_TOKEN);
+ return {WebIdentityToken:process.env.SYNTHETIC_AWS_TOKEN};
+} }
+`,
+        );
+      }
+      const log = join(root, 'source-' + scenarios.indexOf(c) + '.log');
+      writeFileSync(log, '');
+      Object.assign(process.env, {
+        FLINT_PROFILE: c.name,
+        SYNTHETIC_CASE: JSON.stringify(c),
+        SYNTHETIC_CLI_LOG: log,
+        SYNTHETIC_AWS_LOG: log,
+        SYNTHETIC_CLI_TOKEN: 'synthetic-cli-bearer',
+        SYNTHETIC_CLI_EXPIRY: new Date(Date.now() + 3600000).toISOString(),
+        SYNTHETIC_AWS_TOKEN: jwt(c.token ?? {}, Date.now()),
+        SYNTHETIC_AWS_FAILURE: c.sdkFailure ? '1' : '',
+        SYNTHETIC_AWS_AVAILABLE: c.source === 'aws' && !c.missing ? '1' : '0',
+        AWS_REGION: 'us-east-2',
+        AWS_ACCESS_KEY_ID: 'synthetic-aws-key',
+        AWS_SECRET_ACCESS_KEY: 'synthetic-aws-secret',
+      });
+      Object.assign(process.env, c.platformEnvironment ?? {});
+      if (c.source === 'aws' || c.identity)
+        process.env.EXAMPLE_WORKLOAD_IDENTITY_ID = 'wid_aws_' + scenarios.indexOf(c);
+      if (c.source === 'cli') {
+        process.env.EXAMPLE_CLI_CREDENTIALS = c.disabled ? '0' : '1';
+        process.env.PATH = c.missing ? emptyBin : bin + ':' + original.PATH;
+      }
+      let exchanges = 0,
+        apiCalls = 0,
+        result = 'ok';
+      const options = {
+        transport: async (url, init) => {
+          if (String(url).endsWith('/v1/oauth/token')) {
+            exchanges++;
+            assert.equal(
+              new URLSearchParams(init.body).get('subject_token'),
+              process.env.SYNTHETIC_AWS_TOKEN,
+            );
+            return Response.json({
+              access_token: 'synthetic-aws-access',
+              token_type: 'Bearer',
+              issued_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+              expires_in: 3600,
+            });
+          }
+          apiCalls++;
+          return new Response(null, { status: c.cliAPI401 && apiCalls === 1 ? 401 : 204 });
+        },
+        ...(c.explicit
+          ? {
+              apiKey: sdk.workloadIdentityCredentials({
+                workloadIdentityId: process.env.EXAMPLE_WORKLOAD_IDENTITY_ID,
+                source: 'aws',
+              }),
+            }
+          : {}),
+        ...(c.ambientDisabled ? { ambientCredentials: false } : {}),
+      };
+      try {
+        const client = new sdk.Client(options);
+        if (c.noExpiry) {
+          await client.api.read();
+          await client.api.read();
+        } else await Promise.all(Array.from({ length: 100 }, () => client.api.read()));
+      } catch (e) {
+        result = e.workloadIdentity?.reason ?? e.code;
+        assert.ok(!e.message.includes(process.env.SYNTHETIC_AWS_TOKEN));
+        assert.ok(!e.message.includes(process.env.SYNTHETIC_CLI_TOKEN));
+        if (c.error === 'API_KEY_NOT_EXPORTABLE') assert.match(e.message, /API_KEY_NOT_EXPORTABLE/);
+        if (c.missing && c.source === 'aws') assert.match(e.message, /@aws-sdk\/client-sts/);
+      }
+      assert.equal(result, c.expect, c.name);
+      const expectedCalls =
+        c.exports ??
+        (c.missing || c.noSource || c.disabled || c.ambientDisabled || c.identity
+          ? 0
+          : c.noExpiry
+            ? 2
+            : 1);
+      assert.equal(
+        readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).length,
+        expectedCalls,
+        c.name,
+      );
+      assert.equal(exchanges, c.source === 'aws' && c.expect === 'ok' ? 1 : 0, c.name);
+      writeFileSync(log, '');
+      const child = spawn(php, ['tests/helpers/workload-aws-cli.php', join(output, 'php')], {
+        env: process.env,
+      });
+      let stdout = '',
+        stderr = '';
+      child.stdout.on('data', (chunk) => (stdout += chunk));
+      child.stderr.on('data', (chunk) => (stderr += chunk));
+      const status = await new Promise((resolve, reject) => {
+        child.on('error', reject);
+        child.on('close', resolve);
+      });
+      assert.equal(status, 0, stderr);
+      assert.deepEqual(
+        JSON.parse(stdout),
+        { result: c.expect, exchanges: c.source === 'aws' && c.expect === 'ok' ? 1 : 0 },
+        c.name,
+      );
+      assert.equal(
+        readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).length,
+        expectedCalls,
+        c.name + ' PHP',
+      );
+      process.env.PATH = original.PATH;
+    }
+  } finally {
+    for (const key of Object.keys(process.env)) if (!(key in original)) delete process.env[key];
+    Object.assign(process.env, original);
+    clearEnv();
+  }
+});
+
+test('platform AWS SDKs protect ECS, IMDSv2 and STS requests', async () => {
+  const { createServer } = await import('node:http');
+  const { spawn } = await import('node:child_process');
+  const live = join(root, 'aws-platform');
+  generate(loadContract(join(root, 'api.json'), join(root, 'sdk.json')), live);
+  let installed = spawnSync(
+    'npm',
+    [
+      'install',
+      '--ignore-scripts',
+      '--no-audit',
+      '--no-fund',
+      '--no-package-lock',
+      '@aws-sdk/client-sts@3.1161.0',
+    ],
+    { cwd: join(live, 'node'), encoding: 'utf8' },
+  );
+  assert.equal(installed.status, 0, installed.stderr);
+  installed = spawnSync(
+    'composer',
+    ['require', 'aws/aws-sdk-php:^3.402.5', '--no-interaction', '--no-progress', '--no-scripts'],
+    { cwd: join(live, 'php'), encoding: 'utf8' },
+  );
+  assert.equal(installed.status, 0, installed.stderr);
+  let mode, baseUrl, metadata, sts, stolen;
+  const server = createServer(async (req, res) => {
+    if (req.url === '/credentials') {
+      metadata++;
+      assert.equal(req.headers.authorization, 'synthetic-container-auth');
+      if (mode === '307' || mode === '308') {
+        res.writeHead(Number(mode), { location: baseUrl + '/stolen' });
+        res.end();
+        return;
+      }
+      res.end(
+        JSON.stringify({
+          AccessKeyId: 'synthetic-role-key',
+          SecretAccessKey: 'synthetic-role-secret',
+          Token: 'synthetic-role-session',
+          Expiration: new Date(Date.now() + 3600000).toISOString(),
+        }),
+      );
+    } else if (req.url.startsWith('/latest/')) {
+      metadata++;
+      if (req.url === '/latest/api/token') {
+        assert.equal(req.method, 'PUT');
+        res.end('synthetic-imds-session');
+      } else {
+        assert.equal(req.headers['x-aws-ec2-metadata-token'], 'synthetic-imds-session');
+        if (mode === 'imds-redirect') {
+          res.writeHead(308, { location: baseUrl + '/stolen' });
+          res.end();
+          return;
+        }
+        res.end(
+          req.url.endsWith('/')
+            ? 'synthetic-role'
+            : JSON.stringify({
+                AccessKeyId: 'synthetic-role-key',
+                SecretAccessKey: 'synthetic-role-secret',
+                Token: 'synthetic-role-session',
+              }),
+        );
+      }
+    } else if (req.url === '/sts' || req.url === '/sts/') {
+      sts++;
+      let body = '';
+      for await (const chunk of req) body += chunk;
+      const form = new URLSearchParams(body);
+      assert.equal(form.get('Action'), 'GetWebIdentityToken');
+      assert.equal(form.get('Audience.member.1'), baseUrl);
+      assert.equal(form.get('SigningAlgorithm'), 'ES384');
+      assert.match(req.headers.authorization, /AWS4-HMAC-SHA256/);
+      if (mode === 'sts-redirect') {
+        res.writeHead(307, { location: baseUrl + '/stolen' });
+        res.end();
+        return;
+      }
+      res.setHeader('content-type', 'text/xml');
+      res.end(
+        `<GetWebIdentityTokenResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><GetWebIdentityTokenResult><WebIdentityToken>${jwt({ aud: baseUrl }, Date.now())}</WebIdentityToken></GetWebIdentityTokenResult></GetWebIdentityTokenResponse>`,
+      );
+    } else if (req.url === '/stolen') {
+      stolen++;
+      res.end('{}');
+    } else if (req.url === '/v1/oauth/token')
+      res.end(
+        JSON.stringify({
+          access_token: 'synthetic-cloud-access',
+          token_type: 'Bearer',
+          issued_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+          expires_in: 3600,
+        }),
+      );
+    else {
+      res.writeHead(204);
+      res.end();
+    }
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  baseUrl = 'http://127.0.0.1:' + server.address().port;
+  const php = join(root, 'aws-platform.php');
+  writeFileSync(
+    php,
+    `<?php
+require $argv[1] . '/vendor/autoload.php';
+try { $client = new Example\\Discovery\\Client(new Example\\Discovery\\ClientOptions(baseUrl: $argv[2], allowInsecureHttp: true, apiKey: Example\\Discovery\\workloadIdentityCredentials(['workloadIdentityId' => 'wid_platform', 'source' => 'aws']))); $client->api->read(); echo 'ok'; } catch (Example\\Discovery\\SdkError $e) { echo $e->workloadIdentity['reason'] ?? $e->code; }
+`,
+  );
+  try {
+    for (const language of ['node', 'php'])
+      for (const scenario of JSON.parse(
+        readFileSync('tests/fixtures/default-credentials-aws-http.json', 'utf8'),
+      )) {
+        mode = scenario.name;
+        metadata = sts = stolen = 0;
+        clearEnv();
+        const env = {
+          ...process.env,
+          AWS_REGION: 'us-east-2',
+          AWS_ENDPOINT_URL_STS: baseUrl + '/sts',
+          AWS_CONTAINER_CREDENTIALS_FULL_URI:
+            baseUrl.replace('127.0.0.1', 'localhost') + '/credentials',
+          AWS_CONTAINER_AUTHORIZATION_TOKEN: 'synthetic-container-auth',
+          AWS_EC2_METADATA_SERVICE_ENDPOINT: baseUrl.replace('127.0.0.1', 'localhost'),
+          AWS_WEB_IDENTITY_TOKEN_FILE: '/synthetic/foreign-must-not-open',
+          AZURE_FEDERATED_TOKEN_FILE: '/synthetic/foreign-must-not-open',
+          AWS_ROLE_ARN: 'arn:aws:iam::000000000000:role/synthetic',
+          HTTP_PROXY: 'http://127.0.0.1:1',
+          http_proxy: 'http://127.0.0.1:1',
+          NO_PROXY: '127.0.0.1',
+          no_proxy: '127.0.0.1',
+          NODE_USE_ENV_PROXY: '1',
+        };
+        for (const key of [
+          'AWS_ACCESS_KEY_ID',
+          'AWS_SECRET_ACCESS_KEY',
+          'AWS_SESSION_TOKEN',
+          'AWS_EXECUTION_ENV',
+          'AWS_LAMBDA_FUNCTION_NAME',
+          'ECS_CONTAINER_METADATA_URI',
+          'ECS_CONTAINER_METADATA_URI_V4',
+          'AWS_EC2_METADATA_DISABLED',
+        ])
+          delete env[key];
+        if (mode.startsWith('imds')) delete env.AWS_CONTAINER_CREDENTIALS_FULL_URI;
+        const code = `const {Client,workloadIdentityCredentials}=await import(${JSON.stringify(pathToFileURL(join(live, 'node/index.js')).href)});try {await new Client({baseUrl:${JSON.stringify(baseUrl)},allowInsecureHttp:true,apiKey:workloadIdentityCredentials({workloadIdentityId:'wid_platform',source:'aws'})}).api.read();process.stdout.write('ok');}catch(e){process.stdout.write(e.workloadIdentity?.reason??e.code);}`;
+        const child = spawn(
+          language === 'php' ? 'php' : process.execPath,
+          language === 'php'
+            ? [php, join(live, 'php'), baseUrl]
+            : ['--input-type=module', '-e', code],
+          { env },
+        );
+        let stdout = '',
+          stderr = '';
+        child.stdout.on('data', (chunk) => (stdout += chunk));
+        child.stderr.on('data', (chunk) => (stderr += chunk));
+        const status = await new Promise((resolve, reject) => {
+          child.on('error', reject);
+          child.on('close', resolve);
+        });
+        assert.equal(status, 0, stderr);
+        assert.equal(
+          stdout,
+          scenario.expected,
+          language + mode + stderr + JSON.stringify({ metadata, sts, stolen }),
+        );
+        assert.equal(metadata, scenario.metadataRequests);
+        assert.equal(sts, scenario.stsRequests);
+        assert.equal(stolen, 0);
+      }
   } finally {
     clearEnv();
     server.closeAllConnections();
