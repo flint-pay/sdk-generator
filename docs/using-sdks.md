@@ -169,7 +169,16 @@ $explicit = new Client(
 
 Option and namespace names in these snippets depend on the generated package. The explicit workload identity provider uses the configured token environment variable or file; its ID, source, audience and scope options override the corresponding environment values. `defaultCredentials()` uses the complete chain. Exported providers receive the client's actual base URL and transport, including per-request deadlines. Calling a provider directly uses the generated default base URL and default transport.
 
-With `envPrefix: "EXAMPLE"`, set `EXAMPLE_WORKLOAD_IDENTITY_ID` plus `EXAMPLE_OIDC_TOKEN` or `EXAMPLE_OIDC_TOKEN_FILE`. Optional `EXAMPLE_OIDC_SOURCE` selects `auto`, `none`, `token`, `token_file`, or `github_actions`; `auto` prefers the token environment variable, then a configured token file, then GitHub Actions when `GITHUB_ACTIONS=true`. GitHub jobs need `permissions: id-token: write`; the SDK requests the configured audience from the GitHub identity endpoint. `EXAMPLE_OIDC_AUDIENCE` defaults to the base URL's origin, and `EXAMPLE_OIDC_SCOPE` narrows the requested permissions. Token files are reread on every exchange. No cloud metadata, other CI endpoint, other service's token file, or CLI session is consulted.
+With `envPrefix: "EXAMPLE"`, set `EXAMPLE_WORKLOAD_IDENTITY_ID`. `EXAMPLE_OIDC_SOURCE` selects `auto`, `none`, `token`, `token_file`, `github_actions`, `gitlab_ci`, `kubernetes`, `gcp`, or `azure`. Auto discovery chooses the first matching source:
+
+1. `EXAMPLE_OIDC_TOKEN`, then `EXAMPLE_OIDC_TOKEN_FILE` (reread for each exchange).
+2. GitHub Actions when `GITHUB_ACTIONS=true`. Grant `permissions: id-token: write`.
+3. GitLab when `GITLAB_CI=true`. Configure `id_tokens:` to deliver `EXAMPLE_OIDC_TOKEN` with the configured audience; missing tokens produce the YAML to add.
+4. Kubernetes when `KUBERNETES_SERVICE_HOST` is set. Project a Flint audience token at `/var/run/secrets/flint/token`, or configure a separate file explicitly.
+5. GCP when `K_SERVICE`, `FUNCTION_TARGET`, or `GCE_METADATA_HOST` is set. Request a metadata identity token with the configured audience and `Metadata-Flavor: Google`. `GCE_METADATA_HOST` overrides the metadata host.
+6. Azure when both `IDENTITY_ENDPOINT` and `IDENTITY_HEADER` are set, or `AZURE_RESOURCE_ID` marks an IMDS workload. Set `EXAMPLE_OIDC_AUDIENCE` to your Entra app ID URI. `EXAMPLE_AZURE_CLIENT_ID` selects a user-assigned identity. The App Service/Container Apps endpoint takes precedence over IMDS.
+
+Cloud auto discovery never probes metadata without a marker. Explicit `gcp` and `azure` select metadata directly. Metadata requests bypass environment proxies, refuse redirects and have a two-second timeout bounded by the request deadline. Neither runtime reads `AWS_WEB_IDENTITY_TOKEN_FILE`, `AZURE_FEDERATED_TOKEN_FILE`, or the default Kubernetes service account token, including when a configured file resolves to one of them. `EXAMPLE_OIDC_AUDIENCE` otherwise defaults to the base URL's origin, and `EXAMPLE_OIDC_SCOPE` narrows permissions. AWS and CLI-session discovery are not yet supported.
 
 The SDK checks the unverified subject JWT's audience and expiry before sending it. The server verifies its signature and trust conditions. Token exchange uses the configured path on the base origin, HTTPS or loopback only, with redirects disabled. Transient HTTP 429 and 5xx responses retry up to three attempts, respecting Retry-After and the request deadline.
 

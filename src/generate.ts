@@ -1806,7 +1806,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     if (phpContract.defaultCredentials)
       put(
         'src/credentials.php',
-        `<?php\ndeclare(strict_types=1);\nnamespace ${ns};\nfunction defaultCredentials(): CredentialProvider { return new AmbientCredentialProvider(${'json_decode(' + php(JSON.stringify(phpContract.defaultCredentials)) + ', true)'}, null, ${c.defaultBaseUrl === undefined ? 'null' : php(c.defaultBaseUrl)}); }\n/** @param array{workloadIdentityId: string, source?: 'auto'|'none'|'token'|'token_file'|'github_actions', audience?: string, scope?: string} $options */\nfunction workloadIdentityCredentials(array $options): CredentialProvider { return new AmbientCredentialProvider(${'json_decode(' + php(JSON.stringify(phpContract.defaultCredentials)) + ', true)'}, $options, ${c.defaultBaseUrl === undefined ? 'null' : php(c.defaultBaseUrl)}); }\n`,
+        `<?php\ndeclare(strict_types=1);\nnamespace ${ns};\nfunction defaultCredentials(): CredentialProvider { return new AmbientCredentialProvider(${'json_decode(' + php(JSON.stringify(phpContract.defaultCredentials)) + ', true)'}, null, ${c.defaultBaseUrl === undefined ? 'null' : php(c.defaultBaseUrl)}); }\n/** @param array{workloadIdentityId: string, source?: 'auto'|'none'|'token'|'token_file'|'github_actions'|'gitlab_ci'|'kubernetes'|'gcp'|'azure', audience?: string, scope?: string} $options */\nfunction workloadIdentityCredentials(array $options): CredentialProvider { return new AmbientCredentialProvider(${'json_decode(' + php(JSON.stringify(phpContract.defaultCredentials)) + ', true)'}, $options, ${c.defaultBaseUrl === undefined ? 'null' : php(c.defaultBaseUrl)}); }\n`,
       );
     put('custom/.gitkeep', '');
     put(
@@ -3778,7 +3778,7 @@ function runtimeGuide(
     (node ? '' : ' and closures') +
     ' never trigger this refresh retry. Credential provider exceptions become authentication errors without retaining potentially sensitive causes.\n\n' +
     (c.config.auth && 'defaultCredentials' in c.config.auth && c.config.auth.defaultCredentials
-      ? 'Default credential discovery is lazy and runs only when no credential option is passed on either the client or the request, and ambientCredentials is not false. It tries configured API key/access token environment variables (setting both throws ConfigurationError with code credential_conflict), then configured workload identity. Set ambientCredentials: false to disable it. defaultCredentials() and workloadIdentityCredentials(options) return credential providers supporting token, token_file and github_actions sources and cached refresh.\n\n'
+      ? 'Default credential discovery is lazy and runs only when no credential option is passed on either the client or the request, and ambientCredentials is not false. It tries configured API key/access token environment variables (setting both throws ConfigurationError with code credential_conflict), then configured workload identity. Set ambientCredentials: false to disable it. defaultCredentials() and workloadIdentityCredentials(options) return credential providers supporting token, token_file, github_actions, gitlab_ci, kubernetes, gcp and azure sources and cached refresh.\n\n'
       : 'This SDK does not discover credentials from environment variables. The example scripts explicitly read FLINT_BASE_URL and their named credential variables.\n\n') +
     (c.authShortcuts?.apiKey
       ? 'For a multi-tenant application, pass the tenant credential explicitly and disable ambient discovery:\n\n' +
