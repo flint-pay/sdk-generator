@@ -1217,7 +1217,7 @@ try { $client = new Example\\Discovery\\Client(new Example\\Discovery\\ClientOpt
         const env = {
           ...process.env,
           AWS_REGION: 'us-east-2',
-          AWS_ENDPOINT_URL_STS: baseUrl + '/sts',
+          AWS_ENDPOINT_URL_STS: baseUrl.replace('127.0.0.1', 'localhost') + '/sts',
           AWS_CONTAINER_CREDENTIALS_FULL_URI:
             baseUrl.replace('127.0.0.1', 'localhost') + '/credentials',
           AWS_CONTAINER_AUTHORIZATION_TOKEN: 'synthetic-container-auth',
