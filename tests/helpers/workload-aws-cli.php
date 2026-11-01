@@ -18,6 +18,9 @@ namespace Aws\Credentials {
         }
     }
 }
+namespace GuzzleHttp\Promise {
+    final class Create {}
+}
 namespace Aws\Sts {
     if (getenv('SYNTHETIC_AWS_AVAILABLE') === '1') {
         final class StsClient

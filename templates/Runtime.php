@@ -879,7 +879,9 @@ final class AmbientCredentialProvider implements CredentialProvider
             } elseif ($source === 'aws') {
                 if (
                     !class_exists(\Aws\Sts\StsClient::class) ||
-                    !class_exists(\Aws\Credentials\CredentialProvider::class)
+                    !class_exists(\Aws\Credentials\CredentialProvider::class) ||
+                    !class_exists(\GuzzleHttp\Promise\Create::class) ||
+                    !function_exists('Aws\\default_http_handler')
                 ) {
                     $fail(
                         'source_unavailable',
