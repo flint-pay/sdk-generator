@@ -4,6 +4,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ## Unreleased
 
+- Both runtimes support optional AWS STS outbound identity federation with ES384 and use the saved Flint CLI session last in the default credential chain. Explicit cloud sources work without platform markers; Azure auto discovery requires its endpoint/header pair.
+
 - Both generated runtimes support GitLab CI, Kubernetes projected tokens, GCP metadata and Azure managed identity subject tokens. Cloud auto discovery requires platform markers; foreign service token files are refused.
 
 - PHP representation-link validation no longer creates self-referential closures that retain descriptor sources, keeping full package validation within its memory budget without relying on cyclic garbage collection.

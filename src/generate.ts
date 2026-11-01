@@ -1388,8 +1388,16 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
             },
           },
           engines: { node: '>=22.3' },
-          peerDependencies: { '@types/node': '>=22.16.0' },
-          peerDependenciesMeta: { '@types/node': { optional: true } },
+          peerDependencies: {
+            '@types/node': '>=22.16.0',
+            ...(compiledRuntime.defaultCredentials ? { '@aws-sdk/client-sts': '^3.1161.0' } : {}),
+          },
+          peerDependenciesMeta: {
+            '@types/node': { optional: true },
+            ...(compiledRuntime.defaultCredentials
+              ? { '@aws-sdk/client-sts': { optional: true } }
+              : {}),
+          },
           publishConfig: {
             registry: c.config.npm.registry ?? 'https://registry.npmjs.org',
             access: c.config.npm.access ?? 'public',
@@ -1785,13 +1793,21 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         type: 'library',
         license: c.config.license ?? 'Apache-2.0',
         require: { php: '>=8.2', 'ext-json': '*', 'ext-curl': '*' },
-        ...(c.config.webhook?.jwt
+        ...(c.config.webhook?.jwt || phpContract.defaultCredentials
           ? {
               suggest: {
-                'ext-openssl': 'Required for ES256 webhook verification',
-                'psr/simple-cache': 'Optional PSR-16 JWKS cache',
-                'psr/http-client': 'Optional PSR-18 JWKS HTTP client',
-                'psr/http-factory': 'Optional PSR-17 request factory for the JWKS HTTP client',
+                ...(phpContract.defaultCredentials
+                  ? { 'aws/aws-sdk-php': 'Optional AWS STS workload identity source (>=3.402.5)' }
+                  : {}),
+                ...(c.config.webhook?.jwt
+                  ? {
+                      'ext-openssl': 'Required for ES256 webhook verification',
+                      'psr/simple-cache': 'Optional PSR-16 JWKS cache',
+                      'psr/http-client': 'Optional PSR-18 JWKS HTTP client',
+                      'psr/http-factory':
+                        'Optional PSR-17 request factory for the JWKS HTTP client',
+                    }
+                  : {}),
               },
             }
           : {}),
@@ -1806,7 +1822,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     if (phpContract.defaultCredentials)
       put(
         'src/credentials.php',
-        `<?php\ndeclare(strict_types=1);\nnamespace ${ns};\nfunction defaultCredentials(): CredentialProvider { return new AmbientCredentialProvider(${'json_decode(' + php(JSON.stringify(phpContract.defaultCredentials)) + ', true)'}, null, ${c.defaultBaseUrl === undefined ? 'null' : php(c.defaultBaseUrl)}); }\n/** @param array{workloadIdentityId: string, source?: 'auto'|'none'|'token'|'token_file'|'github_actions'|'gitlab_ci'|'kubernetes'|'gcp'|'azure', audience?: string, scope?: string} $options */\nfunction workloadIdentityCredentials(array $options): CredentialProvider { return new AmbientCredentialProvider(${'json_decode(' + php(JSON.stringify(phpContract.defaultCredentials)) + ', true)'}, $options, ${c.defaultBaseUrl === undefined ? 'null' : php(c.defaultBaseUrl)}); }\n`,
+        `<?php\ndeclare(strict_types=1);\nnamespace ${ns};\nfunction defaultCredentials(): CredentialProvider { return new AmbientCredentialProvider(${'json_decode(' + php(JSON.stringify(phpContract.defaultCredentials)) + ', true)'}, null, ${c.defaultBaseUrl === undefined ? 'null' : php(c.defaultBaseUrl)}); }\n/** @param array{workloadIdentityId: string, source?: 'auto'|'none'|'token'|'token_file'|'github_actions'|'gitlab_ci'|'kubernetes'|'gcp'|'azure'|'aws', audience?: string, scope?: string} $options */\nfunction workloadIdentityCredentials(array $options): CredentialProvider { return new AmbientCredentialProvider(${'json_decode(' + php(JSON.stringify(phpContract.defaultCredentials)) + ', true)'}, $options, ${c.defaultBaseUrl === undefined ? 'null' : php(c.defaultBaseUrl)}); }\n`,
       );
     put('custom/.gitkeep', '');
     put(
@@ -3778,7 +3794,7 @@ function runtimeGuide(
     (node ? '' : ' and closures') +
     ' never trigger this refresh retry. Credential provider exceptions become authentication errors without retaining potentially sensitive causes.\n\n' +
     (c.config.auth && 'defaultCredentials' in c.config.auth && c.config.auth.defaultCredentials
-      ? 'Default credential discovery is lazy and runs only when no credential option is passed on either the client or the request, and ambientCredentials is not false. It tries configured API key/access token environment variables (setting both throws ConfigurationError with code credential_conflict), then configured workload identity. Set ambientCredentials: false to disable it. defaultCredentials() and workloadIdentityCredentials(options) return credential providers supporting token, token_file, github_actions, gitlab_ci, kubernetes, gcp and azure sources and cached refresh.\n\n'
+      ? 'Default credential discovery is lazy and runs only when no credential option is passed on either the client or the request, and ambientCredentials is not false. It tries configured API key/access token environment variables (setting both throws ConfigurationError with code credential_conflict), then configured workload identity when its ID is set, then flint auth token --output json for a saved CLI session when no workload identity ID is configured. Set the configured CLI_CREDENTIALS environment variable to 0 to disable the CLI process. Set ambientCredentials: false to disable it. defaultCredentials() and workloadIdentityCredentials(options) return credential providers supporting token, token_file, github_actions, gitlab_ci, kubernetes, gcp, azure and aws sources and cached refresh. The aws source requires the optional @aws-sdk/client-sts package in Node or aws/aws-sdk-php in PHP.\n\n'
       : 'This SDK does not discover credentials from environment variables. The example scripts explicitly read FLINT_BASE_URL and their named credential variables.\n\n') +
     (c.authShortcuts?.apiKey
       ? 'For a multi-tenant application, pass the tenant credential explicitly and disable ambient discovery:\n\n' +

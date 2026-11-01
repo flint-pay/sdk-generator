@@ -102,7 +102,7 @@ Nested constraint changes in `allOf`, `anyOf`, and `not` can receive only a `rev
 ## Unsupported capabilities
 
 - File uploads, multipart bodies, binary response media other than PDF, and download resume/checksum protocols. PDF downloads are buffered; general-purpose file streaming is outside the current contract.
-- Built-in OAuth refresh, AWS outbound federation and CLI-process credentials. Declared [default credentials](using-sdks.md#default-credentials) support environment, token-file, GitHub Actions, GitLab CI, Kubernetes, GCP and Azure federation with process caching in both targets. Other tokens can be supplied as strings or [credential providers](using-sdks.md#credential-providers).
+- Built-in OAuth refresh. Declared [default credentials](using-sdks.md#default-credentials) support environment, token-file, GitHub Actions, GitLab CI, Kubernetes, GCP, Azure and AWS federation, plus CLI-session credentials with process caching in both targets. Other tokens can be supplied as strings or [credential providers](using-sdks.md#credential-providers).
 - Bulk helpers, additional protocols and languages, adaptive throttling, caching and dirty tracking, framework packages, checkout UI, portals, forwarding and replay services, and time simulation.
 
 The schema can still express per-item bulk results, resource relationships, next actions and exports as ordinary data. Automatic provider behavior requires a declared capability, except for bounded default retries on GET/HEAD/OPTIONS; a resource property alone never triggers network activity.

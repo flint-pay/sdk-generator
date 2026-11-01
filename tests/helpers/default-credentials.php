@@ -44,6 +44,7 @@ namespace {
             flags: JSON_THROW_ON_ERROR,
         ),
     );
+    putenv('EXAMPLE_CLI_CREDENTIALS=0');
     foreach ($cases as $index => $c) {
         foreach (
             [
@@ -73,6 +74,10 @@ namespace {
                 'IDENTITY_ENDPOINT',
                 'IDENTITY_HEADER',
                 'AZURE_RESOURCE_ID',
+                'AWS_EXECUTION_ENV',
+                'AWS_LAMBDA_FUNCTION_NAME',
+                'ECS_CONTAINER_METADATA_URI',
+                'ECS_CONTAINER_METADATA_URI_V4',
                 'AWS_WEB_IDENTITY_TOKEN_FILE',
                 'AZURE_FEDERATED_TOKEN_FILE',
             ]
