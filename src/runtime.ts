@@ -579,84 +579,6 @@ async function identityMetadata(
     context?.signal?.removeEventListener('abort', abort);
   }
 }
-async function awsRoleCredential(context: CredentialContext | undefined, deadline: number) {
-  if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY)
-    return {
-      accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-      sessionToken: process.env.AWS_SESSION_TOKEN,
-    };
-  let endpoint: URL;
-  const headers: Record<string, string> = {};
-  const full = process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI,
-    relative = process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI;
-  if (full || relative) {
-    endpoint = new URL(full || 'http://169.254.170.2' + relative);
-    if (
-      endpoint.protocol !== 'https:' &&
-      !(
-        endpoint.protocol === 'http:' &&
-        ['169.254.170.2', '169.254.170.23', '127.0.0.1', 'localhost', '[::1]'].includes(
-          endpoint.hostname,
-        )
-      )
-    )
-      throw new Error();
-    if (process.env.AWS_CONTAINER_AUTHORIZATION_TOKEN)
-      headers.Authorization = process.env.AWS_CONTAINER_AUTHORIZATION_TOKEN;
-  } else {
-    if (process.env.AWS_EC2_METADATA_DISABLED === 'true') throw new Error();
-    const base = process.env.AWS_EC2_METADATA_SERVICE_ENDPOINT || 'http://169.254.169.254';
-    endpoint = new URL(base);
-    if (
-      !['http:', 'https:'].includes(endpoint.protocol) ||
-      endpoint.username ||
-      endpoint.password ||
-      endpoint.hash
-    )
-      throw new Error();
-    const token = await identityMetadata(
-      new URL('/latest/api/token', endpoint),
-      { 'X-aws-ec2-metadata-token-ttl-seconds': '60' },
-      context,
-      deadline,
-      'PUT',
-    );
-    if (!token.trim() || /[\r\n]/.test(token)) throw new Error();
-    headers['X-aws-ec2-metadata-token'] = token;
-    const role = (
-      await identityMetadata(
-        new URL('/latest/meta-data/iam/security-credentials/', endpoint),
-        headers,
-        context,
-        deadline,
-      )
-    ).trim();
-    if (!/^[A-Za-z0-9+=,.@_-]+$/.test(role)) throw new Error();
-    endpoint = new URL(
-      '/latest/meta-data/iam/security-credentials/' + encodeURIComponent(role),
-      endpoint,
-    );
-  }
-  if (endpoint.username || endpoint.password || endpoint.hash) throw new Error();
-  const raw: unknown = JSON.parse(await identityMetadata(endpoint, headers, context, deadline));
-  if (
-    !raw ||
-    typeof raw !== 'object' ||
-    !('AccessKeyId' in raw) ||
-    typeof raw.AccessKeyId !== 'string' ||
-    !('SecretAccessKey' in raw) ||
-    typeof raw.SecretAccessKey !== 'string' ||
-    !('Token' in raw) ||
-    typeof raw.Token !== 'string'
-  )
-    throw new Error();
-  return {
-    accessKeyId: raw.AccessKeyId,
-    secretAccessKey: raw.SecretAccessKey,
-    sessionToken: raw.Token,
-  };
-}
 
 /** Generated package wrappers supply API and environment configuration. */
 export function configuredDefaultCredentials(
@@ -942,14 +864,7 @@ class AmbientCredentialProvider implements CredentialProvider {
         'source_unavailable',
         `Add GitLab YAML:\nid_tokens:\n  ${prefix}_OIDC_TOKEN:\n    aud: ${audience}`,
       );
-    if (source === 'kubernetes') {
-      if (!process.env.KUBERNETES_SERVICE_HOST)
-        fail(
-          'source_unavailable',
-          'KUBERNETES_SERVICE_HOST is required for a Flint projected token',
-        );
-      file ??= '/var/run/secrets/flint/token';
-    }
+    if (source === 'kubernetes') file ??= '/var/run/secrets/flint/token';
     if (source === 'azure' && !this.identity?.audience && !read('OIDC_AUDIENCE'))
       fail('source_unavailable', `Set ${prefix}_OIDC_AUDIENCE to the merchant Entra app ID URI`);
     if (source === 'token_file' || source === 'kubernetes') {
@@ -1007,6 +922,11 @@ class AmbientCredentialProvider implements CredentialProvider {
                 .update(process.env.IDENTITY_HEADER ?? '')
                 .digest('hex'),
               read('AZURE_CLIENT_ID'),
+              process.env.AWS_PROFILE,
+              process.env.AWS_DEFAULT_PROFILE,
+              process.env.AWS_CONFIG_FILE,
+              process.env.AWS_SHARED_CREDENTIALS_FILE,
+              process.env.AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE,
               process.env.AWS_REGION,
               process.env.AWS_DEFAULT_REGION,
               process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI,
@@ -1020,6 +940,7 @@ class AmbientCredentialProvider implements CredentialProvider {
                     process.env.AWS_ACCESS_KEY_ID,
                     process.env.AWS_SECRET_ACCESS_KEY,
                     process.env.AWS_SESSION_TOKEN,
+                    process.env.AWS_CONTAINER_AUTHORIZATION_TOKEN,
                   ]),
                 )
                 .digest('hex'),
@@ -1162,6 +1083,58 @@ class AmbientCredentialProvider implements CredentialProvider {
           return fail('subject_token_request_failed', 'Metadata identity request failed');
         }
       } else if (source === 'aws') {
+        // The standard IMDS provider uses the global core HTTP agent. Node's opt-in
+        // environment proxy mode changes that agent, so refuse it before SDK I/O.
+        if (
+          process.env.NODE_USE_ENV_PROXY === '1' ||
+          process.execArgv.some((arg) => /^--use-env-proxy(?:=|$)/.test(arg)) ||
+          /(?:^|\s)--use-env-proxy(?:[=\s]|$)/.test(process.env.NODE_OPTIONS ?? '') ||
+          [process.getBuiltinModule('http'), process.getBuiltinModule('https')].some((module) => {
+            const agent: unknown = module.globalAgent;
+            if (!agent || typeof agent !== 'object' || !('options' in agent)) return false;
+            const options = agent.options;
+            if (!options || typeof options !== 'object' || !('proxyEnv' in options)) return false;
+            const proxyEnv = options.proxyEnv;
+            return Boolean(
+              proxyEnv && typeof proxyEnv === 'object' && Object.keys(proxyEnv).length > 0,
+            );
+          })
+        )
+          return fail(
+            'source_unavailable',
+            'The aws source requires NODE_USE_ENV_PROXY and --use-env-proxy to be disabled',
+          );
+        // Do not let the standard chain read inbound web-identity subject tokens.
+        // Reject shared files containing this setting, including source profiles.
+        const fs = process.getBuiltinModule('fs');
+        const home = process.getBuiltinModule('os').homedir();
+        const sharedFiles = [
+          process.env.AWS_CONFIG_FILE || home + '/.aws/config',
+          process.env.AWS_SHARED_CREDENTIALS_FILE || home + '/.aws/credentials',
+        ];
+        let inboundIdentity = Boolean(process.env.AWS_WEB_IDENTITY_TOKEN_FILE);
+        try {
+          inboundIdentity ||= sharedFiles.some((path) => {
+            try {
+              return /^\s*web_identity_token_file\s*=/m.test(fs.readFileSync(path, 'utf8'));
+            } catch (error) {
+              // A missing file is normal; other errors must not bypass the guard.
+              if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')
+                return false;
+              throw error;
+            }
+          });
+        } catch {
+          return fail(
+            'source_unavailable',
+            'Cannot inspect AWS shared configuration for inbound web identity',
+          );
+        }
+        if (inboundIdentity)
+          return fail(
+            'source_unavailable',
+            'The aws source refuses AWS_WEB_IDENTITY_TOKEN_FILE and profile web_identity_token_file; use outbound IAM federation',
+          );
         const packageName = '@aws-sdk/client-sts';
         let loaded: unknown;
         try {
@@ -1200,19 +1173,23 @@ class AmbientCredentialProvider implements CredentialProvider {
         const timer = schedule(abort, Math.max(0, cloudDeadline - performance.now()));
         let client: InstanceType<typeof sdk.STSClient> | undefined;
         try {
+          const requestHandler = {
+            connectionTimeout: 1000,
+            requestTimeout: 2000,
+            httpAgent: new (process.getBuiltinModule('http').Agent)(identityAgentOptions),
+            httpsAgent: new (process.getBuiltinModule('https').Agent)(identityAgentOptions),
+          };
           client = new sdk.STSClient({
             region: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION,
             maxAttempts: 1,
             useGlobalEndpoint: false,
-            // Avoid SDK metadata heuristics outside the protected credential transport.
             defaultsMode: 'standard',
-            credentials: () => awsRoleCredential(context, cloudDeadline),
-            requestHandler: {
-              connectionTimeout: 1000,
-              requestTimeout: 2000,
-              httpAgent: new (process.getBuiltinModule('http').Agent)(identityAgentOptions),
-              httpsAgent: new (process.getBuiltinModule('https').Agent)(identityAgentOptions),
-            },
+            // The platform default chain owns profile, container and IMDS selection.
+            timeout: 1000,
+            maxRetries: 0,
+            requestHandler,
+            // SSO clients use clientConfig rather than inheriting the parent handler.
+            clientConfig: { requestHandler, defaultsMode: 'standard', maxAttempts: 1 },
           });
           const result = await abortable(
             client.send(
