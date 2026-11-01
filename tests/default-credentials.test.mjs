@@ -974,7 +974,7 @@ import('node:fs').then(({appendFileSync}) => {
           join(awsDir, 'index.js'),
           `import {appendFileSync} from 'node:fs';
 export class GetWebIdentityTokenCommand { constructor(input) { this.input = input; } }
-export class STSClient { constructor(config) { this.config = config; } destroy() {} async send(command) {
+export class STSClient { constructor(config) { if (config.useGlobalEndpoint !== false) throw Error('STS must use regional endpoints'); this.config = config; } destroy() {} async send(command) {
  if (JSON.stringify(command.input) !== JSON.stringify({Audience:['https://example.invalid'],SigningAlgorithm:'ES384'})) throw Error('Invalid STS input');
  await this.config.credentials();
  appendFileSync(process.env.SYNTHETIC_AWS_LOG, 'sts\\n');

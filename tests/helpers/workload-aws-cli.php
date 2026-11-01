@@ -18,6 +18,7 @@ namespace Aws\Sts {
                         'Audience' => ['https://example.invalid'],
                         'SigningAlgorithm' => 'ES384',
                     ] ||
+                    ($this->config['sts_regional_endpoints'] ?? null) !== 'regional' ||
                     ($this->config['http']['proxy'] ?? null) !== '' ||
                     ($this->config['http']['allow_redirects'] ?? null) !== false
                 ) {

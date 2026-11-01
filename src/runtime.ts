@@ -658,7 +658,7 @@ async function awsRoleCredential(context: CredentialContext | undefined, deadlin
   };
 }
 
-/** Generated package wrappers supply provider configuration; no provider names live here. */
+/** Generated package wrappers supply API and environment configuration. */
 export function configuredDefaultCredentials(
   config: DefaultCredentials,
   baseUrl?: string,
@@ -1203,6 +1203,9 @@ class AmbientCredentialProvider implements CredentialProvider {
           client = new sdk.STSClient({
             region: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION,
             maxAttempts: 1,
+            useGlobalEndpoint: false,
+            // Avoid SDK metadata heuristics outside the protected credential transport.
+            defaultsMode: 'standard',
             credentials: () => awsRoleCredential(context, cloudDeadline),
             requestHandler: {
               connectionTimeout: 1000,

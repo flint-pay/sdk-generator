@@ -889,8 +889,15 @@ final class AmbientCredentialProvider implements CredentialProvider
                 try {
                     $cloudDeadline = min($deadline, hrtime(true) / 1e6 + 5000);
                     $role = self::awsRole($context, $cloudDeadline);
+                    if (
+                        hrtime(true) / 1e6 >= $cloudDeadline ||
+                        ($context['cancellation'] ?? null)?->isCancelled()
+                    ) {
+                        throw new \RuntimeException();
+                    }
                     $client = new \Aws\Sts\StsClient([
                         'version' => '2011-06-15',
+                        'sts_regional_endpoints' => 'regional',
                         'region' => getenv('AWS_REGION') ?: getenv('AWS_DEFAULT_REGION') ?: null,
                         'credentials' => new \Aws\Credentials\Credentials(
                             $role['AccessKeyId'],
