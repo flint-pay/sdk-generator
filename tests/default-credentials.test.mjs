@@ -11,7 +11,9 @@ import { loadContract, generate } from '../dist/index.js';
 
 const root = mkdtempSync(join(tmpdir(), 'sdk-default-credentials-'));
 after(() => rmSync(root, { recursive: true, force: true }));
-const cases = JSON.parse(readFileSync('tests/fixtures/default-credentials.json', 'utf8'));
+const cases = ['default-credentials.json', 'default-credentials-sources.json'].flatMap((name) =>
+  JSON.parse(readFileSync('tests/fixtures/' + name, 'utf8')),
+);
 const defaults = {
   mode: 'service',
   scheme: 'Bearer',
@@ -101,10 +103,23 @@ const envKeys = [
   'OIDC_TOKEN_FILE',
   'OIDC_AUDIENCE',
   'OIDC_SCOPE',
+  'AZURE_CLIENT_ID',
 ];
 function clearEnv() {
   for (const key of envKeys) delete process.env['EXAMPLE_' + key];
   for (const key of [
+    'GITLAB_CI',
+    'KUBERNETES_SERVICE_HOST',
+    'K_SERVICE',
+    'FUNCTION_TARGET',
+    'FUNCTION_NAME',
+    'GCE_METADATA_HOST',
+    'GCE_METADATA_IP',
+    'IDENTITY_ENDPOINT',
+    'IDENTITY_HEADER',
+    'AZURE_RESOURCE_ID',
+    'AWS_WEB_IDENTITY_TOKEN_FILE',
+    'AZURE_FEDERATED_TOKEN_FILE',
     'GITHUB_ACTIONS',
     'ACTIONS_ID_TOKEN_REQUEST_URL',
     'ACTIONS_ID_TOKEN_REQUEST_TOKEN',
@@ -122,6 +137,8 @@ test('shared default credential conformance in Node and PHP', async () => {
       const id = 'wid_synthetic_' + cases.indexOf(c);
       for (const [key, value] of Object.entries(c.environment ?? {}))
         process.env['EXAMPLE_' + key] = value;
+      for (const [key, value] of Object.entries(c.platformEnvironment ?? {}))
+        process.env[key] = value;
       if (c.identity) process.env.EXAMPLE_WORKLOAD_IDENTITY_ID = id;
       const subject = c.rawToken ?? (c.token ? jwt(c.token, now) : '');
       if (subject) process.env.EXAMPLE_OIDC_TOKEN = subject;
@@ -130,6 +147,7 @@ test('shared default credential conformance in Node and PHP', async () => {
         process.env.EXAMPLE_OIDC_TOKEN_FILE = file;
         if (!c.missingFile) writeFileSync(file, c.fileToken ? jwt(c.fileToken, now) : c.file);
       }
+      let metadataRequests = 0;
       let exchanges = 0,
         seen = [],
         sentSubjects = [],
@@ -138,14 +156,29 @@ test('shared default credential conformance in Node and PHP', async () => {
         diagnostics: (event) => events.push(event),
         ...(c.disabled ? { ambientCredentials: false } : {}),
         transport: async (url, init) => {
+          if (init.method === 'GET' && c.metadata && new URL(url).pathname !== '/read') {
+            metadataRequests++;
+            assert.equal(String(url), c.metadata.url, c.name);
+            assert.deepEqual(init.headers, c.metadata.headers, c.name);
+            assert.equal(init.redirect, 'manual');
+            return new Response(
+              c.metadata.rawBody ??
+                (c.metadata.json
+                  ? JSON.stringify({ access_token: jwt(c.metadata.token ?? {}, now) })
+                  : jwt(c.metadata.token ?? {}, now)),
+              { status: c.metadata.status ?? 200 },
+            );
+          }
+
           if (new URL(url).pathname === '/v1/oauth/token') {
             const status = c.exchanges?.[exchanges++];
             assert.notEqual(status, undefined, c.name + ' unexpected exchange');
             assert.equal(init.method, 'POST');
             assert.equal(init.redirect, 'manual');
             assert.equal(init.headers['content-type'], 'application/x-www-form-urlencoded');
-            const expectedSubject =
-              process.env.EXAMPLE_OIDC_SOURCE === 'token_file' || (!subject && !c.rawToken)
+            const expectedSubject = c.metadata
+              ? jwt(c.metadata.token ?? {}, now)
+              : process.env.EXAMPLE_OIDC_SOURCE === 'token_file' || (!subject && !c.rawToken)
                 ? readFileSync(file, 'utf8').trim()
                 : subject;
             const expected = {
@@ -219,6 +252,10 @@ test('shared default credential conformance in Node and PHP', async () => {
       }
       assert.equal(error?.code, c.code ?? (error ? '' : undefined), c.name + ': ' + error?.message);
       if (c.reason) assert.equal(error.workloadIdentity.reason, c.reason, c.name);
+      if (c.source) assert.equal(error.workloadIdentity.source, c.source, c.name);
+      if (c.description)
+        assert.ok(error.workloadIdentity.errorDescription.includes(c.description), c.name);
+      assert.equal(metadataRequests, c.metadata ? 1 : 0, c.name);
       assert.equal(
         error?.name,
         error
@@ -544,8 +581,8 @@ test('discovery exports and ambient options compile and Composer loads namespace
 const options: WorkloadIdentityOptions = { workloadIdentityId: 'wid_example', source: 'token_file', audience: 'https://example.invalid', scope: 'read' };
 new Client({ ambientCredentials: false, apiKey: workloadIdentityCredentials(options) });
 new Client({ credentials: { service: { Bearer: defaultCredentials() } } });
-// @ts-expect-error cloud sources are not implemented
-workloadIdentityCredentials({ workloadIdentityId: 'wid_example', source: 'gcp' });
+// @ts-expect-error unsupported source
+workloadIdentityCredentials({ workloadIdentityId: 'wid_example', source: 'unsupported' });
 `,
   );
   let result = spawnSync(
@@ -767,4 +804,115 @@ test('default credential and README templates have no staging host', () => {
     'tests/providers/flint/full-common-sdk.json',
   ])
     assert.doesNotMatch(readFileSync(path, 'utf8'), /api\.staging\.withflintpay\.com/);
+});
+
+test('cloud metadata HTTP bypasses proxies, refuses redirects and has a short timeout', async () => {
+  const { createServer } = await import('node:http');
+  const { spawn } = await import('node:child_process');
+  let scenario,
+    baseUrl,
+    metadata = 0,
+    exchanges = 0;
+  const server = createServer((req, res) => {
+    if (req.url.startsWith('/computeMetadata/') || req.url.startsWith('/azure')) {
+      metadata++;
+      const url = new URL(req.url, baseUrl);
+      assert.equal(
+        url.searchParams.get(scenario.source === 'gcp' ? 'audience' : 'resource'),
+        baseUrl,
+      );
+      assert.equal(
+        req.headers[scenario.source === 'gcp' ? 'metadata-flavor' : 'x-identity-header'],
+        scenario.source === 'gcp' ? 'Google' : 'synthetic-identity-header',
+      );
+      if (scenario.mode === 'timeout') return;
+      if (scenario.mode === 'redirect') {
+        res.writeHead(302, { location: baseUrl + '/read' });
+        res.end();
+        return;
+      }
+      const token = jwt({ aud: baseUrl }, Date.now());
+      res.end(scenario.source === 'gcp' ? token : JSON.stringify({ access_token: token }));
+    } else if (req.url === '/v1/oauth/token') {
+      exchanges++;
+      res.end(
+        JSON.stringify({
+          access_token: 'synthetic-cloud-access',
+          token_type: 'Bearer',
+          issued_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+          expires_in: 3600,
+        }),
+      );
+    } else {
+      res.writeHead(204);
+      res.end();
+    }
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  baseUrl = 'http://127.0.0.1:' + server.address().port;
+  const php = join(root, 'cloud.php');
+  writeFileSync(
+    php,
+    `<?php
+require $argv[1] . '/src/autoload.php';
+try {
+  $client = new Example\\Discovery\\Client(new Example\\Discovery\\ClientOptions(baseUrl: $argv[2], allowInsecureHttp: true));
+  for ($i = 0; $i < 100; $i++) $client->api->read();
+  echo 'ok';
+} catch (Example\\Discovery\\SdkError $e) { echo $e->workloadIdentity['reason']; }
+`,
+  );
+  try {
+    for (const language of ['node', 'php'])
+      for (const source of ['gcp', 'azure'])
+        for (const mode of ['success', 'redirect', 'timeout']) {
+          clearEnv();
+          scenario = { source, mode };
+          metadata = exchanges = 0;
+          const env = {
+            ...process.env,
+            EXAMPLE_WORKLOAD_IDENTITY_ID: 'wid_http_' + language + source + mode,
+            EXAMPLE_OIDC_SOURCE: source,
+            EXAMPLE_OIDC_AUDIENCE: baseUrl,
+            GCE_METADATA_HOST: '127.0.0.1:' + server.address().port,
+            IDENTITY_ENDPOINT: baseUrl + '/azure',
+            IDENTITY_HEADER: 'synthetic-identity-header',
+            http_proxy: 'http://127.0.0.1:1',
+            HTTP_PROXY: 'http://127.0.0.1:1',
+            no_proxy: '127.0.0.1',
+            NO_PROXY: '127.0.0.1',
+          };
+          // The metadata host uses localhost, outside NO_PROXY. API exchange stays loopback.
+          env.GCE_METADATA_HOST = 'localhost:' + server.address().port;
+          env.IDENTITY_ENDPOINT = baseUrl.replace('127.0.0.1', 'localhost') + '/azure';
+          const code = `const {Client} = await import(${JSON.stringify(pathToFileURL(join(output, 'node/index.js')).href)}); try { const client = new Client({baseUrl: ${JSON.stringify(baseUrl)}, allowInsecureHttp: true}); await Promise.all(Array.from({length:100}, () => client.api.read())); process.stdout.write('ok'); } catch (e) { process.stdout.write(e.workloadIdentity?.reason ?? e.message); }`;
+          const child = spawn(
+            language === 'php' ? 'php' : process.execPath,
+            language === 'php'
+              ? [php, join(output, 'php'), baseUrl]
+              : ['--input-type=module', '-e', code],
+            { env },
+          );
+          let stdout = '',
+            stderr = '';
+          child.stdout.on('data', (chunk) => (stdout += chunk));
+          child.stderr.on('data', (chunk) => (stderr += chunk));
+          const status = await new Promise((resolve, reject) => {
+            child.on('error', reject);
+            child.on('close', resolve);
+          });
+          assert.equal(status, 0, stderr);
+          assert.equal(
+            stdout,
+            mode === 'success' ? 'ok' : 'subject_token_request_failed',
+            language + source + mode,
+          );
+          assert.equal(metadata, 1);
+          assert.equal(exchanges, mode === 'success' ? 1 : 0);
+        }
+  } finally {
+    clearEnv();
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
 });

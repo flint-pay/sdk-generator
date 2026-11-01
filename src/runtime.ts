@@ -482,7 +482,16 @@ export interface CredentialProvider {
   invalidate?(): void;
 }
 
-export type WorkloadIdentitySource = 'auto' | 'none' | 'token' | 'token_file' | 'github_actions';
+export type WorkloadIdentitySource =
+  | 'auto'
+  | 'none'
+  | 'token'
+  | 'token_file'
+  | 'github_actions'
+  | 'gitlab_ci'
+  | 'kubernetes'
+  | 'gcp'
+  | 'azure';
 export interface WorkloadIdentityOptions {
   workloadIdentityId: string;
   source?: WorkloadIdentitySource;
@@ -551,6 +560,8 @@ class AmbientCredentialProvider implements CredentialProvider {
         process.env[env.apiKey],
         process.env[env.token],
         process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN,
+        process.env.IDENTITY_HEADER,
+        read('OIDC_TOKEN'),
       ])
         if (token)
           for (const encoded of [token, encodeURIComponent(token)])
@@ -595,7 +606,7 @@ class AmbientCredentialProvider implements CredentialProvider {
       if (!id)
         fail(
           'no_credentials',
-          `Set ${env.apiKey}, ${env.token}, or ${prefix}_WORKLOAD_IDENTITY_ID with ${prefix}_OIDC_TOKEN, ${prefix}_OIDC_TOKEN_FILE, or GitHub Actions permissions: id-token: write`,
+          `Set ${env.apiKey}, ${env.token}, or ${prefix}_WORKLOAD_IDENTITY_ID with ${prefix}_OIDC_TOKEN, ${prefix}_OIDC_TOKEN_FILE, or GitHub Actions permissions: id-token: write. Other sources: GitLab id_tokens:, Kubernetes projected /var/run/secrets/flint/token, GCP metadata identity, Azure managed identity with OIDC_AUDIENCE`,
         );
     }
     if (typeof id !== 'string' || !id || /[\r\n]/.test(id))
@@ -610,23 +621,86 @@ class AmbientCredentialProvider implements CredentialProvider {
       fail('exchange_unavailable', 'Token exchange requires HTTPS or loopback');
     const audience = this.identity?.audience ?? read('OIDC_AUDIENCE') ?? url.origin;
     const scope = this.identity?.scope ?? read('OIDC_SCOPE');
-    const file = read('OIDC_TOKEN_FILE');
-    if (source === 'auto')
-      source = read('OIDC_TOKEN')
-        ? 'token'
-        : file
-          ? 'token_file'
-          : process.env.GITHUB_ACTIONS === 'true'
-            ? 'github_actions'
-            : 'none';
-    if (!['token', 'token_file', 'github_actions'].includes(source))
-      fail('source_unavailable', 'Supported sources: token, token_file, github_actions');
+    let file = read('OIDC_TOKEN_FILE');
+    if (source === 'auto') {
+      if (read('OIDC_TOKEN')) source = 'token';
+      else if (file) source = 'token_file';
+      else if (process.env.GITHUB_ACTIONS === 'true') source = 'github_actions';
+      else if (process.env.GITLAB_CI === 'true') source = 'gitlab_ci';
+      else if (process.env.KUBERNETES_SERVICE_HOST) source = 'kubernetes';
+      else if (
+        ['K_SERVICE', 'FUNCTION_TARGET', 'GCE_METADATA_HOST'].some((name) => process.env[name])
+      )
+        source = 'gcp';
+      else if (
+        (process.env.IDENTITY_ENDPOINT && process.env.IDENTITY_HEADER) ||
+        process.env.AZURE_RESOURCE_ID
+      )
+        source = 'azure';
+      else source = 'none';
+    }
+    if (
+      ![
+        'token',
+        'token_file',
+        'github_actions',
+        'gitlab_ci',
+        'kubernetes',
+        'gcp',
+        'azure',
+      ].includes(source)
+    )
+      fail(
+        'source_unavailable',
+        'Choose token, token_file, github_actions (permissions: id-token: write), gitlab_ci (id_tokens:), kubernetes (project /var/run/secrets/flint/token), gcp (metadata identity), or azure (managed identity and OIDC_AUDIENCE). Cloud auto discovery requires a platform environment marker.',
+      );
+    if (source === 'gitlab_ci' && !read('OIDC_TOKEN'))
+      fail(
+        'source_unavailable',
+        `Add GitLab YAML:\nid_tokens:\n  ${prefix}_OIDC_TOKEN:\n    aud: ${audience}`,
+      );
+    if (source === 'kubernetes') {
+      if (!process.env.KUBERNETES_SERVICE_HOST)
+        fail(
+          'source_unavailable',
+          'KUBERNETES_SERVICE_HOST is required for a Flint projected token',
+        );
+      file ??= '/var/run/secrets/flint/token';
+    }
+    if (source === 'azure' && !this.identity?.audience && !read('OIDC_AUDIENCE'))
+      fail('source_unavailable', `Set ${prefix}_OIDC_AUDIENCE to the merchant Entra app ID URI`);
+    if (source === 'token_file' || source === 'kubernetes') {
+      const fs = process.getBuiltinModule('fs');
+      const path = process.getBuiltinModule('path');
+      const paths = (value: string) => {
+        const absolute = path.resolve(value);
+        try {
+          return [absolute, fs.realpathSync(absolute)];
+        } catch {
+          return [absolute];
+        }
+      };
+      const selected = file ? paths(file) : [];
+      if (
+        [
+          process.env.AWS_WEB_IDENTITY_TOKEN_FILE,
+          process.env.AZURE_FEDERATED_TOKEN_FILE,
+          '/var/run/secrets/kubernetes.io/serviceaccount/token',
+        ].some((value) => value && paths(value).some((path) => selected.includes(path)))
+      )
+        fail(
+          'source_unavailable',
+          'Refusing a token file intended for another service; project a separate Flint audience token',
+        );
+    }
+    if (source === 'azure' && process.env.IDENTITY_ENDPOINT && !process.env.IDENTITY_HEADER)
+      fail('source_unavailable', 'Azure identity endpoint requires IDENTITY_HEADER');
     const githubUrl = process.env.ACTIONS_ID_TOKEN_REQUEST_URL;
     const githubToken = process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
     if (source === 'github_actions' && (!githubUrl || !githubToken))
       fail('source_unavailable', 'GitHub Actions requires permissions: id-token: write');
     const sourceKey =
-      source === 'token'
+      source === 'token' || source === 'gitlab_ci'
         ? process
             .getBuiltinModule('crypto')
             .createHash('sha256')
@@ -638,7 +712,17 @@ class AmbientCredentialProvider implements CredentialProvider {
               .createHash('sha256')
               .update(JSON.stringify([githubUrl, githubToken]))
               .digest('hex')
-          : file;
+          : [
+              file,
+              process.env.GCE_METADATA_HOST,
+              process.env.IDENTITY_ENDPOINT,
+              process
+                .getBuiltinModule('crypto')
+                .createHash('sha256')
+                .update(process.env.IDENTITY_HEADER ?? '')
+                .digest('hex'),
+              read('AZURE_CLIENT_ID'),
+            ];
     const key = JSON.stringify([
       url.origin,
       this.config.workloadIdentity.tokenPath,
@@ -731,10 +815,119 @@ class AmbientCredentialProvider implements CredentialProvider {
           timer.cancel();
           context?.signal?.removeEventListener('abort', abort);
         }
+      } else if (source === 'gcp' || source === 'azure') {
+        try {
+          const endpoint =
+            source === 'gcp'
+              ? new URL(
+                  'http://' +
+                    (process.env.GCE_METADATA_HOST || 'metadata.google.internal') +
+                    '/computeMetadata/v1/instance/service-accounts/default/identity',
+                )
+              : new URL(
+                  process.env.IDENTITY_ENDPOINT ||
+                    'http://169.254.169.254/metadata/identity/oauth2/token',
+                );
+          if (
+            !['http:', 'https:'].includes(endpoint.protocol) ||
+            endpoint.username ||
+            endpoint.password ||
+            endpoint.hash
+          )
+            throw new Error();
+          const headers: Record<string, string> = {};
+          if (source === 'gcp') {
+            endpoint.searchParams.set('audience', audience);
+            endpoint.searchParams.set('format', 'full');
+            headers['Metadata-Flavor'] = 'Google';
+          } else {
+            endpoint.searchParams.set(
+              'api-version',
+              process.env.IDENTITY_ENDPOINT ? '2019-08-01' : '2018-02-01',
+            );
+            endpoint.searchParams.set('resource', audience);
+            if (read('AZURE_CLIENT_ID'))
+              endpoint.searchParams.set('client_id', read('AZURE_CLIENT_ID') ?? '');
+            if (process.env.IDENTITY_ENDPOINT) {
+              if (!process.env.IDENTITY_HEADER)
+                return fail(
+                  'source_unavailable',
+                  'Azure identity endpoint requires IDENTITY_HEADER',
+                );
+              headers['X-IDENTITY-HEADER'] = process.env.IDENTITY_HEADER;
+            } else headers.Metadata = 'true';
+          }
+          const controller = new AbortController();
+          const abort = () => controller.abort();
+          context?.signal?.addEventListener('abort', abort, { once: true });
+          if (context?.signal?.aborted) controller.abort();
+          const timer = schedule(abort, Math.max(0, Math.min(2000, deadline - performance.now())));
+          try {
+            // Native HTTP has no environment proxy handling and never follows redirects.
+            const response =
+              context?.transport && context.transport !== fetch
+                ? await abortable(
+                    context.transport(endpoint, {
+                      method: 'GET',
+                      headers,
+                      redirect: 'manual',
+                      signal: controller.signal,
+                    }),
+                    controller.signal,
+                  )
+                : await new Promise<{ status: number; text(): Promise<string> }>(
+                    (resolve, reject) => {
+                      const request = (
+                        endpoint.protocol === 'https:'
+                          ? process.getBuiltinModule('https')
+                          : process.getBuiltinModule('http')
+                      ).get(
+                        endpoint,
+                        { headers, signal: controller.signal, agent: false },
+                        (response) => {
+                          const chunks: Buffer[] = [];
+                          let size = 0;
+                          response.on('data', (chunk: Buffer) => {
+                            size += chunk.length;
+                            if (size > 65536) request.destroy(new Error());
+                            else chunks.push(chunk);
+                          });
+                          response.on('error', reject);
+                          response.on('end', () =>
+                            resolve({
+                              status: response.statusCode ?? 0,
+                              text: async () => Buffer.concat(chunks).toString('utf8'),
+                            }),
+                          );
+                        },
+                      );
+                      request.on('error', reject);
+                    },
+                  );
+            if (response.status !== 200) throw new Error();
+            const body = await abortable(response.text(), controller.signal);
+            const payload: unknown = source === 'gcp' ? body.trim() : JSON.parse(body);
+            subject =
+              typeof payload === 'string'
+                ? payload
+                : payload &&
+                    typeof payload === 'object' &&
+                    'access_token' in payload &&
+                    typeof payload.access_token === 'string'
+                  ? payload.access_token
+                  : '';
+            if (!subject) throw new Error();
+          } finally {
+            timer.cancel();
+            context?.signal?.removeEventListener('abort', abort);
+          }
+        } catch {
+          return fail('subject_token_request_failed', 'Metadata identity request failed');
+        }
       } else
         try {
           subject =
-            source === 'token'
+            source === 'token' || source === 'gitlab_ci'
               ? (read('OIDC_TOKEN') ?? '')
               : file
                 ? (await process.getBuiltinModule('fs/promises').readFile(file, 'utf8')).trim()

@@ -36,6 +36,14 @@ namespace {
             '.synthetic-signature';
     }
     $cases = json_decode(file_get_contents($argv[2]), true, flags: JSON_THROW_ON_ERROR);
+    $cases = array_merge(
+        $cases,
+        json_decode(
+            file_get_contents(dirname($argv[2]) . '/default-credentials-sources.json'),
+            true,
+            flags: JSON_THROW_ON_ERROR,
+        ),
+    );
     foreach ($cases as $index => $c) {
         foreach (
             [
@@ -47,10 +55,33 @@ namespace {
                 'OIDC_TOKEN_FILE',
                 'OIDC_AUDIENCE',
                 'OIDC_SCOPE',
+                'AZURE_CLIENT_ID',
             ]
             as $key
         ) {
             putenv('EXAMPLE_' . $key);
+        }
+        foreach (
+            [
+                'GITLAB_CI',
+                'KUBERNETES_SERVICE_HOST',
+                'K_SERVICE',
+                'FUNCTION_TARGET',
+                'FUNCTION_NAME',
+                'GCE_METADATA_HOST',
+                'GCE_METADATA_IP',
+                'IDENTITY_ENDPOINT',
+                'IDENTITY_HEADER',
+                'AZURE_RESOURCE_ID',
+                'AWS_WEB_IDENTITY_TOKEN_FILE',
+                'AZURE_FEDERATED_TOKEN_FILE',
+            ]
+            as $key
+        ) {
+            putenv($key);
+        }
+        foreach ($c['platformEnvironment'] ?? [] as $key => $value) {
+            putenv($key . '=' . $value);
         }
         $GLOBALS['fixtureNow'] = 1900000000.0;
         $id = 'wid_synthetic_' . $index;
@@ -81,11 +112,44 @@ namespace {
                 );
             }
         }
+        $metadataRequests = 0;
         $exchanges = 0;
         $seen = [];
         $subjects = [];
         $events = [];
-        $transport = function ($r) use ($c, $id, $file, $subject, &$exchanges, &$seen, &$subjects) {
+        $transport = function ($r) use (
+            $c,
+            $id,
+            $file,
+            $subject,
+            &$exchanges,
+            &$seen,
+            &$subjects,
+            &$metadataRequests,
+        ) {
+            if (
+                $r['method'] === 'GET' &&
+                isset($c['metadata']) &&
+                parse_url($r['url'], PHP_URL_PATH) !== '/read'
+            ) {
+                $metadataRequests++;
+                check($r['url'] === $c['metadata']['url'], $c['name'] . ' metadata URL');
+                check(
+                    $r['headers'] === $c['metadata']['headers'],
+                    $c['name'] . ' metadata headers',
+                );
+                check($r['timeoutMs'] <= 2000, 'metadata timeout');
+                $token = jwt($c['metadata']['token'] ?? [], $GLOBALS['fixtureNow']);
+                return [
+                    'status' => $c['metadata']['status'] ?? 200,
+                    'headers' => [],
+                    'body' =>
+                        $c['metadata']['rawBody'] ??
+                        ($c['metadata']['json'] ?? false
+                            ? json_encode(['access_token' => $token])
+                            : $token),
+                ];
+            }
             if (parse_url($r['url'], PHP_URL_PATH) === '/v1/oauth/token') {
                 $status = $c['exchanges'][$exchanges++] ?? null;
                 check($status !== null, $c['name'] . ' unexpected exchange');
@@ -94,10 +158,11 @@ namespace {
                     $r['headers']['content-type'] === 'application/x-www-form-urlencoded',
                     'exchange media',
                 );
-                $expectedSubject =
-                    getenv('EXAMPLE_OIDC_SOURCE') === 'token_file' || !$subject
+                $expectedSubject = isset($c['metadata'])
+                    ? jwt($c['metadata']['token'] ?? [], $GLOBALS['fixtureNow'])
+                    : (getenv('EXAMPLE_OIDC_SOURCE') === 'token_file' || !$subject
                         ? trim(file_get_contents($file))
-                        : $subject;
+                        : $subject);
                 parse_str($r['body'], $form);
                 $expected = [
                     'grant_type' => 'urn:ietf:params:oauth:grant-type:token-exchange',
@@ -219,6 +284,19 @@ namespace {
                     : null),
             $c['name'] . ' error kind',
         );
+        check(
+            $metadataRequests === (isset($c['metadata']) ? 1 : 0),
+            $c['name'] . ' metadata count',
+        );
+        if (isset($c['source'])) {
+            check($error->workloadIdentity['source'] === $c['source'], $c['name'] . ' source');
+        }
+        if (isset($c['description'])) {
+            check(
+                str_contains($error->workloadIdentity['errorDescription'], $c['description']),
+                $c['name'] . ' description',
+            );
+        }
         check($seen === ($c['headers'] ?? []), $c['name'] . ' headers');
         check($exchanges === count($c['exchanges'] ?? []), $c['name'] . ' exchange count');
         if ($c['rotateFile'] ?? false) {

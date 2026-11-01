@@ -420,6 +420,7 @@ final class AmbientCredentialProvider implements CredentialProvider
                     getenv($environment['apiKey']),
                     getenv($environment['token']),
                     getenv('ACTIONS_ID_TOKEN_REQUEST_TOKEN'),
+                    getenv('IDENTITY_HEADER'),
                 ]
                 as $secret
             ) {
@@ -494,7 +495,7 @@ final class AmbientCredentialProvider implements CredentialProvider
                         $prefix .
                         '_OIDC_TOKEN or ' .
                         $prefix .
-                        '_OIDC_TOKEN_FILE, or GitHub Actions permissions: id-token: write',
+                        '_OIDC_TOKEN_FILE, or GitHub Actions permissions: id-token: write. Other sources: GitLab id_tokens:, Kubernetes projected /var/run/secrets/flint/token, GCP metadata identity, Azure managed identity with OIDC_AUDIENCE',
                 );
             }
         }
@@ -527,28 +528,115 @@ final class AmbientCredentialProvider implements CredentialProvider
         $scope = $this->identity['scope'] ?? $read('OIDC_SCOPE');
         $file = $read('OIDC_TOKEN_FILE');
         if ($source === 'auto') {
-            $source = $read('OIDC_TOKEN')
-                ? 'token'
-                : ($file
-                    ? 'token_file'
-                    : (getenv('GITHUB_ACTIONS') === 'true'
-                        ? 'github_actions'
-                        : 'none'));
+            $source = match (true) {
+                $read('OIDC_TOKEN') !== null => 'token',
+                $file !== null => 'token_file',
+                getenv('GITHUB_ACTIONS') === 'true' => 'github_actions',
+                getenv('GITLAB_CI') === 'true' => 'gitlab_ci',
+                (bool) getenv('KUBERNETES_SERVICE_HOST') => 'kubernetes',
+                (bool) (getenv('K_SERVICE') ?:
+                getenv('FUNCTION_TARGET') ?:
+                getenv('GCE_METADATA_HOST'))
+                    => 'gcp',
+                (bool) ((getenv('IDENTITY_ENDPOINT') && getenv('IDENTITY_HEADER')) ||
+                    getenv('AZURE_RESOURCE_ID'))
+                    => 'azure',
+                default => 'none',
+            };
         }
-        if (!in_array($source, ['token', 'token_file', 'github_actions'], true)) {
-            $fail('source_unavailable', 'Supported sources: token, token_file, github_actions');
+        if (
+            !in_array(
+                $source,
+                [
+                    'token',
+                    'token_file',
+                    'github_actions',
+                    'gitlab_ci',
+                    'kubernetes',
+                    'gcp',
+                    'azure',
+                ],
+                true,
+            )
+        ) {
+            $fail(
+                'source_unavailable',
+                'Choose token, token_file, github_actions (permissions: id-token: write), gitlab_ci (id_tokens:), kubernetes (project /var/run/secrets/flint/token), gcp (metadata identity), or azure (managed identity and OIDC_AUDIENCE). Cloud auto discovery requires a platform environment marker.',
+            );
+        }
+        if ($source === 'gitlab_ci' && !$read('OIDC_TOKEN')) {
+            $fail(
+                'source_unavailable',
+                "Add GitLab YAML:\nid_tokens:\n  " .
+                    $prefix .
+                    "_OIDC_TOKEN:\n    aud: " .
+                    $audience,
+            );
+        }
+        if ($source === 'kubernetes') {
+            if (!getenv('KUBERNETES_SERVICE_HOST')) {
+                $fail(
+                    'source_unavailable',
+                    'KUBERNETES_SERVICE_HOST is required for a Flint projected token',
+                );
+            }
+            $file ??= '/var/run/secrets/flint/token';
+        }
+        if ($source === 'azure' && !isset($this->identity['audience']) && !$read('OIDC_AUDIENCE')) {
+            $fail(
+                'source_unavailable',
+                'Set ' . $prefix . '_OIDC_AUDIENCE to the merchant Entra app ID URI',
+            );
+        }
+        if ($source === 'token_file' || $source === 'kubernetes') {
+            $paths = static function (string $path): array {
+                $absolute = str_starts_with($path, '/') ? $path : getcwd() . '/' . $path;
+                $segments = [];
+                foreach (explode('/', $absolute) as $segment) {
+                    if ($segment === '..') {
+                        array_pop($segments);
+                    } elseif ($segment !== '' && $segment !== '.') {
+                        $segments[] = $segment;
+                    }
+                }
+                return [
+                    '/' . implode('/', $segments),
+                    realpath($path) ?: '/' . implode('/', $segments),
+                ];
+            };
+            $selected = $file ? $paths($file) : [];
+            foreach (
+                [
+                    getenv('AWS_WEB_IDENTITY_TOKEN_FILE'),
+                    getenv('AZURE_FEDERATED_TOKEN_FILE'),
+                    '/var/run/secrets/kubernetes.io/serviceaccount/token',
+                ]
+                as $foreign
+            ) {
+                if ($foreign && array_intersect($selected, $paths($foreign))) {
+                    $fail(
+                        'source_unavailable',
+                        'Refusing a token file intended for another service; project a separate Flint audience token',
+                    );
+                }
+            }
         }
         $githubUrl = getenv('ACTIONS_ID_TOKEN_REQUEST_URL');
         $githubToken = getenv('ACTIONS_ID_TOKEN_REQUEST_TOKEN');
         if ($source === 'github_actions' && (!$githubUrl || !$githubToken)) {
             $fail('source_unavailable', 'GitHub Actions requires permissions: id-token: write');
         }
-        $sourceKey =
-            $source === 'token'
-                ? hash('sha256', $read('OIDC_TOKEN') ?? '')
-                : ($source === 'github_actions'
-                    ? hash('sha256', json_encode([$githubUrl, $githubToken]))
-                    : $file);
+        $sourceKey = in_array($source, ['token', 'gitlab_ci'], true)
+            ? hash('sha256', $read('OIDC_TOKEN') ?? '')
+            : ($source === 'github_actions'
+                ? hash('sha256', json_encode([$githubUrl, $githubToken]))
+                : [
+                    $file,
+                    getenv('GCE_METADATA_HOST'),
+                    getenv('IDENTITY_ENDPOINT'),
+                    hash('sha256', getenv('IDENTITY_HEADER') ?: ''),
+                    $read('AZURE_CLIENT_ID'),
+                ]);
         $key = hash(
             'sha256',
             json_encode([
@@ -693,7 +781,91 @@ final class AmbientCredentialProvider implements CredentialProvider
                     );
                 }
                 $subject = $payload['value'];
-            } elseif ($source === 'token') {
+            } elseif ($source === 'gcp' || $source === 'azure') {
+                $endpointUrl =
+                    $source === 'gcp'
+                        ? 'http://' .
+                            (getenv('GCE_METADATA_HOST') ?: 'metadata.google.internal') .
+                            '/computeMetadata/v1/instance/service-accounts/default/identity'
+                        : (getenv('IDENTITY_ENDPOINT') ?:
+                        'http://169.254.169.254/metadata/identity/oauth2/token');
+                $endpoint = parse_url($endpointUrl);
+                if (
+                    !$endpoint ||
+                    !in_array($endpoint['scheme'] ?? '', ['http', 'https'], true) ||
+                    isset($endpoint['user']) ||
+                    isset($endpoint['pass']) ||
+                    isset($endpoint['fragment'])
+                ) {
+                    $fail('subject_token_request_failed', 'Metadata identity endpoint is invalid');
+                }
+                parse_str($endpoint['query'] ?? '', $query);
+                $headers = [];
+                if ($source === 'gcp') {
+                    $query['audience'] = $audience;
+                    $query['format'] = 'full';
+                    $headers['Metadata-Flavor'] = 'Google';
+                } else {
+                    $query['api-version'] = getenv('IDENTITY_ENDPOINT')
+                        ? '2019-08-01'
+                        : '2018-02-01';
+                    $query['resource'] = $audience;
+                    if ($read('AZURE_CLIENT_ID')) {
+                        $query['client_id'] = $read('AZURE_CLIENT_ID');
+                    }
+                    if (getenv('IDENTITY_ENDPOINT')) {
+                        if (!getenv('IDENTITY_HEADER')) {
+                            $fail(
+                                'source_unavailable',
+                                'Azure identity endpoint requires IDENTITY_HEADER',
+                            );
+                        }
+                        $headers['X-IDENTITY-HEADER'] = getenv('IDENTITY_HEADER');
+                    } else {
+                        $headers['Metadata'] = 'true';
+                    }
+                }
+                $remaining = min(2000, $deadline - hrtime(true) / 1e6);
+                if ($remaining <= 0 || ($context['cancellation'] ?? null)?->isCancelled()) {
+                    $fail(
+                        'subject_token_request_failed',
+                        'Metadata identity request cancelled or expired',
+                    );
+                }
+                $request = [
+                    'url' =>
+                        explode('?', $endpointUrl, 2)[0] .
+                        '?' .
+                        http_build_query($query, '', '&', PHP_QUERY_RFC3986),
+                    'method' => 'GET',
+                    'headers' => $headers,
+                    'body' => '',
+                    'timeoutMs' => max(1, (int) ceil($remaining)),
+                    'cancellation' => $context['cancellation'] ?? null,
+                ];
+                try {
+                    $response = isset($context['transport'])
+                        ? $context['transport']($request)
+                        : self::send($request);
+                } catch (\Throwable) {
+                    $fail('subject_token_request_failed', 'Metadata identity request failed');
+                }
+                if (($response['failureCode'] ?? null) || $response['status'] !== 200) {
+                    $fail('subject_token_request_failed', 'Metadata identity request failed');
+                }
+                $payload =
+                    $source === 'gcp'
+                        ? trim($response['body'] ?? '')
+                        : json_decode($response['body'] ?? '', true);
+                $subject = is_string($payload)
+                    ? $payload
+                    : (is_array($payload) && is_string($payload['access_token'] ?? null)
+                        ? $payload['access_token']
+                        : '');
+                if ($subject === '') {
+                    $fail('subject_token_request_failed', 'Metadata identity response is invalid');
+                }
+            } elseif ($source === 'token' || $source === 'gitlab_ci') {
                 $subject = $read('OIDC_TOKEN') ?? '';
             } else {
                 $value = $file ? @file_get_contents($file) : '';
