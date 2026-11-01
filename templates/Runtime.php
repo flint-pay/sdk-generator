@@ -398,6 +398,10 @@ final class AmbientCredentialProvider implements CredentialProvider
             $value = getenv($prefix . '_' . $suffix);
             return $value === false || $value === '' ? null : $value;
         };
+        $present = static function (string $name): bool {
+            $value = getenv($name);
+            return $value !== false && $value !== '';
+        };
         $id = $this->identity['workloadIdentityId'] ?? $read('WORKLOAD_IDENTITY_ID');
         $source = $this->identity['source'] ?? ($read('OIDC_SOURCE') ?? 'auto');
         $subject = '';
@@ -542,17 +546,17 @@ final class AmbientCredentialProvider implements CredentialProvider
                 $file !== null => 'token_file',
                 getenv('GITHUB_ACTIONS') === 'true' => 'github_actions',
                 getenv('GITLAB_CI') === 'true' => 'gitlab_ci',
-                (bool) getenv('KUBERNETES_SERVICE_HOST') => 'kubernetes',
-                (bool) (getenv('K_SERVICE') ?:
-                getenv('FUNCTION_TARGET') ?:
-                getenv('GCE_METADATA_HOST'))
+                $present('KUBERNETES_SERVICE_HOST') => 'kubernetes',
+                $present('K_SERVICE') ||
+                    $present('FUNCTION_TARGET') ||
+                    $present('GCE_METADATA_HOST')
                     => 'gcp',
-                (bool) (getenv('IDENTITY_ENDPOINT') && getenv('IDENTITY_HEADER')) => 'azure',
+                $present('IDENTITY_ENDPOINT') && $present('IDENTITY_HEADER') => 'azure',
                 str_starts_with(getenv('AWS_EXECUTION_ENV') ?: '', 'AWS_Lambda_') ||
                     str_starts_with(getenv('AWS_EXECUTION_ENV') ?: '', 'AWS_ECS_') ||
-                    (bool) (getenv('AWS_LAMBDA_FUNCTION_NAME') ?:
-                    getenv('ECS_CONTAINER_METADATA_URI') ?:
-                        getenv('ECS_CONTAINER_METADATA_URI_V4'))
+                    $present('AWS_LAMBDA_FUNCTION_NAME') ||
+                    $present('ECS_CONTAINER_METADATA_URI') ||
+                    $present('ECS_CONTAINER_METADATA_URI_V4')
                     => 'aws',
                 default => 'none',
             };
@@ -578,7 +582,7 @@ final class AmbientCredentialProvider implements CredentialProvider
                 'Choose token, token_file, github_actions (permissions: id-token: write), gitlab_ci (id_tokens:), kubernetes (project /var/run/secrets/flint/token), gcp (metadata identity), azure (managed identity and OIDC_AUDIENCE), or aws (STS GetWebIdentityToken). Cloud auto discovery requires a platform environment marker.',
             );
         }
-        if ($source === 'gitlab_ci' && !$read('OIDC_TOKEN')) {
+        if ($source === 'gitlab_ci' && $read('OIDC_TOKEN') === null) {
             $fail(
                 'source_unavailable',
                 "Add GitLab YAML:\nid_tokens:\n  " .
@@ -588,7 +592,7 @@ final class AmbientCredentialProvider implements CredentialProvider
             );
         }
         if ($source === 'kubernetes') {
-            if (!getenv('KUBERNETES_SERVICE_HOST')) {
+            if (!$present('KUBERNETES_SERVICE_HOST')) {
                 $fail(
                     'source_unavailable',
                     'KUBERNETES_SERVICE_HOST is required for a Flint projected token',
@@ -596,7 +600,11 @@ final class AmbientCredentialProvider implements CredentialProvider
             }
             $file ??= '/var/run/secrets/flint/token';
         }
-        if ($source === 'azure' && !isset($this->identity['audience']) && !$read('OIDC_AUDIENCE')) {
+        if (
+            $source === 'azure' &&
+            !isset($this->identity['audience']) &&
+            $read('OIDC_AUDIENCE') === null
+        ) {
             $fail(
                 'source_unavailable',
                 'Set ' . $prefix . '_OIDC_AUDIENCE to the merchant Entra app ID URI',
@@ -636,7 +644,7 @@ final class AmbientCredentialProvider implements CredentialProvider
             }
         }
         $azureEndpoint =
-            getenv('IDENTITY_ENDPOINT') && getenv('IDENTITY_HEADER')
+            $present('IDENTITY_ENDPOINT') && $present('IDENTITY_HEADER')
                 ? getenv('IDENTITY_ENDPOINT')
                 : null;
         $githubUrl = getenv('ACTIONS_ID_TOKEN_REQUEST_URL');
@@ -838,7 +846,7 @@ final class AmbientCredentialProvider implements CredentialProvider
                 } else {
                     $query['api-version'] = $azureEndpoint ? '2019-08-01' : '2018-02-01';
                     $query['resource'] = $audience;
-                    if ($read('AZURE_CLIENT_ID')) {
+                    if ($read('AZURE_CLIENT_ID') !== null) {
                         $query['client_id'] = $read('AZURE_CLIENT_ID');
                     }
                     if ($azureEndpoint) {
