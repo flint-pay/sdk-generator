@@ -73,8 +73,18 @@ test('prepared descriptors own input, validate once per group and reject missing
   }, TypeError);
   const bad = structuredClone(group);
   bad.operations[0].body = compileCodec({ 'x-sdk-ref': 'Missing' });
+  bad.operations[0].mediaType = 'application/json';
   const broken = new DescriptorSource(settings, { one: () => bad });
   assert.throws(() => broken.operation('one'), /Missing compiled codec/);
+  for (const mediaType of [undefined, 'multipart/form-data']) {
+    const unsupported = structuredClone(group);
+    unsupported.operations[0].body = compileCodec({ type: 'object' });
+    if (mediaType) unsupported.operations[0].mediaType = mediaType;
+    assert.throws(
+      () => new DescriptorSource(settings, { one: () => unsupported }).operation('one'),
+      /one: unsupported request media type/,
+    );
+  }
   const duplicate = structuredClone(group);
   duplicate.operations.push({ ...duplicate.operations[0] });
   assert.throws(() => new DescriptorSource(duplicate), /Duplicate compiled operation one/);
@@ -92,6 +102,7 @@ test('prepared descriptors own input, validate once per group and reject missing
   assert.throws(() => codecClosure(reference, {}), /Missing compiled codec toString/);
   const named = structuredClone(group);
   named.operations[0].body = reference;
+  named.operations[0].mediaType = 'application/json';
   named.definitions = { toString: compileCodec({ type: 'string' }) };
   assert.deepEqual(codecClosure(reference, named.definitions), ['toString']);
   assert.equal(new DescriptorSource(settings, { one: () => named }).operation('one').id, 'one');

@@ -4887,6 +4887,98 @@ final class Codec
             JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES,
         );
     }
+    /** Text of a validated scalar in query parameters and form-encoded bodies. */
+    public static function scalarText(mixed $value): string
+    {
+        return $value instanceof RawNumber
+            ? $value->value
+            : (is_bool($value)
+                ? ($value
+                    ? 'true'
+                    : 'false')
+                : (is_float($value)
+                    ? self::floatText($value)
+                    : (string) $value));
+    }
+    /**
+     * The shortest round-trip decimal for a finite float, formatted like ECMAScript
+     * Number::toString so both runtimes send the same text. (string) and the
+     * precision ini setting would round to 14 significant digits.
+     */
+    private static function floatText(float $value): string
+    {
+        if (!is_finite($value)) {
+            self::fail('value', 'expected a finite number');
+        }
+        if ($value == 0.0) {
+            return '0';
+        }
+        // The fewest correctly rounded significant digits that parse back to $value.
+        for ($precision = 0; $precision < 17; $precision++) {
+            $text = sprintf('%.' . $precision . 'e', $value);
+            if ((float) $text === $value) {
+                break;
+            }
+        }
+        [$mantissa, $exponent] = explode('e', $text);
+        $sign = $value < 0 ? '-' : '';
+        $digits = rtrim(str_replace(['-', '.'], '', $mantissa), '0');
+        $count = strlen($digits);
+        $point = (int) $exponent + 1;
+        if ($count <= $point && $point <= 21) {
+            return $sign . $digits . str_repeat('0', $point - $count);
+        }
+        if (0 < $point && $point <= 21) {
+            return $sign . substr($digits, 0, $point) . '.' . substr($digits, $point);
+        }
+        if (-6 < $point && $point <= 0) {
+            return $sign . '0.' . str_repeat('0', -$point) . $digits;
+        }
+        $power = $point - 1;
+        return $sign .
+            $digits[0] .
+            ($count > 1 ? '.' . substr($digits, 1) : '') .
+            'e' .
+            ($power < 0 ? '-' : '+') .
+            abs($power);
+    }
+    /**
+     * Encode a request-codec result as application/x-www-form-urlencoded. Fields use
+     * the exploded form style and percent-encoding of query parameters; the contract
+     * admits only flat objects of scalars, and undeclared open-object values are checked here.
+     */
+    public static function formEncode(mixed $value): string
+    {
+        if ($value instanceof Model) {
+            $value = $value->toInputValue();
+        }
+        if (
+            !(is_object($value) && !($value instanceof RawNumber)) &&
+            !(is_array($value) && (!$value || !array_is_list($value)))
+        ) {
+            self::typeError('input', 'an object', $value);
+        }
+        $pairs = [];
+        foreach ((array) $value as $name => $field) {
+            if (
+                !(
+                    is_string($field) ||
+                    is_bool($field) ||
+                    is_int($field) ||
+                    (is_float($field) && is_finite($field)) ||
+                    $field instanceof RawNumber
+                )
+            ) {
+                self::typeError(
+                    self::pathKey('input', $name),
+                    'a boolean, string or number',
+                    $field,
+                );
+            }
+            $pairs[] = rawurlencode((string) $name) . '=' . rawurlencode(self::scalarText($field));
+        }
+        return implode('&', $pairs);
+    }
     public static function redact(
         mixed $value,
         array $schema = [],
@@ -6108,14 +6200,7 @@ class Runtime
                 }
                 throw $error;
             }
-            $scalar = fn($v) => $v instanceof RawNumber
-                ? $v->value
-                : (is_bool($v)
-                    ? ($v
-                        ? 'true'
-                        : 'false')
-                    : (string) $v);
-            $values = array_map($scalar, is_array($v) ? $v : [$v]);
+            $values = array_map([Codec::class, 'scalarText'], is_array($v) ? $v : [$v]);
             if ($p['in'] === 'path') {
                 if (array_intersect($values, ['.', '..'])) {
                     Codec::fail($p['name'], 'dot path segments are unsupported');
@@ -6485,7 +6570,11 @@ class Runtime
             if (!isset($op['body'])) {
                 self::notAllowed('body', 'operation does not accept a body');
             }
-            $body = Codec::encode($this->decode($input['body'], $op['body']));
+            $wire = $this->decode($input['body'], $op['body']);
+            $body =
+                $op['mediaType'] === 'application/x-www-form-urlencoded'
+                    ? Codec::formEncode($wire)
+                    : Codec::encode($wire);
             $set('content-type', $op['mediaType']);
         } elseif ($op['bodyRequired']) {
             self::inputError('body', 'REQUIRED', 'body is required');
