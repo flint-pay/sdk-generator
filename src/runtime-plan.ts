@@ -120,6 +120,14 @@ import {
   type CodecPlan,
 } from './codec-plan.js';
 
+/** Request media types whose bodies both runtimes encode as JSON. */
+export const JSON_REQUEST_MEDIA: readonly string[] = [
+  'application/json',
+  'application/merge-patch+json',
+];
+/** Flat objects of scalar fields, encoded like exploded form-style query parameters. */
+export const FORM_REQUEST_MEDIA = 'application/x-www-form-urlencoded';
+
 /** Declared success statuses; default remains a runtime fallback, never an implicit redirect. */
 export function successStatus(status: string): boolean {
   return /^2\d\d$/.test(status) || ['302', '307', '304'].includes(status);
@@ -729,6 +737,12 @@ export function assertRuntimePlan(
       assertCodecPlan(field.codec, `${op.id}.parameter.${field.name}`);
     }
     if (op.body !== undefined) assertCodecPlan(op.body, `${op.id}.body`);
+    if (
+      op.body !== undefined &&
+      (typeof op.mediaType !== 'string' ||
+        !(JSON_REQUEST_MEDIA.includes(op.mediaType) || op.mediaType === FORM_REQUEST_MEDIA))
+    )
+      throw new Error(`${op.id}: unsupported request media type`);
     for (const key of ['outputCertificate', 'payloadCertificate', 'itemCertificate'])
       if (op[key] !== undefined) assertTypeCertificate(op[key]);
     if (op.payloadCodecs !== undefined) {

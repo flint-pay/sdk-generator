@@ -4,6 +4,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ## Unreleased
 
+- Both runtimes send declared `application/x-www-form-urlencoded` request bodies. A body must be a flat, non-null object of scalar fields, including discriminated unions such as an OAuth token request with authorization code, refresh token, device code and token exchange grants. Fields use the query parameter escaping and scalar text. A declared JSON body remains the implicit selection, so existing JSON operations and their wire bytes are unchanged; form-only operations that failed diagnosis now generate. Nested, array and nullable form fields and `encoding` declarations are diagnosed.
+
 - Both runtimes support optional AWS STS outbound identity federation with ES384 and use the saved Flint CLI session last in the default credential chain. Explicit cloud sources work without platform markers; Azure auto discovery requires its endpoint/header pair.
 
 - Both generated runtimes support GitLab CI, Kubernetes projected tokens, GCP metadata and Azure managed identity subject tokens. Cloud auto discovery requires platform markers; foreign service token files are refused.

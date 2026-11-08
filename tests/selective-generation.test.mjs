@@ -210,20 +210,21 @@ for (const target of ['node', 'php']) {
       { ...settings, targets: [target] },
     );
     const body = f.doc.paths['/todos'].post.requestBody;
-    for (const media of [
-      'multipart/form-data',
-      'application/xml',
-      'application/x-www-form-urlencoded',
-    ]) {
+    for (const media of ['multipart/form-data', 'application/xml']) {
       body.content = { [media]: { schema: todo } };
       for (const operations of [undefined, { createTodo: { requestMediaType: media } }]) {
         f.cfg.operations = operations;
         assert.throws(
           () => f.load(),
-          /requestBody declares no supported media type;.*application\/json.*application\/merge-patch\+json.*include or operations.createTodo.hidden/,
+          /requestBody declares no supported media type;.*application\/json.*application\/merge-patch\+json.*application\/x-www-form-urlencoded.*include or operations.createTodo.hidden/,
         );
       }
     }
+    body.content['application/x-www-form-urlencoded'] = { schema: todo };
+    f.cfg.operations = { createTodo: { requestMediaType: 'application/xml' } };
+    assert.throws(() => f.load(), /unsupported request media type application\/xml/);
+    f.cfg.operations = undefined;
+    assert.equal(f.load().operations[0].mediaType, 'application/x-www-form-urlencoded');
     f.cfg.operations = { createTodo: { hidden: true } };
     assert.deepEqual(
       f.load().operations.map((op) => op.id),
@@ -245,8 +246,8 @@ for (const target of ['node', 'php']) {
       assert.equal(f.load().operations[0].mediaType, media);
     }
     f.cfg.operations.createTodo.requestMediaType = 'application/x-www-form-urlencoded';
-    assert.throws(() => f.load(), /unsupported request media type/);
-    f.cfg.operations.createTodo.requestMediaType = 'multipart/form-data';
+    assert.equal(f.load().operations[0].mediaType, 'application/x-www-form-urlencoded');
+    f.cfg.operations.createTodo.requestMediaType = 'text/plain';
     assert.throws(() => f.load(), /selected media type is not declared/);
   });
 }

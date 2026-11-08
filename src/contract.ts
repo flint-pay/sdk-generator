@@ -43,6 +43,8 @@ import {
   isDefaultBaseUrl,
   webhookJwtIssue,
   assertDefaultCredentials,
+  JSON_REQUEST_MEDIA,
+  FORM_REQUEST_MEDIA,
 } from './runtime-plan.js';
 import { visitIntersectedProperties } from './schema-intersections.js';
 import { resolve, dirname, relative as relativePath } from 'node:path';
@@ -466,26 +468,111 @@ function schemaField(s: Schema | undefined, path: string): Schema | undefined {
   const field = project(s);
   return rest.length ? schemaField(field, rest.join('.')) : field;
 }
-function hasType(s: Schema, type: string): boolean {
-  const possible = (shape: Schema): Set<string> => {
-    const declared =
-      shape.type === undefined
-        ? ['null', 'boolean', 'object', 'array', 'string', 'integer', 'number']
-        : Array.isArray(shape.type)
-          ? shape.type
-          : [shape.type];
-    let kinds = new Set(declared);
-    if (kinds.has('number')) kinds.add('integer');
-    const intersect = (other: Set<string>): void => {
-      kinds = new Set([...kinds].filter((kind) => other.has(kind)));
-    };
-    for (const branch of shape.allOf ?? []) intersect(possible(branch));
-    for (const branches of [shape.oneOf, shape.anyOf])
-      if (branches) intersect(new Set(branches.flatMap((branch) => [...possible(branch)])));
-    return kinds;
+/** JSON instance types a schema can accept through its type, conjuncts and alternatives. */
+function possibleTypes(shape: Schema): Set<string> {
+  const declared =
+    shape.type === undefined
+      ? ['null', 'boolean', 'object', 'array', 'string', 'integer', 'number']
+      : Array.isArray(shape.type)
+        ? shape.type
+        : [shape.type];
+  let kinds = new Set(declared);
+  if (kinds.has('number')) kinds.add('integer');
+  const intersect = (other: Set<string>): void => {
+    kinds = new Set([...kinds].filter((kind) => other.has(kind)));
   };
-  const kinds = possible(s);
+  for (const branch of shape.allOf ?? []) intersect(possibleTypes(branch));
+  for (const branches of [shape.oneOf, shape.anyOf])
+    if (branches) intersect(new Set(branches.flatMap((branch) => [...possibleTypes(branch)])));
+  return kinds;
+}
+function hasType(s: Schema, type: string): boolean {
+  const kinds = possibleTypes(s);
   return kinds.has(type) && [...kinds].every((kind) => kind === type || kind === 'null');
+}
+const formScalars = new Set(['boolean', 'string', 'integer', 'number']);
+/** Instance types a field declaration admits, narrowed by its const or enum values. */
+function fieldKinds(field: Schema): Set<string> {
+  const kindOf = (value: unknown): string[] =>
+    value === null
+      ? ['null']
+      : Array.isArray(value)
+        ? ['array']
+        : typeof value === 'number'
+          ? Number.isInteger(value)
+            ? ['integer', 'number']
+            : ['number']
+          : [typeof value];
+  let kinds = possibleTypes(field);
+  const narrow = (values: unknown[]) => {
+    const allowed = new Set(values.flatMap(kindOf));
+    kinds = new Set([...kinds].filter((kind) => allowed.has(kind)));
+  };
+  if (field.const !== undefined) narrow([field.const]);
+  if (field.enum) narrow(field.enum);
+  return kinds;
+}
+/**
+ * Form-encoded bodies are one flat, non-null object. Each declared field must accept
+ * only non-null scalars, which the runtimes encode like exploded form-style query
+ * values. A field's declarations in an object, its allOf conjuncts and their
+ * ancestors apply together, so a conjunct may list allowed names with empty
+ * schemas while a sibling declaration supplies the type. Alternatives and
+ * conditional branches inherit those declarations but do not constrain each other.
+ */
+function formBody(s: Schema, p: string): void {
+  const root = possibleTypes(s);
+  if (root.size !== 1 || !root.has('object'))
+    fail(p, 'form-encoded request bodies require a non-null object schema');
+  type Declarations = ReadonlyMap<string, readonly Schema[]>;
+  const visit = (shape: Schema, path: string, inherited: Declarations, depth: number): void => {
+    if (depth > 64) fail(path, 'form-encoded request schemas are nested too deeply');
+    // The shape and its allOf closure constrain the same instance unconditionally.
+    const conjuncts: [Schema, string][] = [];
+    const collect = (part: Schema, at: string) => {
+      if (conjuncts.some(([seen]) => seen === part)) return;
+      conjuncts.push([part, at]);
+      part.allOf?.forEach((branch, index) => collect(branch, `${at}/allOf/${index}`));
+    };
+    collect(shape, path);
+    const declarations = new Map<string, Schema[]>(
+      [...inherited].map(([name, fields]) => [name, [...fields]]),
+    );
+    const locations = new Map<string, string>();
+    for (const [part, at] of conjuncts)
+      for (const [name, field] of Object.entries(part.properties ?? {})) {
+        declarations.set(name, [...(declarations.get(name) ?? []), field]);
+        if (!locations.has(name)) locations.set(name, `${at}/properties/${pointerSegment(name)}`);
+      }
+    for (const [name, location] of locations) {
+      const kinds = (declarations.get(name) ?? [])
+        .map(fieldKinds)
+        .reduce((left, right) => new Set([...left].filter((kind) => right.has(kind))));
+      if ([...kinds].some((kind) => !formScalars.has(kind)))
+        fail(
+          location,
+          'form-encoded request fields require a non-null boolean, string, integer or number schema',
+        );
+    }
+    for (const [part, at] of conjuncts) {
+      // Open objects remain open; the runtimes reject undeclared nonscalar values.
+      if (
+        typeof part.additionalProperties === 'object' &&
+        [...fieldKinds(part.additionalProperties)].some((kind) => !formScalars.has(kind))
+      )
+        fail(
+          `${at}/additionalProperties`,
+          'form-encoded additional properties require a non-null scalar schema',
+        );
+      for (const key of ['oneOf', 'anyOf'] as const)
+        part[key]?.forEach((branch, index) =>
+          visit(branch, `${at}/${key}/${index}`, declarations, depth + 1),
+        );
+      for (const key of ['then', 'else'] as const)
+        if (part[key]) visit(part[key]!, `${at}/${key}`, declarations, depth + 1);
+    }
+  };
+  visit(s, p, new Map(), 0);
 }
 // Parameter serialization requires one explicit wire shape; conjuncts may add
 // constraints without repeating it. Alternatives remain outside this subset.
@@ -3542,11 +3629,12 @@ function loadContractInput(
           if (op.requestBody.required !== undefined && typeof op.requestBody.required !== 'boolean')
             fail(p, 'requestBody.required must be boolean');
           record(op.requestBody.content, p + '/requestBody/content');
-          const supported = ['application/json', 'application/merge-patch+json'];
-          if (!Object.keys(op.requestBody.content).some((media) => supported.includes(media)))
+          const declared = Object.keys(op.requestBody.content);
+          const supported = [...JSON_REQUEST_MEDIA, FORM_REQUEST_MEDIA];
+          if (!declared.some((media) => supported.includes(media)))
             fail(
               p + '/requestBody/content',
-              `requestBody declares no supported media type; supported types are ${supported.join(' and ')}; exclude this operation with include or operations.${id}.hidden`,
+              `requestBody declares no supported media type; supported types are ${supported.join(', ')}; exclude this operation with include or operations.${id}.hidden`,
             );
           if (
             c.requestMediaType !== undefined &&
@@ -3556,9 +3644,14 @@ function loadContractInput(
               `config/operations/${pointerSegment(id)}/requestMediaType`,
               'selected media type is not declared',
             );
+          // JSON remains the implicit choice whenever it is declared; form encoding
+          // is implicit only for bodies that declare no JSON alternative.
+          const implicit = declared.some((media) => JSON_REQUEST_MEDIA.includes(media))
+            ? JSON_REQUEST_MEDIA
+            : [FORM_REQUEST_MEDIA];
           const contents = Object.entries(op.requestBody.content).filter(([media]) =>
             c.requestMediaType === undefined
-              ? supported.includes(media)
+              ? implicit.includes(media)
               : media === c.requestMediaType,
           );
           if (contents.length !== 1)
@@ -3570,17 +3663,26 @@ function loadContractInput(
             );
           const [media, content] = contents[0]! as [string, any];
           record(content, p + '/requestBody/content/' + media);
-          if (!['application/json', 'application/merge-patch+json'].includes(media))
+          if (!supported.includes(media))
             fail(
               p,
-              `unsupported request media type ${media}; select application/json or application/merge-patch+json using operations.${id}.requestMediaType, or exclude this operation with include or hidden`,
+              `unsupported request media type ${media}; select ${supported.join(', ')} using operations.${id}.requestMediaType, or exclude this operation with include or hidden`,
             );
+          const schemaPath = `${p}/requestBody/content/${pointerSegment(media)}/schema`;
           schema(
             content.schema,
-            `${p}/requestBody/content/${pointerSegment(media)}/schema`,
+            schemaPath,
             raw.openapi.startsWith('3.0.'),
             config.numericUnions === 'explicit',
           );
+          if (media === FORM_REQUEST_MEDIA) {
+            if (content.encoding !== undefined)
+              fail(
+                `${p}/requestBody/content/${pointerSegment(media)}/encoding`,
+                'form-encoded request encoding declarations are unsupported; fields use the default form style',
+              );
+            formBody(content.schema, schemaPath);
+          }
           const mediaExample = Object.hasOwn(content, 'example')
             ? content.example
             : Object.values(content.examples ?? {}).map((entry) =>

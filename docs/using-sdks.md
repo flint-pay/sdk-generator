@@ -890,7 +890,7 @@ Each package's `examples/` directory has a runnable script for every operation, 
 
 Operation names come from the SDK configuration. With `operationNames: "path"`, resources follow API paths and methods retain the operation verb, such as `invoices.void()` and `orders.close()`. Explicit exceptions require a documented naming reason in the profile.
 
-Discriminated request bodies use the same positional calling convention as other operations: `client.paymentIntents.confirm(id, { credential_type: "token", token })`. TypeScript narrows params on the discriminator. In PHP, pass the path ID followed by an associative array or model and optional `RequestOptions`. Variant reference headings identify the discriminator value and link the corresponding model.
+Discriminated request bodies use the same positional calling convention as other operations: `client.paymentIntents.confirm(id, { credential_type: "token", token })`. TypeScript narrows params on the discriminator. Form-encoded bodies, such as an OAuth token request, take the same params; the SDK validates them and sends `application/x-www-form-urlencoded`. In PHP, pass the path ID followed by an associative array or model and optional `RequestOptions`. Variant reference headings identify the discriminator value and link the corresponding model.
 
 SDK profiles can opt into `queryArrays: "scalar-or-array"`. For exploded form query arrays, a scalar sends one repeated query value, exactly like a one-element array. Item enum validation and array bounds apply in both targets; Node also accepts readonly arrays.
 

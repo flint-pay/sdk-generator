@@ -52,6 +52,10 @@ test('request selection is explicit when ambiguous and independent of declaratio
   ]) {
     assert.equal(load(content).operations[0].mediaType, 'application/json');
     assert.equal(load(content, 'application/json').operations[0].mediaType, 'application/json');
+    assert.equal(
+      load(content, 'application/x-www-form-urlencoded').operations[0].mediaType,
+      'application/x-www-form-urlencoded',
+    );
   }
   const ambiguous = { 'application/json': json, 'application/merge-patch+json': form };
   assert.throws(() => load(ambiguous), /requestBody must select/);
@@ -60,8 +64,13 @@ test('request selection is explicit when ambiguous and independent of declaratio
     'application/merge-patch+json',
   );
   assert.throws(() => load(ambiguous, 'text/plain'), /not declared/);
+  for (const selection of [undefined, 'application/x-www-form-urlencoded'])
+    assert.equal(
+      load({ 'application/x-www-form-urlencoded': form }, selection).operations[0].mediaType,
+      'application/x-www-form-urlencoded',
+    );
   assert.throws(
-    () => load({ 'application/x-www-form-urlencoded': form }, 'application/x-www-form-urlencoded'),
+    () => load({ 'multipart/form-data': form }, 'multipart/form-data'),
     /declares no supported media type/,
   );
   assert.throws(() => load(ambiguous, 42), /expected a media type string/);

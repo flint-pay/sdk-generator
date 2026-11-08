@@ -10,6 +10,7 @@ import {
   compileRuntimePlan,
   assertRuntimePlan,
   isBaseUrlSyntax,
+  FORM_REQUEST_MEDIA,
   type RuntimeContract,
   type CompiledRuntimePlan,
 } from './runtime-plan.js';
@@ -3583,6 +3584,31 @@ const encoded = (s: string): string =>
 function scalar(v: unknown): string {
   return v instanceof RawNumber ? v.value : String(v);
 }
+/**
+ * Encode a request-codec result as application/x-www-form-urlencoded. Fields use
+ * the exploded form style and percent-encoding of query parameters; the contract
+ * admits only flat objects of scalars, and undeclared open-object values are checked here.
+ */
+function formEncode(value: unknown): string {
+  if (value instanceof CompiledModel) value = value.toJSON();
+  if (!value || typeof value !== 'object' || Array.isArray(value) || value instanceof RawNumber)
+    return typeError('input', 'an object', value);
+  return Object.entries(value)
+    .filter(([, v]) => v !== undefined)
+    .map(([name, v]) => {
+      if (
+        !(
+          typeof v === 'string' ||
+          typeof v === 'boolean' ||
+          (typeof v === 'number' && Number.isFinite(v)) ||
+          v instanceof RawNumber
+        )
+      )
+        typeError(pathKey('input', name), 'a boolean, string or number', v);
+      return encoded(name) + '=' + encoded(scalar(v));
+    })
+    .join('&');
+}
 function userAgent(base: string, app: ClientOptions['appInfo']): string {
   let suffix = '';
   if (app !== undefined) {
@@ -5072,7 +5098,8 @@ class CompiledRuntime {
       if (!op.body) notAllowed('body', 'operation does not accept a body');
       if (['GET', 'HEAD'].includes(op.verb))
         bad('body', 'GET/HEAD request bodies are unsupported by the Node transport');
-      body = encode(this.decode(input.body, op.body!, { mode: 'request' }));
+      const wire = this.decode(input.body, op.body!, { mode: 'request' });
+      body = op.mediaType === FORM_REQUEST_MEDIA ? formEncode(wire) : encode(wire);
       setHeader('content-type', op.mediaType!);
     } else if (op.bodyRequired) issue('body', 'required');
     for (const key of Object.keys(input))
