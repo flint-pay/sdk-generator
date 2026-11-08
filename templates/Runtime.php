@@ -4896,7 +4896,51 @@ final class Codec
                 ? ($value
                     ? 'true'
                     : 'false')
-                : (string) $value);
+                : (is_float($value)
+                    ? self::floatText($value)
+                    : (string) $value));
+    }
+    /**
+     * The shortest round-trip decimal for a finite float, formatted like ECMAScript
+     * Number::toString so both runtimes send the same text. (string) and the
+     * precision ini setting would round to 14 significant digits.
+     */
+    private static function floatText(float $value): string
+    {
+        if (!is_finite($value)) {
+            self::fail('value', 'expected a finite number');
+        }
+        if ($value == 0.0) {
+            return '0';
+        }
+        // The fewest correctly rounded significant digits that parse back to $value.
+        for ($precision = 0; $precision < 17; $precision++) {
+            $text = sprintf('%.' . $precision . 'e', $value);
+            if ((float) $text === $value) {
+                break;
+            }
+        }
+        [$mantissa, $exponent] = explode('e', $text);
+        $sign = $value < 0 ? '-' : '';
+        $digits = rtrim(str_replace(['-', '.'], '', $mantissa), '0');
+        $count = strlen($digits);
+        $point = (int) $exponent + 1;
+        if ($count <= $point && $point <= 21) {
+            return $sign . $digits . str_repeat('0', $point - $count);
+        }
+        if (0 < $point && $point <= 21) {
+            return $sign . substr($digits, 0, $point) . '.' . substr($digits, $point);
+        }
+        if (-6 < $point && $point <= 0) {
+            return $sign . '0.' . str_repeat('0', -$point) . $digits;
+        }
+        $power = $point - 1;
+        return $sign .
+            $digits[0] .
+            ($count > 1 ? '.' . substr($digits, 1) : '') .
+            'e' .
+            ($power < 0 ? '-' : '+') .
+            abs($power);
     }
     /**
      * Encode a request-codec result as application/x-www-form-urlencoded. Fields use

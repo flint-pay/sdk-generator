@@ -24,7 +24,7 @@ before(() => generate(load(), output));
 // Expected bodies are written by hand from the application/x-www-form-urlencoded
 // rules shared with query parameters: fields in input order, RFC 3986 unreserved
 // characters (A-Z a-z 0-9 - . _ ~) kept, every other UTF-8 byte percent-encoded,
-// spaces as %20, booleans as true/false and numbers as their JSON text.
+// spaces as %20, booleans as true/false and numbers as ECMAScript Number::toString text.
 const form = { 'content-type': 'application/x-www-form-urlencoded' };
 const issued = {
   access_token: 'synthetic-access',
@@ -220,6 +220,29 @@ test('four token grants send independently expected form bodies in Node and PHP'
       responses: [{ status: 204, body: '' }],
       empty: true,
     },
+    // Numbers use ECMAScript Number::toString: the shortest round-trip digits, with
+    // exponents only from 1e21 and below 1e-6. PHP must not round to its precision setting.
+    ...[
+      [0.1 + 0.2, '0.30000000000000004'],
+      [12345678.123456789, '12345678.12345679'],
+      [1e21, '1e%2B21'],
+      [1e20, '100000000000000000000'],
+      [0.000001, '0.000001'],
+      [1e-7, '1e-7'],
+      [-2.5, '-2.5'],
+    ].map(([weight, text]) => ({
+      name: `number text ${text}`,
+      operation: 'createSession',
+      input: { body: { label: 'n', weight } },
+      expected: {
+        method: 'POST',
+        path: '/v1/sessions',
+        headers: form,
+        body: 'label=n&weight=' + text,
+      },
+      responses: [{ status: 204, body: '' }],
+      empty: true,
+    })),
     {
       name: 'JSON control operation',
       operation: 'createNote',

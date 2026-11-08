@@ -37,12 +37,24 @@ const assertion = {
     required: ['client_id', 'client_assertion', 'client_assertion_type'],
   },
 };
-const branch = (grant, required, title) => ({
+// `allowed` closes a branch the way the pinned Flint export does: the conjunct lists
+// permitted names with empty schemas, and the branch's own properties supply types.
+const branch = (grant, required, title, allowed) => ({
   type: 'object',
   ...(title ? { title } : {}),
   properties: { ...fields, grant_type: { type: 'string', enum: [grant] } },
   required: ['grant_type', ...required],
-  allOf: [assertion, { properties: { grant_type: { const: grant } }, required }],
+  allOf: [
+    assertion,
+    {
+      properties: {
+        grant_type: { const: grant },
+        ...Object.fromEntries((allowed ?? []).map((name) => [name, {}])),
+      },
+      required,
+      ...(allowed ? { additionalProperties: false } : {}),
+    },
+  ],
 });
 
 export function tokenApi() {
@@ -65,6 +77,7 @@ export function tokenApi() {
           'urn:ietf:params:oauth:grant-type:token-exchange',
           ['subject_token', 'subject_token_type', 'workload_identity_id'],
           'Workload identity token exchange',
+          ['subject_token', 'subject_token_type', 'workload_identity_id', 'scope'],
         ),
         TokenRequest: {
           type: 'object',
