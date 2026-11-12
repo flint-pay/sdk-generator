@@ -4,6 +4,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ## Unreleased
 
+- Support recursive `propertyNames.not` string predicates in Node and PHP. Reserved key prefixes and other negated key constraints are enforced before sending and in strict response decoding, under both validation profiles. Dictionary key types remain strings.
+
 - Resolve operation callback and Path Item references with sibling fields and sensitive-example protection on the effective merged item (including referenced ancestors), expose strict callback response construction types/factories, and retain referenced and inline request/response models in Node and PHP output without generating incoming client methods. Accept negative scalar parameter constraints with the existing compiled validation in both runtimes. The portable regex translator also supports `\S` inside character classes, needed by callback response constraints. Existing specs and release classification are unchanged.
 
 - Both runtimes send declared `application/x-www-form-urlencoded` request bodies. A body must be a flat, non-null object of scalar fields, including discriminated unions such as an OAuth token request with authorization code, refresh token, device code and token exchange grants. Fields use the query parameter escaping and scalar text. A declared JSON body remains the implicit selection, so existing JSON operations and their wire bytes are unchanged; form-only operations that failed diagnosis now generate. Nested, array and nullable form fields and `encoding` declarations are diagnosed. PHP query parameters and form fields now send floats as the shortest round-trip text, matching Node, instead of rounding to the `precision` setting (14 significant digits).
