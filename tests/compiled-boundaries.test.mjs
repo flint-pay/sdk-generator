@@ -26,6 +26,7 @@ const semantic = new Set([
   'documentation-format',
   'schema-annotations',
   'example-protection',
+  'path-item',
   'parameter-example-policy',
   'target-plan',
   'value-guarantee',

@@ -1,0 +1,197 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Callback fixture",
+    "version": "1"
+  },
+  "paths": {
+    "/callbacks": {
+      "post": {
+        "operationId": "createDeliveryRateCallback",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["url"],
+                "properties": {
+                  "url": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "callbacks": {
+          "evaluation": {
+            "$ref": "#/components/callbacks/evaluation"
+          },
+          "check": {
+            "{$request.body#/url}": {
+              "post": {
+                "requestBody": {
+                  "required": true,
+                  "content": {
+                    "application/json": {
+                      "schema": {
+                        "$ref": "#/components/schemas/ConnectionCheckRequest"
+                      }
+                    }
+                  }
+                },
+                "responses": {
+                  "204": {
+                    "description": "Accepted"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Callback"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/domains": {
+      "get": {
+        "operationId": "listPaymentMethodDomains",
+        "parameters": [
+          {
+            "name": "domain_name",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9.-]+$",
+              "not": {
+                "pattern": "^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$"
+              }
+            }
+          },
+          {
+            "name": "reference",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^(?:\\S(?:[\\s\\S]*\\S)?)?$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Callback"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "callbacks": {
+      "evaluation": {
+        "{$request.body#/url}": {
+          "post": {
+            "requestBody": {
+              "required": true,
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/RateEvaluationRequest"
+                  }
+                }
+              }
+            },
+            "responses": {
+              "2XX": {
+                "description": "OK",
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/RateEvaluationResponse"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Callback": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        }
+      },
+      "ConnectionCheckRequest": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["connection_check"]
+          }
+        }
+      },
+      "RateEvaluationRequest": {
+        "type": "object",
+        "required": ["evaluation_id", "candidates"],
+        "properties": {
+          "evaluation_id": {
+            "type": "string"
+          },
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Candidate"
+            }
+          }
+        }
+      },
+      "Candidate": {
+        "type": "object",
+        "required": ["code"],
+        "properties": {
+          "code": {
+            "type": "string"
+          }
+        }
+      },
+      "RateEvaluationResponse": {
+        "type": "object",
+        "required": ["amount"],
+        "properties": {
+          "amount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "reference": {
+            "type": "string",
+            "pattern": "^(?:\\S(?:[\\s\\S]*\\S)?)?$"
+          }
+        }
+      }
+    }
+  }
+}

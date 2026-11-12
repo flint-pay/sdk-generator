@@ -1,3 +1,4 @@
+import { pathItemFields } from './path-item.js';
 import { webhookNames } from './webhook-names.js';
 import { integerMode, markIntegerMode, sameObjectShape } from './integer-policy.js';
 import { scalarQueryArray } from './query-arrays.js';
@@ -327,6 +328,13 @@ export interface Contract {
   apiVersion: string;
   operations: Operation[];
   incoming?: IncomingWebhook[];
+  /** Incoming callback bodies retain their direction and public model identity. */
+  callbackBodies?: {
+    operationId: string;
+    pointer: string;
+    direction: 'request' | 'response';
+    model: string;
+  }[];
   models: Record<string, Schema>;
   definitions?: Record<string, Schema>;
   modelDependencies?: Record<string, string[]>;
@@ -575,7 +583,8 @@ function formBody(s: Schema, p: string): void {
   visit(s, p, new Map(), 0);
 }
 // Parameter serialization requires one explicit wire shape; conjuncts may add
-// constraints without repeating it. Alternatives remain outside this subset.
+// constraints without repeating it. Negative predicates only remove values and
+// cannot introduce another wire shape. Alternatives remain outside this subset.
 function parameterType(s: Schema, p: string, item = false): string {
   // A scalar and an array of the same scalar have one unambiguous form encoding.
   const alternatives = s.anyOf ?? s.oneOf;
@@ -615,7 +624,7 @@ function parameterType(s: Schema, p: string, item = false): string {
     !declared.length ||
     types.length !== 1 ||
     !allowed.includes(String(types[0])) ||
-    parts.some((part) => part.oneOf || part.anyOf || part.not || part['x-sdk-ref'])
+    parts.some((part) => part.oneOf || part.anyOf || part['x-sdk-ref'])
   )
     fail(p, 'parameters require an explicit non-null scalar type or scalar array');
   const type = String(types[0]);
@@ -685,6 +694,7 @@ function portablePattern(source: string, p: string): string {
   const classes: Record<string, string> = {
     d: '0-9',
     D: '\\x00-\\x2f\\x3a-\\x{10ffff}',
+    S: '\\x00-\\x08\\x0e-\\x1f\\x21-\\x{009f}\\x{00a1}-\\x{167f}\\x{1681}-\\x{1fff}\\x{200b}-\\x{2027}\\x{202a}-\\x{202e}\\x{2030}-\\x{205e}\\x{2060}-\\x{2fff}\\x{3001}-\\x{fefe}\\x{ff00}-\\x{10ffff}',
     w: 'A-Za-z0-9_',
     W: '\\x00-\\x2f\\x3a-\\x40\\x5b-\\x5e\\x60\\x7b-\\x{10ffff}',
   };
@@ -694,9 +704,9 @@ function portablePattern(source: string, p: string): string {
     const ch = source[i]!;
     if (ch === '\\') {
       const next = source[++i]!;
-      if (classes[next]) result += inClass ? classes[next] : '[' + classes[next] + ']';
+      if (next === 'S' && !inClass) result += '[^' + space + ']';
+      else if (classes[next]) result += inClass ? classes[next] : '[' + classes[next] + ']';
       else if (next === 's') result += inClass ? space : '[' + space + ']';
-      else if (next === 'S' && !inClass) result += '[^' + space + ']';
       else if (next === 'v') result += '\\x0b';
       else if (next === 'u') {
         const hex = source.slice(i + 1, i + 5);
@@ -1579,6 +1589,7 @@ function loadContractInput(
         examples: 'example',
         links: 'link',
         pathItems: 'pathItem',
+        callbacks: 'callback',
       };
       return own(kinds, key) ? 'map:' + kinds[key] : 'literal';
     }
@@ -1588,6 +1599,8 @@ function loadContractInput(
     )
       return 'operation';
     if (['operation', 'pathItem'].includes(context) && key === 'parameters') return 'parameter';
+    if (context === 'operation' && key === 'callbacks') return 'map:callback';
+    if (context === 'callback') return key.startsWith('x-') ? 'literal' : 'pathItem';
     if (context === 'operation' && key === 'requestBody') return 'requestBody';
     if (context === 'operation' && key === 'responses') return 'map:response';
     if (['parameter', 'header', 'media'].includes(context) && key === 'schema') return 'schema';
@@ -1699,6 +1712,20 @@ function loadContractInput(
       ])
         if (Object.hasOwn(value, key))
           sourceJson.assertMember(value, key, path + '/' + pointerSegment(key));
+    if (context === 'pathItem' && '$ref' in value)
+      return Object.fromEntries(
+        Object.entries(pathFields(value, file, path, new Set(), sourcePath)).map(([key, field]) => [
+          key,
+          deref(
+            field.value,
+            field.file,
+            path + '/' + pointerSegment(key),
+            stack,
+            childContext(context, key),
+            field.sourcePath,
+          ),
+        ]),
+      );
     const map = context.startsWith('map:');
     if (!map && Object.keys(value).some((key) => key.startsWith('x-sdk-')))
       fail(path, 'x-sdk-* extensions are reserved for resolved generator metadata');
@@ -2545,6 +2572,11 @@ function loadContractInput(
       for (const child of value) collect(child, file, context);
       return;
     }
+    if (context === 'pathItem' && '$ref' in value) {
+      for (const [key, field] of Object.entries(pathFields(value, file, 'callbacks')))
+        collect(field.value, field.file, childContext(context, key));
+      return;
+    }
     if (!context.startsWith('map:') && '$ref' in value) {
       const ref = value.$ref;
       if (typeof ref !== 'string' || /^\w+:/.test(ref) || ref.startsWith('//'))
@@ -2574,33 +2606,28 @@ function loadContractInput(
     seen = new Set<string>(),
     sourcePath = path,
   ): Record<string, PathField> {
-    record(item, path);
-    let fields: Record<string, PathField> = {};
-    if ('$ref' in item) {
-      const ref = item.$ref;
-      if (typeof ref !== 'string' || /^\w+:/.test(ref) || ref.startsWith('//'))
-        fail(path, 'remote references must be vendored locally for reproducible generation');
-      const [relative, fragment = ''] = ref.split('#');
-      const target = resolve(dirname(file), relative || file);
-      const key = target + '#' + fragment;
-      if (seen.has(key)) fail(path, 'cyclic path item reference');
-      seen.add(key);
-      fields = pathFields(pointer(load(target), fragment, path), target, path, seen, fragment);
-    }
-    for (const [key, value] of Object.entries(item)) {
-      if (key === '$ref') continue;
-      if (key.startsWith('x-sdk-'))
-        fail(path, 'x-sdk-* extensions are reserved for resolved generator metadata');
-      if (Object.hasOwn(fields, key))
-        fail(path + '/' + pointerSegment(key), 'conflicting path item $ref field ' + key);
-      Object.defineProperty(fields, key, {
-        value: { value, file, sourcePath: sourcePath + '/' + pointerSegment(key) },
-        enumerable: true,
-        configurable: true,
-      });
-    }
-    return fields;
+    const fields = pathItemFields(
+      { value: item, document: file, pointer: sourcePath },
+      (source, ref) => {
+        const [relative, fragment = ''] = ref.split('#');
+        const target = resolve(dirname(source.document), relative || source.document);
+        return {
+          value: pointer(load(target), fragment, path),
+          document: target,
+          pointer: fragment,
+        };
+      },
+      path,
+      seen,
+    );
+    return Object.fromEntries(
+      Object.entries(fields).map(([key, field]) => [
+        key,
+        { value: field.value, file: field.document, sourcePath: field.pointer },
+      ]),
+    );
   }
+
   // Path-item references contribute operation IDs just like inline path items.
   const declaredIds = new Set<string>();
   let completeInventory =
@@ -2874,6 +2901,93 @@ function loadContractInput(
       return [path, Object.fromEntries(entries)];
     }),
   );
+  // Callbacks describe incoming HTTP, not additional client methods. Traverse
+  // their schemas with the same context rules used for reference reachability.
+  const callbackBodies: NonNullable<Contract['callbackBodies']> = [];
+  const callbackModels: Record<string, Schema> = {};
+  const validateCallback = (
+    value: unknown,
+    context: Context,
+    path: string,
+    operationId: string,
+    direction?: 'request' | 'response',
+  ): void => {
+    if (context === 'literal' || value === undefined) return;
+    if (context === 'schema') {
+      schema(
+        // schema() validates untrusted schema objects before reading fields.
+        value as Schema,
+        path,
+        raw.openapi.startsWith('3.0.'),
+        config.numericUnions === 'explicit',
+      );
+      if (direction) {
+        // Component identities survive resolution. Inline roots use the same
+        // deterministic location-hash convention as incoming webhook bodies.
+        const referenced = referenceNames.get(value as Schema) ?? typeNames.get(value as Schema);
+        const model =
+          referenced ??
+          'Callback' + hash(path).slice(0, 12) + (direction === 'request' ? 'Request' : 'Response');
+        if (!referenced) callbackModels[model] = value as Schema;
+        callbackBodies.push({ operationId, pointer: path, direction, model });
+      }
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((child, index) =>
+        validateCallback(child, context, path + '/' + index, operationId, direction),
+      );
+      return;
+    }
+    record(value, path);
+    for (const [key, child] of Object.entries(value)) {
+      if (
+        context === 'pathItem' &&
+        ![
+          'get',
+          'post',
+          'put',
+          'patch',
+          'delete',
+          'head',
+          'options',
+          'parameters',
+          'summary',
+          'description',
+          'servers',
+        ].includes(key) &&
+        !key.startsWith('x-')
+      )
+        fail(path + '/' + pointerSegment(key), 'unsupported incoming callback method');
+      const next = childContext(context, key);
+      validateCallback(
+        child,
+        next,
+        path + '/' + pointerSegment(key),
+        operationId,
+        next === 'requestBody'
+          ? 'request'
+          : next === 'response'
+            ? 'response'
+            : ['header', 'parameter', 'operation'].includes(next)
+              ? undefined
+              : direction,
+      );
+    }
+  };
+  for (const [path, item] of Object.entries(selectedPaths))
+    for (const [verb, op] of Object.entries(item))
+      if (op && typeof op === 'object' && 'callbacks' in op) {
+        const operationId: unknown = Reflect.get(op, 'operationId');
+        validateCallback(
+          op.callbacks,
+          'map:callback',
+          '/paths/' + pointerSegment(path) + '/' + verb + '/callbacks',
+          typeof operationId === 'string'
+            ? operationId
+            : fail('/paths/' + pointerSegment(path), 'expected an operation ID'),
+        );
+      }
   const incoming: IncomingWebhook[] = [];
   if (raw.webhooks !== undefined) {
     if (raw.openapi.startsWith('3.0.')) fail('/webhooks', 'webhooks require OpenAPI 3.1');
@@ -3010,6 +3124,11 @@ function loadContractInput(
     } catch (error) {
       diagnostics.capture(error);
     }
+  }
+  for (const [name, value] of Object.entries(callbackModels)) {
+    if (Object.hasOwn(models, name)) fail('models/' + name, 'callback model name collision');
+    modelName(name, 'models/' + name, config.targets);
+    models[name] = value;
   }
   for (const k of Object.keys(config.models ?? {}))
     if (!Object.hasOwn(raw.components?.schemas ?? {}, k))
@@ -3468,7 +3587,7 @@ function loadContractInput(
             );
           publicNames.add(key);
         }
-        for (const forbidden of ['callbacks', 'servers'])
+        for (const forbidden of ['servers'])
           if (op[forbidden] !== undefined)
             fail(`${p}/${forbidden}`, 'unsupported operation construct');
         if (item.servers !== undefined)
@@ -4337,6 +4456,7 @@ function loadContractInput(
     apiVersion: config.apiVersion?.value ?? String(doc.info?.version ?? ''),
     operations,
     ...(incoming.length ? { incoming } : {}),
+    ...(callbackBodies.length ? { callbackBodies } : {}),
     models,
     ...(cycles.size ? { definitions } : {}),
     modelDependencies: Object.fromEntries(
@@ -4348,6 +4468,9 @@ function loadContractInput(
           [
             ...new Set([
               ...dependencyPrefixes.get(operationPath)!,
+              ...callbackBodies
+                .filter((body) => body.operationId === op.id)
+                .map((body) => body.model),
               ...dependencyPrefixes.get(sharedParameters)!,
             ]),
           ].sort(),

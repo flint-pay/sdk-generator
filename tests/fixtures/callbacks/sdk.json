@@ -1,0 +1,27 @@
+{
+  "version": "1.0.0",
+  "validation": "schema",
+  "requests": {
+    "style": "object"
+  },
+  "responses": {
+    "return": "result"
+  },
+  "npm": {
+    "name": "@example/callbacks"
+  },
+  "composer": {
+    "name": "example/callbacks",
+    "namespace": "Example\\Callbacks"
+  },
+  "operations": {
+    "createDeliveryRateCallback": {
+      "resource": "callbacks",
+      "method": "create"
+    },
+    "listPaymentMethodDomains": {
+      "resource": "domains",
+      "method": "list"
+    }
+  }
+}

@@ -1,0 +1,6 @@
+import type { Candidate } from './Candidate.js';
+export type RateEvaluationRequest = {
+    /**  [] (Value): {@link Candidate}. */
+    "candidates": Array<Candidate>;
+    "evaluation_id": string;
+};
