@@ -121,19 +121,18 @@ export function sourceExampleProtection(
       if (target) connect(key, target, true);
       if (context !== 'schema' || ignoredSiblings) return key;
     }
+    let effectiveProtection = Boolean(source.protectedAncestor || sensitive(value));
     const fields =
       context === 'pathItem'
         ? pathItemFields(source, (item, ref) => {
             const target = reference(item, ref);
-            return {
-              ...target,
-              protectedAncestor: Boolean(
-                target.protectedAncestor ||
-                  item.protectedAncestor ||
-                  sensitive(item.value) ||
-                  sensitive(target.value),
-              ),
-            };
+            effectiveProtection ||= Boolean(
+              target.protectedAncestor ||
+                item.protectedAncestor ||
+                sensitive(item.value) ||
+                sensitive(target.value),
+            );
+            return target;
           })
         : Object.fromEntries(
             Object.entries(value).map(([name, child]) => [
@@ -145,6 +144,9 @@ export function sourceExampleProtection(
               },
             ]),
           );
+    // A reference and its siblings describe one effective Path Item. Any
+    // inherited protection belongs to that merged owner, not just target fields.
+    if (context === 'pathItem' && effectiveProtection) seeds.add(key);
     for (const [name, child] of Object.entries(fields)) {
       if (name === '$ref' && !context.startsWith('map:')) continue;
       if (context === 'schema' && !Array.isArray(value) && isAnnotation(name)) continue;

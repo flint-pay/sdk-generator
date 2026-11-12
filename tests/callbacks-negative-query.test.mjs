@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { loadContract, generate, compare } from '../dist/index.js';
+import { loadContract, generate, compare, render } from '../dist/index.js';
 import { validateFixtures } from '../dist/fixtures.js';
 
 const root = mkdtempSync(join(tmpdir(), 'sdk-callbacks-'));
@@ -286,6 +286,7 @@ test('inline callback request and response bodies get stable public models and c
 });
 
 test('merged callback sibling examples are protected in every publisher', () => {
+  const flattened = new Map();
   for (const referenced of [false, true])
     for (const merged of [false, true]) {
       const doc = structuredClone(api);
@@ -333,6 +334,14 @@ test('merged callback sibling examples are protected in every publisher', () => 
         out = join(root, `protected-${referenced}-${merged}`);
       writeFileSync(path, JSON.stringify(doc));
       const contract = loadContract(path, fixture + 'sdk.json');
+      const files = [...render(contract)].sort(([a], [b]) => a.localeCompare(b));
+      if (!merged) flattened.set(referenced, files);
+      else
+        assert.deepEqual(
+          files,
+          flattened.get(referenced),
+          'referenced and flattened protection must publish identical bytes',
+        );
       generate(contract, out);
       const model = contract.callbackBodies.find((body) => body.pointer.includes('/put/')).model;
       for (const file of [
@@ -349,3 +358,63 @@ test('merged callback sibling examples are protected in every publisher', () => 
       }
     }
 });
+
+// Property: changing only Path Item reference representation cannot change any
+// published byte. Vary the protection source, flag and callback body representation.
+for (const flag of [{ 'x-sensitive': true }, { writeOnly: true }, { format: 'password' }])
+  for (const protection of Object.keys(flag)[0] === 'x-sensitive'
+    ? ['target', 'ancestor', 'intermediate', 'source', 'sourceAncestor']
+    : ['ancestor'])
+    for (const referencedSchema of [false, true])
+      test(`effective callback protection matches flattening: ${Object.keys(flag)[0]}, ${protection}, ${referencedSchema ? 'referenced' : 'inline'} body`, () => {
+        const doc = structuredClone(api);
+        const marker = 'SYNTHETIC_EFFECTIVE_PATH_ITEM_PROTECTED_EXAMPLE';
+        const body = {
+          type: 'object',
+          properties: {
+            value: { type: 'string', example: marker, examples: [marker], default: marker },
+            nested: { type: 'object', properties: { value: { type: 'string', example: marker } } },
+          },
+        };
+        doc.components.schemas.SiblingBody = body;
+        const schema = referencedSchema ? { $ref: '#/components/schemas/SiblingBody' } : body;
+        const original = doc.components.callbacks.evaluation['{$request.body#/url}'];
+        const sibling = {
+          requestBody: { content: { 'application/json': { schema } } },
+          responses: { 200: { description: 'OK', content: { 'application/json': { schema } } } },
+        };
+        if (protection === 'sourceAncestor')
+          Object.assign(doc.components.callbacks.evaluation, flag);
+        const target = { ...original, ...(protection === 'target' ? flag : {}) };
+        doc.components.pathItems = { Base: target };
+        let ref = '#/components/pathItems/Base';
+        if (protection === 'ancestor') {
+          doc['x-protected-path-items'] = { ...flag, Base: target };
+          ref = '#/x-protected-path-items/Base';
+        } else if (protection === 'intermediate') {
+          doc.components.pathItems.Middle = { $ref: ref, ...flag };
+          ref = '#/components/pathItems/Middle';
+        }
+        const path = join(
+          root,
+          `equivalent-${Object.keys(flag)[0]}-${protection}-${referencedSchema}.json`,
+        );
+        const publications = [];
+        for (const flattened of [false, true]) {
+          doc.components.callbacks.evaluation['{$request.body#/url}'] = flattened
+            ? { ...original, 'x-sensitive': true, put: sibling, patch: sibling }
+            : { $ref: ref, ...(protection === 'source' ? flag : {}), put: sibling, patch: sibling };
+          writeFileSync(path, JSON.stringify(doc));
+          const contract = loadContract(path, fixture + 'sdk.json');
+          const files = render(contract);
+          for (const [file, contents] of files) assert.ok(!contents.includes(marker), file);
+          // Also exercise the saved-contract publication path; provenance is private.
+          assert.deepEqual([...render(JSON.parse(JSON.stringify(contract)))], [...files]);
+          publications.push([...files].sort(([a], [b]) => a.localeCompare(b)));
+        }
+        assert.deepEqual(
+          publications[0],
+          publications[1],
+          'all generated package files must match byte for byte',
+        );
+      });
