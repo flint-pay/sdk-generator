@@ -1,0 +1,6 @@
+export type RateEvaluationResponse = {
+    /** Use an integer string (decimal digits), not a floating-point number. Format: int64. */
+    "amount": `${bigint}`;
+    /** pattern: ^(?:\S(?:[\s\S]*\S)?)?$. */
+    "reference"?: string;
+};

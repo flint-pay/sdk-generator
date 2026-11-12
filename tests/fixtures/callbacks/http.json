@@ -1,0 +1,581 @@
+[
+  {
+    "name": "create registration",
+    "operation": "createDeliveryRateCallback",
+    "input": {
+      "body": {
+        "url": "https://example.invalid/rates"
+      }
+    },
+    "expected": {
+      "method": "POST",
+      "path": "/v1/callbacks",
+      "body": "{\"url\":\"https://example.invalid/rates\"}"
+    },
+    "responses": [
+      {
+        "status": 201,
+        "body": "{\"id\":\"callback_fixture\"}"
+      }
+    ],
+    "data": {
+      "id": "callback_fixture"
+    }
+  },
+  {
+    "name": "hostname retained",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "domain_name": "shop.example"
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/domains?domain_name=shop.example"
+    },
+    "responses": [
+      {
+        "status": 200,
+        "body": "{\"id\":\"domain_fixture\"}"
+      }
+    ],
+    "data": {
+      "id": "domain_fixture"
+    }
+  },
+  {
+    "name": "negative pattern rejected before transport",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "domain_name": "192.0.2.1"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "nonspace control 0",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "hello"
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/domains?reference=hello"
+    },
+    "responses": [
+      {
+        "status": 200,
+        "body": "{\"id\":\"domain_fixture\"}"
+      }
+    ],
+    "data": {
+      "id": "domain_fixture"
+    }
+  },
+  {
+    "name": "nonspace control 1",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "a\nb"
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/domains?reference=a%0Ab"
+    },
+    "responses": [
+      {
+        "status": 200,
+        "body": "{\"id\":\"domain_fixture\"}"
+      }
+    ],
+    "data": {
+      "id": "domain_fixture"
+    }
+  },
+  {
+    "name": "nonspace control 2",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "\u00e9"
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/domains?reference=%C3%A9"
+    },
+    "responses": [
+      {
+        "status": 200,
+        "body": "{\"id\":\"domain_fixture\"}"
+      }
+    ],
+    "data": {
+      "id": "domain_fixture"
+    }
+  },
+  {
+    "name": "nonspace control 3",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "\u0000"
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/domains?reference=%00"
+    },
+    "responses": [
+      {
+        "status": 200,
+        "body": "{\"id\":\"domain_fixture\"}"
+      }
+    ],
+    "data": {
+      "id": "domain_fixture"
+    }
+  },
+  {
+    "name": "nonspace control 4",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "\u200b"
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/domains?reference=%E2%80%8B"
+    },
+    "responses": [
+      {
+        "status": 200,
+        "body": "{\"id\":\"domain_fixture\"}"
+      }
+    ],
+    "data": {
+      "id": "domain_fixture"
+    }
+  },
+  {
+    "name": "nonspace control 5",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "\uff00"
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/domains?reference=%EF%BC%80"
+    },
+    "responses": [
+      {
+        "status": 200,
+        "body": "{\"id\":\"domain_fixture\"}"
+      }
+    ],
+    "data": {
+      "id": "domain_fixture"
+    }
+  },
+  {
+    "name": "nonspace control 6",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": ""
+    },
+    "expected": {
+      "method": "GET",
+      "path": "/v1/domains?reference="
+    },
+    "responses": [
+      {
+        "status": 200,
+        "body": "{\"id\":\"domain_fixture\"}"
+      }
+    ],
+    "data": {
+      "id": "domain_fixture"
+    }
+  },
+  {
+    "name": "whitespace 0 leading",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "\ta"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 0 trailing",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "a\t"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 1 leading",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "\na"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 1 trailing",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "a\n"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 2 leading",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "\u000ba"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 2 trailing",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "a\u000b"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 3 leading",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "\fa"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 3 trailing",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "a\f"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 4 leading",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "\ra"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 4 trailing",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "a\r"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 5 leading",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": " a"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 5 trailing",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "a "
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 6 leading",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "\u00a0a"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 6 trailing",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "a\u00a0"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 7 leading",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "\u1680a"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 7 trailing",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "a\u1680"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 8 leading",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "\u2000a"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 8 trailing",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "a\u2000"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 9 leading",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "\u200aa"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 9 trailing",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "a\u200a"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 10 leading",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "\u2028a"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 10 trailing",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "a\u2028"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 11 leading",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "\u2029a"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 11 trailing",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "a\u2029"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 12 leading",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "\u202fa"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 12 trailing",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "a\u202f"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 13 leading",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "\u205fa"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 13 trailing",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "a\u205f"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 14 leading",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "\u3000a"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 14 trailing",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "a\u3000"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 15 leading",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "\ufeffa"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  },
+  {
+    "name": "whitespace 15 trailing",
+    "operation": "listPaymentMethodDomains",
+    "input": {
+      "reference": "a\ufeff"
+    },
+    "responses": [],
+    "error": {
+      "name": "InvalidInputError"
+    },
+    "attempts": 0
+  }
+]

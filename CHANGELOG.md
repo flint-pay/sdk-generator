@@ -4,6 +4,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ## Unreleased
 
+- Resolve operation callback references and retain their referenced request/response component models in Node and PHP output without generating incoming client methods. Accept negative scalar parameter constraints with the existing compiled validation in both runtimes. The portable regex translator also supports `\S` inside character classes, needed by callback response constraints. Existing specs and release classification are unchanged.
+
 - Both runtimes send declared `application/x-www-form-urlencoded` request bodies. A body must be a flat, non-null object of scalar fields, including discriminated unions such as an OAuth token request with authorization code, refresh token, device code and token exchange grants. Fields use the query parameter escaping and scalar text. A declared JSON body remains the implicit selection, so existing JSON operations and their wire bytes are unchanged; form-only operations that failed diagnosis now generate. Nested, array and nullable form fields and `encoding` declarations are diagnosed. PHP query parameters and form fields now send floats as the shortest round-trip text, matching Node, instead of rounding to the `precision` setting (14 significant digits).
 
 - Both runtimes support optional AWS STS outbound identity federation with ES384 and use the saved Flint CLI session last in the default credential chain. Explicit cloud sources work without platform markers; Azure auto discovery requires its endpoint/header pair.

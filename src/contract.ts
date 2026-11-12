@@ -575,7 +575,8 @@ function formBody(s: Schema, p: string): void {
   visit(s, p, new Map(), 0);
 }
 // Parameter serialization requires one explicit wire shape; conjuncts may add
-// constraints without repeating it. Alternatives remain outside this subset.
+// constraints without repeating it. Negative predicates only remove values and
+// cannot introduce another wire shape. Alternatives remain outside this subset.
 function parameterType(s: Schema, p: string, item = false): string {
   // A scalar and an array of the same scalar have one unambiguous form encoding.
   const alternatives = s.anyOf ?? s.oneOf;
@@ -615,7 +616,7 @@ function parameterType(s: Schema, p: string, item = false): string {
     !declared.length ||
     types.length !== 1 ||
     !allowed.includes(String(types[0])) ||
-    parts.some((part) => part.oneOf || part.anyOf || part.not || part['x-sdk-ref'])
+    parts.some((part) => part.oneOf || part.anyOf || part['x-sdk-ref'])
   )
     fail(p, 'parameters require an explicit non-null scalar type or scalar array');
   const type = String(types[0]);
@@ -685,6 +686,7 @@ function portablePattern(source: string, p: string): string {
   const classes: Record<string, string> = {
     d: '0-9',
     D: '\\x00-\\x2f\\x3a-\\x{10ffff}',
+    S: '\\x00-\\x08\\x0e-\\x1f\\x21-\\x{009f}\\x{00a1}-\\x{167f}\\x{1681}-\\x{1fff}\\x{200b}-\\x{2027}\\x{202a}-\\x{202e}\\x{2030}-\\x{205e}\\x{2060}-\\x{2fff}\\x{3001}-\\x{fefe}\\x{ff00}-\\x{10ffff}',
     w: 'A-Za-z0-9_',
     W: '\\x00-\\x2f\\x3a-\\x40\\x5b-\\x5e\\x60\\x7b-\\x{10ffff}',
   };
@@ -694,9 +696,9 @@ function portablePattern(source: string, p: string): string {
     const ch = source[i]!;
     if (ch === '\\') {
       const next = source[++i]!;
-      if (classes[next]) result += inClass ? classes[next] : '[' + classes[next] + ']';
+      if (next === 'S' && !inClass) result += '[^' + space + ']';
+      else if (classes[next]) result += inClass ? classes[next] : '[' + classes[next] + ']';
       else if (next === 's') result += inClass ? space : '[' + space + ']';
-      else if (next === 'S' && !inClass) result += '[^' + space + ']';
       else if (next === 'v') result += '\\x0b';
       else if (next === 'u') {
         const hex = source.slice(i + 1, i + 5);
@@ -1579,6 +1581,7 @@ function loadContractInput(
         examples: 'example',
         links: 'link',
         pathItems: 'pathItem',
+        callbacks: 'callback',
       };
       return own(kinds, key) ? 'map:' + kinds[key] : 'literal';
     }
@@ -1588,6 +1591,8 @@ function loadContractInput(
     )
       return 'operation';
     if (['operation', 'pathItem'].includes(context) && key === 'parameters') return 'parameter';
+    if (context === 'operation' && key === 'callbacks') return 'map:callback';
+    if (context === 'callback') return key.startsWith('x-') ? 'literal' : 'pathItem';
     if (context === 'operation' && key === 'requestBody') return 'requestBody';
     if (context === 'operation' && key === 'responses') return 'map:response';
     if (['parameter', 'header', 'media'].includes(context) && key === 'schema') return 'schema';
@@ -2874,6 +2879,55 @@ function loadContractInput(
       return [path, Object.fromEntries(entries)];
     }),
   );
+  // Callbacks describe incoming HTTP, not additional client methods. Traverse
+  // their schemas with the same context rules used for reference reachability.
+  const validateCallback = (value: unknown, context: Context, path: string): void => {
+    if (context === 'literal' || value === undefined) return;
+    if (context === 'schema') {
+      schema(
+        // schema() validates untrusted schema objects before reading fields.
+        value as Schema,
+        path,
+        raw.openapi.startsWith('3.0.'),
+        config.numericUnions === 'explicit',
+      );
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((child, index) => validateCallback(child, context, path + '/' + index));
+      return;
+    }
+    record(value, path);
+    for (const [key, child] of Object.entries(value)) {
+      if (
+        context === 'pathItem' &&
+        ![
+          'get',
+          'post',
+          'put',
+          'patch',
+          'delete',
+          'head',
+          'options',
+          'parameters',
+          'summary',
+          'description',
+          'servers',
+        ].includes(key) &&
+        !key.startsWith('x-')
+      )
+        fail(path + '/' + pointerSegment(key), 'unsupported incoming callback method');
+      validateCallback(child, childContext(context, key), path + '/' + pointerSegment(key));
+    }
+  };
+  for (const [path, item] of Object.entries(selectedPaths))
+    for (const [verb, op] of Object.entries(item))
+      if (op && typeof op === 'object' && 'callbacks' in op)
+        validateCallback(
+          op.callbacks,
+          'map:callback',
+          '/paths/' + pointerSegment(path) + '/' + verb + '/callbacks',
+        );
   const incoming: IncomingWebhook[] = [];
   if (raw.webhooks !== undefined) {
     if (raw.openapi.startsWith('3.0.')) fail('/webhooks', 'webhooks require OpenAPI 3.1');
@@ -3468,7 +3522,7 @@ function loadContractInput(
             );
           publicNames.add(key);
         }
-        for (const forbidden of ['callbacks', 'servers'])
+        for (const forbidden of ['servers'])
           if (op[forbidden] !== undefined)
             fail(`${p}/${forbidden}`, 'unsupported operation construct');
         if (item.servers !== undefined)
