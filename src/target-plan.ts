@@ -263,6 +263,7 @@ export function modelsUsed(c: Contract) {
     const names = new Set([
       ...c.operations.flatMap((op) => c.modelDependencies![op.id] ?? []),
       ...Object.keys(c.definitions ?? {}),
+      ...(c.callbackBodies ?? []).map((body) => body.model),
       ...(c.incoming ?? []).flatMap((item) => [item.model, ...item.dependencies]),
     ]);
     return Object.fromEntries(Object.entries(c.models).filter(([name]) => names.has(name)));
@@ -1099,6 +1100,13 @@ export function compileSdkContract(source: Contract): {
       visitInput(child);
   };
   for (const op of c.operations) visitInput(inputSchema(op, c.config.apiVersion, c));
+  for (const body of c.callbackBodies ?? [])
+    if (body.direction === 'response') {
+      const schema = models[body.model];
+      if (!schema) throw new Error('Missing callback response model ' + body.model);
+      inputModels.add(body.model);
+      visitInput(schema);
+    }
   for (const name of Object.keys(models))
     if ((!c.config.targets || c.config.targets.includes('node')) && isReservedTypeName(name))
       throw new Diagnostic(

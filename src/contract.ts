@@ -327,6 +327,13 @@ export interface Contract {
   apiVersion: string;
   operations: Operation[];
   incoming?: IncomingWebhook[];
+  /** Incoming callback bodies retain their direction and public model identity. */
+  callbackBodies?: {
+    operationId: string;
+    pointer: string;
+    direction: 'request' | 'response';
+    model: string;
+  }[];
   models: Record<string, Schema>;
   definitions?: Record<string, Schema>;
   modelDependencies?: Record<string, string[]>;
@@ -1704,6 +1711,20 @@ function loadContractInput(
       ])
         if (Object.hasOwn(value, key))
           sourceJson.assertMember(value, key, path + '/' + pointerSegment(key));
+    if (context === 'pathItem' && '$ref' in value)
+      return Object.fromEntries(
+        Object.entries(pathFields(value, file, path, new Set(), sourcePath)).map(([key, field]) => [
+          key,
+          deref(
+            field.value,
+            field.file,
+            path + '/' + pointerSegment(key),
+            stack,
+            childContext(context, key),
+            field.sourcePath,
+          ),
+        ]),
+      );
     const map = context.startsWith('map:');
     if (!map && Object.keys(value).some((key) => key.startsWith('x-sdk-')))
       fail(path, 'x-sdk-* extensions are reserved for resolved generator metadata');
@@ -2550,6 +2571,11 @@ function loadContractInput(
       for (const child of value) collect(child, file, context);
       return;
     }
+    if (context === 'pathItem' && '$ref' in value) {
+      for (const [key, field] of Object.entries(pathFields(value, file, 'callbacks')))
+        collect(field.value, field.file, childContext(context, key));
+      return;
+    }
     if (!context.startsWith('map:') && '$ref' in value) {
       const ref = value.$ref;
       if (typeof ref !== 'string' || /^\w+:/.test(ref) || ref.startsWith('//'))
@@ -2881,7 +2907,15 @@ function loadContractInput(
   );
   // Callbacks describe incoming HTTP, not additional client methods. Traverse
   // their schemas with the same context rules used for reference reachability.
-  const validateCallback = (value: unknown, context: Context, path: string): void => {
+  const callbackBodies: NonNullable<Contract['callbackBodies']> = [];
+  const callbackModels: Record<string, Schema> = {};
+  const validateCallback = (
+    value: unknown,
+    context: Context,
+    path: string,
+    operationId: string,
+    direction?: 'request' | 'response',
+  ): void => {
     if (context === 'literal' || value === undefined) return;
     if (context === 'schema') {
       schema(
@@ -2891,10 +2925,22 @@ function loadContractInput(
         raw.openapi.startsWith('3.0.'),
         config.numericUnions === 'explicit',
       );
+      if (direction) {
+        // Component identities survive resolution. Inline roots use the same
+        // deterministic location-hash convention as incoming webhook bodies.
+        const referenced = referenceNames.get(value as Schema) ?? typeNames.get(value as Schema);
+        const model =
+          referenced ??
+          'Callback' + hash(path).slice(0, 12) + (direction === 'request' ? 'Request' : 'Response');
+        if (!referenced) callbackModels[model] = value as Schema;
+        callbackBodies.push({ operationId, pointer: path, direction, model });
+      }
       return;
     }
     if (Array.isArray(value)) {
-      value.forEach((child, index) => validateCallback(child, context, path + '/' + index));
+      value.forEach((child, index) =>
+        validateCallback(child, context, path + '/' + index, operationId, direction),
+      );
       return;
     }
     record(value, path);
@@ -2917,17 +2963,35 @@ function loadContractInput(
         !key.startsWith('x-')
       )
         fail(path + '/' + pointerSegment(key), 'unsupported incoming callback method');
-      validateCallback(child, childContext(context, key), path + '/' + pointerSegment(key));
+      const next = childContext(context, key);
+      validateCallback(
+        child,
+        next,
+        path + '/' + pointerSegment(key),
+        operationId,
+        next === 'requestBody'
+          ? 'request'
+          : next === 'response'
+            ? 'response'
+            : ['header', 'parameter', 'operation'].includes(next)
+              ? undefined
+              : direction,
+      );
     }
   };
   for (const [path, item] of Object.entries(selectedPaths))
     for (const [verb, op] of Object.entries(item))
-      if (op && typeof op === 'object' && 'callbacks' in op)
+      if (op && typeof op === 'object' && 'callbacks' in op) {
+        const operationId: unknown = Reflect.get(op, 'operationId');
         validateCallback(
           op.callbacks,
           'map:callback',
           '/paths/' + pointerSegment(path) + '/' + verb + '/callbacks',
+          typeof operationId === 'string'
+            ? operationId
+            : fail('/paths/' + pointerSegment(path), 'expected an operation ID'),
         );
+      }
   const incoming: IncomingWebhook[] = [];
   if (raw.webhooks !== undefined) {
     if (raw.openapi.startsWith('3.0.')) fail('/webhooks', 'webhooks require OpenAPI 3.1');
@@ -3064,6 +3128,11 @@ function loadContractInput(
     } catch (error) {
       diagnostics.capture(error);
     }
+  }
+  for (const [name, value] of Object.entries(callbackModels)) {
+    if (Object.hasOwn(models, name)) fail('models/' + name, 'callback model name collision');
+    modelName(name, 'models/' + name, config.targets);
+    models[name] = value;
   }
   for (const k of Object.keys(config.models ?? {}))
     if (!Object.hasOwn(raw.components?.schemas ?? {}, k))
@@ -4391,6 +4460,7 @@ function loadContractInput(
     apiVersion: config.apiVersion?.value ?? String(doc.info?.version ?? ''),
     operations,
     ...(incoming.length ? { incoming } : {}),
+    ...(callbackBodies.length ? { callbackBodies } : {}),
     models,
     ...(cycles.size ? { definitions } : {}),
     modelDependencies: Object.fromEntries(
@@ -4402,6 +4472,9 @@ function loadContractInput(
           [
             ...new Set([
               ...dependencyPrefixes.get(operationPath)!,
+              ...callbackBodies
+                .filter((body) => body.operationId === op.id)
+                .map((body) => body.model),
               ...dependencyPrefixes.get(sharedParameters)!,
             ]),
           ].sort(),

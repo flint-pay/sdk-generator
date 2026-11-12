@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { loadContract, generate } from '../dist/index.js';
+import { loadContract, generate, compare } from '../dist/index.js';
 import { validateFixtures } from '../dist/fixtures.js';
 
 const root = mkdtempSync(join(tmpdir(), 'sdk-callbacks-'));
@@ -133,4 +133,153 @@ test('negative query predicates are enforced in the default encoding profile too
     (await validateFixtures(out, http)).map((r) => r.scenarios),
     [3, 3],
   );
+});
+
+test('callback response construction types close nested tagged unions', () => {
+  const doc = structuredClone(api);
+  const outcome = {
+    type: 'object',
+    oneOf: [
+      {
+        type: 'object',
+        required: ['type', 'amount_money', 'expires_at', 'selection_guarantee_expires_at'],
+        properties: {
+          type: { const: 'available' },
+          amount_money: { type: 'integer' },
+          expires_at: { type: 'string' },
+          selection_guarantee_expires_at: { type: 'string' },
+        },
+      },
+      {
+        type: 'object',
+        required: ['type', 'reason'],
+        properties: { type: { const: 'unavailable' }, reason: { type: 'string' } },
+      },
+    ],
+  };
+  doc.components.schemas.Outcome = outcome;
+  doc.components.schemas.RateEvaluationResponse = {
+    type: 'object',
+    required: ['results'],
+    properties: { results: { type: 'array', items: { $ref: '#/components/schemas/Outcome' } } },
+  };
+  const path = join(root, 'strict.json'),
+    out = join(root, 'strict');
+  writeFileSync(path, JSON.stringify(doc));
+  generate(loadContract(path, fixture + 'sdk.json'), out);
+  const consumer = join(out, 'node/consumer.ts');
+  writeFileSync(
+    consumer,
+    `import {makeRateEvaluationResponse} from './index.js';
+import type {RateEvaluationResponseInput} from './index.js';
+const valid: RateEvaluationResponseInput = {results:[{type:'available',amount_money:1,expires_at:'later',selection_guarantee_expires_at:'later'}]};
+makeRateEvaluationResponse(valid);
+// @ts-expect-error available requires price and both expiry fields
+const invalid: RateEvaluationResponseInput = {results:[{type:'available'}]};
+// @ts-expect-error factory uses the same strict nested construction type
+makeRateEvaluationResponse({results:[{type:'available'}]});
+`,
+  );
+  const result = spawnSync(
+    process.execPath,
+    [
+      resolve('node_modules/typescript/bin/tsc'),
+      '--noEmit',
+      '--strict',
+      '--skipLibCheck',
+      '--target',
+      'es2022',
+      '--module',
+      'nodenext',
+      consumer,
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+});
+
+test('callback path item references merge sibling methods and diagnose trace', () => {
+  const doc = structuredClone(api);
+  doc.components.pathItems = {
+    Evaluation: doc.components.callbacks.evaluation['{$request.body#/url}'],
+  };
+  doc.components.schemas.PutOnly = {
+    type: 'object',
+    required: ['count'],
+    properties: { count: { type: 'integer' } },
+  };
+  doc.components.callbacks.evaluation['{$request.body#/url}'] = {
+    $ref: '#/components/pathItems/Evaluation',
+    put: {
+      responses: {
+        200: {
+          description: 'OK',
+          content: { 'application/json': { schema: { $ref: '#/components/schemas/PutOnly' } } },
+        },
+      },
+    },
+  };
+  const path = join(root, 'siblings.json');
+  writeFileSync(path, JSON.stringify(doc));
+  const before = loadContract(path, fixture + 'sdk.json'),
+    out = join(root, 'siblings');
+  generate(before, out);
+  assert.ok(before.modelDependencies.createDeliveryRateCallback.includes('PutOnly'));
+  assert.match(readFileSync(join(out, 'node/index.d.ts'), 'utf8'), /PutOnlyInput/);
+  assert.match(
+    readFileSync(join(out, 'php/src/classes/PutOnlyInput.php'), 'utf8'),
+    /class PutOnlyInput/,
+  );
+  doc.components.schemas.PutOnly.required.push('label');
+  doc.components.schemas.PutOnly.properties.label = { type: 'string' };
+  writeFileSync(path, JSON.stringify(doc));
+  assert.ok(compare(before, loadContract(path, fixture + 'sdk.json')).length > 0);
+  doc.components.callbacks.evaluation['{$request.body#/url}'].trace = {};
+  writeFileSync(path, JSON.stringify(doc));
+  assert.throws(
+    () => loadContract(path, fixture + 'sdk.json'),
+    /callbacks.*unsupported incoming callback method.*trace/,
+  );
+});
+
+test('inline callback request and response bodies get stable public models and compatibility facts', () => {
+  const doc = structuredClone(api);
+  const op = doc.components.callbacks.evaluation['{$request.body#/url}'].post;
+  op.requestBody.content['application/json'].schema = {
+    type: 'object',
+    required: ['request_value'],
+    properties: { request_value: { type: 'string' } },
+  };
+  op.responses['2XX'].content['application/json'].schema = {
+    type: 'object',
+    required: ['response_value'],
+    properties: { response_value: { type: 'string' } },
+  };
+  const path = join(root, 'inline-bodies.json');
+  writeFileSync(path, JSON.stringify(doc));
+  const before = loadContract(path, fixture + 'sdk.json'),
+    out = join(root, 'inline-bodies');
+  generate(before, out);
+  const bodies = before.callbackBodies.filter((body) => body.pointer.includes('/evaluation/'));
+  assert.equal(bodies.length, 2);
+  for (const body of bodies) {
+    assert.ok(before.models[body.model]);
+    assert.ok(readFileSync(join(out, 'node/index.d.ts'), 'utf8').includes(body.model));
+    assert.match(
+      readFileSync(join(out, 'php/src/classes', body.model + 'Input.php'), 'utf8'),
+      new RegExp('class ' + body.model + 'Input'),
+    );
+  }
+  assert.deepEqual(loadContract(path, fixture + 'sdk.json').callbackBodies, before.callbackBodies);
+  for (const schema of [
+    op.requestBody.content['application/json'].schema,
+    op.responses['2XX'].content['application/json'].schema,
+  ]) {
+    schema.required.push('added');
+    schema.properties.added = { type: 'string' };
+    writeFileSync(path, JSON.stringify(doc));
+    assert.ok(compare(before, loadContract(path, fixture + 'sdk.json')).length > 0);
+    schema.required.pop();
+    delete schema.properties.added;
+  }
 });
