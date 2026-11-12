@@ -1,3 +1,4 @@
+import { pathItemFields } from './path-item.js';
 import type { Contract, Schema } from './contract.js';
 import { Diagnostic, pointerSegment } from './diagnostic.js';
 
@@ -11,6 +12,9 @@ export interface ExampleSource {
 }
 const object = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
+const sensitive = (value: unknown): boolean =>
+  object(value) &&
+  (value['x-sensitive'] === true || value.writeOnly === true || value.format === 'password');
 const sourceKey = (source: Pick<ExampleSource, 'document' | 'pointer'>): string =>
   source.document + '#' + source.pointer;
 
@@ -106,24 +110,46 @@ export function sourceExampleProtection(
       if (/^\/components\/schemas\/[^/]+$/.test(source.pointer)) shared.component = key;
       shapes.set(shape, shared);
     }
+    if (object(value) && !context.startsWith('map:') && sensitive(value)) seeds.add(key);
     if (
       object(value) &&
+      context !== 'pathItem' &&
       !context.startsWith('map:') &&
-      (value['x-sensitive'] === true || value.writeOnly === true || value.format === 'password')
-    )
-      seeds.add(key);
-    if (object(value) && !context.startsWith('map:') && typeof value.$ref === 'string') {
+      typeof value.$ref === 'string'
+    ) {
       const target = visit(reference(source, value.$ref));
       if (target) connect(key, target, true);
       if (context !== 'schema' || ignoredSiblings) return key;
     }
-    for (const [name, child] of Object.entries(value)) {
+    const fields =
+      context === 'pathItem'
+        ? pathItemFields(source, (item, ref) => {
+            const target = reference(item, ref);
+            return {
+              ...target,
+              protectedAncestor: Boolean(
+                target.protectedAncestor ||
+                  item.protectedAncestor ||
+                  sensitive(item.value) ||
+                  sensitive(target.value),
+              ),
+            };
+          })
+        : Object.fromEntries(
+            Object.entries(value).map(([name, child]) => [
+              name,
+              {
+                ...source,
+                pointer: source.pointer + '/' + pointerSegment(name),
+                value: child,
+              },
+            ]),
+          );
+    for (const [name, child] of Object.entries(fields)) {
       if (name === '$ref' && !context.startsWith('map:')) continue;
       if (context === 'schema' && !Array.isArray(value) && isAnnotation(name)) continue;
       const nested = visit({
-        ...source,
-        pointer: source.pointer + '/' + pointerSegment(name),
-        value: child,
+        ...child,
         context: Array.isArray(value) ? context : childContext(context, name),
       });
       if (!nested) continue;

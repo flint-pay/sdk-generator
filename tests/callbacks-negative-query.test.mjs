@@ -1,3 +1,4 @@
+import { publicInventory } from './helpers/public-inventory.mjs';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
@@ -282,4 +283,69 @@ test('inline callback request and response bodies get stable public models and c
     schema.required.pop();
     delete schema.properties.added;
   }
+});
+
+test('merged callback sibling examples are protected in every publisher', () => {
+  for (const referenced of [false, true])
+    for (const merged of [false, true]) {
+      const doc = structuredClone(api);
+      const marker = 'SYNTHETIC_CALLBACK_SIBLING_SECRET_EXAMPLE';
+      const visible = 'SYNTHETIC_CALLBACK_SIBLING_PUBLIC_EXAMPLE';
+      const schema = {
+        type: 'object',
+        properties: {
+          secret: {
+            type: 'string',
+            'x-sensitive': true,
+            example: marker,
+            examples: [marker],
+            default: marker,
+          },
+          public_value: { type: 'string', example: visible },
+        },
+      };
+      doc.components.schemas.SiblingPayload = schema;
+      const original = doc.components.callbacks.evaluation['{$request.body#/url}'];
+      const put = {
+        responses: {
+          200: {
+            description: 'OK',
+            content: {
+              'application/json': {
+                schema: referenced ? { $ref: '#/components/schemas/SiblingPayload' } : schema,
+              },
+            },
+          },
+        },
+      };
+      doc.components.pathItems = { Evaluation: original };
+      doc.components.callbacks.evaluation['{$request.body#/url}'] = merged
+        ? { $ref: '#/components/pathItems/Evaluation', put }
+        : { ...original, put };
+      const inventory = publicInventory(doc);
+      assert.ok(inventory.callbacks.some((body) => body.pointer.endsWith('/put')));
+      assert.ok(
+        Object.values(inventory.keywords)
+          .flat()
+          .some((path) => path.includes('/put/') && path.endsWith('/x-sensitive')) || referenced,
+      );
+      const path = join(root, `protected-${referenced}-${merged}.json`),
+        out = join(root, `protected-${referenced}-${merged}`);
+      writeFileSync(path, JSON.stringify(doc));
+      const contract = loadContract(path, fixture + 'sdk.json');
+      generate(contract, out);
+      const model = contract.callbackBodies.find((body) => body.pointer.includes('/put/')).model;
+      for (const file of [
+        join(out, 'node/declarations', model + '.d.ts'),
+        join(out, 'node/declarations', model + 'Input.d.ts'),
+        join(out, 'php/src/classes', model + 'Input.php'),
+        join(out, 'node/MODELS.md'),
+        join(out, 'php/MODELS.md'),
+      ]) {
+        const text = readFileSync(file, 'utf8');
+        assert.ok(!text.includes(marker), file);
+        if (!file.endsWith('Input.d.ts'))
+          assert.ok(text.includes(visible), file + ' retains public sibling annotations');
+      }
+    }
 });

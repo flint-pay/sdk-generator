@@ -1,3 +1,4 @@
+import { pathItemFields } from './path-item.js';
 import { webhookNames } from './webhook-names.js';
 import { integerMode, markIntegerMode, sameObjectShape } from './integer-policy.js';
 import { scalarQueryArray } from './query-arrays.js';
@@ -2605,33 +2606,28 @@ function loadContractInput(
     seen = new Set<string>(),
     sourcePath = path,
   ): Record<string, PathField> {
-    record(item, path);
-    let fields: Record<string, PathField> = {};
-    if ('$ref' in item) {
-      const ref = item.$ref;
-      if (typeof ref !== 'string' || /^\w+:/.test(ref) || ref.startsWith('//'))
-        fail(path, 'remote references must be vendored locally for reproducible generation');
-      const [relative, fragment = ''] = ref.split('#');
-      const target = resolve(dirname(file), relative || file);
-      const key = target + '#' + fragment;
-      if (seen.has(key)) fail(path, 'cyclic path item reference');
-      seen.add(key);
-      fields = pathFields(pointer(load(target), fragment, path), target, path, seen, fragment);
-    }
-    for (const [key, value] of Object.entries(item)) {
-      if (key === '$ref') continue;
-      if (key.startsWith('x-sdk-'))
-        fail(path, 'x-sdk-* extensions are reserved for resolved generator metadata');
-      if (Object.hasOwn(fields, key))
-        fail(path + '/' + pointerSegment(key), 'conflicting path item $ref field ' + key);
-      Object.defineProperty(fields, key, {
-        value: { value, file, sourcePath: sourcePath + '/' + pointerSegment(key) },
-        enumerable: true,
-        configurable: true,
-      });
-    }
-    return fields;
+    const fields = pathItemFields(
+      { value: item, document: file, pointer: sourcePath },
+      (source, ref) => {
+        const [relative, fragment = ''] = ref.split('#');
+        const target = resolve(dirname(source.document), relative || source.document);
+        return {
+          value: pointer(load(target), fragment, path),
+          document: target,
+          pointer: fragment,
+        };
+      },
+      path,
+      seen,
+    );
+    return Object.fromEntries(
+      Object.entries(fields).map(([key, field]) => [
+        key,
+        { value: field.value, file: field.document, sourcePath: field.pointer },
+      ]),
+    );
   }
+
   // Path-item references contribute operation IDs just like inline path items.
   const declaredIds = new Set<string>();
   let completeInventory =
