@@ -770,36 +770,38 @@ function schema(s: Schema, p: string, legacy = false, explicitNumbers = false): 
     }
   }
   if (s.propertyNames !== undefined) {
-    const names = s.propertyNames;
     const remedy =
-      'propertyNames supports only string type, minLength, maxLength, pattern, enum and const; express key constraints with these keywords';
-    if (!names || typeof names !== 'object' || Array.isArray(names))
-      fail(p + '/propertyNames', remedy);
-    for (const key of Object.keys(names))
+      'propertyNames supports only string type, minLength, maxLength, pattern, enum, const and recursive not; express key constraints with these keywords';
+    const validateNames = (names: Schema, location: string): void => {
+      if (!names || typeof names !== 'object' || Array.isArray(names)) fail(location, remedy);
+      for (const key of Object.keys(names))
+        if (
+          ![
+            'type',
+            'minLength',
+            'maxLength',
+            'pattern',
+            'enum',
+            'const',
+            'not',
+            'x-sdk-pattern-php',
+            // Raw reserved extensions are rejected before dereferencing/protection.
+            EXAMPLE_PROTECTION_MARKER,
+          ].includes(key)
+        )
+          fail(location + '/' + pointerSegment(key), remedy);
+      if (names.type !== undefined && names.type !== 'string') fail(location + '/type', remedy);
       if (
-        ![
-          'type',
-          'minLength',
-          'maxLength',
-          'pattern',
-          'enum',
-          'const',
-          'x-sdk-pattern-php',
-          // Raw reserved extensions are rejected before dereferencing/protection.
-          EXAMPLE_PROTECTION_MARKER,
-        ].includes(key)
+        names.enum !== undefined &&
+        (!Array.isArray(names.enum) || names.enum.some((key) => typeof key !== 'string'))
       )
-        fail(p + '/propertyNames/' + pointerSegment(key), remedy);
-    if (names.type !== undefined && names.type !== 'string')
-      fail(p + '/propertyNames/type', remedy);
-    if (
-      names.enum !== undefined &&
-      (!Array.isArray(names.enum) || names.enum.some((key) => typeof key !== 'string'))
-    )
-      fail(p + '/propertyNames/enum', remedy);
-    if (Object.hasOwn(names, 'const') && typeof names.const !== 'string')
-      fail(p + '/propertyNames/const', remedy);
-    schema(names, p + '/propertyNames', legacy, explicitNumbers);
+        fail(location + '/enum', remedy);
+      if (Object.hasOwn(names, 'const') && typeof names.const !== 'string')
+        fail(location + '/const', remedy);
+      if (names.not !== undefined) validateNames(names.not, location + '/not');
+    };
+    validateNames(s.propertyNames, p + '/propertyNames');
+    schema(s.propertyNames, p + '/propertyNames', legacy, explicitNumbers);
   }
   if (s.dependentRequired !== undefined) {
     const dependencies = s.dependentRequired;
@@ -2832,7 +2834,7 @@ function loadContractInput(
           child,
           sourcePath + '/' + pointerSegment(key),
           Array.isArray(value) ? context : childContext(context, key),
-          context === 'schema' && key === 'propertyNames',
+          propertyNames || (context === 'schema' && key === 'propertyNames'),
         );
   };
   for (const [event, value] of Object.entries(config.webhook?.events ?? {}))

@@ -27,6 +27,14 @@ const config = {
   composer: { name: 'example/schema-keys', namespace: 'Example\\SchemaKeys' },
 };
 const schemas = {
+  negative: {
+    type: 'object',
+    properties: { reserved_declared: { type: 'string' } },
+    additionalProperties: { type: 'string' },
+    propertyNames: { minLength: 1, not: { pattern: '^reserved_' } },
+  },
+  negativeEnum: { type: 'object', propertyNames: { not: { enum: ['blocked'] } } },
+  negativeNested: { type: 'object', propertyNames: { not: { not: { pattern: '^safe_' } } } },
   names: {
     type: 'object',
     additionalProperties: { type: 'string' },
@@ -78,6 +86,10 @@ const output = join(dir, 'output');
 before(() => generate(load(document()), output));
 
 const valid = [
+  ['negative', { merchant_note: 'value', reserved: 'allowed', Reserved_key: 'case sensitive' }],
+  ['negative', {}],
+  ['negativeEnum', { allowed: 1 }],
+  ['negativeNested', { safe_key: 1 }],
   ['names', { ab: 'x', éé: 'unicode' }],
   ['names', {}],
   ['enums', { alpha: 1, beta: false }],
@@ -92,6 +104,10 @@ const valid = [
   ['nullOnly', null],
 ];
 const invalid = [
+  ['negative', { reserved_private: 'rejected' }],
+  ['negative', { reserved_declared: 'also rejected on declared fields' }],
+  ['negativeEnum', { blocked: 1 }],
+  ['negativeNested', { unsafe_key: 1 }],
   ['names', { a: 'short' }],
   ['names', { abcd: 'long' }],
   ['names', { AB: 'pattern' }],
@@ -180,6 +196,9 @@ test('unsupported propertyNames shapes fail with a specific remedy', () => {
     { enum: [1] },
     { const: 1 },
     { properties: {} },
+    { not: { properties: {} } },
+    { not: { type: 'integer' } },
+    { not: false },
   ]) {
     assert.throws(
       () => load(document({ invalid: { type: 'object', propertyNames } })),
@@ -530,5 +549,79 @@ test('diagnose is identical with relation memoization on and off across composed
       return { status: result.status, report: JSON.parse(result.stdout), stderr: result.stderr };
     };
     assert.deepEqual(run('dist/cli.js'), run(reference), `numeric pair ${index}`);
+  }
+});
+
+test('negative key predicates remain strict in default-profile generated clients', async () => {
+  const api = join(dir, 'negative-default.json'),
+    profile = join(dir, 'negative-default-sdk.json'),
+    out = join(dir, 'negative-default');
+  writeFileSync(api, JSON.stringify(document({ negative: schemas.negative })));
+  const { validation, ...encoding } = config;
+  writeFileSync(profile, JSON.stringify(encoding));
+  generate(loadContract(api, profile), out);
+  const cases = join(dir, 'negative-default-http.json');
+  const control = { merchant_note: 'value' };
+  writeFileSync(
+    cases,
+    JSON.stringify([
+      {
+        name: 'allowed key retained',
+        operation: 'negative',
+        input: { body: control },
+        expected: { method: 'POST', path: '/v1/negative', body: JSON.stringify(control) },
+        responses: [{ status: 200, body: JSON.stringify(control) }],
+        data: control,
+      },
+      {
+        name: 'reserved key rejected before send',
+        operation: 'negative',
+        input: { body: { reserved_private: 'value' } },
+        responses: [],
+        attempts: 0,
+        error: { name: 'InvalidInputError' },
+      },
+      {
+        name: 'response key stays closed',
+        operation: 'negative',
+        input: { body: control },
+        expected: { method: 'POST', path: '/v1/negative', body: JSON.stringify(control) },
+        responses: [{ status: 200, body: '{"reserved_private":"value"}' }],
+        error: { name: 'UnexpectedResponseError' },
+      },
+    ]),
+  );
+  assert.deepEqual(
+    (await validateFixtures(out, cases)).map((x) => x.scenarios),
+    [3, 3],
+  );
+});
+
+test('reserved metadata cannot be injected through negated property-name schemas', () => {
+  for (const key of ['x-sdk-pattern-php', 'x-sdk-example-protected', 'x-sdk-unknown']) {
+    const schema = {
+      type: 'object',
+      propertyNames: { not: { pattern: '^reserved_', [key]: true } },
+    };
+    assert.throws(() => load(document({ invalid: schema })), /x-sdk-\* extensions are reserved/);
+    const profile = join(dir, 'negative-reserved-sdk.json');
+    writeFileSync(
+      profile,
+      JSON.stringify({
+        ...config,
+        webhook: {
+          algorithm: 'hmac-sha256',
+          header: 'X-Signature',
+          timestampHeader: 'X-Time',
+          separator: '.',
+          toleranceSeconds: 300,
+          typeField: 'type',
+          events: { 'map.changed': schema },
+        },
+      }),
+    );
+    const api = join(dir, 'negative-reserved-api.json');
+    writeFileSync(api, JSON.stringify(document({ valid: schemas.names })));
+    assert.throws(() => loadContract(api, profile), /x-sdk-\* extensions are reserved/);
   }
 });
