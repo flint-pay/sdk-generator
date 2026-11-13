@@ -48,7 +48,7 @@ export function webhookNames(
       return [
         {
           original: ref.slice(21).replace(/~1/g, '/').replace(/~0/g, '~'),
-          audience: String(record(variant).title ?? ''),
+          audience: String(resolve(variant).title ?? ''),
           schema: resolve(variant),
         },
       ];
