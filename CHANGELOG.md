@@ -4,6 +4,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ## Unreleased
 
+- Resolve webhook audience titles from referenced components when the reference has no explicit sibling title. Removing redundant sibling titles now preserves Node and PHP output; distinct audiences with missing or colliding resolved titles remain diagnosed.
+
 - Support recursive `propertyNames.not` string predicates in Node and PHP. Reserved key prefixes and other negated key constraints are enforced before sending and in strict response decoding, under both validation profiles. Dictionary key types remain strings.
 
 - Resolve operation callback and Path Item references with sibling fields and sensitive-example protection on the effective merged item (including referenced ancestors), expose strict callback response construction types/factories, and retain referenced and inline request/response models in Node and PHP output without generating incoming client methods. Accept negative scalar parameter constraints with the existing compiled validation in both runtimes. The portable regex translator also supports `\S` inside character classes, needed by callback response constraints. Existing specs and release classification are unchanged.
