@@ -45,11 +45,12 @@ export function webhookNames(
     const entries = (Array.isArray(variants) ? variants : []).flatMap((variant) => {
       const ref = record(variant).$ref;
       if (typeof ref !== 'string' || !ref.startsWith('#/components/schemas/')) return [];
+      const resolved = resolve(variant);
       return [
         {
           original: ref.slice(21).replace(/~1/g, '/').replace(/~0/g, '~'),
-          audience: String(record(variant).title ?? ''),
-          schema: resolve(variant),
+          audience: String(resolved.title ?? ''),
+          schema: resolved,
         },
       ];
     });
@@ -91,12 +92,19 @@ export function webhookNames(
     names[event] = name;
     const entries = branches.get(event) ?? [];
     const different = new Set(entries.map((entry) => stable(shape(entry.schema)))).size > 1;
+    const audienceNames = entries.map((entry) =>
+      webhookEventTypeName(event + '_' + entry.audience).toLowerCase(),
+    );
+    if (
+      different &&
+      (entries.some((entry) => !entry.audience.trim()) ||
+        new Set(audienceNames).size !== entries.length)
+    )
+      throw new Diagnostic(
+        '/webhooks/' + event,
+        'distinct webhook audiences require variant titles',
+      );
     for (const entry of entries) {
-      if (different && !entry.audience)
-        throw new Diagnostic(
-          '/webhooks/' + event,
-          'distinct webhook audiences require variant titles',
-        );
       const variant = different ? choose(event + '_' + entry.audience) : name;
       models[entry.original] = variant;
     }

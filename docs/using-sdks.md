@@ -562,6 +562,8 @@ if (verified.known) {
 
 Node exports `VerifiedWebhook`, `KnownWebhookEvent` and one `<EventName>Event` type per declared event from the package root and the `webhooks` subpath. Per-event types use the PHP event naming rule: `payment_intent.succeeded` becomes `PaymentIntentSucceededEvent`. Names match where PHP emits an event class; multi-variant events have a named Node union without a corresponding PHP event class. These types are unavailable from `resources/*`; `KnownWebhookEvent` is `never` when no events are declared.
 
+Audience-specific event names use the schema variant title: an explicit reference sibling title takes precedence, otherwise the referenced component supplies it. Removing a duplicate sibling title keeps the generated names and packages unchanged.
+
 Use indexed access for payload annotations, for example `type SucceededPayload = PaymentIntentSucceededEvent['data']`. A top-level `typeField` supports exhaustive `switch` narrowing with a `never` default. For a dotted path such as `meta.name`, annotate a handler with the named event type or use `Extract<KnownWebhookEvent, { meta: { name: 'payment_intent.succeeded' } }>`.
 
 - Authenticated unknown names return `known: false` with `reason: "unknown_event"`; declared names whose payload matches no envelope use `reason: "unmatched_envelope"`. PHP uses the same `reason` array key. Known deliveries have no `reason`. Keep unrecognized deliveries for review.
@@ -746,7 +748,7 @@ Response types use the referenced component name, with structurally identical de
 - `Object.keys()` and `Object.values()` can include undeclared fields. Validate values when iterating preserved extras.
 - Optional fields named like inherited `Object` members (such as `toString`) include the inherited signature, so you can omit them. Explicit own values are validated, functions are never serialized as strings, and the runtime reads only own request properties.
 - An OpenAPI 3.1 schema with `properties` or `required` but no `type` does not require an object. Its type keeps the permitted nonobject values; narrow before reading fields. An enclosing object constraint in an `allOf` still applies.
-- A nullable wrapper with one explicitly typed non-null branch and one plain `type: "null"` branch exposes the known value or null. Unknown fields and enum members are preserved; malformed known values fail decoding. Genuinely polymorphic alternatives keep their unknown-variant fallback.
+- A nullable wrapper with one explicitly typed non-null branch and one provably null-only branch (including `type: "null"` and `const: null`) exposes the known value or null. Unknown fields and enum members are preserved; malformed known values fail decoding. Genuinely polymorphic alternatives keep their unknown-variant fallback.
 
 ### PHP models
 

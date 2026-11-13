@@ -66,6 +66,95 @@ final class SchemaAdapter
         }
         return $result;
     }
+    /** Null means null acceptance cannot be decided from this schema. */
+    private static function acceptsNull(array $s, int $depth = 0): ?bool
+    {
+        if ($depth > 128 || isset($s['x-sdk-ref']) || array_key_exists('$ref', $s)) {
+            return null;
+        }
+        $types = isset($s['type']) ? (array) $s['type'] : null;
+        if ($types !== null && !in_array('null', $types, true)) {
+            return false;
+        }
+        if (array_key_exists('const', $s) && $s['const'] !== null) {
+            return false;
+        }
+        if (isset($s['enum']) && !in_array(null, $s['enum'], true)) {
+            return false;
+        }
+        $accepts = fn($v) => self::acceptsNull($v, $depth + 1);
+        $uncertain = false;
+        foreach (['allOf', 'anyOf', 'oneOf'] as $key) {
+            if (!isset($s[$key])) {
+                continue;
+            }
+            $values = array_map($accepts, $s[$key]);
+            $count = count(array_filter($values, fn($v) => $v === true));
+            $unknown = in_array(null, $values, true);
+            if ($key === 'allOf') {
+                if (in_array(false, $values, true)) {
+                    return false;
+                }
+                $uncertain = $uncertain || $unknown;
+            } elseif ($key === 'anyOf') {
+                if (!$count && !$unknown) {
+                    return false;
+                }
+                $uncertain = $uncertain || !$count;
+            } else {
+                if ($count > 1 || (!$count && !$unknown)) {
+                    return false;
+                }
+                $uncertain = $uncertain || $unknown;
+            }
+        }
+        if (isset($s['not'])) {
+            $value = $accepts($s['not']);
+            if ($value === true) {
+                return false;
+            }
+            $uncertain = $uncertain || $value === null;
+        }
+        if (isset($s['if'])) {
+            $condition = $accepts($s['if']);
+            $branches =
+                $condition === null
+                    ? [$s['then'] ?? [], $s['else'] ?? []]
+                    : [$condition ? $s['then'] ?? [] : $s['else'] ?? []];
+            $values = array_map($accepts, $branches);
+            if (count(array_filter($values, fn($v) => $v === false)) === count($values)) {
+                return false;
+            }
+            $uncertain =
+                $uncertain ||
+                count(array_filter($values, fn($v) => $v === true)) !== count($values);
+        }
+        return $uncertain ? null : true;
+    }
+    private static function nullOnlySchema(array $s, int $depth = 0): bool
+    {
+        if (self::acceptsNull($s, $depth) !== true) {
+            return false;
+        }
+        if (
+            ($s['type'] ?? null) === 'null' ||
+            (is_array($s['type'] ?? null) &&
+                !empty($s['type']) &&
+                count(array_filter($s['type'], fn($v) => $v === 'null')) === count($s['type'])) ||
+            (array_key_exists('const', $s) && $s['const'] === null)
+        ) {
+            return true;
+        }
+        foreach ($s['allOf'] ?? [] as $v) {
+            if (self::nullOnlySchema($v, $depth + 1)) {
+                return true;
+            }
+        }
+        $branches = $s['anyOf'] ?? ($s['oneOf'] ?? []);
+        return $branches &&
+            count(array_filter($branches, fn($v) => self::nullOnlySchema($v, $depth + 1))) ===
+                count($branches);
+    }
     private static function nullableAlternative(array $schema): ?int
     {
         if (isset($schema['oneOf'], $schema['anyOf'])) {
@@ -76,17 +165,7 @@ final class SchemaAdapter
             return null;
         }
         foreach ($branches as $nullIndex => $branch) {
-            if (
-                ($branch['type'] ?? null) !== 'null' ||
-                array_diff(array_keys($branch), [
-                    'type',
-                    'description',
-                    'title',
-                    'deprecated',
-                    'readOnly',
-                    'writeOnly',
-                ])
-            ) {
+            if (($branch['type'] ?? null) !== 'null' || !self::nullOnlySchema($branch)) {
                 continue;
             }
             $index = 1 - $nullIndex;

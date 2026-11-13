@@ -1,0 +1,90 @@
+{
+  "untyped": [
+    {
+      "severity": "additive",
+      "subject": "models.Value.input.child",
+      "message": "input types changed from null to null|string. Update supplied values to the accepted types; preserve explicit null only where allowed."
+    },
+    {
+      "severity": "additive",
+      "subject": "models.Value.input.child",
+      "message": "input enum changed; additional input values are accepted; existing values remain supported."
+    },
+    {
+      "severity": "additive",
+      "subject": "models.Value.response.child",
+      "message": "response enum changed; retain unknown-value handling and review newly documented states; do not infer success."
+    },
+    {
+      "severity": "review",
+      "subject": "models.Value",
+      "message": "Compiled public declarations changed for this shared model; review factories, getters and unchanged consumers."
+    }
+  ],
+  "anyOf": [
+    {
+      "severity": "additive",
+      "subject": "models.Value.input.child",
+      "message": "input types changed from null|object to null|object|string. Update supplied values to the accepted types; preserve explicit null only where allowed."
+    },
+    {
+      "severity": "review",
+      "subject": "models.Value.input.child",
+      "message": "anyOf constraints changed; compare accepted field combinations and response alternatives before choosing a release version."
+    },
+    {
+      "severity": "review",
+      "subject": "models.Value.response.child",
+      "message": "anyOf constraints changed; compare accepted field combinations and response alternatives before choosing a release version."
+    },
+    {
+      "severity": "review",
+      "subject": "models.Value",
+      "message": "Compiled public declarations changed for this shared model; review factories, getters and unchanged consumers."
+    }
+  ],
+  "oneOf": [
+    {
+      "severity": "additive",
+      "subject": "models.Value.input.child",
+      "message": "input types changed from null|object to null|object|string. Update supplied values to the accepted types; preserve explicit null only where allowed."
+    },
+    {
+      "severity": "breaking",
+      "subject": "models.Value.input.child",
+      "message": "Alternative response/input shape or discriminator changed; update variant dispatch."
+    },
+    {
+      "severity": "breaking",
+      "subject": "models.Value.response.child",
+      "message": "Alternative response/input shape or discriminator changed; update variant dispatch."
+    },
+    {
+      "severity": "review",
+      "subject": "models.Value",
+      "message": "Compiled public declarations changed for this shared model; review factories, getters and unchanged consumers."
+    }
+  ],
+  "untypedBranch": [
+    {
+      "severity": "additive",
+      "subject": "models.Value.input.child",
+      "message": "input types changed from null|object to null|object|string. Update supplied values to the accepted types; preserve explicit null only where allowed."
+    },
+    {
+      "severity": "review",
+      "subject": "models.Value.input.child",
+      "message": "anyOf constraints changed; compare accepted field combinations and response alternatives before choosing a release version."
+    },
+    {
+      "severity": "review",
+      "subject": "models.Value.response.child",
+      "message": "anyOf constraints changed; compare accepted field combinations and response alternatives before choosing a release version."
+    },
+    {
+      "severity": "review",
+      "subject": "models.Value",
+      "message": "Compiled public declarations changed for this shared model; review factories, getters and unchanged consumers."
+    }
+  ]
+}
