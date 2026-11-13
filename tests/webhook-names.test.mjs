@@ -44,5 +44,8 @@ test('distinct audiences without any title still fail', () => {
     components: { schemas: { A: envelope('merchant'), B: envelope('partner') } },
     webhooks: { 'balance.updated': incoming({ oneOf: [ref('A'), ref('B')] }) },
   };
-  assert.throws(() => webhookNames(document, []), /distinct webhook audiences require variant titles/);
+  assert.throws(
+    () => webhookNames(document, []),
+    /distinct webhook audiences require variant titles/,
+  );
 });
