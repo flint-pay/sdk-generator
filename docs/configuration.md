@@ -859,6 +859,9 @@ For OpenAPI 3.0, put annotations and nullability on an explicit wrapper:
 - Other integers use the shared safe range ±9,007,199,254,740,991. Exact numeric strings may be larger.
 - Unknown numeric response fields use numbers for safe integers and strings for larger or decimal tokens.
 - OpenAPI 3.0 `nullable` is normalized before generation, including reference wrappers.
+- Equivalent required-field disjunctions expressed through `not`/`allOf`, redundant union predicates and independent conditional union overlays normalize to the same declarations, documentation, codecs and compatibility facts. Annotated overlays retain their own metadata.
+- Go generator hints `x-go-name` and `x-go-type-name` are discarded at schema locations before Node/PHP identity and compatibility analysis. Identically named keys inside literal values remain data; other supported custom annotations are preserved.
+- A null-only enum with a declared nullable scalar type retains that scalar representation for future response enum members and compatible enum expansion.
 - Required `readOnly` fields are response requirements; sending them is rejected. Required `writeOnly` fields are input requirements, excluded from response declarations and ordinary inspection.
 - Nested `x-sensitive: true` affects model debug output and parsed error details, not wire serialization. Explicit raw response and body access stays sensitive.
 - Schema defaults are documentation and are never inserted into requests.
@@ -876,7 +879,7 @@ For OpenAPI 3.0, put annotations and nullability on an explicit wrapper:
   - The guard checks the complete composed schema, including sibling required fields, bounds and `not`, before narrowing.
   - Tagged unions wrapped this way keep PHP variant classes. Their constructors validate the branch with the surrounding constraints, and their getters include sibling fields.
   - Normal decoding and PHP response constructors stay tolerant of business bounds and future fields.
-- A nullable wrapper with one explicitly typed non-null branch and one plain `type: "null"` branch keeps that branch's fields; see [TypeScript object types](using-sdks.md#typescript-object-types) and [PHP models](using-sdks.md#php-models).
+- A nullable wrapper with one explicitly typed non-null branch and one provably null-only branch (`type: "null"`, `const: null`, `enum: [null]`, or an equivalent composition) keeps that branch's fields; see [TypeScript object types](using-sdks.md#typescript-object-types) and [PHP models](using-sdks.md#php-models).
 - Constraints apply at every depth: array items, dictionary values, recursive fields, and types or bounds from another `allOf` branch or `$ref` sibling. A named property can take constraints from another branch's `additionalProperties`; specializing a named property doesn't change the dictionary rule for other keys.
 - Numeric interpretation follows the selected branch's representation: a numeric-looking value in a string branch stays a JSON string, and exact-number strings keep their numeric meaning.
 - Mutually dependent unions, where one branch's numeric interpretation depends on another's, are matched jointly under a bounded search. An unusually ambiguous schema can exhaust it and fail validation. Give each field's type and constraints together, or declare a discriminator.

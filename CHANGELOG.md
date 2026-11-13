@@ -4,6 +4,10 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ## Unreleased
 
+- PHP syntax validation skips `php.ini` and extension startup for each file; runtime and descriptor validation retain the installed configuration. This reduces full-package validation overhead without changing its syntax checks or time budgets.
+
+- Equivalent null-only schemas (`type: "null"`, `const: null`, `enum: [null]` and proven compositions) preserve nullable Node declarations and PHP entity hydration. Recursive union diagnostics inherit component titles unless a reference sibling overrides them. Equivalent required-field disjunctions and independent union conditions share output and compatibility facts; Go-only naming hints do not change Node/PHP identities.
+
 - Resolve webhook audience titles from referenced components when the reference has no explicit sibling title. Removing redundant sibling titles now preserves Node and PHP output; distinct audiences with missing or colliding resolved titles remain diagnosed.
 
 - Support recursive `propertyNames.not` string predicates in Node and PHP. Reserved key prefixes and other negated key constraints are enforced before sending and in strict response decoding, under both validation profiles. Dictionary key types remain strings.

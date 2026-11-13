@@ -53,6 +53,8 @@ Files: 103 created (node 46, php 57); no previous generation
 Compatibility: not compared; no previous generation
 ```
 
+PHP syntax checks skip `php.ini` and extension startup; Composer, descriptor and runtime checks use the installed PHP configuration.
+
 Validation summarizes each group instead of dumping inline scripts and package file lists:
 
 ```text

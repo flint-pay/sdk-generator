@@ -3266,7 +3266,8 @@ export function validateWithProgress(
         .map((file) => join(sub, file)),
     );
     check({ target: 'php', label: 'PHP syntax', files: files.length }, () => {
-      for (const file of files) run('php', ['-l', file], join(output, 'php'));
+      // Syntax parsing needs the PHP engine, not per-file extension startup.
+      for (const file of files) run('php', ['-n', '-l', file], join(output, 'php'));
     });
     check({ target: 'php', label: 'Composer metadata' }, () => {
       run('composer', ['validate', '--no-check-publish'], join(output, 'php'));

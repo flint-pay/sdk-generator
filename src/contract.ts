@@ -36,7 +36,12 @@ import {
   suggestion,
   pointerSegment,
 } from './diagnostic.js';
-import { valueInstruction, exactValue, discriminatorBindings } from './codec-plan.js';
+import {
+  valueInstruction,
+  exactValue,
+  discriminatorBindings,
+  nullOnlySchema,
+} from './codec-plan.js';
 import { stable } from './canonical.js';
 import {
   successStatus,
@@ -739,8 +744,89 @@ function portablePattern(source: string, p: string): string {
   }
   return '~' + result.replaceAll('~', '\\~') + '~u';
 }
+/** Keep declared representations when an open response enum can gain non-null members. */
+function nullEnumRepresentation(s: Schema): boolean {
+  const withoutEnums = (value: Schema): Schema => {
+    const result = { ...value };
+    delete result.enum;
+    for (const key of ['allOf', 'anyOf', 'oneOf'] as const)
+      if (value[key]) result[key] = value[key].map(withoutEnums);
+    for (const key of ['not', 'if', 'then', 'else'] as const)
+      if (value[key]) result[key] = withoutEnums(value[key]);
+    return result;
+  };
+  const hasNonNullType = (value: Schema): boolean =>
+    (value.type !== undefined && value.type !== 'null') ||
+    [...(value.allOf ?? []), ...(value.anyOf ?? []), ...(value.oneOf ?? [])].some(hasNonNullType);
+  return hasNonNullType(s) && !nullOnlySchema(withoutEnums(s));
+}
+
+/** Equivalent generator-facing schema forms share one semantic representation. */
+function normalizeCompositions(s: Schema): void {
+  const semanticKeys = (value: Schema): string[] =>
+    Object.keys(value).filter((key) => key !== EXAMPLE_PROTECTION_MARKER);
+  // Recover required-field alternatives expressed using De Morgan's law.
+  if (s.type === 'object' && s.properties && !s.discriminator && !s.anyOf) {
+    for (const [index, condition] of (s.allOf ?? []).entries()) {
+      const negated = condition.not?.allOf;
+      if (
+        !negated?.length ||
+        semanticKeys(condition).length !== 1 ||
+        semanticKeys(condition.not ?? {}).length !== 1
+      )
+        continue;
+      const branches = negated.map((v) => v.not);
+      if (
+        !negated.every((v) => semanticKeys(v).length === 1) ||
+        branches.some(
+          (v) =>
+            !v ||
+            semanticKeys(v).some((k) => !['required', 'properties'].includes(k)) ||
+            Object.keys(v.properties ?? {}).some((k) => !Object.hasOwn(s.properties ?? {}, k)),
+        )
+      )
+        continue;
+      s.anyOf = branches.filter((v): v is Schema => v !== undefined);
+      s.allOf?.splice(index, 1);
+      if (!s.allOf?.length) delete s.allOf;
+      break;
+    }
+  }
+  // Restore an explicit parent predicate when every union branch already
+  // requires it. Keeping the common predicate preserves established public
+  // declarations and documentation of the original equivalent form.
+  if (s.oneOf && !s.anyOf) {
+    const common = s.oneOf[0]?.allOf?.find(
+      (part) =>
+        part.anyOf &&
+        semanticKeys(part).length === 1 &&
+        s.oneOf?.every((branch) =>
+          branch.allOf?.some((other) => other.anyOf && stable(other.anyOf) === stable(part.anyOf)),
+        ),
+    );
+    if (common?.anyOf) s.anyOf = structuredClone(common.anyOf);
+  }
+  // Independent condition overlays may be inline beside a tagged union.
+  if (s.oneOf && s.allOf?.length === 1) {
+    const overlay = s.allOf[0];
+    if (
+      overlay &&
+      semanticKeys(overlay).every(
+        (k) => ['not', 'if', 'then', 'else'].includes(k) && !Object.hasOwn(s, k),
+      ) &&
+      !((s.if || s.then || s.else) && (overlay.if || overlay.then || overlay.else))
+    ) {
+      delete s.allOf;
+      Object.assign(s, overlay);
+    }
+  }
+}
+
 function schema(s: Schema, p: string, legacy = false, explicitNumbers = false): void {
   if (!s || typeof s !== 'object' || Array.isArray(s)) fail(p, 'expected a schema object');
+  // Other generators' naming hints are not Node/PHP schema identities.
+  delete s['x-go-name'];
+  delete s['x-go-type-name'];
   if (s['x-sdk-ref']) return;
   if (!legacy && Array.isArray(s.type)) {
     const types = s.type;
@@ -1090,6 +1176,13 @@ function schema(s: Schema, p: string, legacy = false, explicitNumbers = false): 
     schema(child, p + '/properties/' + pointerSegment(key), legacy, explicitNumbers);
   if (s.additionalProperties && typeof s.additionalProperties === 'object')
     schema(s.additionalProperties, p + '/additionalProperties', legacy, explicitNumbers);
+  normalizeCompositions(s);
+  // Canonical null-only forms share declarations, documentation, codecs and
+  // compatibility facts, rather than merely agreeing during union matching.
+  if (nullOnlySchema(s) && !nullEnumRepresentation(s)) {
+    for (const key of Object.keys(s)) if (!isSchemaAnnotation(key)) delete s[key];
+    s.type = 'null';
+  }
   checkRepresentations(s, p, explicitNumbers);
   // Annotation-only wrappers are equivalent to their branch; semantic siblings stay composed.
   if (
@@ -1841,7 +1934,8 @@ function loadContractInput(
         if (cycles.has(mapped) && cycles.get(mapped) !== key)
           fail(path, 'recursive model name collision');
         cycles.set(mapped, key);
-        return applySiblings({ 'x-sdk-ref': mapped });
+        const title = referencedTitle(pointer(load(target), fragment, path), target, path);
+        return applySiblings({ 'x-sdk-ref': mapped, ...(title !== undefined ? { title } : {}) });
       }
       const cached = resolved.get(cacheKey);
       if (cached) {
@@ -2600,6 +2694,35 @@ function loadContractInput(
       if (key !== '$ref' || context.startsWith('map:'))
         collect(child, file, childContext(context, key));
   };
+  function referencedTitle(
+    value: unknown,
+    file: string,
+    path: string,
+    seen = new Set<string>(),
+  ): string | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const ref: unknown = Reflect.get(value, '$ref');
+    if (
+      !(typeof ref === 'string' && raw.openapi.startsWith('3.0.')) &&
+      Object.hasOwn(value, 'title')
+    ) {
+      const title: unknown = Reflect.get(value, 'title');
+      return typeof title === 'string' ? title : undefined;
+    }
+    if (typeof ref !== 'string') return undefined;
+    if (/^\w+:/.test(ref) || ref.startsWith('//'))
+      fail(path, 'remote references must be vendored locally for reproducible generation');
+    const [relative, fragment = ''] = ref.split('#');
+    const target = resolve(dirname(file), relative || file);
+    const key = target + '#' + fragment;
+    if (seen.has(key)) return undefined;
+    return referencedTitle(
+      pointer(load(target), fragment, path),
+      target,
+      path,
+      new Set([...seen, key]),
+    );
+  }
   type PathField = { value: any; file: string; sourcePath: string };
   function pathFields(
     item: any,

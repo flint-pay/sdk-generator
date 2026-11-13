@@ -748,7 +748,7 @@ Response types use the referenced component name, with structurally identical de
 - `Object.keys()` and `Object.values()` can include undeclared fields. Validate values when iterating preserved extras.
 - Optional fields named like inherited `Object` members (such as `toString`) include the inherited signature, so you can omit them. Explicit own values are validated, functions are never serialized as strings, and the runtime reads only own request properties.
 - An OpenAPI 3.1 schema with `properties` or `required` but no `type` does not require an object. Its type keeps the permitted nonobject values; narrow before reading fields. An enclosing object constraint in an `allOf` still applies.
-- A nullable wrapper with one explicitly typed non-null branch and one plain `type: "null"` branch exposes the known value or null. Unknown fields and enum members are preserved; malformed known values fail decoding. Genuinely polymorphic alternatives keep their unknown-variant fallback.
+- A nullable wrapper with one explicitly typed non-null branch and one provably null-only branch (including `type: "null"`, `const: null` and `enum: [null]`) exposes the known value or null. Unknown fields and enum members are preserved; malformed known values fail decoding. Genuinely polymorphic alternatives keep their unknown-variant fallback.
 
 ### PHP models
 
