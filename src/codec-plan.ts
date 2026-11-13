@@ -214,7 +214,7 @@ export function discriminatorBindings(schema: Schema): Record<string, number> | 
   return result;
 }
 
-/** A conservative proof that a schema accepts null and no non-null value. */
+/** A null-only proof that does not close open response enums. */
 export function nullOnlySchema(schema: Schema, depth = 0): boolean {
   if (depth > 128 || schema['x-sdk-ref'] || Object.hasOwn(schema, '$ref')) return false;
   const acceptsNull = (s: Schema, level: number): boolean | undefined => {
@@ -261,7 +261,6 @@ export function nullOnlySchema(schema: Schema, depth = 0): boolean {
       schema.type.length > 0 &&
       schema.type.every((v) => v === 'null')) ||
     (Object.hasOwn(schema, 'const') && schema.const === null) ||
-    Boolean(schema.enum?.length && schema.enum.every((v) => v === null)) ||
     Boolean(schema.allOf?.some((v) => nullOnlySchema(v, depth + 1))) ||
     Boolean(
       (schema.anyOf ?? schema.oneOf)?.length &&
@@ -277,7 +276,10 @@ export function nullableAlternative(schema: Schema): 0 | 1 | undefined {
   if (schema.oneOf && schema.anyOf) return undefined;
   const branches = schema.oneOf ?? schema.anyOf;
   if (branches?.length !== 2) return undefined;
-  const nullIndex = branches.findIndex((branch) => nullOnlySchema(branch));
+  // The policy requires the emitted branch to have a literal null instruction.
+  const nullIndex = branches.findIndex(
+    (branch) => branch.type === 'null' && nullOnlySchema(branch),
+  );
   if (nullIndex < 0) return undefined;
   const index = nullIndex === 0 ? 1 : 0;
   const branch = branches[index];

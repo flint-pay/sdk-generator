@@ -4,9 +4,11 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ## Unreleased
 
+- Preserve open response enums and enum-expansion compatibility for null singleton enums, including untyped ones. Nullable routing is emitted only when its alternate descriptor has a literal null instruction; mixed string/null enum branches retain their existing union policy.
+
 - PHP syntax validation skips `php.ini` and extension startup for each file; runtime and descriptor validation retain the installed configuration. This reduces full-package validation overhead without changing its syntax checks or time budgets.
 
-- Equivalent null-only schemas (`type: "null"`, `const: null`, `enum: [null]` and proven compositions) preserve nullable Node declarations and PHP entity hydration. Recursive union diagnostics inherit component titles unless a reference sibling overrides them. Equivalent required-field disjunctions and independent union conditions share output and compatibility facts; Go-only naming hints do not change Node/PHP identities.
+- Equivalent null-only schemas (`type: "null"`, `const: null` and proven strict compositions) preserve nullable Node declarations and PHP entity hydration. Recursive union diagnostics inherit component titles unless a reference sibling overrides them. Equivalent required-field disjunctions and independent union conditions share output and compatibility facts; Go-only naming hints do not change Node/PHP identities.
 
 - Resolve webhook audience titles from referenced components when the reference has no explicit sibling title. Removing redundant sibling titles now preserves Node and PHP output; distinct audiences with missing or colliding resolved titles remain diagnosed.
 

@@ -744,23 +744,6 @@ function portablePattern(source: string, p: string): string {
   }
   return '~' + result.replaceAll('~', '\\~') + '~u';
 }
-/** Keep declared representations when an open response enum can gain non-null members. */
-function nullEnumRepresentation(s: Schema): boolean {
-  const withoutEnums = (value: Schema): Schema => {
-    const result = { ...value };
-    delete result.enum;
-    for (const key of ['allOf', 'anyOf', 'oneOf'] as const)
-      if (value[key]) result[key] = value[key].map(withoutEnums);
-    for (const key of ['not', 'if', 'then', 'else'] as const)
-      if (value[key]) result[key] = withoutEnums(value[key]);
-    return result;
-  };
-  const hasNonNullType = (value: Schema): boolean =>
-    (value.type !== undefined && value.type !== 'null') ||
-    [...(value.allOf ?? []), ...(value.anyOf ?? []), ...(value.oneOf ?? [])].some(hasNonNullType);
-  return hasNonNullType(s) && !nullOnlySchema(withoutEnums(s));
-}
-
 /** Equivalent generator-facing schema forms share one semantic representation. */
 function normalizeCompositions(s: Schema): void {
   const semanticKeys = (value: Schema): string[] =>
@@ -1179,7 +1162,7 @@ function schema(s: Schema, p: string, legacy = false, explicitNumbers = false): 
   normalizeCompositions(s);
   // Canonical null-only forms share declarations, documentation, codecs and
   // compatibility facts, rather than merely agreeing during union matching.
-  if (nullOnlySchema(s) && !nullEnumRepresentation(s)) {
+  if (nullOnlySchema(s)) {
     for (const key of Object.keys(s)) if (!isSchemaAnnotation(key)) delete s[key];
     s.type = 'null';
   }

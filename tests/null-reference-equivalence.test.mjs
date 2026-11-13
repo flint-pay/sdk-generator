@@ -12,7 +12,6 @@ const nulls = [
   { type: 'null' },
   { const: null },
   { const: null, type: ['number', 'null'], format: 'decimal' },
-  { enum: [null] },
   { type: ['null'] },
   { type: ['null'], const: null, enum: [null] },
   { allOf: [{ const: null }, {}] },
@@ -96,14 +95,17 @@ test('equivalent null-only forms preserve every declaration, descriptor, PHP cla
       'php',
       [
         '-r',
-        String.raw`require $argv[1].'/src/Client.php';$c=new Example\NullEquivalence\Container(['child'=>(object)['value'=>'ok']]);$child=$c->getChild();if(!$child instanceof Example\NullEquivalence\Child || $child->getValue()!=='ok')exit(1);if((new ReflectionMethod($c,'getChild'))->getReturnType()->getName()!=='Example\\NullEquivalence\\Child')exit(2);$null=new Example\NullEquivalence\Container(['child'=>null]);if($null->getChild()!==null)exit(3);$schema=json_decode($argv[2],true);$plan=Example\NullEquivalence\Internal\SchemaAdapter::compile(['anyOf'=>[['type'=>'object'], $schema]]);if(($plan['nullableAlternative']??null)!==0)exit(4);`,
+        String.raw`require $argv[1].'/src/Client.php';$c=new Example\NullEquivalence\Container(['child'=>(object)['value'=>'ok']]);$child=$c->getChild();if(!$child instanceof Example\NullEquivalence\Child || $child->getValue()!=='ok')exit(1);if((new ReflectionMethod($c,'getChild'))->getReturnType()->getName()!=='Example\\NullEquivalence\\Child')exit(2);$null=new Example\NullEquivalence\Container(['child'=>null]);if($null->getChild()!==null)exit(3);$schema=json_decode($argv[2],true);$plan=Example\NullEquivalence\Internal\SchemaAdapter::compile(['anyOf'=>[['type'=>'object'], $schema]]);if(($plan['nullableAlternative']??null)!==(($schema['type']??null)==='null'?0:null))exit(4);`,
         join(out, 'php'),
         JSON.stringify(branch),
       ],
       { encoding: 'utf8' },
     );
     assert.equal(php.status, 0, php.stdout + php.stderr);
-    assert.equal(nullableAlternative({ anyOf: [{ type: 'object' }, branch] }), 0);
+    assert.equal(
+      nullableAlternative({ anyOf: [{ type: 'object' }, branch] }),
+      branch.type === 'null' ? 0 : undefined,
+    );
   }
 });
 test('null-only proofs do not mistake empty or contradictory schemas for null', () => {

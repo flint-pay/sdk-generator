@@ -141,9 +141,7 @@ final class SchemaAdapter
             (is_array($s['type'] ?? null) &&
                 !empty($s['type']) &&
                 count(array_filter($s['type'], fn($v) => $v === 'null')) === count($s['type'])) ||
-            (array_key_exists('const', $s) && $s['const'] === null) ||
-            (!empty($s['enum']) &&
-                count(array_filter($s['enum'], fn($v) => $v === null)) === count($s['enum']))
+            (array_key_exists('const', $s) && $s['const'] === null)
         ) {
             return true;
         }
@@ -167,7 +165,7 @@ final class SchemaAdapter
             return null;
         }
         foreach ($branches as $nullIndex => $branch) {
-            if (!self::nullOnlySchema($branch)) {
+            if (($branch['type'] ?? null) !== 'null' || !self::nullOnlySchema($branch)) {
                 continue;
             }
             $index = 1 - $nullIndex;
