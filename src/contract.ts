@@ -41,6 +41,7 @@ import {
   exactValue,
   discriminatorBindings,
   nullOnlySchema,
+  nullableAlternative,
 } from './codec-plan.js';
 import { stable } from './canonical.js';
 import {
@@ -4635,6 +4636,24 @@ function loadContractInput(
       contract.definitions = definitions;
       return { 'x-sdk-ref': name };
     }
+    // Reuse a source nullable shell rather than nesting another nullable union
+    // around it. Keep the named partial branch for declarations and hydration.
+    const nullable = nullableAlternative(shape, models);
+    if (
+      nullable !== undefined &&
+      Object.keys(shape).every(
+        (key) => key === 'oneOf' || key === 'anyOf' || isSchemaAnnotation(key),
+      )
+    ) {
+      const branches = shape.oneOf ?? shape.anyOf;
+      const branch = branches?.[nullable];
+      if (!branch) throw new Error('Missing nullable previous-attribute branch');
+      const { oneOf: _one, anyOf: _any, ...annotations } = shape;
+      return {
+        ...annotations,
+        anyOf: [previousProjection(branch), { type: 'null' }],
+      };
+    }
     const object = shape.type === 'object' || shape.properties !== undefined;
     const result: Schema = object ? { type: shape.type ?? 'object' } : cloneJson(shape);
     delete result.required;
@@ -4650,13 +4669,26 @@ function loadContractInput(
     delete result['x-sdk-type-name'];
     if (object) {
       result.properties = Object.fromEntries(
-        Object.entries(shape.properties ?? {}).map(([name, field]) => [
-          name,
-          {
-            ...(field.description ? { description: field.description } : {}),
-            anyOf: [previousProjection(field), { type: 'null' }],
-          },
-        ]),
+        Object.entries(shape.properties ?? {}).map(([name, field]) => {
+          let projected = previousProjection(field);
+          if (Array.isArray(projected.type) && projected.type.includes('null')) {
+            const types = projected.type.filter((type) => type !== 'null');
+            const type = types[0];
+            if (type !== undefined)
+              projected = { ...projected, type: types.length === 1 ? type : types };
+          }
+          return [
+            name,
+            {
+              ...(field.description ? { description: field.description } : {}),
+              ...(projected.type === 'null'
+                ? { type: 'null' }
+                : projected.anyOf?.some((branch) => nullOnlySchema(branch))
+                  ? projected
+                  : { anyOf: [projected, { type: 'null' }] }),
+            },
+          ];
+        }),
       );
       if (typeof shape.additionalProperties === 'object')
         result.additionalProperties = previousProjection(shape.additionalProperties);

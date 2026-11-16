@@ -4,6 +4,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ## Unreleased
 
+- Preserve named partial models inside nullable previous-attribute fields. Node keeps typed nested access, and PHP hydrates shared partial entities with presence-aware getters.
+
 - Preserve public alternative labels through codec sharing in Node and PHP validation errors. Unnamed alternatives use their shape number instead of an internal codec reference; field paths and validation reasons are unchanged.
 
 - Recursively project webhook previous attributes in Node and PHP, including partial objects inside nested arrays. Missing prior line-item fields no longer reject signed order updates; present numeric fields still decode as exact strings.

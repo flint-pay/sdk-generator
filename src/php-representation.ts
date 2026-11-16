@@ -281,7 +281,7 @@ export function phpRepresentations(
     }
     const branches = declaration.oneOf ?? declaration.anyOf;
     if (branches) {
-      const nullableBranch = nullableAlternative(declaration);
+      const nullableBranch = nullableAlternative(declaration, definitions);
       if (nullableBranch !== undefined) {
         const branch = branches[nullableBranch];
         if (!branch) throw new Error('Invalid nullable PHP branch');
