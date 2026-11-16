@@ -415,6 +415,8 @@ Conditional calls send the declared precondition header and surface conflicts wi
 
 ## Webhook verification
 
+Webhook previous attributes expose optional, nullable top-level resource fields. A null previous value means the field was absent before the change. Nested objects retain their full resource shape and decode normally in Node and PHP, including exact-number strings.
+
 ### JWT deliveries
 
 Providers declaring `webhook.jwt` support per-delivery ES256 JWTs without a shared secret. In Node, use `verifyWebhookAsync(rawBody, headers, options)` from the package root or `webhooks` subpath, or `client.verifyWebhookAsync`. PHP provides `Webhooks::verifyDelivery($rawBody, $headers, $options)` and `$client->verifyWebhookDelivery`. Both return the existing verified result plus `signingMethod: 'jwt' | 'hmac'` in Node or `signing_method` in PHP.

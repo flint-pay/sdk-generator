@@ -1526,6 +1526,16 @@ function pointer(root: unknown, pointer: string, p: string): any {
  * structuredClone copies string storage too, multiplying large enum annotations
  * each time a resolved response schema is instantiated. */
 function cloneJson(
+  value: Schema,
+  referenceNames?: WeakMap<object, string>,
+  typeNames?: WeakMap<object, string>,
+): Schema;
+function cloneJson(
+  value: unknown,
+  referenceNames?: WeakMap<object, string>,
+  typeNames?: WeakMap<object, string>,
+): unknown;
+function cloneJson(
   value: unknown,
   referenceNames?: WeakMap<object, string>,
   typeNames?: WeakMap<object, string>,
@@ -4592,6 +4602,66 @@ function loadContractInput(
     hash: '',
   };
   if (auth) contract.auth = auth;
+  // Previous attributes contain prior top-level values, including null for an
+  // absent field. Resolve the hint into ordinary schemas so declarations and both
+  // codecs share optionality, nullability and nested numeric normalization.
+  const previousProjection = (shape: Schema, seen = new Set<string>()): Schema => {
+    const reference = shape['x-sdk-ref'];
+    if (reference) {
+      const target = definitions[reference] ?? models[reference];
+      if (!target || seen.has(reference))
+        return fail('x-flint-partial-of', 'expected a productive resource model');
+      return previousProjection(target, new Set([...seen, reference]));
+    }
+    const project = (branch: Schema): Schema => previousProjection(branch, seen);
+    // Partial variants overlap when their discriminants are omitted or null.
+    const allOf = [
+      ...(shape.allOf ?? []).map(project),
+      ...(shape.oneOf ? [{ anyOf: shape.oneOf.map(project) }] : []),
+      ...(shape.anyOf ? [{ anyOf: shape.anyOf.map(project) }] : []),
+    ];
+    return {
+      type: 'object',
+      properties: Object.fromEntries(
+        Object.entries(shape.properties ?? {}).map(([name, field]) => [
+          name,
+          {
+            ...(field.description ? { description: field.description } : {}),
+            anyOf: [cloneJson(field, referenceNames, typeNames), { type: 'null' }],
+          },
+        ]),
+      ),
+      ...(allOf.length ? { allOf } : {}),
+    };
+  };
+  const previousSeen = new WeakSet<Schema>();
+  const resolvePrevious = (shape: Schema): void => {
+    if (!shape || typeof shape !== 'object' || previousSeen.has(shape)) return;
+    previousSeen.add(shape);
+    const resource = shape['x-flint-partial-of'];
+    if (typeof resource === 'string') {
+      const target =
+        models[resource] ?? fail('x-flint-partial-of', 'expected a resolved resource model');
+      // Do not alias the enriched map to the untyped source map component.
+      referenceNames.delete(shape);
+      typeNames.delete(shape);
+      shape.allOf = [...(shape.allOf ?? []), previousProjection(target)];
+    }
+    Object.values(shape.properties ?? {}).forEach(resolvePrevious);
+    for (const key of ['allOf', 'anyOf', 'oneOf'] as const) shape[key]?.forEach(resolvePrevious);
+    if (shape.items) resolvePrevious(shape.items);
+    if (typeof shape.additionalProperties === 'object') resolvePrevious(shape.additionalProperties);
+  };
+  Object.values(contract.models).forEach(resolvePrevious);
+  for (const operation of contract.operations) {
+    if (operation.body) resolvePrevious(operation.body);
+    operation.parameters.forEach((parameter) => resolvePrevious(parameter.schema));
+    Object.values(operation.responses).forEach((response) => {
+      if (response.schema) resolvePrevious(response.schema);
+    });
+  }
+  contract.incoming?.forEach((item) => resolvePrevious(item.schema));
+  Object.values(contract.config.webhook?.events ?? {}).forEach(resolvePrevious);
   // Resolution is finished. Do not retain expanded cached copies while the
   // owned contract is compacted and compiled.
   resolved.clear();

@@ -17,7 +17,20 @@ function fixture(t, collisions = {}) {
     type: 'object',
     required: ['id', 'name'],
     additionalProperties: false,
-    properties: { id: { type: 'string' }, name: { type: 'string', minLength: 1, maxLength: 255 } },
+    properties: {
+      id: { type: 'string' },
+      name: { type: 'string', minLength: 1, maxLength: 255 },
+      issued_at: { type: 'string', format: 'date-time' },
+      amount: { type: 'integer', format: 'int64' },
+      money: {
+        type: 'object',
+        required: ['amount', 'currency'],
+        properties: {
+          amount: { type: 'integer', format: 'int64' },
+          currency: { type: 'string' },
+        },
+      },
+    },
   };
   const envelope = (event, model, source, constant = false) => ({
     type: 'object',
@@ -151,7 +164,7 @@ test('events and audience models use event names; request names and PHP response
   ])
     assert.match(f.declarations, new RegExp('type ' + name + '\\b'));
   assert.doesNotMatch(f.declarations, /IncomingWebhook|RequestRequest|Shape \$/);
-  assert.match(f.declarations, /Partial<Customer>/);
+  assert.doesNotMatch(f.declarations, /Partial<Customer>/);
   assert.equal(
     typescriptType(
       f.contract.models.PaymentIntentSucceededEvent.properties.event_type,
@@ -164,7 +177,7 @@ test('events and audience models use event names; request names and PHP response
     ),
     '"payment_intent.succeeded"',
   );
-  assert.match(f.declarations, /Partial<PaymentIntent>/);
+  assert.doesNotMatch(f.declarations, /Partial<PaymentIntent>/);
   const classes = readdirSync(join(f.output, 'php/src/classes'));
   for (const name of ['Order', 'OrderPaidMerchantEvent', 'CustomerUpdatedEvent'])
     assert.ok(classes.includes(name + '.php'), name);
@@ -174,7 +187,14 @@ test('events and audience models use event names; request names and PHP response
     consumer,
     `import {Client,type KnownWebhookEvent,type CustomerUpdatedEvent,type OrderPaidMerchantEvent,type OrderPaidInstalledMerchantsEvent,type CheckoutBuyerFieldsRequestInput,type CustomerUpdateRequestInput,type PaymentIntentConfirmRequestInput} from './index.js';
 declare const event:KnownWebhookEvent;
-if(event.event_type==='customer.updated') {const selected:CustomerUpdatedEvent=event;const oldName:string|undefined=event.data.previous_attributes?.name;
+if(event.event_type==='customer.updated') {const selected:CustomerUpdatedEvent=event;const oldName:string|null|undefined=event.data.previous_attributes?.name;
+const oldAmount:string|null|undefined=event.data.previous_attributes?.amount;
+const oldMoneyAmount:string|undefined=event.data.previous_attributes?.money?.amount;
+const absent:NonNullable<CustomerUpdatedEvent['data']['previous_attributes']>={name:null,amount:null,money:null};
+// @ts-expect-error Previous nested resource values retain required fields.
+const partialNested:NonNullable<CustomerUpdatedEvent['data']['previous_attributes']>={money:{currency:'USD'}};
+// @ts-expect-error Exact numeric fields decode as strings, including previous values.
+const rawAmount:number=event.data.previous_attributes?.money?.amount;
 // @ts-expect-error Previous fields retain resource field types.
 const wrong:number=event.data.previous_attributes?.name;
 }
@@ -229,6 +249,205 @@ declare const client:Client; const verified=client.verifyWebhook(new Uint8Array(
     { encoding: 'utf8' },
   );
   assert.equal(php, 'TypeNames\\Order');
+});
+
+test('previous attributes normalize nested values and allow absent fields in both verifiers', async (t) => {
+  const f = fixture(t);
+  const { verifyWebhookAsync } = await import(pathToFileURL(join(f.output, 'node/index.js')));
+  const now = 1_700_000_000;
+  const previousCases = [
+    undefined,
+    {},
+    { name: null, issued_at: null, amount: null, money: null },
+    { name: 'Before', amount: 123, money: { amount: 456, currency: 'USD' } },
+    { amount: 9007199254740993n, future_field: { enabled: true } },
+  ];
+  const cases = previousCases.map((previous) => {
+    const raw = JSON.stringify(
+      {
+        event_type: 'customer.updated',
+        data: {
+          object: { id: 'cus_fixture', name: 'After' },
+          ...(previous === undefined ? {} : { previous_attributes: previous }),
+        },
+      },
+      (_, value) => (typeof value === 'bigint' ? 'EXACT_INTEGER' : value),
+    ).replace('"EXACT_INTEGER"', '9007199254740993');
+    return {
+      raw,
+      headers: {
+        'X-Timestamp': String(now),
+        'X-Signature': createHmac('sha256', 'synthetic')
+          .update(now + '.' + raw)
+          .digest('hex'),
+      },
+    };
+  });
+  const expected = [
+    undefined,
+    {},
+    { name: null, issued_at: null, amount: null, money: null },
+    { name: 'Before', amount: '123', money: { amount: '456', currency: 'USD' } },
+    { amount: '9007199254740993', future_field: { enabled: true } },
+  ];
+  for (const [index, sample] of cases.entries()) {
+    const result = await verifyWebhookAsync(Buffer.from(sample.raw), sample.headers, {
+      secrets: 'synthetic',
+      nowSeconds: now,
+    });
+    assert.equal(result.known, true, sample.raw);
+    assert.deepEqual(
+      result.event.data.previous_attributes === undefined
+        ? undefined
+        : JSON.parse(JSON.stringify(result.event.data.previous_attributes)),
+      expected[index],
+    );
+    assert.equal(Object.hasOwn(result.event.data, 'previous_attributes'), index !== 0);
+  }
+  const php = String.raw`require $argv[1].'/src/Client.php';
+$cases=json_decode($argv[2],true,512,JSON_THROW_ON_ERROR);$rows=[];
+$c=new TypeNames\Client(new TypeNames\ClientOptions('https://example.invalid'));
+foreach($cases as $case){
+  $v=$c->verifyWebhookDelivery($case['raw'],$case['headers'],['secrets'=>'synthetic','now_seconds'=>1700000000]);
+  if(!$v['known'])throw new RuntimeException('unmatched envelope');
+  $rows[]=$v['event'];
+}
+echo json_encode($rows,JSON_THROW_ON_ERROR);`;
+  const rows = JSON.parse(
+    execFileSync('php', ['-r', php, join(f.output, 'php'), JSON.stringify(cases)], {
+      encoding: 'utf8',
+    }),
+  );
+  for (const [index, row] of rows.entries()) {
+    assert.deepEqual(row.data.previous_attributes, expected[index]);
+    assert.equal(Object.hasOwn(row.data, 'previous_attributes'), index !== 0);
+  }
+  // Widen only top-level presence: nested resource fields retain validation.
+  const invalid = cases[0].raw.replace(
+    '"object":',
+    '"previous_attributes":{"money":{"currency":"USD"}},"object":',
+  );
+  const invalidHeaders = {
+    'X-Timestamp': String(now),
+    'X-Signature': createHmac('sha256', 'synthetic')
+      .update(now + '.' + invalid)
+      .digest('hex'),
+  };
+  await assert.rejects(
+    verifyWebhookAsync(Buffer.from(invalid), invalidHeaders, {
+      secrets: 'synthetic',
+      nowSeconds: now,
+    }),
+    /money/,
+  );
+});
+
+test('previous attributes preserve resource alternatives and conjunctive field rules', async (t) => {
+  const f = fixture(t, {
+    Customer: {
+      allOf: [
+        {
+          type: 'object',
+          required: ['id', 'name'],
+          properties: {
+            id: { type: 'string' },
+            name: { type: 'string' },
+            money: {
+              type: 'object',
+              required: ['amount'],
+              properties: { amount: { type: 'integer', format: 'int64' } },
+            },
+          },
+        },
+        {
+          oneOf: [
+            {
+              type: 'object',
+              required: ['status'],
+              properties: {
+                status: { const: 'pending', type: 'string' },
+                outcome: { type: 'string' },
+              },
+            },
+            {
+              type: 'object',
+              required: ['status'],
+              properties: {
+                status: { const: 'succeeded', type: 'string' },
+                outcome: { type: 'integer', format: 'int64' },
+              },
+            },
+            {
+              type: 'object',
+              required: ['status'],
+              properties: {
+                status: { const: 'failed', type: 'string' },
+                outcome: { type: 'boolean' },
+              },
+            },
+          ],
+        },
+      ],
+    },
+  });
+  const { verifyWebhookAsync } = await import(pathToFileURL(join(f.output, 'node/index.js')));
+  const previous = [
+    {},
+    { status: null },
+    { status: 'pending', outcome: 'waiting' },
+    { status: 'succeeded', outcome: 123 },
+    { status: 'failed', outcome: false },
+    { money: { amount: 456 } },
+  ];
+  const expected = previous.map((value, index) =>
+    index === 3
+      ? { status: 'succeeded', outcome: '123' }
+      : index === 5
+        ? { money: { amount: '456' } }
+        : value,
+  );
+  const samples = previous.map((value) => {
+    const raw = JSON.stringify({
+      event_type: 'customer.updated',
+      data: {
+        object: { id: 'cus_fixture', name: 'After', status: 'succeeded', outcome: 789 },
+        previous_attributes: value,
+      },
+    });
+    return {
+      raw,
+      headers: {
+        'X-Timestamp': '1700000000',
+        'X-Signature': createHmac('sha256', 'synthetic')
+          .update('1700000000.' + raw)
+          .digest('hex'),
+      },
+    };
+  });
+  for (const [index, sample] of samples.entries()) {
+    const result = await verifyWebhookAsync(Buffer.from(sample.raw), sample.headers, {
+      secrets: 'synthetic',
+      nowSeconds: 1700000000,
+    });
+    assert.equal(result.known, true, sample.raw);
+    assert.deepEqual(
+      JSON.parse(JSON.stringify(result.event.data.previous_attributes)),
+      expected[index],
+    );
+  }
+  const php = String.raw`require $argv[1].'/src/Client.php';
+$c=new TypeNames\Client(new TypeNames\ClientOptions('https://example.invalid'));$rows=[];
+foreach(json_decode($argv[2],true) as $case){
+ $v=$c->verifyWebhookDelivery($case['raw'],$case['headers'],['secrets'=>'synthetic','now_seconds'=>1700000000]);
+ if(!$v['known'])throw new RuntimeException('unmatched previous variant');$rows[]=$v['event'];
+}echo json_encode($rows,JSON_THROW_ON_ERROR);`;
+  const rows = JSON.parse(
+    execFileSync('php', ['-r', php, join(f.output, 'php'), JSON.stringify(samples)], {
+      encoding: 'utf8',
+    }),
+  );
+  for (const [index, row] of rows.entries())
+    assert.deepEqual(row.data.previous_attributes, expected[index]);
 });
 
 test('event/model collisions use WebhookEvent fallback and double collisions fail', (t) => {

@@ -4,6 +4,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ## Unreleased
 
+- Fix webhook previous attributes in Node and PHP by resolving partial resource fields into optional, nullable schemas. Node now recognizes events with absent prior values and nested exact-number amounts; PHP also normalizes those amounts and exposes typed previous-attribute fields.
+
 - Preserve open response enums and enum-expansion compatibility for null singleton enums, including untyped ones. Nullable routing is emitted only when its alternate descriptor has a literal null instruction; mixed string/null enum branches retain their existing union policy.
 
 - PHP syntax validation skips `php.ini` and extension startup for each file; runtime and descriptor validation retain the installed configuration. This reduces full-package validation overhead without changing its syntax checks or time budgets.
