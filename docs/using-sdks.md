@@ -249,6 +249,8 @@ Result-mode methods return `Result` with `data` and `raw`, plus `lastResponse` i
 
 Local request validation throws `InvalidInputError` before dispatch, with `code: "INVALID_REQUEST"`, `outcome: "not_sent"` and `details: [{ code, param }]`. Detail codes are `REQUIRED`, `INVALID_VALUE`, `UNKNOWN_FIELD` and `NOT_ALLOWED`. The top-level `param` identifies the same input.
 
+Untagged union mismatch errors include the closest alternative's public label or shape number, followed by the failing field path and reason.
+
 Body paths use `line_items[0].type`; map keys use `metadata.key` or `metadata["a.b"]` when outside `[A-Za-z0-9_-]+`. Query parameters and headers use bare published names, such as `payment_status` and `X-Request-Id`. A query-array message can name `payment_status[0]` while its `param` remains `payment_status`.
 
 Messages name the field and allowed values: `line_items[0].type is required: one of "variant", "bundle", "custom"`. Enum mismatches and unknown fields suggest a name when exactly one candidate is within edit distance 2: `line_items[0].type must be one of "variant", "bundle", "custom"; received "customm" (did you mean "custom"?)`. Only enum mismatches show the received value; sensitive fields show `received a value`. Other failures report the received type, without echoing input. Node and PHP use identical messages.
