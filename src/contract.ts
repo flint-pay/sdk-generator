@@ -4675,7 +4675,7 @@ function loadContractInput(
             name,
             {
               ...(field.description ? { description: field.description } : {}),
-              ...(nullableAlternative(projected, models) !== undefined
+              ...(projected.anyOf?.some((branch) => nullOnlySchema(branch))
                 ? projected
                 : { anyOf: [projected, { type: 'null' }] }),
             },

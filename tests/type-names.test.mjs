@@ -390,6 +390,7 @@ test('previous attributes share named and recursive array projections without ch
         id: { type: 'string' },
         name: { type: 'string' },
         children: { type: 'array', items: { $ref: '#/components/schemas/Customer' } },
+        parent: { anyOf: [{ $ref: '#/components/schemas/Customer' }, { type: 'null' }] },
         line_items: { type: 'array', items: { $ref: '#/components/schemas/LineItem' } },
       },
     },
@@ -424,6 +425,7 @@ test('previous attributes share named and recursive array projections without ch
     `import type { CustomerUpdatedEvent } from './index.js';
 declare const event: CustomerUpdatedEvent;
 const line = event.data.previous_attributes?.line_items?.[0];
+const parentName: string | null | undefined = event.data.previous_attributes?.parent?.name;
 const amount: string | null | undefined = line?.money?.amount;
 const nullableAmount: string | null | undefined = line?.maybe_money?.amount;
 const arrayAmount: string | null | undefined = line?.money_history?.[0]?.amount;
@@ -452,7 +454,8 @@ const invalid: number = line?.money?.amount;
     [
       '-r',
       String.raw`require $argv[1].'/src/Client.php';
-$p = new TypeNames\CustomerUpdatedEventDataPreviousAttributes(['line_items'=>[(object)['money'=>(object)['amount'=>'9007199254740993'], 'maybe_money'=>(object)['amount'=>'123'], 'money_history'=>[(object)['amount'=>'456'], null]]]]);
+$p = new TypeNames\CustomerUpdatedEventDataPreviousAttributes(['parent'=>(object)['name'=>'Before'], 'line_items'=>[(object)['money'=>(object)['amount'=>'9007199254740993'], 'maybe_money'=>(object)['amount'=>'123'], 'money_history'=>[(object)['amount'=>'456'], null]]]]);
+if (!$p->getParent() instanceof TypeNames\CustomerPreviousAttributes || $p->getParent()->getName() !== 'Before') throw new RuntimeException('untyped recursive nullable parent');
 $m = $p->getLineItems()[0]->getMoney();
 if (!$m instanceof TypeNames\MoneyValuePreviousAttributes || !$m->hasAmount() || $m->hasCurrency() || $m->getCurrency() !== null || $m->getAmount() !== '9007199254740993') throw new RuntimeException('untyped partial money');
 $line = $p->getLineItems()[0];
@@ -485,6 +488,7 @@ echo 'typed';`,
   };
   const previous = {
     children: [{ children: [{ name: null }] }],
+    parent: { parent: null, name: 'Before' },
     line_items: [
       { amount: '456', maybe_money: { amount: '123' }, money_history: [{ currency: 'USD' }, null] },
     ],
