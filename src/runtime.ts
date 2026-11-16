@@ -2416,7 +2416,7 @@ function selectAlternatives(
       issue(closest?.[1].param ?? path, 'union', {
         param: publicParam(path),
         count: branches.length,
-        shape: branch?.label ?? branch?.reference ?? `shape ${index + 1}`,
+        shape: branch?.label ?? `shape ${index + 1}`,
         failure: closest?.[1].message ?? 'no shape matched',
       });
     }

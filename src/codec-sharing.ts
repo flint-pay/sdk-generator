@@ -31,6 +31,7 @@ export function codecSharing(original: Record<string, CodecPlan>) {
       return {
         ...ANY_CODEC,
         reference: name,
+        ...(codec.label !== undefined ? { label: codec.label } : {}),
         modelObjectInput: codec.modelObjectInput,
         ...(codec.objectOnlyAlternative ? { objectOnlyAlternative: true } : {}),
         rejectInput: codec.rejectInput,

@@ -119,6 +119,12 @@ for (const [field, value, message, param = field, code = 'INVALID_VALUE'] of [
     'credential matches none of its 2 shapes; closest is SavedCardCredential: credential.payment_method_id is required',
     'credential.payment_method_id',
   ],
+  [
+    'funding',
+    { source: { funding_source_type: 'external_payment', consideration_money: {} } },
+    'funding matches none of its 2 shapes; closest is shape 1: funding.source.consideration_money is not a field of this source',
+    'funding.source.consideration_money',
+  ],
 ])
   cases.push({ body: { [field]: value }, param, code, message });
 for (const key of ['a"b', 'a[b]', 'é', '{expectation}']) {
@@ -188,9 +194,34 @@ test('generated Node and PHP local validation matches server stage 1 without sen
             title: 'SavedCardCredential',
             type: 'object',
             required: ['payment_method_id'],
-            properties: { payment_method_id: { type: 'string' } },
+            properties: {
+              payment_method_id: { type: 'string' },
+              // Large named and unnamed branches exercise codec interning.
+              ...Object.fromEntries(
+                Array.from({ length: 12 }, (_, index) => ['optional_' + index, { type: 'string' }]),
+              ),
+            },
           },
           { title: 'TokenCredential', type: 'string' },
+        ],
+      },
+      funding: {
+        oneOf: [
+          {
+            type: 'object',
+            required: ['source'],
+            properties: {
+              source: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  funding_source_type: { type: 'string', const: 'external_payment' },
+                  customer_id: { type: 'string' },
+                },
+              },
+            },
+          },
+          { type: 'string' },
         ],
       },
     },
