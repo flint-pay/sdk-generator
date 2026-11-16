@@ -381,7 +381,7 @@ echo json_encode($rows,JSON_THROW_ON_ERROR);`;
   );
 });
 
-test('previous attributes project recursive array references without changing current objects', async (t) => {
+test('previous attributes share named and recursive array projections without changing current objects', async (t) => {
   const f = fixture(t, {
     Customer: {
       type: 'object',
@@ -390,9 +390,20 @@ test('previous attributes project recursive array references without changing cu
         id: { type: 'string' },
         name: { type: 'string' },
         children: { type: 'array', items: { $ref: '#/components/schemas/Customer' } },
+        line_items: { type: 'array', items: { $ref: '#/components/schemas/LineItem' } },
+      },
+    },
+    LineItem: {
+      type: 'object',
+      required: ['id', 'amount', 'purchased_gift_cards'],
+      properties: {
+        id: { type: 'string' },
+        amount: { type: 'integer', format: 'int64' },
+        purchased_gift_cards: { type: 'array', items: { type: 'string' } },
       },
     },
   });
+  assert.ok(f.contract.models.LineItemPreviousAttributes);
   const { verifyWebhookAsync } = await import(pathToFileURL(join(f.output, 'node/index.js')));
   const verify = async (object, previous) => {
     const raw = JSON.stringify({
@@ -410,7 +421,10 @@ test('previous attributes project recursive array references without changing cu
       nowSeconds: 1700000000,
     });
   };
-  const previous = { children: [{ children: [{ name: null }] }] };
+  const previous = {
+    children: [{ children: [{ name: null }] }],
+    line_items: [{ amount: '456' }],
+  };
   const raw = JSON.stringify({
     event_type: 'customer.updated',
     data: { object: { id: 'cus_fixture', name: 'After' }, previous_attributes: previous },

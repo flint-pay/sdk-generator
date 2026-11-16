@@ -4605,8 +4605,10 @@ function loadContractInput(
   // Previous snapshots may omit fields at any depth, including array elements.
   // Resolve that policy here so both targets share types and numeric decoding.
   const previousReferences = new Map<string, string>();
-  const previousProjection = (shape: Schema): Schema => {
-    const reference = shape['x-sdk-ref'];
+  const previousProjection = (shape: Schema, expand = false): Schema => {
+    // Preserve sharing for ordinary resolved references as well as cycles.
+    // Expanded partial graphs otherwise duplicate named nested resources.
+    const reference = shape['x-sdk-ref'] ?? (!expand ? typeNames.get(shape) : undefined);
     if (reference) {
       const existing = previousReferences.get(reference);
       if (existing) return { 'x-sdk-ref': existing };
@@ -4616,7 +4618,7 @@ function loadContractInput(
       while (Object.hasOwn(definitions, name) || Object.hasOwn(models, name)) name += '_';
       previousReferences.set(reference, name);
       definitions[name] = {};
-      const projected = previousProjection(target);
+      const projected = previousProjection(target, true);
       definitions[name] = projected;
       models[name] = projected;
       contract.definitions = definitions;
@@ -4645,9 +4647,9 @@ function loadContractInput(
     delete result.oneOf;
     delete result.anyOf;
     const allOf = [
-      ...(shape.allOf ?? []).map(previousProjection),
-      ...(shape.oneOf ? [{ anyOf: shape.oneOf.map(previousProjection) }] : []),
-      ...(shape.anyOf ? [{ anyOf: shape.anyOf.map(previousProjection) }] : []),
+      ...(shape.allOf ?? []).map((branch) => previousProjection(branch)),
+      ...(shape.oneOf ? [{ anyOf: shape.oneOf.map((branch) => previousProjection(branch)) }] : []),
+      ...(shape.anyOf ? [{ anyOf: shape.anyOf.map((branch) => previousProjection(branch)) }] : []),
     ];
     if (allOf.length) result.allOf = allOf;
     return result;
