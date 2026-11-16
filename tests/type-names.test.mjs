@@ -399,11 +399,63 @@ test('previous attributes share named and recursive array projections without ch
       properties: {
         id: { type: 'string' },
         amount: { type: 'integer', format: 'int64' },
+        money: { $ref: '#/components/schemas/MoneyValue' },
         purchased_gift_cards: { type: 'array', items: { type: 'string' } },
+      },
+    },
+    MoneyValue: {
+      type: 'object',
+      required: ['amount', 'currency'],
+      properties: {
+        amount: { type: 'integer', format: 'int64' },
+        currency: { type: 'string' },
       },
     },
   });
   assert.ok(f.contract.models.LineItemPreviousAttributes);
+  const consumer = join(f.output, 'node/nested-previous.ts');
+  writeFileSync(
+    consumer,
+    `import type { CustomerUpdatedEvent } from './index.js';
+declare const event: CustomerUpdatedEvent;
+const line = event.data.previous_attributes?.line_items?.[0];
+const amount: string | null | undefined = line?.money?.amount;
+// @ts-expect-error Prior exact amounts remain strings.
+const invalid: number = line?.money?.amount;
+`,
+  );
+  execFileSync(
+    process.execPath,
+    [
+      resolve('node_modules/typescript/bin/tsc'),
+      '--strict',
+      '--noEmit',
+      '--module',
+      'NodeNext',
+      '--target',
+      'ES2022',
+      '--typeRoots',
+      resolve('node_modules/@types'),
+      consumer,
+    ],
+    { stdio: 'pipe' },
+  );
+  const hydrated = execFileSync(
+    'php',
+    [
+      '-r',
+      String.raw`require $argv[1].'/src/Client.php';
+$p = new TypeNames\CustomerUpdatedEventDataPreviousAttributes(['line_items'=>[['money'=>['amount'=>'9007199254740993']]]]);
+$m = $p->getLineItems()[0]->getMoney();
+if (!$m instanceof TypeNames\MoneyValuePreviousAttributes || !$m->hasAmount() || $m->hasCurrency() || $m->getCurrency() !== null || $m->getAmount() !== '9007199254740993') throw new RuntimeException('untyped partial money');
+$n = new TypeNames\LineItemPreviousAttributes(['money'=>null]);
+if (!$n->hasMoney() || $n->getMoney() !== null || (new TypeNames\LineItemPreviousAttributes([]))->hasMoney()) throw new RuntimeException('lost presence');
+echo 'typed';`,
+      join(f.output, 'php'),
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.equal(hydrated, 'typed');
   const { verifyWebhookAsync } = await import(pathToFileURL(join(f.output, 'node/index.js')));
   const verify = async (object, previous) => {
     const raw = JSON.stringify({

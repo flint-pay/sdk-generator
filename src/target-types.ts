@@ -350,7 +350,7 @@ export function typescriptType(
         const alternatives = branches.map((branch) =>
           render(branch, response, tag?.propertyName, known, objectContext, arrayContext),
         );
-        if (response && !known && nullableAlternative(s) === undefined)
+        if (response && !known && nullableAlternative(s, definitions) === undefined)
           alternatives.push(
             objectContext === 'object' || branches.every((v) => v.type === 'object')
               ? 'Record<string, unknown>'
