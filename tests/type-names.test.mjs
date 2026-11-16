@@ -310,7 +310,7 @@ $c=new TypeNames\Client(new TypeNames\ClientOptions('https://example.invalid'));
 foreach($cases as $case){
   $v=$c->verifyWebhookDelivery($case['raw'],$case['headers'],['secrets'=>'synthetic','now_seconds'=>1700000000]);
   if(!$v['known'])throw new RuntimeException('unmatched envelope');
-  $rows[]=json_decode(json_encode($v['event']),true);
+  $rows[]=$v['event'];
 }
 echo json_encode($rows,JSON_THROW_ON_ERROR);`;
   const rows = JSON.parse(
@@ -319,7 +319,7 @@ echo json_encode($rows,JSON_THROW_ON_ERROR);`;
     }),
   );
   for (const [index, row] of rows.entries()) {
-    assert.deepEqual(row.data.previous_attributes, index === 1 ? [] : expected[index]);
+    assert.deepEqual(row.data.previous_attributes, expected[index]);
     assert.equal(Object.hasOwn(row.data, 'previous_attributes'), index !== 0);
   }
   // Widen only top-level presence: nested resource fields retain validation.
@@ -340,6 +340,114 @@ echo json_encode($rows,JSON_THROW_ON_ERROR);`;
     }),
     /money/,
   );
+});
+
+test('previous attributes preserve resource alternatives and conjunctive field rules', async (t) => {
+  const f = fixture(t, {
+    Customer: {
+      allOf: [
+        {
+          type: 'object',
+          required: ['id', 'name'],
+          properties: {
+            id: { type: 'string' },
+            name: { type: 'string' },
+            money: {
+              type: 'object',
+              required: ['amount'],
+              properties: { amount: { type: 'integer', format: 'int64' } },
+            },
+          },
+        },
+        {
+          oneOf: [
+            {
+              type: 'object',
+              required: ['status'],
+              properties: {
+                status: { const: 'pending', type: 'string' },
+                outcome: { type: 'string' },
+              },
+            },
+            {
+              type: 'object',
+              required: ['status'],
+              properties: {
+                status: { const: 'succeeded', type: 'string' },
+                outcome: { type: 'integer', format: 'int64' },
+              },
+            },
+            {
+              type: 'object',
+              required: ['status'],
+              properties: {
+                status: { const: 'failed', type: 'string' },
+                outcome: { type: 'boolean' },
+              },
+            },
+          ],
+        },
+      ],
+    },
+  });
+  const { verifyWebhookAsync } = await import(pathToFileURL(join(f.output, 'node/index.js')));
+  const previous = [
+    {},
+    { status: null },
+    { status: 'pending', outcome: 'waiting' },
+    { status: 'succeeded', outcome: 123 },
+    { status: 'failed', outcome: false },
+    { money: { amount: 456 } },
+  ];
+  const expected = previous.map((value, index) =>
+    index === 3
+      ? { status: 'succeeded', outcome: '123' }
+      : index === 5
+        ? { money: { amount: '456' } }
+        : value,
+  );
+  const samples = previous.map((value) => {
+    const raw = JSON.stringify({
+      event_type: 'customer.updated',
+      data: {
+        object: { id: 'cus_fixture', name: 'After', status: 'succeeded', outcome: 789 },
+        previous_attributes: value,
+      },
+    });
+    return {
+      raw,
+      headers: {
+        'X-Timestamp': '1700000000',
+        'X-Signature': createHmac('sha256', 'synthetic')
+          .update('1700000000.' + raw)
+          .digest('hex'),
+      },
+    };
+  });
+  for (const [index, sample] of samples.entries()) {
+    const result = await verifyWebhookAsync(Buffer.from(sample.raw), sample.headers, {
+      secrets: 'synthetic',
+      nowSeconds: 1700000000,
+    });
+    assert.equal(result.known, true, sample.raw);
+    assert.deepEqual(
+      JSON.parse(JSON.stringify(result.event.data.previous_attributes)),
+      expected[index],
+    );
+  }
+  const php = String.raw`require $argv[1].'/src/Client.php';
+$c=new TypeNames\Client(new TypeNames\ClientOptions('https://example.invalid'));$rows=[];
+foreach(json_decode($argv[2],true) as $case){
+ $v=$c->verifyWebhookDelivery($case['raw'],$case['headers'],['secrets'=>'synthetic','now_seconds'=>1700000000]);
+ if(!$v['known'])throw new RuntimeException('unmatched previous variant');$rows[]=$v['event'];
+}echo json_encode($rows,JSON_THROW_ON_ERROR);`;
+  const rows = JSON.parse(
+    execFileSync('php', ['-r', php, join(f.output, 'php'), JSON.stringify(samples)], {
+      encoding: 'utf8',
+    }),
+  );
+  for (const [index, row] of rows.entries())
+    assert.deepEqual(row.data.previous_attributes, expected[index]);
 });
 
 test('event/model collisions use WebhookEvent fallback and double collisions fail', (t) => {

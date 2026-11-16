@@ -52,7 +52,7 @@ import {
   JSON_REQUEST_MEDIA,
   FORM_REQUEST_MEDIA,
 } from './runtime-plan.js';
-import { valueScopes, visitIntersectedProperties } from './schema-intersections.js';
+import { visitIntersectedProperties } from './schema-intersections.js';
 import { resolve, dirname, relative as relativePath } from 'node:path';
 import { createHash } from 'node:crypto';
 
@@ -4605,28 +4605,47 @@ function loadContractInput(
   // Previous attributes contain prior top-level values, including null for an
   // absent field. Resolve the hint into ordinary schemas so declarations and both
   // codecs share optionality, nullability and nested numeric normalization.
+  const previousProjection = (shape: Schema, seen = new Set<string>()): Schema => {
+    const reference = shape['x-sdk-ref'];
+    if (reference) {
+      const target = definitions[reference] ?? models[reference];
+      if (!target || seen.has(reference))
+        return fail('x-flint-partial-of', 'expected a productive resource model');
+      return previousProjection(target, new Set([...seen, reference]));
+    }
+    const project = (branch: Schema): Schema => previousProjection(branch, seen);
+    // Partial variants overlap when their discriminants are omitted or null.
+    const allOf = [
+      ...(shape.allOf ?? []).map(project),
+      ...(shape.oneOf ? [{ anyOf: shape.oneOf.map(project) }] : []),
+      ...(shape.anyOf ? [{ anyOf: shape.anyOf.map(project) }] : []),
+    ];
+    return {
+      type: 'object',
+      properties: Object.fromEntries(
+        Object.entries(shape.properties ?? {}).map(([name, field]) => [
+          name,
+          {
+            ...(field.description ? { description: field.description } : {}),
+            anyOf: [cloneJson(field, referenceNames, typeNames), { type: 'null' }],
+          },
+        ]),
+      ),
+      ...(allOf.length ? { allOf } : {}),
+    };
+  };
   const previousSeen = new WeakSet<Schema>();
   const resolvePrevious = (shape: Schema): void => {
-    if (previousSeen.has(shape)) return;
+    if (!shape || typeof shape !== 'object' || previousSeen.has(shape)) return;
     previousSeen.add(shape);
     const resource = shape['x-flint-partial-of'];
     if (typeof resource === 'string') {
       const target =
         models[resource] ?? fail('x-flint-partial-of', 'expected a resolved resource model');
-      const properties: Record<string, Schema> = {};
-      visitIntersectedProperties(valueScopes(target, definitions), (fields, name) => {
-        const first = fields[0];
-        if (!first) return;
-        const field = fields.length === 1 ? first : { allOf: fields };
-        properties[name] = {
-          ...(field.description ? { description: field.description } : {}),
-          anyOf: [cloneJson(field, referenceNames, typeNames), { type: 'null' }],
-        };
-      });
       // Do not alias the enriched map to the untyped source map component.
       referenceNames.delete(shape);
       typeNames.delete(shape);
-      shape.properties = { ...properties, ...shape.properties };
+      shape.allOf = [...(shape.allOf ?? []), previousProjection(target)];
     }
     Object.values(shape.properties ?? {}).forEach(resolvePrevious);
     for (const key of ['allOf', 'anyOf', 'oneOf'] as const) shape[key]?.forEach(resolvePrevious);
