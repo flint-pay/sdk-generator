@@ -417,7 +417,7 @@ Conditional calls send the declared precondition header and surface conflicts wi
 
 ## Webhook verification
 
-Webhook previous attributes expose optional, nullable top-level resource fields. A null previous value means the field was absent before the change. Nested objects retain their full resource shape and decode normally in Node and PHP, including exact-number strings.
+Webhook previous attributes expose optional, nullable resource fields at every depth, including array elements. A null previous value means the field was absent before the change. Present values decode normally in Node and PHP, including exact-number strings.
 
 ### JWT deliveries
 
