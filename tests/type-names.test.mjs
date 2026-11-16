@@ -400,6 +400,11 @@ test('previous attributes share named and recursive array projections without ch
         id: { type: 'string' },
         amount: { type: 'integer', format: 'int64' },
         money: { $ref: '#/components/schemas/MoneyValue' },
+        maybe_money: { anyOf: [{ $ref: '#/components/schemas/MoneyValue' }, { type: 'null' }] },
+        money_history: {
+          type: 'array',
+          items: { oneOf: [{ $ref: '#/components/schemas/MoneyValue' }, { type: 'null' }] },
+        },
         purchased_gift_cards: { type: 'array', items: { type: 'string' } },
       },
     },
@@ -420,6 +425,8 @@ test('previous attributes share named and recursive array projections without ch
 declare const event: CustomerUpdatedEvent;
 const line = event.data.previous_attributes?.line_items?.[0];
 const amount: string | null | undefined = line?.money?.amount;
+const nullableAmount: string | null | undefined = line?.maybe_money?.amount;
+const arrayAmount: string | null | undefined = line?.money_history?.[0]?.amount;
 // @ts-expect-error Prior exact amounts remain strings.
 const invalid: number = line?.money?.amount;
 `,
@@ -445,10 +452,13 @@ const invalid: number = line?.money?.amount;
     [
       '-r',
       String.raw`require $argv[1].'/src/Client.php';
-$p = new TypeNames\CustomerUpdatedEventDataPreviousAttributes(['line_items'=>[(object)['money'=>(object)['amount'=>'9007199254740993']]]]);
+$p = new TypeNames\CustomerUpdatedEventDataPreviousAttributes(['line_items'=>[(object)['money'=>(object)['amount'=>'9007199254740993'], 'maybe_money'=>(object)['amount'=>'123'], 'money_history'=>[(object)['amount'=>'456'], null]]]]);
 $m = $p->getLineItems()[0]->getMoney();
 if (!$m instanceof TypeNames\MoneyValuePreviousAttributes || !$m->hasAmount() || $m->hasCurrency() || $m->getCurrency() !== null || $m->getAmount() !== '9007199254740993') throw new RuntimeException('untyped partial money');
-$n = new TypeNames\LineItemPreviousAttributes(['money'=>null]);
+$line = $p->getLineItems()[0];
+if (!$line->getMaybeMoney() instanceof TypeNames\MoneyValuePreviousAttributes || $line->getMaybeMoney()->getAmount() !== '123' || !$line->getMoneyHistory()[0] instanceof TypeNames\MoneyValuePreviousAttributes || $line->getMoneyHistory()[0]->getAmount() !== '456' || $line->getMoneyHistory()[1] !== null) throw new RuntimeException('untyped already-nullable money');
+$n = new TypeNames\LineItemPreviousAttributes(['money'=>null, 'maybe_money'=>null]);
+if (!$n->hasMaybeMoney() || $n->getMaybeMoney() !== null) throw new RuntimeException('lost nullable field');
 if (!$n->hasMoney() || $n->getMoney() !== null || (new TypeNames\LineItemPreviousAttributes([]))->hasMoney()) throw new RuntimeException('lost presence');
 echo 'typed';`,
       join(f.output, 'php'),
@@ -475,7 +485,9 @@ echo 'typed';`,
   };
   const previous = {
     children: [{ children: [{ name: null }] }],
-    line_items: [{ amount: '456' }],
+    line_items: [
+      { amount: '456', maybe_money: { amount: '123' }, money_history: [{ currency: 'USD' }, null] },
+    ],
   };
   const raw = JSON.stringify({
     event_type: 'customer.updated',

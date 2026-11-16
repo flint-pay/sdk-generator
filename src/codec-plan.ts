@@ -274,7 +274,7 @@ export function nullOnlySchema(schema: Schema, depth = 0): boolean {
  */
 export function nullableAlternative(
   schema: Schema,
-  definitions: Readonly<Record<string, Schema>> = schema['x-sdk-definitions'] ?? {},
+  definitions: Readonly<Record<string, Schema>> = {},
 ): 0 | 1 | undefined {
   if (schema.oneOf && schema.anyOf) return undefined;
   const branches = schema.oneOf ?? schema.anyOf;
