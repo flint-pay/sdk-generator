@@ -445,7 +445,7 @@ const invalid: number = line?.money?.amount;
     [
       '-r',
       String.raw`require $argv[1].'/src/Client.php';
-$p = new TypeNames\CustomerUpdatedEventDataPreviousAttributes(['line_items'=>[['money'=>['amount'=>'9007199254740993']]]]);
+$p = new TypeNames\CustomerUpdatedEventDataPreviousAttributes(['line_items'=>[(object)['money'=>(object)['amount'=>'9007199254740993']]]]);
 $m = $p->getLineItems()[0]->getMoney();
 if (!$m instanceof TypeNames\MoneyValuePreviousAttributes || !$m->hasAmount() || $m->hasCurrency() || $m->getCurrency() !== null || $m->getAmount() !== '9007199254740993') throw new RuntimeException('untyped partial money');
 $n = new TypeNames\LineItemPreviousAttributes(['money'=>null]);
