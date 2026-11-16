@@ -30,6 +30,14 @@ function fixture(t, collisions = {}) {
           properties: {
             id: { type: 'string' },
             purchased_gift_cards: { type: 'array', items: { type: 'string' } },
+            nullable_entries: {
+              type: 'array',
+              items: {
+                type: ['object', 'null'],
+                required: ['id'],
+                properties: { id: { type: 'string' } },
+              },
+            },
             modifiers: {
               type: 'array',
               items: {
@@ -286,6 +294,7 @@ test('previous attributes normalize nested values and allow absent fields in bot
     { money: { amount: null } },
     { line_items: [{ id: 'li_fixture', modifiers: [{ amount: 456 }] }, {}] },
     { line_items: [{ purchased_gift_cards: null, modifiers: [{ name: null }] }] },
+    { line_items: [{ nullable_entries: [null, {}] }] },
   ];
   const cases = previousCases.map((previous) => {
     const raw = JSON.stringify(
@@ -318,6 +327,7 @@ test('previous attributes normalize nested values and allow absent fields in bot
     { money: { amount: null } },
     { line_items: [{ id: 'li_fixture', modifiers: [{ amount: '456' }] }, {}] },
     { line_items: [{ purchased_gift_cards: null, modifiers: [{ name: null }] }] },
+    { line_items: [{ nullable_entries: [null, {}] }] },
   ];
   for (const [index, sample] of cases.entries()) {
     const result = await verifyWebhookAsync(Buffer.from(sample.raw), sample.headers, {
@@ -401,6 +411,29 @@ test('previous attributes project recursive array references without changing cu
     });
   };
   const previous = { children: [{ children: [{ name: null }] }] };
+  const raw = JSON.stringify({
+    event_type: 'customer.updated',
+    data: { object: { id: 'cus_fixture', name: 'After' }, previous_attributes: previous },
+  });
+  const headers = {
+    'X-Timestamp': '1700000000',
+    'X-Signature': createHmac('sha256', 'synthetic')
+      .update('1700000000.' + raw)
+      .digest('hex'),
+  };
+  const php = String.raw`require $argv[1].'/src/Client.php';
+$c=new TypeNames\Client(new TypeNames\ClientOptions('https://example.invalid'));
+$v=$c->verifyWebhookDelivery($argv[2],json_decode($argv[3],true),['secrets'=>'synthetic','now_seconds'=>1700000000]);
+if(!$v['known'])throw new RuntimeException('unmatched recursive envelope');
+echo json_encode($v['event'],JSON_THROW_ON_ERROR);`;
+  assert.deepEqual(
+    JSON.parse(
+      execFileSync('php', ['-r', php, join(f.output, 'php'), raw, JSON.stringify(headers)], {
+        encoding: 'utf8',
+      }),
+    ).data.previous_attributes,
+    previous,
+  );
   const result = await verify({ id: 'cus_fixture', name: 'After' }, previous);
   assert.equal(result.known, true);
   assert.deepEqual(JSON.parse(JSON.stringify(result.event.data.previous_attributes)), previous);
@@ -414,6 +447,7 @@ test('previous attributes preserve resource alternatives and conjunctive field r
   const f = fixture(t, {
     Customer: {
       allOf: [
+        { anyOf: [{ required: ['id'] }, { required: ['name'] }] },
         {
           type: 'object',
           required: ['id', 'name'],

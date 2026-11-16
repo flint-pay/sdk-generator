@@ -4616,12 +4616,15 @@ function loadContractInput(
       while (Object.hasOwn(definitions, name) || Object.hasOwn(models, name)) name += '_';
       previousReferences.set(reference, name);
       definitions[name] = {};
-      definitions[name] = previousProjection(target);
+      const projected = previousProjection(target);
+      definitions[name] = projected;
+      models[name] = projected;
       contract.definitions = definitions;
       return { 'x-sdk-ref': name };
     }
     const object = shape.type === 'object' || shape.properties !== undefined;
-    const result: Schema = object ? { type: 'object' } : cloneJson(shape);
+    const result: Schema = object ? { type: shape.type ?? 'object' } : cloneJson(shape);
+    delete result.required;
     // Projected values must not alias complete resource declarations.
     delete result['x-sdk-type-name'];
     if (object) {
