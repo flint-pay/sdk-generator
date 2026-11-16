@@ -6,6 +6,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 - Preserve public alternative labels through codec sharing in Node and PHP validation errors. Unnamed alternatives use their shape number instead of an internal codec reference; field paths and validation reasons are unchanged.
 
+- Recursively project webhook previous attributes in Node and PHP, including partial objects inside nested arrays. Missing prior line-item fields no longer reject signed order updates; present numeric fields still decode as exact strings.
+
 - Fix webhook previous attributes in Node and PHP by resolving partial resource fields into optional, nullable schemas. Node now recognizes events with absent prior values and nested exact-number amounts; PHP also normalizes those amounts and exposes typed previous-attribute fields.
 
 - Preserve open response enums and enum-expansion compatibility for null singleton enums, including untyped ones. Nullable routing is emitted only when its alternate descriptor has a literal null instruction; mixed string/null enum branches retain their existing union policy.

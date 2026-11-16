@@ -22,6 +22,28 @@ function fixture(t, collisions = {}) {
       name: { type: 'string', minLength: 1, maxLength: 255 },
       issued_at: { type: 'string', format: 'date-time' },
       amount: { type: 'integer', format: 'int64' },
+      line_items: {
+        type: 'array',
+        items: {
+          type: 'object',
+          required: ['id', 'purchased_gift_cards', 'modifiers'],
+          properties: {
+            id: { type: 'string' },
+            purchased_gift_cards: { type: 'array', items: { type: 'string' } },
+            modifiers: {
+              type: 'array',
+              items: {
+                type: 'object',
+                required: ['name', 'amount'],
+                properties: {
+                  name: { type: 'string' },
+                  amount: { type: 'integer', format: 'int64' },
+                },
+              },
+            },
+          },
+        },
+      },
       money: {
         type: 'object',
         required: ['amount', 'currency'],
@@ -189,10 +211,9 @@ test('events and audience models use event names; request names and PHP response
 declare const event:KnownWebhookEvent;
 if(event.event_type==='customer.updated') {const selected:CustomerUpdatedEvent=event;const oldName:string|null|undefined=event.data.previous_attributes?.name;
 const oldAmount:string|null|undefined=event.data.previous_attributes?.amount;
-const oldMoneyAmount:string|undefined=event.data.previous_attributes?.money?.amount;
+const oldMoneyAmount:string|null|undefined=event.data.previous_attributes?.money?.amount;
 const absent:NonNullable<CustomerUpdatedEvent['data']['previous_attributes']>={name:null,amount:null,money:null};
-// @ts-expect-error Previous nested resource values retain required fields.
-const partialNested:NonNullable<CustomerUpdatedEvent['data']['previous_attributes']>={money:{currency:'USD'}};
+const partialNested:NonNullable<CustomerUpdatedEvent['data']['previous_attributes']>={money:{currency:'USD'},line_items:[{modifiers:[{amount:'456'}]}]};
 // @ts-expect-error Exact numeric fields decode as strings, including previous values.
 const rawAmount:number=event.data.previous_attributes?.money?.amount;
 // @ts-expect-error Previous fields retain resource field types.
@@ -261,6 +282,10 @@ test('previous attributes normalize nested values and allow absent fields in bot
     { name: null, issued_at: null, amount: null, money: null },
     { name: 'Before', amount: 123, money: { amount: 456, currency: 'USD' } },
     { amount: 9007199254740993n, future_field: { enabled: true } },
+    { money: { currency: 'USD' } },
+    { money: { amount: null } },
+    { line_items: [{ id: 'li_fixture', modifiers: [{ amount: 456 }] }, {}] },
+    { line_items: [{ purchased_gift_cards: null, modifiers: [{ name: null }] }] },
   ];
   const cases = previousCases.map((previous) => {
     const raw = JSON.stringify(
@@ -289,6 +314,10 @@ test('previous attributes normalize nested values and allow absent fields in bot
     { name: null, issued_at: null, amount: null, money: null },
     { name: 'Before', amount: '123', money: { amount: '456', currency: 'USD' } },
     { amount: '9007199254740993', future_field: { enabled: true } },
+    { money: { currency: 'USD' } },
+    { money: { amount: null } },
+    { line_items: [{ id: 'li_fixture', modifiers: [{ amount: '456' }] }, {}] },
+    { line_items: [{ purchased_gift_cards: null, modifiers: [{ name: null }] }] },
   ];
   for (const [index, sample] of cases.entries()) {
     const result = await verifyWebhookAsync(Buffer.from(sample.raw), sample.headers, {
@@ -322,10 +351,10 @@ echo json_encode($rows,JSON_THROW_ON_ERROR);`;
     assert.deepEqual(row.data.previous_attributes, expected[index]);
     assert.equal(Object.hasOwn(row.data, 'previous_attributes'), index !== 0);
   }
-  // Widen only top-level presence: nested resource fields retain validation.
+  // Partial fields still validate supplied scalar types.
   const invalid = cases[0].raw.replace(
     '"object":',
-    '"previous_attributes":{"money":{"currency":"USD"}},"object":',
+    '"previous_attributes":{"money":{"amount":false}},"object":',
   );
   const invalidHeaders = {
     'X-Timestamp': String(now),
@@ -339,6 +368,45 @@ echo json_encode($rows,JSON_THROW_ON_ERROR);`;
       nowSeconds: now,
     }),
     /money/,
+  );
+});
+
+test('previous attributes project recursive array references without changing current objects', async (t) => {
+  const f = fixture(t, {
+    Customer: {
+      type: 'object',
+      required: ['id', 'name'],
+      properties: {
+        id: { type: 'string' },
+        name: { type: 'string' },
+        children: { type: 'array', items: { $ref: '#/components/schemas/Customer' } },
+      },
+    },
+  });
+  const { verifyWebhookAsync } = await import(pathToFileURL(join(f.output, 'node/index.js')));
+  const verify = async (object, previous) => {
+    const raw = JSON.stringify({
+      event_type: 'customer.updated',
+      data: { object, previous_attributes: previous },
+    });
+    const headers = {
+      'X-Timestamp': '1700000000',
+      'X-Signature': createHmac('sha256', 'synthetic')
+        .update('1700000000.' + raw)
+        .digest('hex'),
+    };
+    return verifyWebhookAsync(Buffer.from(raw), headers, {
+      secrets: 'synthetic',
+      nowSeconds: 1700000000,
+    });
+  };
+  const previous = { children: [{ children: [{ name: null }] }] };
+  const result = await verify({ id: 'cus_fixture', name: 'After' }, previous);
+  assert.equal(result.known, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.event.data.previous_attributes)), previous);
+  await assert.rejects(
+    verify({ id: 'cus_fixture', name: 'After', children: [{}] }, previous),
+    /name|id/,
   );
 });
 

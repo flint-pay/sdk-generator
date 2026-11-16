@@ -4602,37 +4602,52 @@ function loadContractInput(
     hash: '',
   };
   if (auth) contract.auth = auth;
-  // Previous attributes contain prior top-level values, including null for an
-  // absent field. Resolve the hint into ordinary schemas so declarations and both
-  // codecs share optionality, nullability and nested numeric normalization.
-  const previousProjection = (shape: Schema, seen = new Set<string>()): Schema => {
+  // Previous snapshots may omit fields at any depth, including array elements.
+  // Resolve that policy here so both targets share types and numeric decoding.
+  const previousReferences = new Map<string, string>();
+  const previousProjection = (shape: Schema): Schema => {
     const reference = shape['x-sdk-ref'];
     if (reference) {
+      const existing = previousReferences.get(reference);
+      if (existing) return { 'x-sdk-ref': existing };
       const target = definitions[reference] ?? models[reference];
-      if (!target || seen.has(reference))
-        return fail('x-flint-partial-of', 'expected a productive resource model');
-      return previousProjection(target, new Set([...seen, reference]));
+      if (!target) return fail('x-flint-partial-of', 'expected a productive resource model');
+      let name = reference + 'PreviousAttributes';
+      while (Object.hasOwn(definitions, name) || Object.hasOwn(models, name)) name += '_';
+      previousReferences.set(reference, name);
+      definitions[name] = {};
+      definitions[name] = previousProjection(target);
+      contract.definitions = definitions;
+      return { 'x-sdk-ref': name };
     }
-    const project = (branch: Schema): Schema => previousProjection(branch, seen);
-    // Partial variants overlap when their discriminants are omitted or null.
-    const allOf = [
-      ...(shape.allOf ?? []).map(project),
-      ...(shape.oneOf ? [{ anyOf: shape.oneOf.map(project) }] : []),
-      ...(shape.anyOf ? [{ anyOf: shape.anyOf.map(project) }] : []),
-    ];
-    return {
-      type: 'object',
-      properties: Object.fromEntries(
+    const object = shape.type === 'object' || shape.properties !== undefined;
+    const result: Schema = object ? { type: 'object' } : cloneJson(shape);
+    // Projected values must not alias complete resource declarations.
+    delete result['x-sdk-type-name'];
+    if (object) {
+      result.properties = Object.fromEntries(
         Object.entries(shape.properties ?? {}).map(([name, field]) => [
           name,
           {
             ...(field.description ? { description: field.description } : {}),
-            anyOf: [cloneJson(field, referenceNames, typeNames), { type: 'null' }],
+            anyOf: [previousProjection(field), { type: 'null' }],
           },
         ]),
-      ),
-      ...(allOf.length ? { allOf } : {}),
-    };
+      );
+      if (typeof shape.additionalProperties === 'object')
+        result.additionalProperties = previousProjection(shape.additionalProperties);
+    }
+    if (shape.items) result.items = previousProjection(shape.items);
+    // Partial variants overlap when their discriminants are omitted or null.
+    delete result.oneOf;
+    delete result.anyOf;
+    const allOf = [
+      ...(shape.allOf ?? []).map(previousProjection),
+      ...(shape.oneOf ? [{ anyOf: shape.oneOf.map(previousProjection) }] : []),
+      ...(shape.anyOf ? [{ anyOf: shape.anyOf.map(previousProjection) }] : []),
+    ];
+    if (allOf.length) result.allOf = allOf;
+    return result;
   };
   const previousSeen = new WeakSet<Schema>();
   const resolvePrevious = (shape: Schema): void => {
