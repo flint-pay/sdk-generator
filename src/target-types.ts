@@ -127,8 +127,6 @@ export function typescriptType(
   documentation = false,
 ): string {
   definitions = s['x-sdk-definitions'] ?? definitions;
-  if (response && typeof s['x-flint-partial-of'] === 'string')
-    return `Partial<${s['x-flint-partial-of']}>`;
   if (
     response &&
     s['x-sdk-event-tag'] &&

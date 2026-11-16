@@ -52,7 +52,7 @@ import {
   JSON_REQUEST_MEDIA,
   FORM_REQUEST_MEDIA,
 } from './runtime-plan.js';
-import { visitIntersectedProperties } from './schema-intersections.js';
+import { valueScopes, visitIntersectedProperties } from './schema-intersections.js';
 import { resolve, dirname, relative as relativePath } from 'node:path';
 import { createHash } from 'node:crypto';
 
@@ -1525,6 +1525,16 @@ function pointer(root: unknown, pointer: string, p: string): any {
 /** Clone owned JSON containers while reusing immutable primitive values.
  * structuredClone copies string storage too, multiplying large enum annotations
  * each time a resolved response schema is instantiated. */
+function cloneJson(
+  value: Schema,
+  referenceNames?: WeakMap<object, string>,
+  typeNames?: WeakMap<object, string>,
+): Schema;
+function cloneJson(
+  value: unknown,
+  referenceNames?: WeakMap<object, string>,
+  typeNames?: WeakMap<object, string>,
+): unknown;
 function cloneJson(
   value: unknown,
   referenceNames?: WeakMap<object, string>,
@@ -4592,6 +4602,47 @@ function loadContractInput(
     hash: '',
   };
   if (auth) contract.auth = auth;
+  // Previous attributes contain prior top-level values, including null for an
+  // absent field. Resolve the hint into ordinary schemas so declarations and both
+  // codecs share optionality, nullability and nested numeric normalization.
+  const previousSeen = new WeakSet<Schema>();
+  const resolvePrevious = (shape: Schema): void => {
+    if (previousSeen.has(shape)) return;
+    previousSeen.add(shape);
+    const resource = shape['x-flint-partial-of'];
+    if (typeof resource === 'string') {
+      const target =
+        models[resource] ?? fail('x-flint-partial-of', 'expected a resolved resource model');
+      const properties: Record<string, Schema> = {};
+      visitIntersectedProperties(valueScopes(target, definitions), (fields, name) => {
+        const first = fields[0];
+        if (!first) return;
+        const field = fields.length === 1 ? first : { allOf: fields };
+        properties[name] = {
+          ...(field.description ? { description: field.description } : {}),
+          anyOf: [cloneJson(field, referenceNames, typeNames), { type: 'null' }],
+        };
+      });
+      // Do not alias the enriched map to the untyped source map component.
+      referenceNames.delete(shape);
+      typeNames.delete(shape);
+      shape.properties = { ...properties, ...shape.properties };
+    }
+    Object.values(shape.properties ?? {}).forEach(resolvePrevious);
+    for (const key of ['allOf', 'anyOf', 'oneOf'] as const) shape[key]?.forEach(resolvePrevious);
+    if (shape.items) resolvePrevious(shape.items);
+    if (typeof shape.additionalProperties === 'object') resolvePrevious(shape.additionalProperties);
+  };
+  Object.values(contract.models).forEach(resolvePrevious);
+  for (const operation of contract.operations) {
+    if (operation.body) resolvePrevious(operation.body);
+    operation.parameters.forEach((parameter) => resolvePrevious(parameter.schema));
+    Object.values(operation.responses).forEach((response) => {
+      if (response.schema) resolvePrevious(response.schema);
+    });
+  }
+  contract.incoming?.forEach((item) => resolvePrevious(item.schema));
+  Object.values(contract.config.webhook?.events ?? {}).forEach(resolvePrevious);
   // Resolution is finished. Do not retain expanded cached copies while the
   // owned contract is compacted and compiled.
   resolved.clear();
