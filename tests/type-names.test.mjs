@@ -401,6 +401,8 @@ test('previous attributes share named and recursive array projections without ch
         id: { type: 'string' },
         amount: { type: 'integer', format: 'int64' },
         money: { $ref: '#/components/schemas/MoneyValue' },
+        memo: { type: ['string', 'null'], const: 'Before' },
+        nullable_amount: { type: ['integer', 'null'], format: 'int64' },
         maybe_money: { anyOf: [{ $ref: '#/components/schemas/MoneyValue' }, { type: 'null' }] },
         money_history: {
           type: 'array',
@@ -428,6 +430,8 @@ const line = event.data.previous_attributes?.line_items?.[0];
 const parentName: string | null | undefined = event.data.previous_attributes?.parent?.name;
 const amount: string | null | undefined = line?.money?.amount;
 const nullableAmount: string | null | undefined = line?.maybe_money?.amount;
+const memo: string | null | undefined = line?.memo;
+const nullableScalar: string | null | undefined = line?.nullable_amount;
 const arrayAmount: string | null | undefined = line?.money_history?.[0]?.amount;
 // @ts-expect-error Prior exact amounts remain strings.
 const invalid: number = line?.money?.amount;
@@ -460,7 +464,8 @@ $m = $p->getLineItems()[0]->getMoney();
 if (!$m instanceof TypeNames\MoneyValuePreviousAttributes || !$m->hasAmount() || $m->hasCurrency() || $m->getCurrency() !== null || $m->getAmount() !== '9007199254740993') throw new RuntimeException('untyped partial money');
 $line = $p->getLineItems()[0];
 if (!$line->getMaybeMoney() instanceof TypeNames\MoneyValuePreviousAttributes || $line->getMaybeMoney()->getAmount() !== '123' || !$line->getMoneyHistory()[0] instanceof TypeNames\MoneyValuePreviousAttributes || $line->getMoneyHistory()[0]->getAmount() !== '456' || $line->getMoneyHistory()[1] !== null) throw new RuntimeException('untyped already-nullable money');
-$n = new TypeNames\LineItemPreviousAttributes(['money'=>null, 'maybe_money'=>null]);
+$n = new TypeNames\LineItemPreviousAttributes(['money'=>null, 'maybe_money'=>null, 'memo'=>null, 'nullable_amount'=>null]);
+if (!$n->hasMemo() || $n->getMemo() !== null || !$n->hasNullableAmount() || $n->getNullableAmount() !== null) throw new RuntimeException('lost nullable scalar');
 if (!$n->hasMaybeMoney() || $n->getMaybeMoney() !== null) throw new RuntimeException('lost nullable field');
 if (!$n->hasMoney() || $n->getMoney() !== null || (new TypeNames\LineItemPreviousAttributes([]))->hasMoney()) throw new RuntimeException('lost presence');
 echo 'typed';`,
@@ -490,7 +495,13 @@ echo 'typed';`,
     children: [{ children: [{ name: null }] }],
     parent: { parent: null, name: 'Before' },
     line_items: [
-      { amount: '456', maybe_money: { amount: '123' }, money_history: [{ currency: 'USD' }, null] },
+      {
+        amount: '456',
+        memo: null,
+        nullable_amount: null,
+        maybe_money: { amount: '123' },
+        money_history: [{ currency: 'USD' }, null],
+      },
     ],
   };
   const raw = JSON.stringify({

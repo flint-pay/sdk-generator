@@ -4670,14 +4670,22 @@ function loadContractInput(
     if (object) {
       result.properties = Object.fromEntries(
         Object.entries(shape.properties ?? {}).map(([name, field]) => {
-          const projected = previousProjection(field);
+          let projected = previousProjection(field);
+          if (Array.isArray(projected.type) && projected.type.includes('null')) {
+            const types = projected.type.filter((type) => type !== 'null');
+            const type = types[0];
+            if (type !== undefined)
+              projected = { ...projected, type: types.length === 1 ? type : types };
+          }
           return [
             name,
             {
               ...(field.description ? { description: field.description } : {}),
-              ...(projected.anyOf?.some((branch) => nullOnlySchema(branch))
-                ? projected
-                : { anyOf: [projected, { type: 'null' }] }),
+              ...(projected.type === 'null'
+                ? { type: 'null' }
+                : projected.anyOf?.some((branch) => nullOnlySchema(branch))
+                  ? projected
+                  : { anyOf: [projected, { type: 'null' }] }),
             },
           ];
         }),
