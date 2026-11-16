@@ -447,13 +447,15 @@ test('previous attributes preserve resource alternatives and conjunctive field r
   const f = fixture(t, {
     Customer: {
       allOf: [
-        { anyOf: [{ required: ['id'] }, { required: ['name'] }] },
+        { anyOf: [{ required: ['a'] }, { required: ['b'] }] },
         {
           type: 'object',
           required: ['id', 'name'],
           properties: {
             id: { type: 'string' },
             name: { type: 'string' },
+            a: { type: 'string' },
+            b: { type: 'string' },
             money: {
               type: 'object',
               required: ['amount'],
@@ -512,7 +514,13 @@ test('previous attributes preserve resource alternatives and conjunctive field r
     const raw = JSON.stringify({
       event_type: 'customer.updated',
       data: {
-        object: { id: 'cus_fixture', name: 'After', status: 'succeeded', outcome: 789 },
+        object: {
+          id: 'cus_fixture',
+          name: 'After',
+          a: 'current',
+          status: 'succeeded',
+          outcome: 789,
+        },
         previous_attributes: value,
       },
     });
