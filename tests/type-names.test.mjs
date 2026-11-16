@@ -463,6 +463,11 @@ test('previous attributes preserve resource alternatives and conjunctive field r
       allOf: [
         { anyOf: [{ required: ['a'] }, { required: ['b'] }] },
         {
+          if: { properties: { status: { const: 'failed' } }, required: ['status'] },
+          then: { required: ['failure_reason'] },
+          else: { not: { required: ['failure_reason'] } },
+        },
+        {
           type: 'object',
           required: ['id', 'name'],
           properties: {
@@ -470,6 +475,7 @@ test('previous attributes preserve resource alternatives and conjunctive field r
             name: { type: 'string' },
             a: { type: 'string' },
             b: { type: 'string' },
+            failure_reason: { type: 'string' },
             money: {
               type: 'object',
               required: ['amount'],
@@ -516,6 +522,7 @@ test('previous attributes preserve resource alternatives and conjunctive field r
     { status: 'succeeded', outcome: 123 },
     { status: 'failed', outcome: false },
     { money: { amount: 456 } },
+    { status: null, failure_reason: null },
   ];
   const expected = previous.map((value, index) =>
     index === 3

@@ -4605,6 +4605,17 @@ function loadContractInput(
   // Previous snapshots may omit fields at any depth, including array elements.
   // Resolve that policy here so both targets share types and numeric decoding.
   const previousReferences = new Map<string, string>();
+  const objectRule = (shape: Schema): boolean =>
+    shape.type === 'object' ||
+    (Array.isArray(shape.type) && shape.type.includes('object')) ||
+    shape.properties !== undefined ||
+    shape.required !== undefined ||
+    Boolean(
+      shape.allOf?.some(objectRule) ||
+        shape.anyOf?.some(objectRule) ||
+        shape.oneOf?.some(objectRule),
+    ) ||
+    Boolean(shape.not && objectRule(shape.not));
   const previousProjection = (shape: Schema, expand = false): Schema => {
     // Preserve sharing for ordinary resolved references as well as cycles.
     // Expanded partial graphs otherwise duplicate named nested resources.
@@ -4627,6 +4638,14 @@ function loadContractInput(
     const object = shape.type === 'object' || shape.properties !== undefined;
     const result: Schema = object ? { type: shape.type ?? 'object' } : cloneJson(shape);
     delete result.required;
+    // Cross-field presence policies describe complete snapshots. A partial
+    // snapshot can omit the discriminant or record any prior field as null.
+    if (shape.if && objectRule(shape.if)) {
+      delete result.if;
+      delete result.then;
+      delete result.else;
+    }
+    if (shape.not && objectRule(shape.not)) delete result.not;
     // Projected values must not alias complete resource declarations.
     delete result['x-sdk-type-name'];
     if (object) {
