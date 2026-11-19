@@ -848,6 +848,8 @@ export interface CompiledSdkContract {
       path: string[];
       node: string;
       nodeDocumentation: string;
+      nodeBody?: string;
+      nodeEnvelopeExports?: string[];
       php: string;
       phpNative: string;
       /** Absent in saved plans whose Pages/Wait helpers returned Results. */
@@ -1590,11 +1592,8 @@ export function compileSdkContract(source: Contract): {
 
   if (plan.node.eventDeclarations)
     plan.node.eventDeclarations = replaceOutputNames(plan.node.eventDeclarations);
-  const nodePayloadType = (schema: Schema, documentation = false): string => {
-    const type = documentation ? typescriptType(schema, true) : namedType(schema, models, true);
-    const alternatives = namedPayloadAlternatives(schema, c.definitions ?? {});
-    if (!alternatives) return type;
-    const declarations = alternatives.branches.map((branch) =>
+  const sharedPayloadFields = (branches: Schema[]): string => {
+    const declarations = branches.map((branch) =>
       directionalSchema(phpDeclaration(branch, c.definitions), true),
     );
     const fields = (declarations[0]?.required ?? []).flatMap((name) => {
@@ -1608,7 +1607,33 @@ export function compileSdkContract(source: Contract): {
         ? [JSON.stringify(name) + ': ' + [...new Set(members)].join(' | ')]
         : [];
     });
-    return fields.length ? '(' + type + ') & { ' + fields.join('; ') + ' }' : type;
+    return fields.length ? '{ ' + fields.join('; ') + ' }' : '';
+  };
+  const envelopeProjection = (schema: Schema, path: string[]) => {
+    let payload = schema;
+    const shape: string[] = [];
+    for (const key of path) {
+      const declaration = directionalSchema(phpDeclaration(payload, c.definitions), true);
+      const child = declaration.properties?.[key];
+      if (!child || !declaration.required?.includes(key)) return undefined;
+      const { 'x-sdk-type-name': _name, ...envelope } = declaration;
+      const properties = { ...envelope.properties, [key]: {} };
+      shape.push(
+        typescriptType(
+          {
+            ...envelope,
+            properties: Object.fromEntries(
+              Object.keys(properties)
+                .sort()
+                .map((name) => [name, properties[name]!]),
+            ),
+          },
+          true,
+        ),
+      );
+      payload = child;
+    }
+    return { payload, shape: stable(shape) };
   };
   const responseReturns = Object.fromEntries(
     c.operations
@@ -1616,6 +1641,57 @@ export function compileSdkContract(source: Contract): {
       .map((op) => {
         const projected = payloadSchemas(op, c.definitions);
         const uncertain = payloadHasAlternatives(op, c.definitions);
+        const path = op.response?.payloadPath?.split('.') ?? [];
+        const alternatives = projected.map((schema) =>
+          namedPayloadAlternatives(schema, c.definitions ?? {}),
+        );
+        const sharedFields = alternatives.map((entry) =>
+          entry ? sharedPayloadFields(entry.composed ?? entry.branches) : '',
+        );
+        const nodePayloadType = (schema: Schema, index: number, documentation = false) => {
+          const type = documentation
+            ? typescriptType(schema, true)
+            : namedType(schema, models, true);
+          const fields = sharedFields[index];
+          return fields ? '(' + type + ') & ' + fields : type;
+        };
+        const node =
+          replaceOutputNames(
+            [...new Set(projected.map((schema, index) => nodePayloadType(schema, index)))].join(
+              ' | ',
+            ),
+          ) || plan.node.operations[op.id]!.output;
+        // The unprojected body and the payload share this decoded value when
+        // no alternative above the path requires a separate projection codec.
+        const nodeBody =
+          !uncertain && sharedFields.length && sharedFields.every(Boolean)
+            ? path.reduceRight(
+                (type, key) => '{ ' + JSON.stringify(key) + ': ' + type + ' }',
+                [...new Set(sharedFields)].join(' | '),
+              )
+            : undefined;
+        const envelopes = new Map<string, Set<string>>();
+        // A previously direct response envelope may still be published for
+        // another operation. Keep that name on this resource for its branch.
+        if (!uncertain && alternatives.some(Boolean) && path.length) {
+          for (const [status, response] of Object.entries(op.responses)) {
+            if ((!successStatus(status) && status !== 'default') || !response.schema) continue;
+            const envelope = envelopeProjection(response.schema, path);
+            if (!envelope) continue;
+            const union = namedPayloadAlternatives(envelope.payload, c.definitions ?? {});
+            if (!union) continue;
+            const peers = envelopes.get(envelope.shape) ?? new Set<string>();
+            for (const name of union.names) peers.add(name);
+            envelopes.set(envelope.shape, peers);
+          }
+        }
+        const nodeEnvelopeExports = envelopes.size
+          ? Object.entries(models).flatMap(([name, schema]) => {
+              const candidate = envelopeProjection(schema, path);
+              const ref = candidate?.payload['x-sdk-type-name'] ?? candidate?.payload['x-sdk-ref'];
+              return candidate && ref && envelopes.get(candidate.shape)?.has(ref) ? [name] : [];
+            })
+          : [];
         if (uncertain && projected.length) {
           const runtimeOperation = plan.runtime.operations.find(
             (operation) => operation.id === op.id,
@@ -1626,17 +1702,15 @@ export function compileSdkContract(source: Contract): {
         return [
           op.id,
           {
-            path: op.response?.payloadPath?.split('.') ?? [],
+            path,
             ...(uncertain && projected.length ? { validate: true as const } : {}),
             ...(op.pagination || op.polling ? { helperReturn: 'payload' as const } : {}),
-            node: projected.length
-              ? replaceOutputNames(
-                  [...new Set(projected.map((s) => nodePayloadType(s)))].join(' | '),
-                )
-              : plan.node.operations[op.id]!.output,
+            node,
+            ...(nodeBody ? { nodeBody } : {}),
+            ...(nodeEnvelopeExports.length ? { nodeEnvelopeExports } : {}),
             nodeDocumentation: replaceOutputNames(
               projected.length
-                ? projected.map((s) => nodePayloadType(s, true)).join(' | ')
+                ? projected.map((s, index) => nodePayloadType(s, index, true)).join(' | ')
                 : plan.documentation[op.id]!.nodeOutput,
             ),
             php: uncertain
@@ -1765,14 +1839,20 @@ export function compileSdkContract(source: Contract): {
             alternatives &&
             alternatives.names.every((name) => Object.hasOwn(semantic.models, name))
           ) {
-            for (const name of alternatives.names) {
-              const model = semantic.models[name];
+            const names = alternatives.names.map((name, index) => {
+              const projection = alternatives.composed?.[index];
+              const path = plan.responseReturns![op.id]!.path.map(pascalWords).join('');
+              return projection ? prefix + path + 'Payload' + name : name;
+            });
+            for (const [index, name] of names.entries()) {
+              const projection = alternatives.composed?.[index];
+              const model = projection ?? semantic.models[name];
               if (!model) throw new Error('Missing PHP payload model ' + name);
-              representations.model(name, model, 'models.' + name);
+              representations.model(name, model, projection ? name : 'models.' + name);
             }
             result.phpPayloadAlternatives = {
               codec: compileCodec(alternatives.union),
-              models: alternatives.names,
+              models: names,
             };
           }
         }

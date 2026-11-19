@@ -6,7 +6,7 @@
       "api": "tests/fixtures/payment-api.json",
       "config": "tests/fixtures/payment-sdk.json",
       "nodeRuntimeSha256": "f338d479363568bc11509314e6503bc3f0f4e573d70509afac3a945a5c5c9d95",
-      "phpSha256": "6720fbcdd7894d3696471ab459da1e284b839d1fe6a71b5f9ee361aefee5868c",
+      "phpSha256": "c7b9cf721d6d631b2ac30ff067ba2da9241af8947126494d1a4ed29de829eeff",
       "rootExports": [
         "Client",
         "ClientOptions",
@@ -37,16 +37,16 @@
       ],
       "singleTarget": {
         "node": "f338d479363568bc11509314e6503bc3f0f4e573d70509afac3a945a5c5c9d95",
-        "php": "6720fbcdd7894d3696471ab459da1e284b839d1fe6a71b5f9ee361aefee5868c"
+        "php": "c7b9cf721d6d631b2ac30ff067ba2da9241af8947126494d1a4ed29de829eeff"
       },
-      "phpRuntimeSha256": "a2019f5a0c003f0a46224d1f93c7d7fb01ba043a360cd68b907ada04eb9d4166"
+      "phpRuntimeSha256": "52a2381a70dc07001eba2249e67560cd6062a26cf4137032562363c187d1d630"
     },
     {
       "name": "flint",
       "api": "tests/providers/flint/openapi.json",
       "config": "tests/providers/flint/sdk.json",
       "nodeRuntimeSha256": "fb9a96b6393a9930b65c8d8481c630d8a8aa14d8f05be8581825995e4edc60cd",
-      "phpSha256": "697260ece1cb5031a43cc5d759e1dbe785b5933ba6e3848cd7a9afb10410295b",
+      "phpSha256": "afb932f5ad56ba98593d2abbb4b3b28ab4f4c1c8b804b0a5741239edcac69f69",
       "rootExports": [
         "Address",
         "CapturePaymentIntentRequest",
@@ -210,9 +210,9 @@
       ],
       "singleTarget": {
         "node": "6f5a77e5b8b99513a3d4e1c780290a116460e85b639fb5aaaabdd868fbd87748",
-        "php": "697260ece1cb5031a43cc5d759e1dbe785b5933ba6e3848cd7a9afb10410295b"
+        "php": "afb932f5ad56ba98593d2abbb4b3b28ab4f4c1c8b804b0a5741239edcac69f69"
       },
-      "phpRuntimeSha256": "960bde550f4f9ffb7cd1c3d925ea515bfcd38cc5243d71bad6e95529fab1652b"
+      "phpRuntimeSha256": "bbf679d40645c66e20bc41b7375d6dc3ec7f0d04842d099ee126afd721e10552"
     }
   ]
 }

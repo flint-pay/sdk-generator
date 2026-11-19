@@ -179,6 +179,9 @@ export function assertCompiledSnapshot(value: unknown): asserts value is Compile
       if (response.validate !== undefined && response.validate !== true)
         throw new Error('Invalid payload validation flag for ' + id);
       fields(response, ['node', 'nodeDocumentation', 'php', 'phpNative'], 'string', id);
+      if (response.nodeBody !== undefined) fields(response, ['nodeBody'], 'string', id);
+      if (response.nodeEnvelopeExports !== undefined)
+        strings(response.nodeEnvelopeExports, id + '.nodeEnvelopeExports');
       if (response.helperReturn !== undefined && response.helperReturn !== 'payload')
         throw new Error('Invalid payload helper return mode for ' + id);
       if (!Array.isArray(response.path) || response.path.some((p) => typeof p !== 'string' || !p))

@@ -309,7 +309,6 @@ final class Result
         private readonly array $redactFields = [],
         private readonly array $responseCodec = [],
         private readonly array $definitions = [],
-        private readonly ?Model $projectedPayload = null,
     ) {
         $this->responseInfo = ResponseInfo::from($metadata, $data);
     }
@@ -326,11 +325,6 @@ final class Result
     public function inspectionContext(): array
     {
         return [$this->redactFields, $this->responseCodec, $this->definitions];
-    }
-    /** @internal A typed branch selected from the successful wire response. */
-    public function projectedPayload(): ?Model
-    {
-        return $this->projectedPayload;
     }
     public function __debugInfo(): array
     {
@@ -2008,11 +2002,6 @@ class Model implements \JsonSerializable
     /** @internal Attach only the model returned by a payload call. */
     public static function responsePayload(Result $result, array $path): mixed
     {
-        $projected = $result->projectedPayload();
-        if ($projected !== null) {
-            $projected->responseInfo = $result->lastResponse();
-            return $projected;
-        }
         $value = $result->data;
         foreach ($path as $key) {
             if ($value instanceof self && $value->has($key)) {
@@ -2054,6 +2043,24 @@ class Model implements \JsonSerializable
             $value->responseInfo = $result->lastResponse();
         }
         return $value;
+    }
+    /** @internal Share the selected response model between the envelope and payload. */
+    public static function withResponseBranch(mixed $body, array $path, Model $branch): mixed
+    {
+        if (!$path) {
+            return $branch;
+        }
+        $field = array_shift($path);
+        if ($body instanceof self) {
+            $value = self::withResponseBranch($body->get($field), $path, $branch);
+            $body->hydrated[$field] = $value;
+            $body->copyOnRead[$field] = self::containsMutableObject($value);
+        } elseif (is_array($body)) {
+            $body[$field] = self::withResponseBranch($body[$field], $path, $branch);
+        } else {
+            $body->{$field} = self::withResponseBranch($body->{$field}, $path, $branch);
+        }
+        return $body;
     }
     private array $hydrated = [];
     private array $copyOnRead = [];
@@ -3318,7 +3325,6 @@ final class Codec
     {
         return in_array($instruction['kind'], ['exact-integer', 'decimal'], true);
     }
-    /** Shared selection policy for numeric interpretation and validation. */
     /** @internal Find the unique declared branch for a projected response model. */
     public static function responseAlternative(mixed $value, array $codec, array $definitions): ?int
     {
@@ -3356,6 +3362,7 @@ final class Codec
         );
         return count($selected) === 1 ? array_key_first($selected) : null;
     }
+    /** Shared selection policy for numeric interpretation and validation. */
     private static function selectAlternatives(
         mixed $value,
         array $s,
@@ -5862,18 +5869,6 @@ class Runtime
             Model::assertRepresentation(['kind' => 'entity', 'name' => $name]);
         }
     }
-    private function hydrateProjectedPayload(string $raw, string $path, array $plan): ?Model
-    {
-        // Match the original wire value before the response codec can turn exact numbers into strings.
-        $body = Codec::parse($raw, true);
-        $value = $path === '' ? $body : self::field($body, $path);
-        $index = Codec::responseAlternative($value, $plan['codec'], $this->definitions());
-        if ($index === null) {
-            return null;
-        }
-        $class = __NAMESPACE__ . '\\' . $plan['models'][$index];
-        return new $class($value, $this->options->redactFields);
-    }
     private function decode(mixed $value, array $codec, array $context = []): mixed
     {
         return Codec::execute(
@@ -6946,6 +6941,8 @@ class Runtime
                     }
                     $responseErrorCode = 'schema_mismatch';
                     try {
+                        $branch = null;
+                        $path = $op['response']['payloadPath'] ?? '';
                         if ($binary) {
                             $responseErrorCode = 'unexpected_media_type';
                             $contentType = strtolower(
@@ -6977,6 +6974,19 @@ class Runtime
                             if ($raw === '') {
                                 $responseErrorCode = 'missing_payload';
                                 throw new \RuntimeException('Missing body');
+                            }
+                            $alternatives = $declared['phpPayloadAlternatives'] ?? null;
+                            if ($alternatives !== null) {
+                                $payload = $path === '' ? $data : self::field($data, $path);
+                                $index = Codec::responseAlternative(
+                                    $payload,
+                                    $alternatives['codec'],
+                                    $this->definitions(),
+                                );
+                                if ($index !== null) {
+                                    $class = __NAMESPACE__ . '\\' . $alternatives['models'][$index];
+                                    $branch = new $class($payload, $this->options->redactFields);
+                                }
                             }
                             $data = Codec::plainNumbers(
                                 $this->decode($data, $declared['codec'], [
@@ -7035,13 +7045,13 @@ class Runtime
                                 $data = new $class((array) $data, $this->options->redactFields);
                             }
                         }
-                        $projectedPayload = isset($declared['phpPayloadAlternatives'])
-                            ? $this->hydrateProjectedPayload(
-                                $raw,
-                                $op['response']['payloadPath'] ?? '',
-                                $declared['phpPayloadAlternatives'],
-                            )
-                            : null;
+                        if ($branch !== null) {
+                            $data = Model::withResponseBranch(
+                                $data,
+                                $path === '' ? [] : explode('.', $path),
+                                $branch,
+                            );
+                        }
                     } catch (\Throwable $cause) {
                         throw SdkError::create(
                             'protocol',
@@ -7065,7 +7075,6 @@ class Runtime
                         $this->options->redactFields,
                         $declared['codec'] ?? [],
                         $this->definitions(),
-                        $projectedPayload,
                     );
                 }
                 $kind = match (true) {

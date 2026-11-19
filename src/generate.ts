@@ -1568,6 +1568,9 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         const requestOptionsType =
           targetPlan.node.operations[op.id]!.requestOptions ?? 'RequestOptions';
         const payload = payloadReturns[op.id];
+        const responseBody = payload?.nodeBody
+          ? `(${responseType(op)}) & (${payload.nodeBody})`
+          : responseType(op);
         const decodePayload = payload
           ? `, (result, path) => this.#runtime.decodePayload(${js(op.id)}, result, path)`
           : '';
@@ -1575,7 +1578,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         for (const method of [op.method, ...(op.aliases ?? [])]) {
           const request = `this.#runtime.request(${js(op.id)}, ${call.nodeInput}, options)`;
           code += `      ${method}: ${positional(op) ? 'async ' : ''}(${call.nodeArgs}) => ${request}${payload ? `.then(result => _sdkPayload(result, ${js(payload.path)}${decodePayload}))` : ''},\n`;
-          declarations += `    ${methodDoc(c, op, method, definitions, call.nodePathDocs)}    ${method}(${call.nodeSignature}): Promise<${payload ? `WithResponseInfo<${payload.node}, ${responseType(op)}>` : `Result<${responseType(op)}>`}>;\n`;
+          declarations += `    ${methodDoc(c, op, method, definitions, call.nodePathDocs)}    ${method}(${call.nodeSignature}): Promise<${payload ? `WithResponseInfo<${payload.node}, ${responseBody}>` : `Result<${responseType(op)}>`}>;\n`;
         }
         if (op.pagination)
           for (const [suffix, runtime, returnType] of [
@@ -1583,7 +1586,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
               'Pages',
               'pages',
               payload?.helperReturn === 'payload'
-                ? `WithResponseInfo<${payload.node}, ${responseType(op)}>`
+                ? `WithResponseInfo<${payload.node}, ${responseBody}>`
                 : `Result<${responseType(op)}>`,
             ],
             ['Items', 'items', targetPlan.node.operations[op.id]!.items],
@@ -1595,7 +1598,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         if (op.polling) {
           const request = `this.#runtime.wait(${js(op.id)}, ${call.nodeInput}, options)`;
           code += `      ${op.method}Wait: (${call.nodeArgs}) => ${request}${payload?.helperReturn === 'payload' ? `.then(result => _sdkPayload(result, ${js(payload.path)}${decodePayload}))` : ''},\n`;
-          declarations += `    /** Poll until a declared terminal state or deadline.\n     * @see ${seeTarget(c, op)}\n     */\n    ${op.method}Wait(${payload?.helperReturn === 'payload' || positional(op) ? call.nodeSignature : `input: ${prefix}Input, options?: ${requestOptionsType}`}): Promise<${payload?.helperReturn === 'payload' ? `WithResponseInfo<${payload.node}, ${responseType(op)}>` : `Result<${responseType(op)}>`}>;\n`;
+          declarations += `    /** Poll until a declared terminal state or deadline.\n     * @see ${seeTarget(c, op)}\n     */\n    ${op.method}Wait(${payload?.helperReturn === 'payload' || positional(op) ? call.nodeSignature : `input: ${prefix}Input, options?: ${requestOptionsType}`}): Promise<${payload?.helperReturn === 'payload' ? `WithResponseInfo<${payload.node}, ${responseBody}>` : `Result<${responseType(op)}>`}>;\n`;
         }
       }
       code += '    });\n';
@@ -1701,6 +1704,14 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
         c.config.webhook
           ? [...webhookTypes, 'KnownWebhookEvent', 'VerifiedWebhook', 'WebhookVerificationOptions']
           : [],
+      ),
+      new Map(
+        groups.map((group) => [
+          group,
+          c.operations
+            .filter((op) => op.resource === group)
+            .flatMap((op) => payloadReturns[op.id]?.nodeEnvelopeExports ?? []),
+        ]),
       ),
     );
     const scopedClient = scopedNodeClients(code);
