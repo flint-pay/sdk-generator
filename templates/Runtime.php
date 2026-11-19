@@ -4288,6 +4288,7 @@ final class Codec
         int $depth = 0,
         bool $validateConstraints = true,
         bool $allowUnknownResponseFields = false,
+        bool $dictionaryValue = false,
     ): mixed {
         $previousSensitive = self::$sensitive;
         self::$sensitive = $previousSensitive || ($s['sensitive'] ?? false);
@@ -4307,6 +4308,7 @@ final class Codec
         int $depth = 0,
         bool $validateConstraints = true,
         bool $allowUnknownResponseFields = false,
+        bool $dictionaryValue = false,
     ): mixed {
         if ($depth > 256) {
             self::fail(
@@ -4338,6 +4340,7 @@ final class Codec
                 $depth + 1,
                 $validateConstraints,
                 $allowUnknownResponseFields,
+                $dictionaryValue,
             );
         }
         if ($value instanceof Model) {
@@ -4365,6 +4368,7 @@ final class Codec
                 $depth + 1,
                 $validateConstraints,
                 $allowUnknownResponseFields,
+                $dictionaryValue,
             );
             // A successful match already executed the complete branch. Reuse
             // it only in matching mode, with the same unknown-field policy.
@@ -4377,6 +4381,7 @@ final class Codec
                 $definitions,
                 $depth,
                 $validateConstraints,
+                $dictionaryValue,
             ) {
                 try {
                     $result = self::executeNode(
@@ -4389,6 +4394,7 @@ final class Codec
                         $depth + 1,
                         $validateConstraints,
                         $allowUnknownFields,
+                        $dictionaryValue,
                     );
                     $matched[] = [$branch, $allowUnknownFields, $result];
                     return true;
@@ -4426,6 +4432,7 @@ final class Codec
                         $depth + 1,
                         $validateConstraints,
                         $allowUnknownResponseFields,
+                        $dictionaryValue,
                     ),
                     $path,
                     $value,
@@ -4472,6 +4479,7 @@ final class Codec
                             $depth + 1,
                             $validateConstraints,
                             $tolerateUnknownFields,
+                            $dictionaryValue,
                         );
                     }
                     $result = self::combine($result, $branchResult, $path, $value);
@@ -4701,6 +4709,7 @@ final class Codec
                         $depth + 1,
                         $validateConstraints,
                         $allowUnknownResponseFields,
+                        true,
                     );
                 } else {
                     $out->{$key} = $v;
@@ -4827,6 +4836,7 @@ final class Codec
                         self::issue(
                             $path,
                             $s['checks']['pattern'] === '^[A-Z]{3}$' &&
+                            !$dictionaryValue &&
                             ($path === 'currency' || str_ends_with($path, '.currency'))
                                 ? 'uppercaseCurrency'
                                 : 'pattern',

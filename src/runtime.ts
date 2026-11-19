@@ -2324,6 +2324,7 @@ function codecMode(response: boolean, matching: boolean): CodecMode {
 }
 export type CodecContext = CodecMode & {
   path?: string;
+  dictionaryValue?: boolean;
   sensitive?: boolean;
   redactFields?: string[];
   definitions?: Readonly<Record<string, CodecPlan>>;
@@ -2988,6 +2989,7 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
       ...codecMode(response, matching),
       sensitive,
       path: path,
+      dictionaryValue: context.dictionaryValue ?? false,
       redactFields: redactFields,
       definitions: definitions,
       depth: depth + 1,
@@ -3011,6 +3013,7 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
       ...codecMode(response, matching),
       sensitive,
       path: path,
+      dictionaryValue: context.dictionaryValue ?? false,
       redactFields: redactFields,
       definitions: definitions,
       depth: depth + 1,
@@ -3028,6 +3031,7 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
           ...codecMode(response, true),
           sensitive,
           path: path,
+          dictionaryValue: context.dictionaryValue ?? false,
           redactFields: redactFields,
           definitions: definitions,
           depth: depth + 1,
@@ -3052,6 +3056,7 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
           ...codecMode(response, matching),
           sensitive,
           path: path,
+          dictionaryValue: context.dictionaryValue ?? false,
           redactFields: redactFields,
           definitions: definitions,
           depth: depth + 1,
@@ -3085,6 +3090,7 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
                 ...codecMode(response, matching),
                 sensitive,
                 path: path,
+                dictionaryValue: context.dictionaryValue ?? false,
                 redactFields: redactFields,
                 definitions: definitions,
                 depth: depth + 1,
@@ -3254,6 +3260,7 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
           ...codecMode(response, matching),
           sensitive,
           path: pathKey(path, k),
+          dictionaryValue: true,
           redactFields: redactFields,
           definitions: definitions,
           depth: depth + 1,
@@ -3335,7 +3342,9 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
       if (s.checks.pattern !== undefined && !new RegExp(s.checks.pattern, 'u').test(value))
         issue(
           path,
-          s.checks.pattern === '^[A-Z]{3}$' && (path === 'currency' || path.endsWith('.currency'))
+          s.checks.pattern === '^[A-Z]{3}$' &&
+            !context.dictionaryValue &&
+            (path === 'currency' || path.endsWith('.currency'))
             ? 'uppercaseCurrency'
             : 'pattern',
         );

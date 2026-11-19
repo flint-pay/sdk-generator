@@ -27,6 +27,13 @@ const cases = [
     message: 'airport_code must be a string matching the required pattern; received a string',
   },
   {
+    body: { airport_codes: { currency: 'jfk' } },
+    param: 'airport_codes.currency',
+    code: 'INVALID_VALUE',
+    message:
+      'airport_codes.currency must be a string matching the required pattern; received a string',
+  },
+  {
     body: { line_items: [{}] },
     param: 'line_items[0].type',
     code: 'REQUIRED',
@@ -189,6 +196,10 @@ test('generated Node and PHP local validation matches server stage 1 without sen
       id: { type: 'string', readOnly: true },
       currency: { type: 'string', pattern: '^[A-Z]{3}$' },
       airport_code: { type: 'string', pattern: '^[A-Z]{3}$' },
+      airport_codes: {
+        type: 'object',
+        additionalProperties: { type: 'string', pattern: '^[A-Z]{3}$' },
+      },
       minimum: { type: 'number', minimum: 1 },
       exclusive: { type: 'number', exclusiveMinimum: 1 },
       multiple: { type: 'number', multipleOf: 2 },
