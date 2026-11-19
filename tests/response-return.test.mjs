@@ -15,6 +15,7 @@ import {
 } from '../dist/index.js';
 import { compileSdkContract } from '../dist/target-plan.js';
 import { compareCompiledContracts } from '../dist/compiled-compatibility.js';
+import { assertRuntimePlan } from '../dist/runtime-plan.js';
 import { checkVersionPolicy } from '../dist/version.js';
 
 const root = mkdtempSync(join(tmpdir(), 'sdk-response-return-'));
@@ -616,6 +617,107 @@ test('map payloads and unknown tagged variants preserve JSON and carry response 
         JSON.stringify(body),
       ),
       JSON.stringify(body),
+    );
+  }
+});
+
+test('named untagged payload alternatives retain response models and their shared fields', async () => {
+  const definition = (field, member) => ({
+    type: 'object',
+    required: ['event_id', field],
+    properties: { event_id: { type: 'string' }, [field]: member },
+  });
+  const fixtures = [
+    {
+      body: '{"data":{"event_id":"event_http","attempt":9007199254740993}}',
+      model: 'HttpDelivery',
+      id: 'event_http',
+      getter: 'getAttempt',
+      value: '9007199254740993',
+    },
+    {
+      body: '{"data":{"event_id":"event_stream","delivery_method":"listener_stream"}}',
+      model: 'StreamDelivery',
+      id: 'event_stream',
+      getter: 'getDeliveryMethod',
+      value: 'listener_stream',
+    },
+    {
+      body: '{"data":{"event_id":"event_future","delivery_method":"future"}}',
+      model: 'Model',
+      id: 'event_future',
+    },
+  ];
+  for (const [keyword, sharing] of [
+    ['oneOf', false],
+    ['oneOf', true],
+    ['anyOf', false],
+  ]) {
+    const f = fixture({
+      responses: { return: 'payload', payloadPath: 'data' },
+      sharing,
+      schema: { $ref: '#/components/schemas/DeliveryResponse' },
+      components: {
+        schemas: {
+          HttpDelivery: definition('attempt', { type: 'integer', format: 'int64' }),
+          StreamDelivery: definition('delivery_method', {
+            type: 'string',
+            const: 'listener_stream',
+          }),
+          DeliveryResponse: {
+            type: 'object',
+            required: ['data'],
+            properties: {
+              data: {
+                [keyword]: ['HttpDelivery', 'StreamDelivery'].map((name) => ({
+                  $ref: '#/components/schemas/' + name,
+                })),
+              },
+            },
+          },
+        },
+      },
+    });
+    for (const { body, model, id, getter, value } of fixtures) {
+      const c = await client(f, body);
+      const payload = await c.api.getItem();
+      assert.equal(payload.event_id, id);
+      assert.equal(payload.lastResponse.status, 200);
+      if (getter === 'getAttempt') assert.equal(payload.attempt, value);
+      const result = php(
+        f,
+        `$value=$c->api->getItem();echo json_encode([(new ReflectionClass($value))->getShortName(), ${getter ? '$value->getEventId(), $value->' + getter + '()' : '$value->event_id, null'}, $value->lastResponse()->status, $value->lastResponse()->body->data->event_id]);`,
+        body,
+      );
+      assert.deepEqual(JSON.parse(result), [model, id, value ?? null, 200, id]);
+    }
+    typecheck(
+      f,
+      `import { Client, type DeliveryResponse, type HttpDelivery, type StreamDelivery } from './index.js';
+const client = new Client({ baseUrl: 'https://example.invalid' });
+const result = await client.api.getItem();
+const id: string = result.event_id;
+const observed: DeliveryResponse = result.lastResponse.body;
+declare const http: HttpDelivery;
+declare const stream: StreamDelivery;
+const ids: string[] = [http.event_id, stream.event_id];`,
+    );
+    const plan = compileSdkContract(f.contract).plan.php.runtime;
+    assertRuntimePlan(plan);
+    const response = plan.operations[0].responses[200];
+    response.phpPayloadAlternatives.models = ['HttpDelivery'];
+    assert.throws(() => assertRuntimePlan(plan), /invalid alternatives/);
+    assert.equal(
+      php(
+        f,
+        String.raw`$plan=Example\ResponseReturn\SchemaRegistry::contract();
+foreach($plan['operations'] as &$operation){
+  $operation['responses'][200]['phpPayloadAlternatives']['models']=['HttpDelivery'];
+}
+try { Example\ResponseReturn\Runtime::assertCompiledPlan($plan); }
+catch (InvalidArgumentException $error) { echo $error->getMessage(); }`,
+      ),
+      'Invalid PHP payload alternatives',
     );
   }
 });

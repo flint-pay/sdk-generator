@@ -309,6 +309,7 @@ final class Result
         private readonly array $redactFields = [],
         private readonly array $responseCodec = [],
         private readonly array $definitions = [],
+        private readonly ?Model $projectedPayload = null,
     ) {
         $this->responseInfo = ResponseInfo::from($metadata, $data);
     }
@@ -325,6 +326,11 @@ final class Result
     public function inspectionContext(): array
     {
         return [$this->redactFields, $this->responseCodec, $this->definitions];
+    }
+    /** @internal A typed branch selected from the successful wire response. */
+    public function projectedPayload(): ?Model
+    {
+        return $this->projectedPayload;
     }
     public function __debugInfo(): array
     {
@@ -2002,6 +2008,11 @@ class Model implements \JsonSerializable
     /** @internal Attach only the model returned by a payload call. */
     public static function responsePayload(Result $result, array $path): mixed
     {
+        $projected = $result->projectedPayload();
+        if ($projected !== null) {
+            $projected->responseInfo = $result->lastResponse();
+            return $projected;
+        }
         $value = $result->data;
         foreach ($path as $key) {
             if ($value instanceof self && $value->has($key)) {
@@ -3308,6 +3319,43 @@ final class Codec
         return in_array($instruction['kind'], ['exact-integer', 'decimal'], true);
     }
     /** Shared selection policy for numeric interpretation and validation. */
+    /** @internal Find the unique declared branch for a projected response model. */
+    public static function responseAlternative(mixed $value, array $codec, array $definitions): ?int
+    {
+        $keyword = isset($codec['exactlyOne']) ? 'exactlyOne' : 'some';
+        $matches = static function (array $branch, bool $allowUnknownFields) use (
+            $value,
+            $definitions,
+        ): bool|SdkError {
+            try {
+                self::execute($value, $branch, [
+                    'mode' => 'match',
+                    'direction' => 'response',
+                    'path' => 'response',
+                    'definitions' => $definitions,
+                    'allowUnknownResponseFields' => $allowUnknownFields,
+                ]);
+                return true;
+            } catch (SdkError $error) {
+                if (self::validationFailureMessage($error) !== null) {
+                    return $error;
+                }
+                throw $error;
+            }
+        };
+        [$selected] = self::selectAlternatives(
+            $value,
+            $codec,
+            $keyword,
+            'response',
+            true,
+            false,
+            false,
+            $matches,
+            $definitions,
+        );
+        return count($selected) === 1 ? array_key_first($selected) : null;
+    }
     private static function selectAlternatives(
         mixed $value,
         array $s,
@@ -5692,6 +5740,9 @@ class Runtime
                 if (isset($response['phpRepresentation'])) {
                     Model::assertRepresentation($response['phpRepresentation']);
                 }
+                if (array_key_exists('phpPayloadAlternatives', $response)) {
+                    self::assertPayloadAlternatives($response['phpPayloadAlternatives']);
+                }
                 if (
                     ($response['bodyKind'] ?? null) === 'sse' &&
                     (isset($response['codec']) ||
@@ -5787,6 +5838,41 @@ class Runtime
     private function definitions(): array
     {
         return $this->descriptors?->definitions() ?? ($this->contract['definitions'] ?? []);
+    }
+    private static function assertPayloadAlternatives(mixed $plan): void
+    {
+        if (!is_array($plan) || !is_array($plan['codec'] ?? null)) {
+            throw new \InvalidArgumentException('Invalid PHP payload alternatives');
+        }
+        $codec = $plan['codec'];
+        Codec::assertPlan($codec, 'response.phpPayloadAlternatives');
+        $branches = $codec['exactlyOne'] ?? ($codec['some'] ?? []);
+        $models = $plan['models'] ?? null;
+        if (
+            isset($codec['tag']) ||
+            (isset($codec['exactlyOne']) && isset($codec['some'])) ||
+            count($branches) < 2 ||
+            !is_array($models) ||
+            !array_is_list($models) ||
+            count($models) !== count($branches)
+        ) {
+            throw new \InvalidArgumentException('Invalid PHP payload alternatives');
+        }
+        foreach ($models as $name) {
+            Model::assertRepresentation(['kind' => 'entity', 'name' => $name]);
+        }
+    }
+    private function hydrateProjectedPayload(string $raw, string $path, array $plan): ?Model
+    {
+        // Match the original wire value before the response codec can turn exact numbers into strings.
+        $body = Codec::parse($raw, true);
+        $value = $path === '' ? $body : self::field($body, $path);
+        $index = Codec::responseAlternative($value, $plan['codec'], $this->definitions());
+        if ($index === null) {
+            return null;
+        }
+        $class = __NAMESPACE__ . '\\' . $plan['models'][$index];
+        return new $class($value, $this->options->redactFields);
     }
     private function decode(mixed $value, array $codec, array $context = []): mixed
     {
@@ -6949,6 +7035,13 @@ class Runtime
                                 $data = new $class((array) $data, $this->options->redactFields);
                             }
                         }
+                        $projectedPayload = isset($declared['phpPayloadAlternatives'])
+                            ? $this->hydrateProjectedPayload(
+                                $raw,
+                                $op['response']['payloadPath'] ?? '',
+                                $declared['phpPayloadAlternatives'],
+                            )
+                            : null;
                     } catch (\Throwable $cause) {
                         throw SdkError::create(
                             'protocol',
@@ -6972,6 +7065,7 @@ class Runtime
                         $this->options->redactFields,
                         $declared['codec'] ?? [],
                         $this->definitions(),
+                        $projectedPayload,
                     );
                 }
                 $kind = match (true) {

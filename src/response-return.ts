@@ -2,10 +2,30 @@ import type { Operation, Schema } from './contract.js';
 import { Diagnostic, pointerSegment } from './diagnostic.js';
 import { successStatus } from './runtime-plan.js';
 import { objectConstraint, objectBodyConstraint } from './target-types.js';
+import { valueScopes } from './schema-intersections.js';
 
 export interface ResponseReturn {
   return?: 'result' | 'payload';
   payloadPath?: string | null;
+}
+
+/** Untagged payload alternatives with source component identities. */
+export function namedPayloadAlternatives(
+  schema: Schema,
+  definitions: Readonly<Record<string, Schema>>,
+) {
+  const unions = valueScopes(schema, definitions).filter((part) => part.oneOf || part.anyOf);
+  const [union] = unions;
+  if (!union || unions.length !== 1 || union.discriminator || (union.oneOf && union.anyOf))
+    return undefined;
+  const branches = union.oneOf ?? union.anyOf ?? [];
+  const names = branches.flatMap((branch) => {
+    const name = branch['x-sdk-type-name'] ?? branch['x-sdk-ref'];
+    return name && objectBodyConstraint(branch, definitions) ? [name] : [];
+  });
+  if (names.length < 2 || names.length !== branches.length || new Set(names).size !== names.length)
+    return undefined;
+  return { union, branches, names };
 }
 
 export function validateResponseReturn(

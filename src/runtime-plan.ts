@@ -296,6 +296,7 @@ export interface CompiledOperation
     Omit<Operation['responses'][string], 'schema'> & {
       codec?: CodecPlan;
       phpRepresentation?: PhpRepresentation;
+      phpPayloadAlternatives?: { codec: CodecPlan; models: string[] };
       model?: string;
       variants?: Record<string, string>;
     }
@@ -812,6 +813,25 @@ export function assertRuntimePlan(
       if (result.codec !== undefined) assertCodecPlan(result.codec, `${op.id}.responses.${status}`);
       if (result.schema !== undefined) throw new Error('Raw schema in compiled response');
       if (result.phpRepresentation !== undefined) assertPhpRepresentation(result.phpRepresentation);
+      if (result.phpPayloadAlternatives !== undefined) {
+        const location = `${op.id}.responses.${status}.phpPayloadAlternatives`;
+        const alternatives = record(result.phpPayloadAlternatives, location);
+        const codec = alternatives.codec;
+        assertCodecPlan(codec, location + '.codec');
+        const branches = codec.exactlyOne ?? codec.some;
+        if (
+          !branches ||
+          branches.length < 2 ||
+          codec.tag ||
+          (codec.exactlyOne && codec.some) ||
+          !Array.isArray(alternatives.models) ||
+          alternatives.models.length !== branches.length ||
+          alternatives.models.some(
+            (name) => typeof name !== 'string' || !/^[A-Za-z][A-Za-z0-9_]*$/.test(name),
+          )
+        )
+          throw new Error(location + ': invalid alternatives');
+      }
       for (const key of ['model', 'mediaType'])
         if (result[key] !== undefined && typeof result[key] !== 'string')
           throw new Error(`${op.id}.responses.${status}: invalid ${key}`);

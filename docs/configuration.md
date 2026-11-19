@@ -263,6 +263,9 @@ New SDKs return the complete decoded body directly (`responses.return: "payload"
 
 - Settings merge at the SDK and operation levels. You may set an SDK-wide `responses.payloadPath`; an operation's `response.payloadPath: null` clears it, and `response.return: "result"` opts the operation out.
 - A dot-separated `payloadPath` must name required, declared properties through non-null objects in every successful JSON response. References and compositions are checked. Optional paths, array traversal and paths through empty, binary or streaming responses fail diagnosis. A payload must always be an object and cannot declare `lastResponse`; use result mode for scalar, array, nullable or incompatible payload shapes.
+
+When an untagged payload union references named object models, Node keeps the types of fields required by every alternative. PHP hydrates each uniquely matched alternative as its named model.
+
 - Unknown union variants keep conservative output types; consumers narrow them before assuming a payload shape.
 - Payload objects carry `lastResponse` in Node and `lastResponse()` in PHP. `ResponseInfo.body` is the complete decoded body with the operation’s declared response type. Node uses `WithResponseInfo<Payload, Body>`; PHP models return nullable `ResponseInfo` (null on nested or caller-built models).
 - `Pages` and `Wait` follow the base method’s mode. Each page carries its response information; `Wait` carries the final poll’s. `Items` yields individual items without response information.

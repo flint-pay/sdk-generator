@@ -230,6 +230,8 @@ With `requests.style: "object"`, methods take one input object with path/query/h
 
 Payload methods return the decoded object, or the configured object payload inside it. Node attaches a readonly, non-enumerable `lastResponse`; PHP exposes `lastResponse(): ?ResponseInfo` on the returned model. Nested models and models built by callers return null in PHP. Node's `WithResponseInfo<Payload, Body>` remains assignable to the payload type, and response information stays out of enumeration, inspection, cloning and JSON serialization.
 
+For untagged payload alternatives that reference named objects, Node preserves the types of shared required fields. PHP returns the named model when exactly one branch matches. If PHP has no unique match, it returns a generic model.
+
 `ResponseInfo` contains `status`, lowercase `headers`, optional `requestId`, ordered `requestIds`, optional `idempotencyKey`, `attempts`, `durationMs` and `body`. `body` is the complete decoded body with the operation's declared response type. Read `order.lastResponse.requestId` in Node or `$order->lastResponse()?->requestId` in PHP. No second request is needed.
 
 A response body declared as a component uses that component's type in both SDKs. PHP reuses the component's model class. Inline operation response names use `OperationResponse` when their ordinary name is already a declared component.

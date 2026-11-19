@@ -34,7 +34,11 @@ import {
 } from './php-representation.js';
 import { phpDeclaration, phpUnion } from './php-types.js';
 import { positional, pathParameters, hasParams } from './request-style.js';
-import { payloadSchemas, payloadHasAlternatives } from './response-return.js';
+import {
+  payloadSchemas,
+  payloadHasAlternatives,
+  namedPayloadAlternatives,
+} from './response-return.js';
 import { schemaComment } from './schema-documentation.js';
 import { codecSharing } from './codec-sharing.js';
 import { Diagnostic } from './diagnostic.js';
@@ -1586,6 +1590,26 @@ export function compileSdkContract(source: Contract): {
 
   if (plan.node.eventDeclarations)
     plan.node.eventDeclarations = replaceOutputNames(plan.node.eventDeclarations);
+  const nodePayloadType = (schema: Schema, documentation = false): string => {
+    const type = documentation ? typescriptType(schema, true) : namedType(schema, models, true);
+    const alternatives = namedPayloadAlternatives(schema, c.definitions ?? {});
+    if (!alternatives) return type;
+    const declarations = alternatives.branches.map((branch) =>
+      directionalSchema(phpDeclaration(branch, c.definitions), true),
+    );
+    const fields = (declarations[0]?.required ?? []).flatMap((name) => {
+      const members = declarations.flatMap((declaration) => {
+        const field = declaration.properties?.[name];
+        return field && declaration.required?.includes(name)
+          ? [namedType(field, models, true)]
+          : [];
+      });
+      return members.length === declarations.length && !members.includes('unknown')
+        ? [JSON.stringify(name) + ': ' + [...new Set(members)].join(' | ')]
+        : [];
+    });
+    return fields.length ? '(' + type + ') & { ' + fields.join('; ') + ' }' : type;
+  };
   const responseReturns = Object.fromEntries(
     c.operations
       .filter((op) => op.response?.return === 'payload')
@@ -1607,12 +1631,12 @@ export function compileSdkContract(source: Contract): {
             ...(op.pagination || op.polling ? { helperReturn: 'payload' as const } : {}),
             node: projected.length
               ? replaceOutputNames(
-                  [...new Set(projected.map((s) => namedType(s, models, true)))].join(' | '),
+                  [...new Set(projected.map((s) => nodePayloadType(s)))].join(' | '),
                 )
               : plan.node.operations[op.id]!.output,
             nodeDocumentation: replaceOutputNames(
               projected.length
-                ? projected.map((s) => typescriptType(s, true)).join(' | ')
+                ? projected.map((s) => nodePayloadType(s, true)).join(' | ')
                 : plan.documentation[op.id]!.nodeOutput,
             ),
             php: uncertain
@@ -1727,6 +1751,31 @@ export function compileSdkContract(source: Contract): {
         if (result.phpRepresentation.kind === 'entity')
           result.model = result.phpRepresentation.name;
         else delete result.model;
+        if (plan.responseReturns?.[op.id]) {
+          const projected = payloadSchemas(
+            { ...op, responses: { [status]: response } },
+            semantic.definitions,
+          );
+          const [schema] = projected;
+          const alternatives =
+            schema && projected.length === 1
+              ? namedPayloadAlternatives(schema, semantic.definitions ?? {})
+              : undefined;
+          if (
+            alternatives &&
+            alternatives.names.every((name) => Object.hasOwn(semantic.models, name))
+          ) {
+            for (const name of alternatives.names) {
+              const model = semantic.models[name];
+              if (!model) throw new Error('Missing PHP payload model ' + name);
+              representations.model(name, model, 'models.' + name);
+            }
+            result.phpPayloadAlternatives = {
+              codec: compileCodec(alternatives.union),
+              models: alternatives.names,
+            };
+          }
+        }
       }
       const outputs = Object.entries(compiled.responses)
         .filter(([status]) => successStatus(status) || status === 'default')
@@ -1764,25 +1813,26 @@ export function compileSdkContract(source: Contract): {
       }
       const returns = plan.responseReturns?.[op.id];
       if (returns && !payloadHasAlternatives(op, c.definitions)) {
-        const values = Object.entries(compiled.responses)
+        const payloadTypes = (value: PhpRepresentation): string[] =>
+          value.kind === 'entity'
+            ? [value.name]
+            : value.kind === 'tagged'
+              ? [...Object.values(value.variants).flatMap(payloadTypes), 'Model']
+              : ['Model'];
+        const types = Object.entries(compiled.responses)
           .filter(([status]) => successStatus(status) || status === 'default')
-          .map(([, result]) =>
-            project(result.phpRepresentation ?? { kind: 'value', type: 'mixed' }, returns.path),
+          .flatMap(([, result]) =>
+            result.phpPayloadAlternatives
+              ? [...result.phpPayloadAlternatives.models, 'Model']
+              : payloadTypes(
+                  project(
+                    result.phpRepresentation ?? { kind: 'value', type: 'mixed' },
+                    returns.path,
+                  ),
+                ),
           );
-        const join = (native: boolean) => {
-          const payloadType = (value: PhpRepresentation): string =>
-            value.kind === 'entity'
-              ? value.name
-              : value.kind === 'tagged'
-                ? [...new Set([...Object.values(value.variants).map(payloadType), 'Model'])].join(
-                    '|',
-                  )
-                : 'Model';
-          const types = [...new Set(values.map(payloadType))];
-          return native ? phpUnion(types) : types.includes('mixed') ? 'mixed' : types.join('|');
-        };
-        returns.php = join(false);
-        returns.phpNative = join(true);
+        returns.php = phpUnion(types);
+        returns.phpNative = returns.php;
       }
     }
     for (const [event, name] of Object.entries(eventModels)) {
