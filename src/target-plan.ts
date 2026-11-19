@@ -1977,8 +1977,10 @@ export function compileSdkContract(source: Contract): {
           const branches = [...(envelopeBranchTypes.get(entity.name)?.get(getter.field) ?? [])];
           const native = phpRepresentationType(value, true);
           const declared = phpRepresentationType(value);
-          const type = branches.length ? phpUnion([...branches, native]) : native;
-          const doc = branches.length ? phpUnion([...branches, declared]) : declared;
+          const envelopeType = (fallback: string) =>
+            phpUnion([...branches, fallback === 'mixed' ? '\\stdClass' : fallback]);
+          const type = branches.length ? envelopeType(native) : native;
+          const doc = branches.length ? envelopeType(declared) : declared;
           getter.type = !required.has(getter.field) ? nullablePhpAccessor(type) : type;
           getter.doc = !required.has(getter.field) ? nullablePhpAccessor(doc) : doc;
         }

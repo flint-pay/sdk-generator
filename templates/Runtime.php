@@ -1988,6 +1988,12 @@ final class EventStream implements \IteratorAggregate
     }
 }
 
+/** @internal A response value already normalized by the operation codec. */
+final class DecodedResponseValue
+{
+    public function __construct(public readonly mixed $value) {}
+}
+
 class Model implements \JsonSerializable
 {
     private const RESPONSE_OBJECT_CODEC = /* RESPONSE_OBJECT_CODEC */ '{}';
@@ -2065,6 +2071,7 @@ class Model implements \JsonSerializable
     private array $hydrated = [];
     private array $copyOnRead = [];
     private readonly bool $response;
+    private readonly bool $decodedResponse;
     protected readonly mixed $values;
     private readonly mixed $inputValues;
     private readonly array $codec;
@@ -2088,13 +2095,18 @@ class Model implements \JsonSerializable
         }
         $this->representation = $representation;
         $this->redactFields = $redactFields;
-        if (is_array($values) && $codec['modelObjectInput']) {
-            $values = (object) $values;
+        $this->decodedResponse = $response && $values instanceof DecodedResponseValue;
+        if ($this->decodedResponse) {
+            $normalized = $values->value;
+        } else {
+            if (is_array($values) && $codec['modelObjectInput']) {
+                $values = (object) $values;
+            }
+            $normalized = Codec::execute($values, $codec, [
+                'mode' => $response ? 'response' : 'request',
+                'redactFields' => $redactFields,
+            ]);
         }
-        $normalized = Codec::execute($values, $codec, [
-            'mode' => $response ? 'response' : 'request',
-            'redactFields' => $redactFields,
-        ]);
         // Store public values: unwrap nested models and exact wire-number wrappers,
         // while retaining the normalized distinction between objects and lists.
         $hasWireNumbers = false;
@@ -2213,6 +2225,7 @@ class Model implements \JsonSerializable
         array $plan,
         array $redactFields = [],
         int $depth = 0,
+        bool $decoded = false,
     ): mixed {
         if ($depth > 256) {
             throw new \InvalidArgumentException('PHP representation nesting limit');
@@ -2223,24 +2236,39 @@ class Model implements \JsonSerializable
             case 'nullable':
                 return $value === null
                     ? null
-                    : self::hydrate($value, $plan['value'], $redactFields, $depth + 1);
+                    : self::hydrate($value, $plan['value'], $redactFields, $depth + 1, $decoded);
             case 'entity':
                 if ($value instanceof Model) {
                     return $value;
                 }
                 $class = __NAMESPACE__ . '\\' . $plan['name'];
-                return new $class($value, $redactFields);
+                return new $class(
+                    $decoded ? new DecodedResponseValue($value) : $value,
+                    $redactFields,
+                );
             case 'list':
             case 'map':
                 $out = [];
                 foreach ((array) $value as $key => $child) {
-                    $out[$key] = self::hydrate($child, $plan['value'], $redactFields, $depth + 1);
+                    $out[$key] = self::hydrate(
+                        $child,
+                        $plan['value'],
+                        $redactFields,
+                        $depth + 1,
+                        $decoded,
+                    );
                 }
                 return $out;
             case 'tagged':
                 $tag = is_object($value) ? $value->{$plan['field']} ?? null : null;
                 return is_string($tag) && isset($plan['variants'][$tag])
-                    ? self::hydrate($value, $plan['variants'][$tag], $redactFields, $depth + 1)
+                    ? self::hydrate(
+                        $value,
+                        $plan['variants'][$tag],
+                        $redactFields,
+                        $depth + 1,
+                        $decoded,
+                    )
                     : self::copyValue($value);
             case 'record':
                 $out = new \stdClass();
@@ -2249,7 +2277,7 @@ class Model implements \JsonSerializable
                     $out->{$key} =
                         $field === null
                             ? self::copyValue($child)
-                            : self::hydrate($child, $field, $redactFields, $depth + 1);
+                            : self::hydrate($child, $field, $redactFields, $depth + 1, $decoded);
                 }
                 return $out;
         }
@@ -2343,7 +2371,12 @@ class Model implements \JsonSerializable
             $this->hydrated[$field] =
                 $plan === null
                     ? self::copyValue($value)
-                    : self::hydrate($value, $plan, $this->redactFields);
+                    : self::hydrate(
+                        $value,
+                        $plan,
+                        $this->redactFields,
+                        decoded: $this->decodedResponse,
+                    );
             $this->copyOnRead[$field] = self::containsMutableObject($this->hydrated[$field]);
         }
         // PHP arrays use copy-on-write; immutable model children can be shared.
@@ -6941,6 +6974,7 @@ class Runtime
                     }
                     $responseErrorCode = 'schema_mismatch';
                     try {
+                        $alternatives = $declared['phpPayloadAlternatives'] ?? null;
                         $branch = null;
                         $path = $op['response']['payloadPath'] ?? '';
                         if ($binary) {
@@ -6975,7 +7009,7 @@ class Runtime
                                 $responseErrorCode = 'missing_payload';
                                 throw new \RuntimeException('Missing body');
                             }
-                            $alternatives = $declared['phpPayloadAlternatives'] ?? null;
+                            $index = null;
                             if ($alternatives !== null) {
                                 $payload = $path === '' ? $data : self::field($data, $path);
                                 $index = Codec::responseAlternative(
@@ -6983,10 +7017,6 @@ class Runtime
                                     $alternatives['codec'],
                                     $this->definitions(),
                                 );
-                                if ($index !== null) {
-                                    $class = __NAMESPACE__ . '\\' . $alternatives['models'][$index];
-                                    $branch = new $class($payload, $this->options->redactFields);
-                                }
                             }
                             $data = Codec::plainNumbers(
                                 $this->decode($data, $declared['codec'], [
@@ -6994,6 +7024,21 @@ class Runtime
                                     'path' => 'response',
                                 ]),
                             );
+                            if ($alternatives !== null) {
+                                $payload = $path === '' ? $data : self::field($data, $path);
+                                if (!($payload instanceof \stdClass)) {
+                                    throw new \RuntimeException(
+                                        'Expected an object response alternative',
+                                    );
+                                }
+                                if ($index !== null) {
+                                    $class = __NAMESPACE__ . '\\' . $alternatives['models'][$index];
+                                    $branch = new $class(
+                                        new DecodedResponseValue($payload),
+                                        $this->options->redactFields,
+                                    );
+                                }
+                            }
                         } elseif ($raw !== '') {
                             throw new \RuntimeException('Unexpected body for an empty response');
                         }
@@ -7016,6 +7061,7 @@ class Runtime
                                 $data,
                                 $declared['phpRepresentation'],
                                 $this->options->redactFields,
+                                decoded: $alternatives !== null,
                             );
                         } else {
                             $model = $declared['model'] ?? null;

@@ -158,7 +158,7 @@ function runtimeIdentity(
               ? /^node\/(runtime|type-certificate|codec-plan|runtime-plan|request-options|descriptor-source|package-plan|response|request)\.js$/.test(
                   name,
                 )
-              : /^php\/src\/(SchemaAdapter|classes\/(?:Runtime|Codec|Model|SdkError|Result|RequestOptions|ClientOptions|Omitted|AmbientCredentialProvider|Credential|CredentialProvider|EventStream|ServerSentEvent|Cancellation|ByteStream|CurlByteStream|RawNumber|ParsedNumber|ExactNumber|ResponseInfo|Errors\/\w+|Internal\/DescriptorSource))\.php$/.test(
+              : /^php\/src\/(SchemaAdapter|classes\/(?:Runtime|Codec|Model|SdkError|Result|RequestOptions|ClientOptions|Omitted|AmbientCredentialProvider|Credential|CredentialProvider|EventStream|ServerSentEvent|Cancellation|ByteStream|CurlByteStream|RawNumber|ParsedNumber|ExactNumber|DecodedResponseValue|ResponseInfo|Errors\/\w+|Internal\/DescriptorSource))\.php$/.test(
                   name,
                 ),
           ),

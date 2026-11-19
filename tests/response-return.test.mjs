@@ -700,6 +700,10 @@ test('named untagged payload alternatives retain response models and their share
         },
       },
     });
+    assert.match(
+      f.read('php/src/classes/DeliveryResponse.php'),
+      /public function getData\(\): HttpDelivery\|StreamDelivery\|\\stdClass/,
+    );
     for (const { body, model, id, getter, value } of fixtures) {
       const c = await client(f, body);
       const payload = await c.api.getItem();
@@ -784,13 +788,25 @@ test('a PHP payload branch and its response envelope use the composed numeric re
       },
     },
   });
+  const codecPath = 'php/src/classes/Codec.php';
+  const mode = "$mode = $context['mode'] ?? 'request';";
+  const codec = f.read(codecPath);
+  assert.ok(codec.includes(mode));
+  writeFileSync(
+    join(f.output, codecPath),
+    codec.replace(
+      mode,
+      mode +
+        "\nif ($mode === 'response') $GLOBALS['responseDecodes'] = ($GLOBALS['responseDecodes'] ?? 0) + 1;",
+    ),
+  );
   assert.equal(
     php(
       f,
-      "$value=$c->api->getItem();$body=$value->lastResponse()->body->getData();if($body!==$value)throw new Exception('Different branch models');echo get_debug_type($body->getValue());",
+      "$value=$c->api->getItem();$body=$value->lastResponse()->body->getData();if($body!==$value)throw new Exception('Different branch models');echo get_debug_type($body->getValue()), ':', $GLOBALS['responseDecodes'];",
       '{"data":{"value":1}}',
     ),
-    'float',
+    'float:1',
   );
 });
 
