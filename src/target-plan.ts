@@ -1777,6 +1777,28 @@ export function compileSdkContract(source: Contract): {
       semantic.definitions ?? {},
       semantic.config.phpFieldClasses,
     );
+    const envelopeBranchTypes = new Map<string, Map<string, Set<string>>>();
+    const recordEnvelopeBranches = (
+      representation: PhpRepresentation,
+      path: string[],
+      branches: string[],
+    ): void => {
+      let part: PhpRepresentation | undefined = representation;
+      for (const [index, field] of path.entries()) {
+        const entity =
+          part?.kind === 'entity' ? representations.entities.get(part.name) : undefined;
+        const record: Extract<PhpRepresentation, { kind: 'record' }> | undefined =
+          entity?.representation ?? (part?.kind === 'record' ? part : undefined);
+        if (entity && index === path.length - 1) {
+          const fields = envelopeBranchTypes.get(entity.name) ?? new Map<string, Set<string>>();
+          const types = fields.get(field) ?? new Set<string>();
+          for (const branch of branches) types.add(branch);
+          fields.set(field, types);
+          envelopeBranchTypes.set(entity.name, fields);
+        }
+        part = record?.fields[field];
+      }
+    };
     const project = (value: PhpRepresentation, path: string[]): PhpRepresentation => {
       if (!path.length) return value;
       if (value.kind === 'entity') {
@@ -1825,7 +1847,8 @@ export function compileSdkContract(source: Contract): {
         if (result.phpRepresentation.kind === 'entity')
           result.model = result.phpRepresentation.name;
         else delete result.model;
-        if (plan.responseReturns?.[op.id]) {
+        const responseReturn = plan.responseReturns?.[op.id];
+        if (responseReturn) {
           const projected = payloadSchemas(
             { ...op, responses: { [status]: response } },
             semantic.definitions,
@@ -1841,7 +1864,7 @@ export function compileSdkContract(source: Contract): {
           ) {
             const names = alternatives.names.map((name, index) => {
               const projection = alternatives.composed?.[index];
-              const path = plan.responseReturns![op.id]!.path.map(pascalWords).join('');
+              const path = responseReturn.path.map(pascalWords).join('');
               return projection ? prefix + path + 'Payload' + name : name;
             });
             for (const [index, name] of names.entries()) {
@@ -1854,6 +1877,7 @@ export function compileSdkContract(source: Contract): {
               codec: compileCodec(alternatives.union),
               models: names,
             };
+            recordEnvelopeBranches(result.phpRepresentation, responseReturn.path, names);
           }
         }
       }
@@ -1947,8 +1971,13 @@ export function compileSdkContract(source: Contract): {
       for (const getter of model.getters) {
         const value = entity.representation.fields[getter.field];
         if (value) {
-          const type = phpRepresentationType(value, true);
-          const doc = phpRepresentationType(value);
+          // The same envelope class can be constructed without a selected
+          // branch, so keep its default representation as well.
+          const branches = [...(envelopeBranchTypes.get(entity.name)?.get(getter.field) ?? [])];
+          const native = phpRepresentationType(value, true);
+          const declared = phpRepresentationType(value);
+          const type = branches.length ? phpUnion([...branches, native]) : native;
+          const doc = branches.length ? phpUnion([...branches, declared]) : declared;
           getter.type = !required.has(getter.field) ? nullablePhpAccessor(type) : type;
           getter.doc = !required.has(getter.field) ? nullablePhpAccessor(doc) : doc;
         }
