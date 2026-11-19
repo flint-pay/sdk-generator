@@ -255,6 +255,8 @@ Body paths use `line_items[0].type`; map keys use `metadata.key` or `metadata["a
 
 Messages name the field and allowed values: `line_items[0].type is required: one of "variant", "bundle", "custom"`. Enum mismatches and unknown fields suggest a name when exactly one candidate is within edit distance 2: `line_items[0].type must be one of "variant", "bundle", "custom"; received "customm" (did you mean "custom"?)`. Only enum mismatches show the received value; sensitive fields show `received a value`. Other failures report the received type, without echoing input. Node and PHP use identical messages.
 
+An unknown `limit` argument suggests `page_size` on operations that take that query parameter. A currency field that requires three uppercase letters names the ISO 4217 format and gives `USD` as an example.
+
 PHP keeps `OUTCOME_NOT_SENT`, `OUTCOME_RESPONSE` and `OUTCOME_UNKNOWN`. Both `$e->code` and `$e->getCode()` return the string error code; `$e->status` carries the HTTP status. Messages are preserved verbatim; `__toString()` adds status, code and request ID for logs.
 
 Every error after a call resolves an idempotency key exposes `error.idempotencyKey` (Node) or `$error->idempotencyKey` (PHP), including validation and cancellation before sending. Successful results expose `lastResponse.idempotencyKey` (PHP: `$result->lastResponse()?->idempotencyKey`). Keys are included in error inspection. Persist your key across process restarts and application resubmissions; automatically generated UUID v4 keys, including any configured prefix, last for one SDK call and are reused on every attempt.

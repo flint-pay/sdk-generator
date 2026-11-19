@@ -9,6 +9,24 @@ import { loadContract, generate } from '../dist/index.js';
 
 const cases = [
   {
+    params: { limit: 1 },
+    param: 'limit',
+    code: 'UNKNOWN_FIELD',
+    message: 'limit is not a field of this input (did you mean "page_size"?)',
+  },
+  {
+    body: { currency: 'usd' },
+    param: 'currency',
+    code: 'INVALID_VALUE',
+    message: 'currency must be a three-letter uppercase ISO 4217 code such as USD.',
+  },
+  {
+    body: { airport_code: 'jfk' },
+    param: 'airport_code',
+    code: 'INVALID_VALUE',
+    message: 'airport_code must be a string matching the required pattern; received a string',
+  },
+  {
     body: { line_items: [{}] },
     param: 'line_items[0].type',
     code: 'REQUIRED',
@@ -169,6 +187,8 @@ test('generated Node and PHP local validation matches server stage 1 without sen
       password: { type: 'string', enum: ['pending', 'paid'], writeOnly: true },
       redacted: { type: 'string', enum: ['pending', 'paid'] },
       id: { type: 'string', readOnly: true },
+      currency: { type: 'string', pattern: '^[A-Z]{3}$' },
+      airport_code: { type: 'string', pattern: '^[A-Z]{3}$' },
       minimum: { type: 'number', minimum: 1 },
       exclusive: { type: 'number', exclusiveMinimum: 1 },
       multiple: { type: 'number', multipleOf: 2 },
@@ -236,6 +256,7 @@ test('generated Node and PHP local validation matches server stage 1 without sen
           post: {
             operationId: 'createOrder',
             parameters: [
+              { in: 'query', name: 'page_size', schema: { type: 'integer' } },
               {
                 in: 'query',
                 name: 'payment_status',

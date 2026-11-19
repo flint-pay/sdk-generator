@@ -4824,7 +4824,13 @@ final class Codec
                 if (isset($s['checks']['pattern'])) {
                     $pattern = $s['phpPattern'];
                     if (preg_match($pattern, $value) !== 1) {
-                        self::issue($path, 'pattern');
+                        self::issue(
+                            $path,
+                            $s['checks']['pattern'] === '^[A-Z]{3}$' &&
+                            ($path === 'currency' || str_ends_with($path, '.currency'))
+                                ? 'uppercaseCurrency'
+                                : 'pattern',
+                        );
                     }
                 }
             }
@@ -6580,10 +6586,19 @@ class Runtime
         }
         foreach (array_keys($input) as $key) {
             if ($key !== 'body' && !in_array($key, array_column($op['parameters'], 'name'), true)) {
+                $suggestion = '';
+                if ($key === 'limit') {
+                    foreach ($op['parameters'] as $parameter) {
+                        if ($parameter['in'] === 'query' && $parameter['name'] === 'page_size') {
+                            $suggestion = ' (did you mean "page_size"?)';
+                            break;
+                        }
+                    }
+                }
                 self::inputError(
                     (string) $key,
                     'UNKNOWN_FIELD',
-                    $key . ' is not a field of this input',
+                    $key . ' is not a field of this input' . $suggestion,
                 );
             }
         }
