@@ -30,6 +30,7 @@ import { pascalWords, isReservedTypeName } from './naming.js';
 import {
   phpRepresentations,
   phpRepresentationType,
+  type PhpEntity,
   type PhpRepresentation,
 } from './php-representation.js';
 import { phpDeclaration, phpUnion } from './php-types.js';
@@ -1785,7 +1786,7 @@ export function compileSdkContract(source: Contract): {
     ): void => {
       let part: PhpRepresentation | undefined = representation;
       for (const [index, field] of path.entries()) {
-        const entity =
+        const entity: PhpEntity | undefined =
           part?.kind === 'entity' ? representations.entities.get(part.name) : undefined;
         const record: Extract<PhpRepresentation, { kind: 'record' }> | undefined =
           entity?.representation ?? (part?.kind === 'record' ? part : undefined);
