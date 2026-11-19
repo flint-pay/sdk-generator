@@ -4,6 +4,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ## Unreleased
 
+- Explain the uppercase ISO 4217 currency constraint in Node and PHP. Passing `limit` to an operation that takes the `page_size` query parameter suggests `page_size`.
+
 - Preserve named partial models inside nullable previous-attribute fields. Node keeps typed nested access, and PHP hydrates shared partial entities with presence-aware getters.
 
 - Preserve public alternative labels through codec sharing in Node and PHP validation errors. Unnamed alternatives use their shape number instead of an internal codec reference; field paths and validation reasons are unchanged.

@@ -2324,6 +2324,7 @@ function codecMode(response: boolean, matching: boolean): CodecMode {
 }
 export type CodecContext = CodecMode & {
   path?: string;
+  dictionaryValue?: boolean;
   sensitive?: boolean;
   redactFields?: string[];
   definitions?: Readonly<Record<string, CodecPlan>>;
@@ -2988,6 +2989,7 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
       ...codecMode(response, matching),
       sensitive,
       path: path,
+      dictionaryValue: context.dictionaryValue ?? false,
       redactFields: redactFields,
       definitions: definitions,
       depth: depth + 1,
@@ -3011,6 +3013,7 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
       ...codecMode(response, matching),
       sensitive,
       path: path,
+      dictionaryValue: context.dictionaryValue ?? false,
       redactFields: redactFields,
       definitions: definitions,
       depth: depth + 1,
@@ -3028,6 +3031,7 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
           ...codecMode(response, true),
           sensitive,
           path: path,
+          dictionaryValue: context.dictionaryValue ?? false,
           redactFields: redactFields,
           definitions: definitions,
           depth: depth + 1,
@@ -3052,6 +3056,7 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
           ...codecMode(response, matching),
           sensitive,
           path: path,
+          dictionaryValue: context.dictionaryValue ?? false,
           redactFields: redactFields,
           definitions: definitions,
           depth: depth + 1,
@@ -3085,6 +3090,7 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
                 ...codecMode(response, matching),
                 sensitive,
                 path: path,
+                dictionaryValue: context.dictionaryValue ?? false,
                 redactFields: redactFields,
                 definitions: definitions,
                 depth: depth + 1,
@@ -3254,6 +3260,7 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
           ...codecMode(response, matching),
           sensitive,
           path: pathKey(path, k),
+          dictionaryValue: true,
           redactFields: redactFields,
           definitions: definitions,
           depth: depth + 1,
@@ -3333,7 +3340,14 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
       if (s.checks.maxLength !== undefined && length > s.checks.maxLength)
         issue(path, 'maxLength', { limit: s.checks.maxLength!, length: length });
       if (s.checks.pattern !== undefined && !new RegExp(s.checks.pattern, 'u').test(value))
-        issue(path, 'pattern', {});
+        issue(
+          path,
+          s.checks.pattern === '^[A-Z]{3}$' &&
+            !context.dictionaryValue &&
+            (path === 'currency' || path.endsWith('.currency'))
+            ? 'uppercaseCurrency'
+            : 'pattern',
+        );
     }
   }
   if (type === undefined && typeof value === 'number' && (!response || matching))
@@ -5106,10 +5120,13 @@ class CompiledRuntime {
       if (key !== 'body' && !op.parameters.some((p) => p.name === key))
         issue(key, 'unknown', {
           where: 'this input',
-          suggestion: suggestion(key, [
-            ...op.parameters.map((p) => p.name),
-            ...(op.body ? ['body'] : []),
-          ]),
+          suggestion:
+            key === 'limit' && op.parameters.some((p) => p.in === 'query' && p.name === 'page_size')
+              ? ' (did you mean "page_size"?)'
+              : suggestion(key, [
+                  ...op.parameters.map((p) => p.name),
+                  ...(op.body ? ['body'] : []),
+                ]),
         });
     const transport =
       this.options.transport ??
