@@ -293,6 +293,7 @@ export function splitNodeDeclarations(
   publicModels: ReadonlySet<string> = new Set(),
   modelCodecs: ReadonlyMap<string, CodecPlan> = new Map(),
   rootOnlyTypes: ReadonlySet<string> = new Set(),
+  envelopeExports: ReadonlyMap<string, readonly string[]> = new Map(),
 ): Map<string, Set<string>> {
   const source = ts.createSourceFile('index.d.ts', text, ts.ScriptTarget.Latest, true);
   const importStatements = source.statements.filter(ts.isImportDeclaration);
@@ -465,6 +466,7 @@ export function splitNodeDeclarations(
   );
   // Include the type dependency closure in selective entry points without importing the root.
   for (const [group, names] of roots) {
+    for (const name of envelopeExports.get(group) ?? []) names.add(name);
     const visit = (name: string): void => {
       for (const dependency of [...(peers.get(name) ?? []), ...refs(symbols.get(name) ?? [], name)])
         if (!names.has(dependency)) {

@@ -19,7 +19,7 @@ export function reservePublicSymbols(
       'ResponseInfo',
       'WithResponseInfo',
       'Runtime',
-      ...(targets.includes('php') ? ['Omitted'] : []),
+      ...(targets.includes('php') ? ['Omitted', 'DecodedResponseValue'] : []),
       'Model',
       'Result',
       'SdkError',

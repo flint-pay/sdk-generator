@@ -30,11 +30,16 @@ import { pascalWords, isReservedTypeName } from './naming.js';
 import {
   phpRepresentations,
   phpRepresentationType,
+  type PhpEntity,
   type PhpRepresentation,
 } from './php-representation.js';
 import { phpDeclaration, phpUnion } from './php-types.js';
 import { positional, pathParameters, hasParams } from './request-style.js';
-import { payloadSchemas, payloadHasAlternatives } from './response-return.js';
+import {
+  payloadSchemas,
+  payloadHasAlternatives,
+  namedPayloadAlternatives,
+} from './response-return.js';
 import { schemaComment } from './schema-documentation.js';
 import { codecSharing } from './codec-sharing.js';
 import { Diagnostic } from './diagnostic.js';
@@ -844,6 +849,8 @@ export interface CompiledSdkContract {
       path: string[];
       node: string;
       nodeDocumentation: string;
+      nodeBody?: string;
+      nodeEnvelopeExports?: string[];
       php: string;
       phpNative: string;
       /** Absent in saved plans whose Pages/Wait helpers returned Results. */
@@ -1586,12 +1593,106 @@ export function compileSdkContract(source: Contract): {
 
   if (plan.node.eventDeclarations)
     plan.node.eventDeclarations = replaceOutputNames(plan.node.eventDeclarations);
+  const sharedPayloadFields = (branches: Schema[]): string => {
+    const declarations = branches.map((branch) =>
+      directionalSchema(phpDeclaration(branch, c.definitions), true),
+    );
+    const fields = (declarations[0]?.required ?? []).flatMap((name) => {
+      const members = declarations.flatMap((declaration) => {
+        const field = declaration.properties?.[name];
+        return field && declaration.required?.includes(name)
+          ? [namedType(field, models, true)]
+          : [];
+      });
+      return members.length === declarations.length && !members.includes('unknown')
+        ? [JSON.stringify(name) + ': ' + [...new Set(members)].join(' | ')]
+        : [];
+    });
+    return fields.length ? '{ ' + fields.join('; ') + ' }' : '';
+  };
+  const envelopeProjection = (schema: Schema, path: string[]) => {
+    let payload = schema;
+    const shape: string[] = [];
+    for (const key of path) {
+      const declaration = directionalSchema(phpDeclaration(payload, c.definitions), true);
+      const child = declaration.properties?.[key];
+      if (!child || !declaration.required?.includes(key)) return undefined;
+      const { 'x-sdk-type-name': _name, ...envelope } = declaration;
+      const properties = { ...envelope.properties, [key]: {} };
+      shape.push(
+        typescriptType(
+          {
+            ...envelope,
+            properties: Object.fromEntries(
+              Object.keys(properties)
+                .sort()
+                .map((name) => [name, properties[name]!]),
+            ),
+          },
+          true,
+        ),
+      );
+      payload = child;
+    }
+    return { payload, shape: stable(shape) };
+  };
   const responseReturns = Object.fromEntries(
     c.operations
       .filter((op) => op.response?.return === 'payload')
       .map((op) => {
         const projected = payloadSchemas(op, c.definitions);
         const uncertain = payloadHasAlternatives(op, c.definitions);
+        const path = op.response?.payloadPath?.split('.') ?? [];
+        const alternatives = projected.map((schema) =>
+          namedPayloadAlternatives(schema, c.definitions ?? {}),
+        );
+        const sharedFields = alternatives.map((entry) =>
+          entry ? sharedPayloadFields(entry.composed ?? entry.branches) : '',
+        );
+        const nodePayloadType = (schema: Schema, index: number, documentation = false) => {
+          const type = documentation
+            ? typescriptType(schema, true)
+            : namedType(schema, models, true);
+          const fields = sharedFields[index];
+          return fields ? '(' + type + ') & ' + fields : type;
+        };
+        const node =
+          replaceOutputNames(
+            [...new Set(projected.map((schema, index) => nodePayloadType(schema, index)))].join(
+              ' | ',
+            ),
+          ) || plan.node.operations[op.id]!.output;
+        // The unprojected body and the payload share this decoded value when
+        // no alternative above the path requires a separate projection codec.
+        const nodeBody =
+          !uncertain && sharedFields.length && sharedFields.every(Boolean)
+            ? path.reduceRight(
+                (type, key) => '{ ' + JSON.stringify(key) + ': ' + type + ' }',
+                [...new Set(sharedFields)].join(' | '),
+              )
+            : undefined;
+        const envelopes = new Map<string, Set<string>>();
+        // A previously direct response envelope may still be published for
+        // another operation. Keep that name on this resource for its branch.
+        if (!uncertain && alternatives.some(Boolean) && path.length) {
+          for (const [status, response] of Object.entries(op.responses)) {
+            if ((!successStatus(status) && status !== 'default') || !response.schema) continue;
+            const envelope = envelopeProjection(response.schema, path);
+            if (!envelope) continue;
+            const union = namedPayloadAlternatives(envelope.payload, c.definitions ?? {});
+            if (!union) continue;
+            const peers = envelopes.get(envelope.shape) ?? new Set<string>();
+            for (const name of union.names) peers.add(name);
+            envelopes.set(envelope.shape, peers);
+          }
+        }
+        const nodeEnvelopeExports = envelopes.size
+          ? Object.entries(models).flatMap(([name, schema]) => {
+              const candidate = envelopeProjection(schema, path);
+              const ref = candidate?.payload['x-sdk-type-name'] ?? candidate?.payload['x-sdk-ref'];
+              return candidate && ref && envelopes.get(candidate.shape)?.has(ref) ? [name] : [];
+            })
+          : [];
         if (uncertain && projected.length) {
           const runtimeOperation = plan.runtime.operations.find(
             (operation) => operation.id === op.id,
@@ -1602,17 +1703,15 @@ export function compileSdkContract(source: Contract): {
         return [
           op.id,
           {
-            path: op.response?.payloadPath?.split('.') ?? [],
+            path,
             ...(uncertain && projected.length ? { validate: true as const } : {}),
             ...(op.pagination || op.polling ? { helperReturn: 'payload' as const } : {}),
-            node: projected.length
-              ? replaceOutputNames(
-                  [...new Set(projected.map((s) => namedType(s, models, true)))].join(' | '),
-                )
-              : plan.node.operations[op.id]!.output,
+            node,
+            ...(nodeBody ? { nodeBody } : {}),
+            ...(nodeEnvelopeExports.length ? { nodeEnvelopeExports } : {}),
             nodeDocumentation: replaceOutputNames(
               projected.length
-                ? projected.map((s) => typescriptType(s, true)).join(' | ')
+                ? projected.map((s, index) => nodePayloadType(s, index, true)).join(' | ')
                 : plan.documentation[op.id]!.nodeOutput,
             ),
             php: uncertain
@@ -1679,6 +1778,28 @@ export function compileSdkContract(source: Contract): {
       semantic.definitions ?? {},
       semantic.config.phpFieldClasses,
     );
+    const envelopeBranchTypes = new Map<string, Map<string, Set<string>>>();
+    const recordEnvelopeBranches = (
+      representation: PhpRepresentation,
+      path: string[],
+      branches: string[],
+    ): void => {
+      let part: PhpRepresentation | undefined = representation;
+      for (const [index, field] of path.entries()) {
+        const entity: PhpEntity | undefined =
+          part?.kind === 'entity' ? representations.entities.get(part.name) : undefined;
+        const record: Extract<PhpRepresentation, { kind: 'record' }> | undefined =
+          entity?.representation ?? (part?.kind === 'record' ? part : undefined);
+        if (entity && index === path.length - 1) {
+          const fields = envelopeBranchTypes.get(entity.name) ?? new Map<string, Set<string>>();
+          const types = fields.get(field) ?? new Set<string>();
+          for (const branch of branches) types.add(branch);
+          fields.set(field, types);
+          envelopeBranchTypes.set(entity.name, fields);
+        }
+        part = record?.fields[field];
+      }
+    };
     const project = (value: PhpRepresentation, path: string[]): PhpRepresentation => {
       if (!path.length) return value;
       if (value.kind === 'entity') {
@@ -1727,6 +1848,39 @@ export function compileSdkContract(source: Contract): {
         if (result.phpRepresentation.kind === 'entity')
           result.model = result.phpRepresentation.name;
         else delete result.model;
+        const responseReturn = plan.responseReturns?.[op.id];
+        if (responseReturn) {
+          const projected = payloadSchemas(
+            { ...op, responses: { [status]: response } },
+            semantic.definitions,
+          );
+          const [schema] = projected;
+          const alternatives =
+            schema && projected.length === 1
+              ? namedPayloadAlternatives(schema, semantic.definitions ?? {})
+              : undefined;
+          if (
+            alternatives &&
+            alternatives.names.every((name) => Object.hasOwn(semantic.models, name))
+          ) {
+            const names = alternatives.names.map((name, index) => {
+              const projection = alternatives.composed?.[index];
+              const path = responseReturn.path.map(pascalWords).join('');
+              return projection ? prefix + path + 'Payload' + name : name;
+            });
+            for (const [index, name] of names.entries()) {
+              const projection = alternatives.composed?.[index];
+              const model = projection ?? semantic.models[name];
+              if (!model) throw new Error('Missing PHP payload model ' + name);
+              representations.model(name, model, projection ? name : 'models.' + name);
+            }
+            result.phpPayloadAlternatives = {
+              codec: compileCodec(alternatives.union),
+              models: names,
+            };
+            recordEnvelopeBranches(result.phpRepresentation, responseReturn.path, names);
+          }
+        }
       }
       const outputs = Object.entries(compiled.responses)
         .filter(([status]) => successStatus(status) || status === 'default')
@@ -1764,25 +1918,26 @@ export function compileSdkContract(source: Contract): {
       }
       const returns = plan.responseReturns?.[op.id];
       if (returns && !payloadHasAlternatives(op, c.definitions)) {
-        const values = Object.entries(compiled.responses)
+        const payloadTypes = (value: PhpRepresentation): string[] =>
+          value.kind === 'entity'
+            ? [value.name]
+            : value.kind === 'tagged'
+              ? [...Object.values(value.variants).flatMap(payloadTypes), 'Model']
+              : ['Model'];
+        const types = Object.entries(compiled.responses)
           .filter(([status]) => successStatus(status) || status === 'default')
-          .map(([, result]) =>
-            project(result.phpRepresentation ?? { kind: 'value', type: 'mixed' }, returns.path),
+          .flatMap(([, result]) =>
+            result.phpPayloadAlternatives
+              ? [...result.phpPayloadAlternatives.models, 'Model']
+              : payloadTypes(
+                  project(
+                    result.phpRepresentation ?? { kind: 'value', type: 'mixed' },
+                    returns.path,
+                  ),
+                ),
           );
-        const join = (native: boolean) => {
-          const payloadType = (value: PhpRepresentation): string =>
-            value.kind === 'entity'
-              ? value.name
-              : value.kind === 'tagged'
-                ? [...new Set([...Object.values(value.variants).map(payloadType), 'Model'])].join(
-                    '|',
-                  )
-                : 'Model';
-          const types = [...new Set(values.map(payloadType))];
-          return native ? phpUnion(types) : types.includes('mixed') ? 'mixed' : types.join('|');
-        };
-        returns.php = join(false);
-        returns.phpNative = join(true);
+        returns.php = phpUnion(types);
+        returns.phpNative = returns.php;
       }
     }
     for (const [event, name] of Object.entries(eventModels)) {
@@ -1817,8 +1972,15 @@ export function compileSdkContract(source: Contract): {
       for (const getter of model.getters) {
         const value = entity.representation.fields[getter.field];
         if (value) {
-          const type = phpRepresentationType(value, true);
-          const doc = phpRepresentationType(value);
+          // The same envelope class can be constructed without a selected
+          // branch, so keep its default representation as well.
+          const branches = [...(envelopeBranchTypes.get(entity.name)?.get(getter.field) ?? [])];
+          const native = phpRepresentationType(value, true);
+          const declared = phpRepresentationType(value);
+          const envelopeType = (fallback: string) =>
+            phpUnion([...branches, fallback === 'mixed' ? '\\stdClass' : fallback]);
+          const type = branches.length ? envelopeType(native) : native;
+          const doc = branches.length ? envelopeType(declared) : declared;
           getter.type = !required.has(getter.field) ? nullablePhpAccessor(type) : type;
           getter.doc = !required.has(getter.field) ? nullablePhpAccessor(doc) : doc;
         }

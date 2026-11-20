@@ -2,10 +2,58 @@ import type { Operation, Schema } from './contract.js';
 import { Diagnostic, pointerSegment } from './diagnostic.js';
 import { successStatus } from './runtime-plan.js';
 import { objectConstraint, objectBodyConstraint } from './target-types.js';
+import { compileCodec } from './codec-plan.js';
+import { stable } from './canonical.js';
 
 export interface ResponseReturn {
   return?: 'result' | 'payload';
   payloadPath?: string | null;
+}
+
+const unconstrainedObjectCodecs = new Set([
+  stable(compileCodec({})),
+  stable(compileCodec({ type: 'object' })),
+]);
+
+/** Untagged payload alternatives with source component identities. */
+export function namedPayloadAlternatives(
+  schema: Schema,
+  definitions: Readonly<Record<string, Schema>>,
+) {
+  const conjuncts = (part: Schema, seen = new Set<string>()): Schema[] => {
+    const ref = part['x-sdk-ref'];
+    if (ref && Object.hasOwn(definitions, ref) && !seen.has(ref))
+      return conjuncts(definitions[ref]!, new Set([...seen, ref]));
+    const { allOf, ...base } = part;
+    return [base, ...(allOf ?? []).flatMap((child) => conjuncts(child, seen))];
+  };
+  const scopes = conjuncts(schema);
+  const unions = scopes.filter((part) => part.oneOf || part.anyOf);
+  const [union] = unions;
+  if (!union || unions.length !== 1 || union.discriminator || (union.oneOf && union.anyOf))
+    return undefined;
+  const branches = union.oneOf ?? union.anyOf ?? [];
+  const names = branches.flatMap((branch) => {
+    const name = branch['x-sdk-type-name'] ?? branch['x-sdk-ref'];
+    return name && objectBodyConstraint(branch, definitions) ? [name] : [];
+  });
+  if (names.length < 2 || names.length !== branches.length || new Set(names).size !== names.length)
+    return undefined;
+  const { oneOf: _one, anyOf: _any, ...base } = union;
+  const composed = scopes.some((part) => {
+    const { label: _label, ...codec } = compileCodec(part === union ? base : part);
+    return !unconstrainedObjectCodecs.has(stable(codec));
+  });
+  return {
+    union,
+    branches,
+    names,
+    composed: composed
+      ? branches.map((branch) => ({
+          allOf: scopes.flatMap((part) => (part === union ? [base, branch] : [part])),
+        }))
+      : undefined,
+  };
 }
 
 export function validateResponseReturn(

@@ -15,6 +15,7 @@ import {
 } from '../dist/index.js';
 import { compileSdkContract } from '../dist/target-plan.js';
 import { compareCompiledContracts } from '../dist/compiled-compatibility.js';
+import { assertRuntimePlan } from '../dist/runtime-plan.js';
 import { checkVersionPolicy } from '../dist/version.js';
 
 const root = mkdtempSync(join(tmpdir(), 'sdk-response-return-'));
@@ -35,6 +36,7 @@ function fixture({
   operations = {},
   schema = envelope,
   extraResponses = {},
+  extraPaths = {},
   sharing,
   parameters,
   components,
@@ -48,6 +50,7 @@ function fixture({
     info: { title: 'Response returns', version: '1' },
     ...(components ? { components } : {}),
     paths: {
+      ...extraPaths,
       '/item': {
         get: {
           operationId: 'getItem',
@@ -618,6 +621,193 @@ test('map payloads and unknown tagged variants preserve JSON and carry response 
       JSON.stringify(body),
     );
   }
+});
+
+test('named untagged payload alternatives retain response models and their shared fields', async () => {
+  const definition = (field, member) => ({
+    type: 'object',
+    required: ['event_id', field],
+    properties: { event_id: { type: 'string' }, [field]: member },
+  });
+  const fixtures = [
+    {
+      body: '{"data":{"event_id":"event_http","attempt":9007199254740993}}',
+      model: 'HttpDelivery',
+      id: 'event_http',
+      getter: 'getAttempt',
+      value: '9007199254740993',
+    },
+    {
+      body: '{"data":{"event_id":"event_stream","delivery_method":"listener_stream"}}',
+      model: 'StreamDelivery',
+      id: 'event_stream',
+      getter: 'getDeliveryMethod',
+      value: 'listener_stream',
+    },
+    {
+      body: '{"data":{"event_id":"event_future","delivery_method":"future"}}',
+      model: 'Model',
+      id: 'event_future',
+    },
+  ];
+  for (const [keyword, sharing] of [
+    ['oneOf', false],
+    ['oneOf', true],
+    ['anyOf', false],
+  ]) {
+    const http = { $ref: '#/components/schemas/HttpDelivery' };
+    const stream = { $ref: '#/components/schemas/StreamDelivery' };
+    const f = fixture({
+      responses: { return: 'payload', payloadPath: 'data' },
+      operations: { getLegacy: { resource: 'legacy', response: { return: 'result' } } },
+      extraPaths: {
+        '/legacy': {
+          get: {
+            operationId: 'getLegacy',
+            responses: {
+              200: {
+                description: 'OK',
+                content: {
+                  'application/json': {
+                    schema: { $ref: '#/components/schemas/HttpDeliveryResponse' },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      sharing,
+      schema: { $ref: '#/components/schemas/DeliveryResponse' },
+      components: {
+        schemas: {
+          HttpDelivery: definition('attempt', { type: 'integer', format: 'int64' }),
+          StreamDelivery: definition('delivery_method', {
+            type: 'string',
+            const: 'listener_stream',
+          }),
+          HttpDeliveryResponse: { type: 'object', required: ['data'], properties: { data: http } },
+          DeliveryResponse: {
+            type: 'object',
+            required: ['data'],
+            properties: {
+              data: {
+                ...(keyword === 'anyOf' ? { type: 'object' } : {}),
+                [keyword]: [http, stream],
+              },
+            },
+          },
+        },
+      },
+    });
+    assert.match(
+      f.read('php/src/classes/DeliveryResponse.php'),
+      /public function getData\(\): HttpDelivery\|StreamDelivery\|\\stdClass/,
+    );
+    for (const { body, model, id, getter, value } of fixtures) {
+      const c = await client(f, body);
+      const payload = await c.api.getItem();
+      assert.equal(payload.event_id, id);
+      assert.equal(payload.lastResponse.status, 200);
+      assert.equal(payload.lastResponse.body.data.event_id, id);
+      if (getter === 'getAttempt') assert.equal(payload.attempt, value);
+      const result = php(
+        f,
+        `$value=$c->api->getItem();$body=$value->lastResponse()->body->getData();echo json_encode([(new ReflectionClass($value))->getShortName(), ${getter ? '$value->getEventId(), $value->' + getter + '()' : '$value->event_id, null'}, $value->lastResponse()->status, ${getter ? '$body->getEventId(), $body === $value' : '$body->event_id, false'}]);`,
+        body,
+      );
+      assert.deepEqual(JSON.parse(result), [model, id, value ?? null, 200, id, Boolean(getter)]);
+    }
+    typecheck(
+      f,
+      `import { Client, type DeliveryResponse, type HttpDelivery, type StreamDelivery } from './index.js';
+import type { HttpDeliveryResponse } from './resources/api.js';
+const client = new Client({ baseUrl: 'https://example.invalid' });
+const result = await client.api.getItem();
+const id: string = result.event_id;
+const envelopeId: string = result.lastResponse.body.data.event_id;
+const observed: DeliveryResponse = result.lastResponse.body;
+declare const legacy: HttpDeliveryResponse;
+declare const http: HttpDelivery;
+declare const stream: StreamDelivery;
+const ids: string[] = [legacy.data.event_id, http.event_id, stream.event_id];`,
+    );
+    const plan = compileSdkContract(f.contract).plan.php.runtime;
+    assertRuntimePlan(plan);
+    const response = plan.operations.find((operation) => operation.id === 'getItem').responses[200];
+    response.phpPayloadAlternatives.models = ['HttpDelivery'];
+    assert.throws(() => assertRuntimePlan(plan), /invalid alternatives/);
+    assert.equal(
+      php(
+        f,
+        String.raw`$plan=Example\ResponseReturn\SchemaRegistry::contract();
+foreach($plan['operations'] as &$operation){
+  if ($operation['id'] === 'getItem') $operation['responses'][200]['phpPayloadAlternatives']['models']=['HttpDelivery'];
+}
+try { Example\ResponseReturn\Runtime::assertCompiledPlan($plan); }
+catch (InvalidArgumentException $error) { echo $error->getMessage(); }`,
+      ),
+      'Invalid PHP payload alternatives',
+    );
+  }
+});
+
+test('a PHP payload branch and its response envelope use the composed numeric representation', () => {
+  const f = fixture({
+    responses: { return: 'payload', payloadPath: 'data' },
+    schema: { $ref: '#/components/schemas/NumberResponse' },
+    components: {
+      schemas: {
+        IntegerPayload: {
+          type: 'object',
+          required: ['value'],
+          properties: { value: { type: 'integer', format: 'int32' } },
+        },
+        TextPayload: {
+          type: 'object',
+          required: ['note'],
+          properties: { note: { type: 'string' } },
+        },
+        NumberResponse: {
+          type: 'object',
+          required: ['data'],
+          properties: {
+            data: {
+              allOf: [
+                { properties: { value: { type: 'number' } } },
+                {
+                  oneOf: [
+                    { $ref: '#/components/schemas/IntegerPayload' },
+                    { $ref: '#/components/schemas/TextPayload' },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      },
+    },
+  });
+  const codecPath = 'php/src/classes/Codec.php';
+  const mode = "$mode = $context['mode'] ?? 'request';";
+  const codec = f.read(codecPath);
+  assert.ok(codec.includes(mode));
+  writeFileSync(
+    join(f.output, codecPath),
+    codec.replace(
+      mode,
+      mode +
+        "\nif ($mode === 'response') $GLOBALS['responseDecodes'] = ($GLOBALS['responseDecodes'] ?? 0) + 1;",
+    ),
+  );
+  assert.equal(
+    php(
+      f,
+      "$value=$c->api->getItem();$body=$value->lastResponse()->body->getData();if($body!==$value)throw new Exception('Different branch models');echo get_debug_type($body->getValue()), ':', $GLOBALS['responseDecodes'];",
+      '{"data":{"value":1}}',
+    ),
+    'float:1',
+  );
 });
 
 test('legacy SdkResponse declarations and response surface versions require a major upgrade', () => {
