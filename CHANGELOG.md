@@ -4,6 +4,8 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ## Unreleased
 
+- Accept the `@types/node` 20.19.x declarations used by new Next.js projects. The SDK runtime requires Node.js 22.3 or newer.
+
 - Preserve named models when a projected response has untagged object alternatives. PHP returns the uniquely matched model with its field getters. Node keeps the types of required fields shared by all alternatives.
 
 - Explain the uppercase ISO 4217 currency constraint in Node and PHP. Passing `limit` to an operation that takes the `page_size` query parameter suggests `page_size`.
