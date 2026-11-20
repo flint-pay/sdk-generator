@@ -5,6 +5,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHmac } from 'node:crypto';
 import { OutputBaselines, runtimeEntries } from './helpers/output-baselines.mjs';
 import ts from 'typescript';
 import { loadContract, render, generate, preview } from '../dist/index.js';
@@ -241,6 +242,164 @@ switch(event.type) {
 `,
   );
   assert.equal(compileSdkContract(c).plan.php.eventModels['payment.updated'], undefined);
+});
+
+test('PHP verifies both named event_source variants and exposes their types to consumers', () => {
+  const variant = (title, eventSource, extra) => ({
+    title,
+    allOf: [
+      { $ref: '#/components/schemas/OrderEnvelope' },
+      {
+        required: ['event_source', extra],
+        properties: {
+          event_source: { const: eventSource },
+          [extra]: { type: 'string' },
+        },
+      },
+    ],
+  });
+  const f = fixture({
+    events: {},
+    typeField: 'event_type',
+    schemas: {
+      OrderEnvelope: {
+        type: 'object',
+        properties: { event_type: { const: 'order.paid' } },
+        required: ['event_type'],
+      },
+      MerchantOrder: variant('Merchant', 'merchant', 'merchant_id'),
+      InstalledOrder: variant('Installed merchants', 'installed_merchants', 'partner_app_id'),
+    },
+  });
+  const ref = (name) => '#/components/schemas/' + name;
+  const api = JSON.parse(readFileSync(f.api));
+  api.webhooks = {
+    'order.paid': {
+      post: {
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                discriminator: {
+                  propertyName: 'event_source',
+                  mapping: {
+                    merchant: ref('MerchantOrder'),
+                    installed_merchants: ref('InstalledOrder'),
+                  },
+                },
+                oneOf: [{ $ref: ref('MerchantOrder') }, { $ref: ref('InstalledOrder') }],
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+  writeFileSync(f.api, JSON.stringify(api));
+  generate(f.load(), f.output);
+  const secret = 'synthetic-secret';
+  const timestamp = 1700000000;
+  const sign = (event) => {
+    const raw = JSON.stringify(event);
+    const signature = createHmac('sha256', secret)
+      .update(timestamp + '.' + raw)
+      .digest('hex');
+    return [raw, { 'X-Signature': signature, 'X-Timestamp': String(timestamp) }];
+  };
+  const events = [
+    { event_type: 'order.paid', event_source: 'merchant', merchant_id: 'merchant_example' },
+    {
+      event_type: 'order.paid',
+      event_source: 'installed_merchants',
+      partner_app_id: 'partner_example',
+    },
+    { event_type: 'order.unknown', event_source: 'merchant', merchant_id: 'merchant_example' },
+  ];
+  const phpRoot = join(f.output, 'php');
+  const run = spawnSync(
+    'php',
+    [
+      '-r',
+      String.raw`require $argv[1].'/src/Client.php';
+use Example\WebhookTypes\{Client, ClientOptions, Webhooks};
+$client = new Client(new ClientOptions(baseUrl: 'https://example.invalid'));
+$timestamp = (int) $argv[2];
+$secret = $argv[3];
+foreach (json_decode(stream_get_contents(STDIN), true, 512, JSON_THROW_ON_ERROR) as [$raw, $headers]) {
+    $options = ['secrets' => $secret, 'now_seconds' => $timestamp];
+    $verified = [
+        Webhooks::verify($raw, $headers, $secret, $timestamp),
+        $client->verifyWebhook($raw, $headers, $secret, $timestamp),
+        Webhooks::verifyDelivery($raw, $headers, $options),
+        $client->verifyWebhookDelivery($raw, $headers, $options),
+    ];
+    $result[] = array_map(fn($delivery) => [
+        get_class($delivery['event']),
+        $delivery['known'],
+        $delivery['reason'] ?? null,
+        $delivery['event'],
+        $delivery['signing_method'] ?? null,
+    ], $verified);
+}
+echo json_encode($result, JSON_THROW_ON_ERROR);`,
+      phpRoot,
+      String(timestamp),
+      secret,
+    ],
+    { input: JSON.stringify(events.map(sign)), encoding: 'utf8' },
+  );
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(
+    JSON.parse(run.stdout),
+    [
+      ['Example\\WebhookTypes\\OrderPaidMerchantEvent', true, null],
+      ['Example\\WebhookTypes\\OrderPaidInstalledMerchantsEvent', true, null],
+      ['stdClass', false, 'unknown_event'],
+    ].map(([name, known, reason], i) =>
+      [null, null, 'hmac', 'hmac'].map((method) => [name, known, reason, events[i], method]),
+    ),
+  );
+
+  const consumer = join(f.root, 'consumer.php');
+  writeFileSync(
+    consumer,
+    String.raw`<?php
+use Example\WebhookTypes\{Client, OrderPaidInstalledMerchantsEvent, OrderPaidMerchantEvent, Webhooks};
+
+/** @param OrderPaidMerchantEvent|OrderPaidInstalledMerchantsEvent|stdClass|array<array-key, mixed> $event */
+function accountId(OrderPaidMerchantEvent|OrderPaidInstalledMerchantsEvent|stdClass|array $event): ?string {
+    return match (true) {
+        $event instanceof OrderPaidMerchantEvent => $event->getMerchantId(),
+        $event instanceof OrderPaidInstalledMerchantsEvent => $event->getPartnerAppId(),
+        default => null,
+    };
+}
+function consume(Client $client, string $raw, string $secret): void {
+    foreach ([
+        Webhooks::verify($raw, [], $secret),
+        $client->verifyWebhook($raw, [], $secret),
+        Webhooks::verifyDelivery($raw, [], ['secrets' => $secret]),
+        $client->verifyWebhookDelivery($raw, [], ['secrets' => $secret]),
+    ] as $result) {
+        if ($result['known']) accountId($result['event']);
+    }
+}
+`,
+  );
+  const analysis = spawnSync(
+    'php',
+    [
+      resolve('.generated/phpstan-vendor/bin/phpstan'),
+      'analyse',
+      '--level=max',
+      '--no-progress',
+      '--error-format=raw',
+      '--autoload-file=' + join(phpRoot, 'src/Client.php'),
+      consumer,
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.equal(analysis.status, 0, analysis.stdout + analysis.stderr);
 });
 
 test('configured webhooks without events export never and a named result', () => {

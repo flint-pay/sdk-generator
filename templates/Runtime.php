@@ -2536,6 +2536,27 @@ final class Codec
                 }
             }
         }
+        if (array_key_exists('excludeFields', $value)) {
+            $groups = $value['excludeFields'];
+            if (
+                !isset($value['exclude']) ||
+                !is_array($groups) ||
+                !$groups ||
+                !array_is_list($groups)
+            ) {
+                $invalid('invalid exclusion fields');
+            }
+            foreach ($groups as $group) {
+                if (
+                    !is_array($group) ||
+                    !$group ||
+                    !array_is_list($group) ||
+                    array_filter($group, fn($field) => !is_string($field))
+                ) {
+                    $invalid('invalid exclusion field group');
+                }
+            }
+        }
         if (!is_array($value['checks'] ?? null)) {
             $invalid('missing checks');
         }
@@ -4494,7 +4515,23 @@ final class Codec
                 }
             };
             if (isset($s['exclude']) && $matches($s['exclude'], false) === true) {
-                self::fail($path, 'value matches a forbidden combination');
+                if ($value instanceof \stdClass || (is_array($value) && !array_is_list($value))) {
+                    $keys = array_keys((array) $value);
+                    foreach ($s['excludeFields'] ?? [] as $group) {
+                        if (array_diff($group, $keys)) {
+                            continue;
+                        }
+                        $paths = array_map(
+                            fn($field) => self::param(self::pathKey($path, $field)),
+                            $group,
+                        );
+                        $last = array_pop($paths);
+                        self::issue($path, $paths ? 'forbiddenFields' : 'forbiddenField', [
+                            'fields' => $paths ? implode(', ', $paths) . ' and ' . $last : $last,
+                        ]);
+                    }
+                }
+                self::issue($path, 'forbidden');
             }
             $conditional = self::conditionalBranch(
                 $value,
@@ -5871,8 +5908,25 @@ class Runtime
                 throw new \InvalidArgumentException('Invalid compiled webhook JWT location');
             }
         }
-        foreach ($contract['webhook']['events'] ?? [] as $name => $codec) {
+        $events = $contract['webhook']['events'] ?? [];
+        foreach ($events as $name => $codec) {
             Codec::assertPlan($codec, 'events.' . $name);
+        }
+        $variants = $contract['webhook']['eventVariants'] ?? [];
+        if (!is_array($variants)) {
+            throw new \InvalidArgumentException('Invalid compiled webhook event variants');
+        }
+        foreach ($variants as $name => $variant) {
+            if (
+                !isset($events[$name]) ||
+                !is_string($variant['field'] ?? null) ||
+                $variant['field'] === '' ||
+                !is_array($variant['models'] ?? null) ||
+                !$variant['models'] ||
+                array_filter($variant['models'], fn($model) => !is_string($model) || $model === '')
+            ) {
+                throw new \InvalidArgumentException('Invalid compiled webhook event variant');
+            }
         }
     }
     private function definitions(): array
@@ -8825,14 +8879,17 @@ class Runtime
             $event = $decoded;
         }
         $event = Codec::plainNumbers($event);
-        if (
-            $known &&
-            is_string($eventType) &&
-            isset($w['eventModels'][$eventType]) &&
-            is_object($event)
-        ) {
-            $class = __NAMESPACE__ . '\\' . $w['eventModels'][$eventType];
-            $event = new $class((array) $event, $redactFields);
+        if ($known && is_string($eventType) && is_object($event)) {
+            $model = $w['eventModels'][$eventType] ?? null;
+            $variant = $w['eventVariants'][$eventType] ?? null;
+            if ($variant !== null) {
+                $tag = $event->{$variant['field']} ?? null;
+                $model = is_string($tag) ? $variant['models'][$tag] ?? null : null;
+            }
+            if ($model !== null) {
+                $class = __NAMESPACE__ . '\\' . $model;
+                $event = new $class((array) $event, $redactFields);
+            }
         }
         return [
             'event' => $event,

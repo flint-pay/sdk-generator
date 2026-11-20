@@ -3047,7 +3047,19 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
         throw error;
       }
     };
-    if (not && matches(not, false) === true) bad(path, 'value matches a forbidden combination');
+    if (not && matches(not, false) === true) {
+      const input = value;
+      const fields =
+        input && typeof input === 'object' && !Array.isArray(input)
+          ? s.excludeFields?.find((group) => group.every((key) => Object.hasOwn(input, key)))
+          : undefined;
+      if (!fields) issue(path, 'forbidden');
+      const paths = fields.map((field) => publicParam(pathKey(path, field)));
+      const last = paths.pop()!;
+      issue(path, paths.length ? 'forbiddenFields' : 'forbiddenField', {
+        fields: paths.length ? paths.join(', ') + ' and ' + last : last,
+      });
+    }
     const conditional = conditionalBranch(value, { codec: s, definitions }, context);
     for (const branch of [...(allOf ?? []), ...(conditional ? [conditional] : [])])
       result = combine(
