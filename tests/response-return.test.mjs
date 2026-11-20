@@ -678,8 +678,15 @@ test('decoded upload header maps pass directly to fetch and redact inspection', 
   );
   const { upload } = await c.api.getItem();
   assert.deepEqual(Reflect.ownKeys(upload.headers), ['Content-Type', 'Authorization']);
+  // Next.js Pages Router checks the prototype before walking enumerable prop entries.
+  const prototype = Object.getPrototypeOf(upload.headers);
+  assert.ok(prototype === null || prototype.hasOwnProperty('isPrototypeOf'));
+  assert.deepEqual(JSON.parse(JSON.stringify({ headers: upload.headers })), {
+    headers: { 'Content-Type': 'image/png', Authorization: 'synthetic-upload-signature' },
+  });
   assert.doesNotMatch(inspect(upload.headers), /synthetic-upload-signature/);
-  assert.match(inspect(upload.headers), /REDACTED/);
+  assert.match(inspect(upload), /REDACTED/);
+  assert.doesNotMatch(inspect(upload), /synthetic-upload-signature/);
   const bytes = Buffer.from([1, 2, 3]);
   const response = await fetch(upload.url, {
     method: upload.method,

@@ -20,14 +20,9 @@ import { compileCodec, ANY_CODEC, exactValue, wireKind, type CodecPlan } from '.
 export { directionalSchema } from './codec-plan.js';
 
 const inspectCustom = Symbol.for('nodejs.util.inspect.custom');
-const responseMapInspectors = new WeakMap<object, () => unknown>();
-const responseMapPrototype = Object.freeze(
-  Object.defineProperty(Object.create(null), inspectCustom, {
-    value(this: object) {
-      return responseMapInspectors.get(this)?.();
-    },
-  }),
-);
+function sensitiveKey(key: string, fields: readonly string[]): boolean {
+  return fields.includes(key) || /authorization|token|secret|password|api.?key/i.test(key);
+}
 
 function inspectResponseObject(
   value: Record<string, unknown>,
@@ -35,12 +30,28 @@ function inspectResponseObject(
   redactFields: string[],
   definitions: Readonly<Record<string, CodecPlan>>,
 ): void {
-  const inspect = () => redactCodec(value, codec, redactFields, definitions);
   if (typeof codec.extra === 'object' && !Object.keys(codec.fields ?? {}).length) {
-    // Web IDL record conversion rejects own symbols, even when non-enumerable.
-    responseMapInspectors.set(value, inspect);
-    Object.setPrototypeOf(value, responseMapPrototype);
-  } else Object.defineProperty(value, inspectCustom, { value: inspect });
+    const sensitiveValues =
+      redactCodec(null, codec, redactFields, definitions) === '[REDACTED]' ||
+      redactCodec(null, codec.extra, redactFields, definitions) === '[REDACTED]';
+    for (const key of Object.keys(value)) {
+      if (!sensitiveValues && !sensitiveKey(key, redactFields)) continue;
+      // Keep a plain record for Fetch and serializers. Ordinary inspection skips getters.
+      let field = value[key];
+      Object.defineProperty(value, key, {
+        enumerable: true,
+        configurable: true,
+        get: () => field,
+        set: (updated: unknown) => {
+          field = updated;
+        },
+      });
+    }
+    return;
+  }
+  Object.defineProperty(value, inspectCustom, {
+    value: () => redactCodec(value, codec, redactFields, definitions),
+  });
 }
 
 type InternalErrorKind =
@@ -3485,7 +3496,7 @@ export function redactCodec(
     return Object.fromEntries(
       Object.entries(value).map(([k, v]) => [
         k,
-        fields.includes(k) || /authorization|token|secret|password|api.?key/i.test(k)
+        sensitiveKey(k, fields)
           ? '[REDACTED]'
           : redactCodec(
               v,
