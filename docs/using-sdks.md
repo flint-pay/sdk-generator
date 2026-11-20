@@ -20,6 +20,8 @@ Node (one ESM package with TypeScript declarations):
 - Node.js 22.12+ for CommonJS: `const { Client } = require('@example/library')`, including resource subpaths such as `require('@example/library/resources/books')`.
 - TypeScript 5.9+ with NodeNext module resolution. The optional `@types/node` peer accepts 20.19.0+ on the 20.x line or 22.16.0+. For a Node.js 22 project, use `npm install --save-dev @types/node@22`.
 
+For Flint product images, copy the [file upload example](../examples/flint-file-upload.mjs) into your app. It creates the file, sends its bytes with the returned upload headers, and completes the upload.
+
 PHP:
 
 - PHP 8.2+ with ext-json and ext-curl. No framework is required.

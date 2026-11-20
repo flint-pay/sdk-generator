@@ -28,6 +28,7 @@
     "docs/releases.md",
     "docs/support-matrix.md",
     "docs/using-sdks.md",
+    "examples/flint-file-upload.mjs",
     "examples/library.openapi.json",
     "examples/library.sdk.json",
     "CONTRIBUTING.md",

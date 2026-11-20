@@ -20,6 +20,28 @@ import { compileCodec, ANY_CODEC, exactValue, wireKind, type CodecPlan } from '.
 export { directionalSchema } from './codec-plan.js';
 
 const inspectCustom = Symbol.for('nodejs.util.inspect.custom');
+const responseMapInspectors = new WeakMap<object, () => unknown>();
+const responseMapPrototype = Object.freeze(
+  Object.defineProperty(Object.create(null), inspectCustom, {
+    value(this: object) {
+      return responseMapInspectors.get(this)?.();
+    },
+  }),
+);
+
+function inspectResponseObject(
+  value: Record<string, unknown>,
+  codec: CodecPlan,
+  redactFields: string[],
+  definitions: Readonly<Record<string, CodecPlan>>,
+): void {
+  const inspect = () => redactCodec(value, codec, redactFields, definitions);
+  if (typeof codec.extra === 'object' && !Object.keys(codec.fields ?? {}).length) {
+    // Web IDL record conversion rejects own symbols, even when non-enumerable.
+    responseMapInspectors.set(value, inspect);
+    Object.setPrototypeOf(value, responseMapPrototype);
+  } else Object.defineProperty(value, inspectCustom, { value: inspect });
+}
 
 type InternalErrorKind =
   | 'transport'
@@ -3110,9 +3132,7 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
       !(result instanceof ParsedNumber)
     ) {
       const object = Object.assign(Object.create(null), result);
-      Object.defineProperty(object, inspectCustom, {
-        value: () => redactCodec(object, s, redactFields, definitions),
-      });
+      inspectResponseObject(object, s, redactFields, definitions);
       return object;
     }
     return result;
@@ -3276,11 +3296,7 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
       if (s.checks.maxProperties !== undefined && count > s.checks.maxProperties)
         issue(path, 'maxProperties', { limit: s.checks.maxProperties!, length: count });
     }
-    if (response)
-      Object.defineProperty(out, inspectCustom, {
-        value: () => redactCodec(out, s, redactFields, definitions),
-        enumerable: false,
-      });
+    if (response) inspectResponseObject(out, s, redactFields, definitions);
     return out;
   }
   if (type === 'array' || (type === undefined && Array.isArray(value))) {
