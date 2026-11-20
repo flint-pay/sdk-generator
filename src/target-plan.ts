@@ -1176,23 +1176,27 @@ export function compileSdkContract(source: Contract): {
     {};
   const audienceModels = new Set(c.webhookAudienceModels ?? []);
   for (const [event, schema] of Object.entries(c.config.webhook?.events ?? {})) {
+    const field = schema.discriminator?.propertyName;
+    const bindings = discriminatorBindings(schema);
+    const branches = schema.oneOf;
+    if (field && bindings && branches) {
+      const models = Object.fromEntries(
+        Object.entries(bindings).flatMap(([tag, index]) => {
+          const branch = branches[index];
+          const name = branch?.['x-sdk-type-name'] ?? branch?.['x-sdk-ref'];
+          return name && audienceModels.has(name) ? [[tag, name]] : [];
+        }),
+      );
+      if (Object.keys(models).length) {
+        eventVariants[event] = { field, models };
+        continue;
+      }
+    }
     if (objectConstraint(schema) === 'object') {
       const name = eventTypeName(c, event);
       eventModels[event] = name;
       responseModels.push(compilePhpModel(name, schema, true, sharedNames));
-      continue;
     }
-    const field = schema.discriminator?.propertyName;
-    const bindings = discriminatorBindings(schema);
-    if (!field || !bindings || !schema.oneOf) continue;
-    const models = Object.fromEntries(
-      Object.entries(bindings).flatMap(([tag, index]) => {
-        const branch = schema.oneOf?.[index];
-        const name = branch?.['x-sdk-type-name'] ?? branch?.['x-sdk-ref'];
-        return name && audienceModels.has(name) ? [[tag, name]] : [];
-      }),
-    );
-    if (Object.keys(models).length) eventVariants[event] = { field, models };
   }
   if (phpRuntime.webhook) {
     phpRuntime.webhook.eventModels = eventModels;

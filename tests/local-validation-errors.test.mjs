@@ -15,7 +15,7 @@ const cases = [
     message: "status and name can't be sent together.",
   },
   {
-    body: { secret: 'pending', status: 'inactive', expected_version: 3 },
+    body: { name: undefined, secret: 'pending', status: 'inactive', expected_version: 3 },
     param: 'body',
     code: 'INVALID_VALUE',
     message: "status and secret can't be sent together.",

@@ -267,7 +267,14 @@ test('PHP verifies both named event_source variants and exposes their types to c
         properties: { event_type: { const: 'order.paid' } },
         required: ['event_type'],
       },
-      MerchantOrder: variant('Merchant', 'merchant', 'merchant_id'),
+      MerchantOrder: {
+        ...variant('Merchant', 'merchant', 'merchant_id'),
+        if: {
+          required: ['auxiliary'],
+          properties: { auxiliary: { const: 5.25 } },
+        },
+        else: { required: ['other_field'] },
+      },
       InstalledOrder: variant('Installed merchants', 'installed_merchants', 'partner_app_id'),
     },
   });
@@ -280,6 +287,7 @@ test('PHP verifies both named event_source variants and exposes their types to c
           content: {
             'application/json': {
               schema: {
+                type: 'object',
                 discriminator: {
                   propertyName: 'event_source',
                   mapping: {
@@ -307,7 +315,12 @@ test('PHP verifies both named event_source variants and exposes their types to c
     return [raw, { 'X-Signature': signature, 'X-Timestamp': String(timestamp) }];
   };
   const events = [
-    { event_type: 'order.paid', event_source: 'merchant', merchant_id: 'merchant_example' },
+    {
+      event_type: 'order.paid',
+      event_source: 'merchant',
+      merchant_id: 'merchant_example',
+      auxiliary: 5.25,
+    },
     {
       event_type: 'order.paid',
       event_source: 'installed_merchants',
@@ -355,9 +368,11 @@ echo json_encode($result, JSON_THROW_ON_ERROR);`,
       ['Example\\WebhookTypes\\OrderPaidMerchantEvent', true, null],
       ['Example\\WebhookTypes\\OrderPaidInstalledMerchantsEvent', true, null],
       ['stdClass', false, 'unknown_event'],
-    ].map(([name, known, reason], i) =>
-      [null, null, 'hmac', 'hmac'].map((method) => [name, known, reason, events[i], method]),
-    ),
+    ].map(([name, known, reason], i) => {
+      // Untyped fractions keep their exact JSON spelling as a string in PHP.
+      const event = i === 0 ? { ...events[i], auxiliary: '5.25' } : events[i];
+      return [null, null, 'hmac', 'hmac'].map((method) => [name, known, reason, event, method]);
+    }),
   );
 
   const consumer = join(f.root, 'consumer.php');
@@ -400,6 +415,39 @@ function consume(Client $client, string $raw, string $secret): void {
     { encoding: 'utf8' },
   );
   assert.equal(analysis.status, 0, analysis.stdout + analysis.stderr);
+
+  const descriptor = join(phpRoot, 'src/descriptors/webhook.json');
+  const original = readFileSync(descriptor, 'utf8');
+  for (const [patch, message] of [
+    [{ field: 'missing_tag' }, 'Invalid webhook discriminator for order.paid'],
+    [
+      { models: { unknown_tag: 'OrderPaidMerchantEvent' } },
+      'Invalid webhook variant binding for order.paid',
+    ],
+    [{ models: { merchant: 'MissingEvent' } }, 'Invalid webhook variant binding for order.paid'],
+  ]) {
+    const group = JSON.parse(original);
+    Object.assign(group.webhook.eventVariants['order.paid'], patch);
+    writeFileSync(descriptor, JSON.stringify(group));
+    const invalid = spawnSync(
+      'php',
+      [
+        '-r',
+        String.raw`require $argv[1].'/src/Client.php';
+try {
+    Example\WebhookTypes\SchemaRegistry::source()->webhook();
+    exit(1);
+} catch (InvalidArgumentException $error) {
+    echo $error->getMessage();
+}`,
+        phpRoot,
+      ],
+      { encoding: 'utf8' },
+    );
+    assert.equal(invalid.status, 0, invalid.stderr);
+    assert.equal(invalid.stdout, message);
+  }
+  writeFileSync(descriptor, original);
 });
 
 test('configured webhooks without events export never and a named result', () => {

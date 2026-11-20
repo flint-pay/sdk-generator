@@ -8888,7 +8888,7 @@ class Runtime
             }
             if ($model !== null) {
                 $class = __NAMESPACE__ . '\\' . $model;
-                $event = new $class((array) $event, $redactFields);
+                $event = new $class(new DecodedResponseValue($event), $redactFields);
             }
         }
         return [
