@@ -182,6 +182,9 @@ export const VALIDATION_MESSAGES = {
   unknown: '{param} is not a field of {where}{suggestion}',
   notAllowed: "{param} can't be sent: {reason}",
   invalid: '{param} must be {expectation}',
+  forbidden: '{param} matches a forbidden rule.',
+  forbiddenField: "{fields} can't be sent.",
+  forbiddenFields: "{fields} can't be sent together.",
   minimum: '{param} must be at least {limit}; received a number',
   maximum: '{param} must be at most {limit}; received a number',
   exclusiveMinimum: '{param} must be greater than {limit}; received a number',
@@ -317,6 +320,7 @@ export interface CompiledRuntimePlan
     certificate?: TypeCertificate;
     events: Record<string, CodecPlan>;
     eventModels?: Record<string, string>;
+    eventVariants?: Record<string, { field: string; models: Record<string, string> }>;
   };
 }
 
@@ -847,15 +851,25 @@ export function assertRuntimePlan(
     for (const [name, codec] of Object.entries(record(plan.definitions, 'definitions')))
       assertCodecPlan(codec, 'definitions.' + name);
   if (plan.webhook !== undefined) {
-    const jwt = record(plan.webhook, 'webhook').jwt;
+    const webhook = record(plan.webhook, 'webhook');
+    const jwt = webhook.jwt;
     const issue = jwt === undefined ? undefined : webhookJwtIssue(jwt);
     if (issue) throw new Error('webhook.jwt.' + issue.field + ': ' + issue.message);
-  }
-  if (plan.webhook !== undefined && record(plan.webhook, 'webhook').certificate !== undefined)
-    assertTypeCertificate(record(plan.webhook, 'webhook').certificate);
-  if (plan.webhook !== undefined)
-    for (const [name, codec] of Object.entries(
-      record(record(plan.webhook, 'webhook').events, 'webhook.events'),
-    ))
+    if (webhook.certificate !== undefined) assertTypeCertificate(webhook.certificate);
+    const events = record(webhook.events, 'webhook.events');
+    for (const [name, codec] of Object.entries(events))
       assertCodecPlan(codec, 'webhook.events.' + name);
+    if (webhook.eventVariants !== undefined)
+      for (const [event, value] of Object.entries(
+        record(webhook.eventVariants, 'webhook.eventVariants'),
+      )) {
+        const path = 'webhook.eventVariants.' + event;
+        const { field, models } = record(value, path);
+        if (!Object.hasOwn(events, event) || typeof field !== 'string' || !field)
+          throw new Error(path + ': invalid event or discriminator field');
+        const bindings = Object.values(record(models, path + '.models'));
+        if (!bindings.length || bindings.some((model) => typeof model !== 'string' || !model))
+          throw new Error(path + ': invalid event variant model');
+      }
+  }
 }

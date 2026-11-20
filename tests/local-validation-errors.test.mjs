@@ -9,6 +9,24 @@ import { loadContract, generate } from '../dist/index.js';
 
 const cases = [
   {
+    body: { name: 'Local delivery', status: 'inactive', expected_version: 3 },
+    param: 'body',
+    code: 'INVALID_VALUE',
+    message: "status and name can't be sent together.",
+  },
+  {
+    body: { name: undefined, secret: 'pending', status: 'inactive', expected_version: 3 },
+    param: 'body',
+    code: 'INVALID_VALUE',
+    message: "status and secret can't be sent together.",
+  },
+  {
+    body: { restricted: 'example' },
+    param: 'restricted',
+    code: 'INVALID_VALUE',
+    message: 'restricted matches a forbidden rule.',
+  },
+  {
     params: { limit: 1 },
     param: 'limit',
     code: 'UNKNOWN_FIELD',
@@ -178,7 +196,15 @@ test('generated Node and PHP local validation matches server stage 1 without sen
   const schema = {
     type: 'object',
     additionalProperties: false,
+    not: {
+      required: ['status'],
+      anyOf: [{ required: ['name'] }, { required: ['secret'] }],
+    },
     properties: {
+      name: { type: 'string' },
+      status: { type: 'string', enum: ['active', 'inactive'] },
+      expected_version: { type: 'integer' },
+      restricted: { type: 'string', not: { const: 'example' } },
       masked: {
         discriminator: { propertyName: 'type' },
         oneOf: ['a', 'b'].map((type) => ({
@@ -337,6 +363,8 @@ test('generated Node and PHP local validation matches server stage 1 without sen
     );
   }
   assert.equal(sent, 0);
+  await client.api.createOrder({ body: { status: 'inactive', expected_version: 3 } });
+  assert.equal(sent, 1);
   const php = execFileSync(
     'php',
     [
@@ -350,11 +378,12 @@ foreach(json_decode(stream_get_contents(STDIN),false,512,JSON_THROW_ON_ERROR) as
   try{$c->api->createOrder($input);$rows[]=['unexpected'=>'success'];}
   catch(\LocalValidation\Errors\InvalidInputError $e){$rows[]=['class'=>'InvalidInputError','code'=>$e->code,'param'=>$e->param,'message'=>$e->getMessage(),'outcome'=>$e->outcome,'details'=>array_map(fn($d)=>['code'=>$d['code'],'param'=>$d['param']],$e->details)];}
 }
+$c->api->createOrder(['body' => ['status' => 'inactive', 'expected_version' => 3]]);
 echo json_encode(['rows'=>$rows,'sent'=>$sent],JSON_THROW_ON_ERROR);
 `,
       join(output, 'php'),
     ],
     { input: JSON.stringify(cases), encoding: 'utf8' },
   );
-  assert.deepEqual(JSON.parse(php), { rows: expected, sent: 0 });
+  assert.deepEqual(JSON.parse(php), { rows: expected, sent: 1 });
 });

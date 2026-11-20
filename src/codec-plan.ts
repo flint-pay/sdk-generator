@@ -65,6 +65,8 @@ export interface CodecPlan {
   readonly some?: readonly CodecPlan[];
   readonly exactlyOne?: readonly CodecPlan[];
   readonly exclude?: CodecPlan;
+  /** Field-presence combinations for diagnostics after the exclusion matches. */
+  readonly excludeFields?: readonly (readonly string[])[];
   readonly includes?: CodecPlan;
   readonly when?: {
     readonly test: CodecPlan;
@@ -307,6 +309,19 @@ export function nullableAlternative(
   return index;
 }
 
+/** Only presence-only predicates can be described as fields that cannot coexist. */
+function excludedFieldGroups(predicate: Schema): string[][] | undefined {
+  const { required, anyOf, ...other } = predicate;
+  if (Object.keys(other).length || !required?.length) return undefined;
+  if (!anyOf) return [[...new Set(required)]];
+  if (
+    !anyOf.length ||
+    anyOf.some((branch) => Object.keys(branch).length !== 1 || !branch.required?.length)
+  )
+    return undefined;
+  return anyOf.map((branch) => [...new Set([...required, ...(branch.required ?? [])])]);
+}
+
 function compileNode(input: Schema, output: Schema, depth: number): CodecPlan {
   if (depth > 256) throw new Error('Schema exceeds the supported compilation depth (256)');
   const request = directionalSchema(input, false);
@@ -339,6 +354,7 @@ function compileNode(input: Schema, output: Schema, depth: number): CodecPlan {
   const range = input.format ? ranges[input.format] : undefined;
   const bindings = discriminatorBindings(input);
   const nullableBranch = nullableAlternative(input);
+  const excludeFields = input.not && excludedFieldGroups(input.not);
   const branches = (a: readonly Schema[], b: readonly Schema[]) =>
     a.map((child, index) => compileNode(child, b[index] ?? child, depth + 1));
   return {
@@ -437,6 +453,7 @@ function compileNode(input: Schema, output: Schema, depth: number): CodecPlan {
         }
       : {}),
     ...(input.not ? { exclude: compileNode(input.not, input.not, depth + 1) } : {}),
+    ...(excludeFields ? { excludeFields } : {}),
     ...(input.discriminator && bindings ? { tag: input.discriminator.propertyName } : {}),
     ...(input['x-sdk-ref'] ? { reference: input['x-sdk-ref'] } : {}),
     ...(input['x-sdk-definitions']
@@ -510,6 +527,17 @@ export function assertCodecPlan(
   for (const key of ['requiredInput', 'requiredOutput'])
     if (!Array.isArray(node[key]) || !node[key].every((item: unknown) => typeof item === 'string'))
       invalid('invalid required keys');
+  if (
+    node.excludeFields !== undefined &&
+    (!node.exclude ||
+      !Array.isArray(node.excludeFields) ||
+      !node.excludeFields.length ||
+      !node.excludeFields.every(
+        (group: unknown) =>
+          Array.isArray(group) && group.length && group.every((field) => typeof field === 'string'),
+      ))
+  )
+    invalid('invalid exclusion fields');
   if (
     node.tagValues !== undefined &&
     (!Array.isArray(node.tagValues) || !node.tagValues.every((value) => typeof value === 'string'))
