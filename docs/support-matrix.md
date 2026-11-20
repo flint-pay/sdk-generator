@@ -16,7 +16,7 @@ Local request validation uses `InvalidInputError` with `INVALID_REQUEST`, stage-
 
 | Capability                     | Node.js/TypeScript                                                                                           | PHP                                                                                       |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
-| Runtime/package                | Node 22.3+ ESM, 22.12+ `require()`; TypeScript 5.9+ with consumer-installed Node types (22.16.0+)            | PHP 8.2+, Composer, ext-json/ext-curl; JWT requires ext-openssl                           |
+| Runtime/package                | Node 22.3+ ESM, 22.12+ `require()`. TypeScript 5.9+ with Node types 20.19.0+ on 20.x or 22.16.0+             | PHP 8.2+, Composer, ext-json/ext-curl; JWT requires ext-openssl                           |
 | Authentication                 | Named bearer/header API-key modes, string or provider credentials, configured shortcuts                      | Same                                                                                      |
 | Credential presence            | Explicit undefined/null/empty/blank credentials fail locally; ambient discovery requires omitted credentials | Same; named arguments preserve omission using an internal enum default marker             |
 | Credential destinations        | Allowed origins; return declared redirects; reject unsafe links                                              | Same                                                                                      |

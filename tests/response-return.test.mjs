@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { inspect } from 'node:util';
+import { createServer } from 'node:http';
 import { execFileSync } from 'node:child_process';
 import {
   setCompatibilityBaseline,
@@ -621,6 +622,79 @@ test('map payloads and unknown tagged variants preserve JSON and carry response 
       JSON.stringify(body),
     );
   }
+});
+
+test('decoded upload header maps pass directly to fetch and redact inspection', async (t) => {
+  const received = [];
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    received.push([
+      request.method,
+      request.headers['content-type'],
+      request.headers.authorization,
+      Buffer.concat(chunks),
+    ]);
+    response.writeHead(204).end();
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const fixtureUrl = 'http://127.0.0.1:' + server.address().port;
+  const f = fixture({
+    schema: {
+      type: 'object',
+      required: ['data'],
+      properties: {
+        data: {
+          type: 'object',
+          required: ['upload'],
+          properties: {
+            upload: {
+              type: 'object',
+              required: ['url', 'method', 'headers'],
+              properties: {
+                url: { type: 'string' },
+                method: { type: 'string', const: 'PUT' },
+                headers: { type: 'object', additionalProperties: { type: 'string' } },
+              },
+            },
+          },
+        },
+      },
+    },
+    responses: { return: 'payload', payloadPath: 'data' },
+  });
+  const c = await client(
+    f,
+    JSON.stringify({
+      data: {
+        upload: {
+          url: fixtureUrl,
+          method: 'PUT',
+          headers: { 'Content-Type': 'image/png', Authorization: 'synthetic-upload-signature' },
+        },
+      },
+    }),
+  );
+  const { upload } = await c.api.getItem();
+  assert.deepEqual(Reflect.ownKeys(upload.headers), ['Content-Type', 'Authorization']);
+  // Next.js Pages Router checks the prototype before walking enumerable prop entries.
+  const prototype = Object.getPrototypeOf(upload.headers);
+  assert.ok(prototype === null || prototype.hasOwnProperty('isPrototypeOf'));
+  assert.deepEqual(JSON.parse(JSON.stringify({ headers: upload.headers })), {
+    headers: { 'Content-Type': 'image/png', Authorization: 'synthetic-upload-signature' },
+  });
+  assert.doesNotMatch(inspect(upload.headers), /synthetic-upload-signature/);
+  assert.match(inspect(upload), /REDACTED/);
+  assert.doesNotMatch(inspect(upload), /synthetic-upload-signature/);
+  const bytes = Buffer.from([1, 2, 3]);
+  const response = await fetch(upload.url, {
+    method: upload.method,
+    headers: upload.headers,
+    body: bytes,
+  });
+  assert.equal(response.status, 204);
+  assert.deepEqual(received, [['PUT', 'image/png', 'synthetic-upload-signature', bytes]]);
 });
 
 test('named untagged payload alternatives retain response models and their shared fields', async () => {

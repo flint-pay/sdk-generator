@@ -167,7 +167,7 @@ test('installed SDK supports ESM, CommonJS and consumer-owned Node types', () =>
   assert.equal(metadata.homepage, homepage);
   assert.deepEqual(metadata.repository, repository);
   assert.equal(metadata.dependencies, undefined);
-  assert.deepEqual(metadata.peerDependencies, { '@types/node': '>=22.16.0' });
+  assert.deepEqual(metadata.peerDependencies, { '@types/node': '^20.19.0 || >=22.16.0' });
   assert.deepEqual(metadata.peerDependenciesMeta, { '@types/node': { optional: true } });
   assert.equal(existsSync(join(consumer, 'node_modules/@types/node')), false);
   for (const subpath of ['.', './resources/*']) {
