@@ -4705,7 +4705,9 @@ function loadContractInput(
     if (allOf.length) result.allOf = allOf;
     return result;
   };
-  const previousSeen = new WeakSet<Schema>();
+  // All visited schemas are still reachable during this pass. A WeakSet adds
+  // substantial lookup and insertion time on Node 22 for large contracts.
+  const previousSeen = new Set<Schema>();
   const resolvePrevious = (shape: Schema): void => {
     if (!shape || typeof shape !== 'object' || previousSeen.has(shape)) return;
     previousSeen.add(shape);
@@ -4733,6 +4735,7 @@ function loadContractInput(
   }
   contract.incoming?.forEach((item) => resolvePrevious(item.schema));
   Object.values(contract.config.webhook?.events ?? {}).forEach(resolvePrevious);
+  previousSeen.clear();
   // Resolution is finished. Do not retain expanded cached copies while the
   // owned contract is compacted and compiled.
   resolved.clear();
