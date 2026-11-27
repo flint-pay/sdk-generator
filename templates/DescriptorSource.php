@@ -242,6 +242,32 @@ final class DescriptorSource
         }
         return $this->models[$name];
     }
+    private function webhookVariantReferences(array $webhook, array $definitions): void
+    {
+        foreach ($webhook['eventVariants'] ?? [] as $event => $variant) {
+            $codec = $webhook['events'][$event];
+            if (isset($codec['reference'])) {
+                $codec = $definitions[$codec['reference']];
+            }
+            if (($codec['tag'] ?? null) !== $variant['field']) {
+                throw new \InvalidArgumentException('Invalid webhook discriminator for ' . $event);
+            }
+            $tags = [];
+            foreach ($codec['exactlyOne'] ?? [] as $branch) {
+                foreach ($branch['tagValues'] ?? [] as $tag) {
+                    $tags[$tag] = true;
+                }
+            }
+            $this->modelNames ??= array_fill_keys($this->read('models'), true);
+            foreach ($variant['models'] as $tag => $model) {
+                if (!isset($tags[$tag], $this->modelNames[$model])) {
+                    throw new \InvalidArgumentException(
+                        'Invalid webhook variant binding for ' . $event,
+                    );
+                }
+            }
+        }
+    }
     public function webhook(): ?array
     {
         if (!$this->webhookLoaded) {
@@ -252,6 +278,7 @@ final class DescriptorSource
                 \SdkNamespace\Runtime::assertCompiledPlan(
                     array_replace($this->settings, ['webhook' => $group['webhook']]),
                 );
+                $this->webhookVariantReferences($group['webhook'], $definitions);
                 $this->webhook = $group['webhook'];
             }
             $this->webhookLoaded = true;

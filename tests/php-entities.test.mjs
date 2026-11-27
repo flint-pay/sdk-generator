@@ -426,10 +426,9 @@ test('verified webhooks hydrate nested entities and expose their types to PHPSta
       },
     },
   });
-  assert.match(
-    readFileSync(join(f.output, 'php/RUNTIME.md'), 'utf8'),
-    /Multi-variant or ambiguous event schemas.*stdClass.*known is true/,
-  );
+  const guide = readFileSync(join(f.output, 'php/RUNTIME.md'), 'utf8');
+  assert.match(guide, /named variants selected by a declared discriminator/);
+  assert.match(guide, /Envelopes without a class binding.*stdClass.*known is true/);
   const file = join(f.dir, 'webhook.php');
   writeFileSync(
     file,

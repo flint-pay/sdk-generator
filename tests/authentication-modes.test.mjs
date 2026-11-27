@@ -847,3 +847,68 @@ test('examples send optional named-mode credentials only when set and print resp
     await new Promise((done) => server.close(done));
   }
 });
+
+test('keyless writes override global authentication and retain idempotency in both clients', async () => {
+  const local = join(dir, 'anonymous-write');
+  const apiPath = join(dir, 'anonymous-write.openapi.json');
+  const configPath = join(dir, 'anonymous-write.sdk.json');
+  const casesPath = join(dir, 'anonymous-write.cases.json');
+  writeFileSync(
+    apiPath,
+    JSON.stringify({
+      ...api,
+      security: [{ Merchant: [] }],
+      paths: {
+        '/storefront/resolve': {
+          post: {
+            operationId: 'resolveStorefront',
+            security: [],
+            parameters: [{ in: 'header', name: 'Idempotency-Key', schema: { type: 'string' } }],
+            responses: { 204: { description: 'OK' } },
+          },
+        },
+      },
+    }),
+  );
+  writeFileSync(
+    configPath,
+    JSON.stringify({
+      ...config,
+      operations: {
+        resolveStorefront: {
+          idempotency: {
+            header: 'Idempotency-Key',
+            retention: '24h',
+            scope: 'storefront',
+            auto: true,
+          },
+        },
+      },
+    }),
+  );
+  writeFileSync(
+    casesPath,
+    JSON.stringify([
+      {
+        name: 'resolve storefront with a saved key and no credentials',
+        operation: 'resolveStorefront',
+        input: {},
+        options: { idempotencyKey: 'save-cart-1' },
+        expected: {
+          method: 'POST',
+          path: '/v1/storefront/resolve',
+          headers: { 'idempotency-key': 'save-cart-1' },
+          absentHeaders: ['authorization'],
+        },
+        responses: [{ status: 204 }],
+        empty: true,
+      },
+    ]),
+  );
+
+  generate(loadContract(apiPath, configPath), local);
+  assert.deepEqual(
+    (await validateFixtures(local, casesPath)).map(({ scenarios }) => scenarios),
+    [1, 1],
+  );
+});

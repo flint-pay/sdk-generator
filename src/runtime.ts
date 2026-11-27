@@ -1903,6 +1903,8 @@ export class EventStream implements AsyncIterable<ServerSentEvent> {
 }
 const validationFailures = new WeakMap<Error, string>();
 const publicParam = (path: string) => path.replace(/^input(?:\.|(?=\[)|$)/, '') || 'body';
+const hasDefinedField = (entries: Record<string, unknown>, key: string) =>
+  Object.hasOwn(entries, key) && entries[key] !== undefined;
 const pathKey = (path: string, key: string) =>
   /^[A-Za-z0-9_-]+$/.test(key) ? `${path}.${key}` : `${path}[${JSON.stringify(key)}]`;
 function suggestion(value: unknown, allowed: readonly unknown[]): string {
@@ -3080,7 +3082,21 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
         throw error;
       }
     };
-    if (not && matches(not, false) === true) bad(path, 'value matches a forbidden combination');
+    if (not && matches(not, false) === true) {
+      const input =
+        value && typeof value === 'object' && !Array.isArray(value)
+          ? (value as Record<string, unknown>)
+          : undefined;
+      const fields =
+        input &&
+        s.excludeFields?.find((group) => group.every((key) => hasDefinedField(input, key)));
+      if (!fields) issue(path, 'forbidden');
+      const paths = fields.map((field) => publicParam(pathKey(path, field)));
+      const last = paths.pop()!;
+      issue(path, paths.length ? 'forbiddenFields' : 'forbiddenField', {
+        fields: paths.length ? paths.join(', ') + ' and ' + last : last,
+      });
+    }
     const conditional = conditionalBranch(value, { codec: s, definitions }, context);
     for (const branch of [...(allOf ?? []), ...(conditional ? [conditional] : [])])
       result = combine(
@@ -3245,8 +3261,7 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
       return typeError(path, 'an object', value);
     const entries = value as Record<string, unknown>;
     for (const k of response ? s.requiredOutput : s.requiredInput)
-      if (!Object.hasOwn(entries, k) || entries[k] === undefined)
-        bad(pathKey(path, k), 'required field is missing');
+      if (!hasDefinedField(entries, k)) bad(pathKey(path, k), 'required field is missing');
     const out: Record<string, unknown> = Object.create(null);
     for (const [k, v] of Object.entries(entries)) {
       if (v === undefined && !response) continue;

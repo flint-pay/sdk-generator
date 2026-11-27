@@ -543,6 +543,21 @@ $verified = $client->verifyWebhook(
 // A native PHP handler can instead use file_get_contents('php://input') and getallheaders().
 ```
 
+In PHP, a signed delivery that matches a named envelope variant returns its generated class. For Flint merchant webhooks, `event_source` selects the class. Use `instanceof` to narrow the event and call its getters:
+
+```php
+use Flint\OrderPaidInstalledMerchantsEvent;
+use Flint\OrderPaidMerchantEvent;
+
+$event = $verified['event'];
+if (
+  $event instanceof OrderPaidMerchantEvent ||
+  $event instanceof OrderPaidInstalledMerchantsEvent
+) {
+  $order = $event->getData()->getObject();
+}
+```
+
 Never rebuild the body with `JSON.stringify` or `json_encode`. Whitespace, property order and numeric spelling change the bytes and cause a signature mismatch. A mismatch cannot tell whether the secret or the body is wrong.
 
 `known` requires a registered event name and a matching declared envelope. Checking it narrows the Node event type; then switch on the event-name field. For an illustrative provider using `event_type`:
@@ -570,7 +585,7 @@ if (verified.known) {
 }
 ```
 
-Node exports `VerifiedWebhook`, `KnownWebhookEvent` and one `<EventName>Event` type per declared event from the package root and the `webhooks` subpath. Per-event types use the PHP event naming rule: `payment_intent.succeeded` becomes `PaymentIntentSucceededEvent`. Names match where PHP emits an event class; multi-variant events have a named Node union without a corresponding PHP event class. These types are unavailable from `resources/*`; `KnownWebhookEvent` is `never` when no events are declared.
+Node exports `VerifiedWebhook`, `KnownWebhookEvent` and one `<EventName>Event` type per declared event from the package root and the `webhooks` subpath. Per-event types use the PHP event naming rule: `payment_intent.succeeded` becomes `PaymentIntentSucceededEvent`. For multi-variant events, the Node type covers the whole envelope union and PHP can emit individual classes for named variants. These types are unavailable from `resources/*`; `KnownWebhookEvent` is `never` when no events are declared.
 
 Audience-specific event names use the schema variant title: an explicit reference sibling title takes precedence, otherwise the referenced component supplies it. Removing a duplicate sibling title keeps the generated names and packages unchanged.
 

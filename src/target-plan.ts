@@ -1172,14 +1172,36 @@ export function compileSdkContract(source: Contract): {
     }
   }
   const eventModels: Record<string, string> = {};
+  const eventVariants: NonNullable<NonNullable<CompiledRuntimePlan['webhook']>['eventVariants']> =
+    {};
+  const audienceModels = new Set(c.webhookAudienceModels ?? []);
   for (const [event, schema] of Object.entries(c.config.webhook?.events ?? {})) {
+    const field = schema.discriminator?.propertyName;
+    const bindings = discriminatorBindings(schema);
+    const branches = schema.oneOf;
+    if (field && bindings && branches) {
+      const models = Object.fromEntries(
+        Object.entries(bindings).flatMap(([tag, index]) => {
+          const branch = branches[index];
+          const name = branch?.['x-sdk-type-name'] ?? branch?.['x-sdk-ref'];
+          return name && audienceModels.has(name) ? [[tag, name]] : [];
+        }),
+      );
+      if (Object.keys(models).length) {
+        eventVariants[event] = { field, models };
+        continue;
+      }
+    }
     if (objectConstraint(schema) === 'object') {
       const name = eventTypeName(c, event);
       eventModels[event] = name;
       responseModels.push(compilePhpModel(name, schema, true, sharedNames));
     }
   }
-  if (phpRuntime.webhook) phpRuntime.webhook.eventModels = eventModels;
+  if (phpRuntime.webhook) {
+    phpRuntime.webhook.eventModels = eventModels;
+    if (Object.keys(eventVariants).length) phpRuntime.webhook.eventVariants = eventVariants;
+  }
   const authentication = compileAuthentication(c);
   const plan: CompiledSdkContract = {
     ...(c.operations.some(positional)
