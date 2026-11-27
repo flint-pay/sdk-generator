@@ -18,7 +18,9 @@ Node (one ESM package with TypeScript declarations):
 
 - Node.js 22.3+ for ESM imports. Use a `.mjs` file or a project with `"type": "module"`.
 - Node.js 22.12+ for CommonJS: `const { Client } = require('@example/library')`, including resource subpaths such as `require('@example/library/resources/books')`.
-- TypeScript 5.9+ with NodeNext module resolution. Install `@types/node` 22.16.0+ matching your runtime as a development dependency, for example `npm install --save-dev @types/node@22`; older declarations can fail with TypeScript 5.9. Node types are an optional peer dependency, so JavaScript installs need no type packages.
+- TypeScript 5.9+ with NodeNext module resolution. The optional `@types/node` peer accepts 20.19.0+ on the 20.x line or 22.16.0+. For a Node.js 22 project, use `npm install --save-dev @types/node@22`.
+
+For Flint product images, copy the [file upload example](https://github.com/flint-pay/sdk-generator/blob/main/examples/flint-file-upload.mjs) into your app. It creates the file, sends its bytes with the returned upload headers, and completes the upload.
 
 PHP:
 

@@ -4,6 +4,10 @@ Generator changes that affect generated SDKs. Generated SDK versions are indepen
 
 ## Unreleased
 
+- Accept the `@types/node` 20.19.x declarations used by new Next.js projects. The SDK runtime requires Node.js 22.3 or newer.
+
+- Pass decoded upload headers directly to Node's `fetch` when uploading a file. Inspection still redacts sensitive header values.
+
 - PHP webhook verifiers hydrate named envelope variants using their declared discriminator. Flint merchant events return their generated merchant or installed-merchants class, and verifier return annotations include both.
 - Node and PHP name the conflicting fields when local validation rejects a forbidden combination of fields.
 

@@ -1131,7 +1131,7 @@ function packageReadme(
     c.config.documentation?.overview ??
     `${node ? 'TypeScript and JavaScript' : 'PHP'} client for the ${api}.`;
   const install = node
-    ? `\`\`\`sh\nnpm install ${c.config.npm.name}\n\`\`\`\n\nRequires Node.js 22.3+, or Node.js 22.12+ to \`require()\` from CommonJS. TypeScript projects need TypeScript 5.9+ with NodeNext module resolution and \`npm install --save-dev @types/node@22\` (22.16.0+).`
+    ? `\`\`\`sh\nnpm install ${c.config.npm.name}\n\`\`\`\n\nRequires Node.js 22.3+, or Node.js 22.12+ to \`require()\` from CommonJS. TypeScript projects need TypeScript 5.9+ with NodeNext module resolution and \`@types/node\` 20.19.0+ on the 20.x line or 22.16.0+. For a Node.js 22 project, use \`npm install --save-dev @types/node@22\`.`
     : `\`\`\`sh\ncomposer require ${c.config.composer.name}\n\`\`\`\n\nRequires PHP 8.2+ with ext-json and ext-curl. PHPDoc types target PHPStan 2.2+.`;
   const environment = [
     ...new Set(
@@ -1389,7 +1389,7 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
           },
           engines: { node: '>=22.3' },
           peerDependencies: {
-            '@types/node': '>=22.16.0',
+            '@types/node': '^20.19.0 || >=22.16.0',
             ...(compiledRuntime.defaultCredentials ? { '@aws-sdk/client-sts': '^3.1161.0' } : {}),
           },
           peerDependenciesMeta: {

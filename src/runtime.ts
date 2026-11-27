@@ -20,6 +20,39 @@ import { compileCodec, ANY_CODEC, exactValue, wireKind, type CodecPlan } from '.
 export { directionalSchema } from './codec-plan.js';
 
 const inspectCustom = Symbol.for('nodejs.util.inspect.custom');
+function sensitiveKey(key: string, fields: readonly string[]): boolean {
+  return fields.includes(key) || /authorization|token|secret|password|api.?key/i.test(key);
+}
+
+function inspectResponseObject(
+  value: Record<string, unknown>,
+  codec: CodecPlan,
+  redactFields: string[],
+  definitions: Readonly<Record<string, CodecPlan>>,
+): void {
+  if (typeof codec.extra === 'object' && !Object.keys(codec.fields ?? {}).length) {
+    const sensitiveValues =
+      redactCodec(null, codec, redactFields, definitions) === '[REDACTED]' ||
+      redactCodec(null, codec.extra, redactFields, definitions) === '[REDACTED]';
+    for (const key of Object.keys(value)) {
+      if (!sensitiveValues && !sensitiveKey(key, redactFields)) continue;
+      // Keep a plain record for Fetch and serializers. Ordinary inspection skips getters.
+      let field = value[key];
+      Object.defineProperty(value, key, {
+        enumerable: true,
+        configurable: true,
+        get: () => field,
+        set: (updated: unknown) => {
+          field = updated;
+        },
+      });
+    }
+    return;
+  }
+  Object.defineProperty(value, inspectCustom, {
+    value: () => redactCodec(value, codec, redactFields, definitions),
+  });
+}
 
 type InternalErrorKind =
   | 'transport'
@@ -3126,9 +3159,7 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
       !(result instanceof ParsedNumber)
     ) {
       const object = Object.assign(Object.create(null), result);
-      Object.defineProperty(object, inspectCustom, {
-        value: () => redactCodec(object, s, redactFields, definitions),
-      });
+      inspectResponseObject(object, s, redactFields, definitions);
       return object;
     }
     return result;
@@ -3291,11 +3322,7 @@ function executeNode(value: unknown, s: CodecPlan, context: CodecContext): unkno
       if (s.checks.maxProperties !== undefined && count > s.checks.maxProperties)
         issue(path, 'maxProperties', { limit: s.checks.maxProperties!, length: count });
     }
-    if (response)
-      Object.defineProperty(out, inspectCustom, {
-        value: () => redactCodec(out, s, redactFields, definitions),
-        enumerable: false,
-      });
+    if (response) inspectResponseObject(out, s, redactFields, definitions);
     return out;
   }
   if (type === 'array' || (type === undefined && Array.isArray(value))) {
@@ -3484,7 +3511,7 @@ export function redactCodec(
     return Object.fromEntries(
       Object.entries(value).map(([k, v]) => [
         k,
-        fields.includes(k) || /authorization|token|secret|password|api.?key/i.test(k)
+        sensitiveKey(k, fields)
           ? '[REDACTED]'
           : redactCodec(
               v,
