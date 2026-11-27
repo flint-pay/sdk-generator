@@ -19,6 +19,10 @@ Regenerate both targets together. Handle configuration failures using the [SDK-s
 
 An iterator without `maxPages` now raises `PaginationLimitError` (`pagination_limit_exceeded`) after yielding 1,000 pages when another page exists. Use `pages` and `nextPageToken` to identify progress and the remaining continuation. A terminal 1,000th page succeeds. Set an explicit `maxPages` when a quiet, intentional limit is wanted; explicit `maxPages: 1000` also ends quietly.
 
+## PHP webhook event classes
+
+After regenerating, use `instanceof` and generated getters for known events with named, discriminated variants. For Flint merchant webhooks, `event_source` selects the merchant or installed-merchants class. Call `toArray()` if a handler needs the decoded wire keys. See [PHP webhook verification](using-sdks.md#webhook-verification).
+
 ## Local validation errors
 
 Regenerate both targets together. Handle local `InvalidInputError` using `code: "INVALID_REQUEST"` and `details[]` items with `code` (`REQUIRED`, `INVALID_VALUE`, `UNKNOWN_FIELD`, `NOT_ALLOWED`) and `param`. Replace checks for lowercase local validation codes or internal `input.` paths with these codes and [API field paths](using-sdks.md#errors-and-retries). Local failures retain `outcome: "not_sent"`; messages now name fields and suggest close matches, while sensitive values stay hidden.

@@ -1782,8 +1782,20 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
       userAgent: `${c.config.composer.name.replaceAll('/', '-')}/${c.config.version}`,
     };
     const eventModels = targetPlan.php.eventModels;
+    const eventClasses = new Set([
+      ...Object.values(eventModels),
+      ...Object.values(phpContract.webhook?.eventVariants ?? {}).flatMap((variant) =>
+        Object.values(variant.models),
+      ),
+    ]);
+    const webhookResult = (delivery = false) => {
+      const event = [...eventClasses, '\\stdClass', 'array<array-key, mixed>'].join('|');
+      const signing = delivery ? ", signing_method: 'jwt'|'hmac'" : '';
+      return `array{known: true, event: ${event}${signing}}|array{known: false, event: mixed, reason: 'unknown_event'|'unmatched_envelope'${signing}}`;
+    };
     const webhookDoc = (secretType: string) =>
-      `    /** @param string $rawBody Original request bytes.\n     * @param array<string, string|list<string>> $headers Header map, including PSR-7 header arrays.\n     * @param ${secretType} $secrets\n     * @param int|null $nowSeconds\n     * @return array{known: true, event: ${Object.values(eventModels).join('|') || 'mixed'}|\\stdClass|array}|array{known: false, event: mixed, reason: 'unknown_event'|'unmatched_envelope'} */\n`;
+      `    /** @param string $rawBody Original request bytes.\n     * @param array<string, string|list<string>> $headers Header map, including PSR-7 header arrays.\n     * @param ${secretType} $secrets\n     * @param int|null $nowSeconds\n     * @return ${webhookResult()} */\n`;
+    const webhookDeliveryDoc = `    /** @param string $rawBody Original request bytes.\n     * @param array<string, string|list<string>> $headers Header map, including PSR-7 header arrays.\n     * @param array<string, mixed> $options\n     * @return ${webhookResult(true)} */\n`;
     // Each PHP event class reuses its reserved Node identity once. Other
     // response classes with that name must still produce a collision.
     const reservedEventModels = new Set(Object.values(eventModels));
@@ -1936,13 +1948,13 @@ function renderCompiled(compilation: ReturnType<typeof compileSdkContract>): Map
     code += '    public function close(): void { $this->runtime->close(); }\n';
     if (c.config.webhook)
       // Runtime and Webhooks delegate to the same verifier; Runtime retains client redaction.
-      code += `${webhookDoc('string|array<array-key, string>')}    public function verifyWebhook(mixed $rawBody, mixed $headers, mixed $secrets, mixed $nowSeconds = null): array { return $this->runtime->verifyWebhook($rawBody, $headers, $secrets, $nowSeconds); }\n    /** @param array<string, mixed> $options @return array<string, mixed> */\n    public function verifyWebhookDelivery(mixed $rawBody, mixed $headers, array $options): array { return $this->runtime->verifyWebhookDelivery($rawBody, $headers, $options); }\n`;
+      code += `${webhookDoc('string|array<array-key, string>')}    public function verifyWebhook(mixed $rawBody, mixed $headers, mixed $secrets, mixed $nowSeconds = null): array { return $this->runtime->verifyWebhook($rawBody, $headers, $secrets, $nowSeconds); }\n${webhookDeliveryDoc}    public function verifyWebhookDelivery(mixed $rawBody, mixed $headers, array $options): array { return $this->runtime->verifyWebhookDelivery($rawBody, $headers, $options); }\n`;
     if (c.config.money)
       code +=
         '    public function money(string $currency, string $major): array { return $this->runtime->money($currency, $major); }\n';
     code += '}\n';
     if (targetPlan.php.standaloneWebhook)
-      code += `final class Webhooks {\n${webhookDoc('string|list<string>')}    public static function verify(mixed $rawBody, mixed $headers, mixed $secrets, mixed $nowSeconds = null): array { return Runtime::verifyWebhookFromPlan(SchemaRegistry::source(), $rawBody, $headers, $secrets, $nowSeconds); }\n    /** @param array<string, mixed> $options @return array<string, mixed> */\n    public static function verifyDelivery(mixed $rawBody, mixed $headers, array $options): array { return Runtime::verifyWebhookDeliveryFromPlan(SchemaRegistry::source(), $rawBody, $headers, $options); }\n}\n`;
+      code += `final class Webhooks {\n${webhookDoc('string|list<string>')}    public static function verify(mixed $rawBody, mixed $headers, mixed $secrets, mixed $nowSeconds = null): array { return Runtime::verifyWebhookFromPlan(SchemaRegistry::source(), $rawBody, $headers, $secrets, $nowSeconds); }\n${webhookDeliveryDoc}    public static function verifyDelivery(mixed $rawBody, mixed $headers, array $options): array { return Runtime::verifyWebhookDeliveryFromPlan(SchemaRegistry::source(), $rawBody, $headers, $options); }\n}\n`;
     for (const group of groups) {
       code += `final class ${pascal(group)}Resource {\n    public function __construct(private readonly Runtime $runtime) {}\n`;
       for (const op of c.operations.filter((o) => o.resource === group)) {
@@ -3655,7 +3667,7 @@ function webhookGuide(c: Contract, target: 'node' | 'php', standaloneWebhook: bo
       : standaloneWebhook
         ? `Use ${c.config.composer.namespace}\\Webhooks::verify($rawBody, $headers, $secrets, $nowSeconds = null) to verify without client options, a base URL or API credentials. Client::verifyWebhook delegates to the same verifier. The static method keeps mixed arguments so invalid inputs produce SDK error subclasses. `
         : 'The Webhooks name belongs to an API model; use Client::verifyWebhook for verification. Its mixed arguments keep invalid inputs within the SDK error guards. ';
-  const requirements = `${verifier}Call ${target === 'node' ? 'verifyWebhook(rawBody, headers, secrets, nowSeconds?)' : 'verifyWebhook($rawBody, $headers, $secrets, $nowSeconds = null)'} with original request bytes and ${headers}. This package uses ${w.format ?? 'hex'} HMAC-SHA256 signing and a ${w.toleranceSeconds}-second timestamp tolerance. ${w.format === 'standard-webhooks' ? 'Secrets must use the whsec_ prefix and canonical base64 encoding of exactly 32 key bytes.' : `Use the signing secret supplied by ${apiName(c)}.`} Pass one secret string or an array of active secrets during rotation. nowSeconds is an optional Unix time override in seconds for deterministic tests; normally omit it. Millisecond-scale values raise an input error explaining the conversion. ${target === 'node' ? 'Node accepts original Buffer, Uint8Array or ArrayBuffer bytes. ' : 'PHP emits event classes for supported single object envelopes. Multi-variant or ambiguous event schemas verify and validate normally but return stdClass values (with arrays for JSON lists), even when known is true. Check the event name and payload fields before using these values; known does not guarantee a generated PHP class. '}\n\n`;
+  const requirements = `${verifier}Call ${target === 'node' ? 'verifyWebhook(rawBody, headers, secrets, nowSeconds?)' : 'verifyWebhook($rawBody, $headers, $secrets, $nowSeconds = null)'} with original request bytes and ${headers}. This package uses ${w.format ?? 'hex'} HMAC-SHA256 signing and a ${w.toleranceSeconds}-second timestamp tolerance. ${w.format === 'standard-webhooks' ? 'Secrets must use the whsec_ prefix and canonical base64 encoding of exactly 32 key bytes.' : `Use the signing secret supplied by ${apiName(c)}.`} Pass one secret string or an array of active secrets during rotation. nowSeconds is an optional Unix time override in seconds for deterministic tests; normally omit it. Millisecond-scale values raise an input error explaining the conversion. ${target === 'node' ? 'Node accepts original Buffer, Uint8Array or ArrayBuffer bytes. ' : 'PHP returns generated classes for supported single object envelopes and for named variants selected by a declared discriminator. For Flint merchant webhooks, event_source selects the Merchant or InstalledMerchants class. Use instanceof to access a specific class’s getters. Envelopes without a class binding can return stdClass values or arrays even when known is true. '}\n\n`;
   // With a JWT configured, snippets use the async verifier, which accepts JWT and HMAC deliveries.
   const jwt = Boolean(w.jwt);
   const nodeFramework = `### Fetch\n\nThe request body must not have been consumed. Pass the SDK client and ${jwt ? 'the IDs of your receiving webhook endpoints' : 'your configured signing secret'} to this helper:\n\n\`\`\`js
@@ -3703,6 +3715,7 @@ $rawBody = file_get_contents('php://input');
 ${jwt ? `$verified = $client->verifyWebhookDelivery($rawBody, getallheaders(), ['endpoint_ids' => ['${exampleEndpointId}']]);\n// For HMAC deliveries, also pass 'secrets' => [$currentSecret, $previousSecret] during rotation.` : '$verified = $client->verifyWebhook($rawBody, getallheaders(), $webhookSecret);\n// For rotation, pass [$currentSecret, $previousSecret] instead.'}
 if ($verified['known']) {
     $event = $verified['event'];
+    // Use instanceof to narrow generated event classes before calling their getters.
     // Persist and process the matched event idempotently.
 } else {
     // Persist for review; do not assume a declared model or payload shape.
